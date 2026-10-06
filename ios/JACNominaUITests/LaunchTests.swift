@@ -37,4 +37,81 @@ final class LaunchTests: XCTestCase {
         attachment.lifetime = .keepAlways
         add(attachment)
     }
+
+    @MainActor private func fixture(_ arguments: [String] = []) -> XCUIApplication {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"] + arguments; app.launch()
+        XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 20))
+        return app
+    }
+    @MainActor private func tap(_ app: XCUIApplication, _ label: String) {
+        let button = app.buttons[label].firstMatch
+        for _ in 0..<8 { if button.exists && button.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(button.waitForExistence(timeout: 10), "Debe existir el botón \(label)")
+        XCTAssertTrue(button.isHittable, "Debe poderse tocar \(label)"); button.tap()
+    }
+    @MainActor private func fill(_ app: XCUIApplication, _ id: String, _ value: String) {
+        let field = app.textFields[id].firstMatch
+        for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        // Right-aligned numbers end at the trailing inset. A tap farther left
+        // puts the cursor before the number, where backspace cannot clear it.
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "El campo debe recibir el foco del teclado.")
+        let old = (field.value as? String) ?? ""
+        let count = old == field.placeholderValue ? 0 : old.count
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + value)
+        if ["editor.km", "editor.hourDivisor", "editor.counts.0"].contains(id) {
+            XCTAssertEqual(field.value as? String, value, "El importe debe conservar el valor escrito.")
+        }
+    }
+    @MainActor func testCreatePeriodAndManageItsActivitiesWithNativeForms() {
+        let app = fixture()
+        tap(app, "period.create"); tap(app, "editor.save")
+        XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 15))
+        tap(app, "Actividad"); tap(app, "activity.shows"); tap(app, "activity.add")
+        fill(app, "editor.name", "Show simulado iPhone"); tap(app, "editor.save")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Show simulado iPhone")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+        attachScreen(app, name: "show-guardado")
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app, "activity.routes"); tap(app, "Editar"); fill(app, "editor.km", "120"); tap(app, "editor.save")
+        let distance = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value == %@", "120 km", "120 km")).firstMatch
+        XCTAssertTrue(distance.waitForExistence(timeout: 15), app.debugDescription)
+        attachScreen(app, name: "recorrido-compartido")
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app, "activity.movements"); tap(app, "activity.add")
+        fill(app, "editor.concept", "Novedad simulada iPhone"); tap(app, "editor.save")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Novedad simulada iPhone")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+        app.navigationBars.buttons.firstMatch.tap()
+        tap(app, "activity.hours"); tap(app, "Registrar horas y novedades")
+        fill(app, "editor.counts.0", "2"); tap(app, "editor.save")
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Recargo nocturno")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
+        attachScreen(app, name: "horas-guardadas")
+    }
+    @MainActor func testCloseArchiveAndReopenWithoutRealEmailsOrData() {
+        let app = fixture()
+        tap(app, "period.fixture-period"); tap(app, "period.close")
+        tap(app, "Cerrar quincena")
+        XCTAssertTrue(app.staticTexts["Neto del cierre"].waitForExistence(timeout: 15))
+        app.tabBars.buttons["Archivo"].tap(); tap(app, "period.fixture-period")
+        tap(app, "Documentos")
+        XCTAssertTrue(app.buttons["Resumen PDF"].waitForExistence(timeout: 10))
+        attachScreen(app, name: "archivo-documentos")
+        tap(app, "period.reopen"); tap(app, "Reabrir para corregir")
+        XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 15))
+        tap(app, "Corregir parámetros de este corte")
+        XCTAssertTrue(app.textFields["editor.hourDivisor"].waitForExistence(timeout: 10))
+        fill(app, "editor.hourDivisor", "200"); tap(app, "editor.save")
+        attachScreen(app, name: "correccion-historica")
+    }
+    @MainActor func testReadOnlyAccountHasNoEditingOrOwnerActions() {
+        let app = fixture(["--uitest-reader"])
+        XCTAssertFalse(app.buttons["period.create"].exists)
+        tap(app, "period.fixture-period")
+        XCTAssertFalse(app.buttons["period.close"].exists); XCTAssertFalse(app.buttons["period.delete"].exists)
+        tap(app, "Actividad"); tap(app, "activity.shows"); XCTAssertFalse(app.buttons["activity.add"].exists)
+        app.tabBars.buttons["Equipo"].tap(); XCTAssertFalse(app.buttons["employee.create"].exists)
+        app.tabBars.buttons["Gestión"].tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
+        tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
+        attachScreen(app, name: "permisos-solo-consulta")
+    }
 }

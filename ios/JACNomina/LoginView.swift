@@ -32,6 +32,7 @@ struct LoginView: View {
                 } footer: {
                     Text("Usa el mismo usuario y contraseña que en la web. El acceso es exclusivo para las cuentas autorizadas por Camilo.")
                 }
+                Section { NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() } }
             }
             .navigationTitle("Nómina JAC")
             .scrollDismissesKeyboard(.interactively)
@@ -42,5 +43,43 @@ struct LoginView: View {
         guard !store.busy else { return }
         focus = nil
         Task { await store.signIn(username: username, password: password); password = "" }
+    }
+}
+
+enum ActivationInput {
+    static func token(_ input: String, baseURL: URL = PayrollClient.productionURL) -> String? {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        if value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { return value }
+        guard let parts = URLComponents(string: value), parts.scheme == "https", parts.host == baseURL.host, parts.port == baseURL.port,
+              parts.path == "/acceso", parts.user == nil, parts.password == nil, parts.query == nil,
+              let fragment = parts.fragment, fragment.hasPrefix("activacion=") else { return nil }
+        let token = String(fragment.dropFirst("activacion=".count))
+        return token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil ? token : nil
+    }
+}
+struct ActivateAccountView: View {
+    @EnvironmentObject private var store: PayrollStore
+    @State private var link = ""
+    @State private var password = ""
+    @State private var repeated = ""
+    @State private var error: String?
+    var body: some View {
+        Form {
+            Section {
+                TextField("Pega el enlace privado de activación", text: $link, axis: .vertical).textInputAutocapitalization(.never).autocorrectionDisabled().privacySensitive()
+                SecureField("Nueva contraseña", text: $password).textContentType(.newPassword)
+                SecureField("Repetir contraseña", text: $repeated).textContentType(.newPassword)
+            } footer: { Text("Usa el enlace individual generado por Camilo. Vence en 24 horas y funciona una sola vez.") }
+            if let error = error ?? store.error { Section { InlineError(message: error) } }
+            Section {
+                Button("Activar y entrar") {
+                    guard let token = ActivationInput.token(link, baseURL: store.client.baseURL) else { error = "Pega un enlace de activación válido."; return }
+                    guard !password.isEmpty, password == repeated else { error = "Ingresa una contraseña y repítela igual."; return }
+                    error = nil
+                    Task { if await store.activate(token: token, password: password) { link = ""; password = ""; repeated = "" } }
+                }.disabled(store.busy)
+            }
+        }.navigationTitle("Activar cuenta").disabled(store.busy).scrollDismissesKeyboard(.interactively)
+            .onDisappear { link = ""; password = ""; repeated = "" }
     }
 }

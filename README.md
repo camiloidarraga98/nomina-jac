@@ -4,12 +4,12 @@ Aplicación privada de pagos de shows y nómina administrativa activa en https:/
 
 ## Desarrollo
 
-Node.js 24 LTS recomendado.
+Node.js 24 LTS recomendado. Consulta la incidencia de instalación limpia del lockfile en `docs/PROJECT_CONTEXT.md`; la validación actual usa las dependencias preparadas del entorno.
 
 ```sh
 npm ci
 npx tsc --noEmit
-node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs
+node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
 npm run build
 ```
 
@@ -17,7 +17,7 @@ Las pruebas usan bases en memoria y correo simulado. Para vista local usa `npm r
 
 ## Funciones
 
-La primera app nativa de iPhone está en [`ios/`](ios/README.md), con proyecto SwiftUI/Xcode, acceso a las mismas cuentas, consulta de quincenas/pagos/personal y documentos. Puede instalarse de forma privada en los tres iPhones registrados de Camilo sin publicarla en App Store. La guía detalla el alcance de esta entrega y la firma desde su Mac.
+La app nativa de iPhone está en [`ios/`](ios/README.md), con proyecto SwiftUI/Xcode, acceso a las mismas cuentas y funciones de quincenas, pagos, personal, edición, cierres, archivo, usuarios, correo y documentos/impresión. Puede instalarse de forma privada en los tres iPhones registrados de Camilo sin publicarla en App Store. La guía detalla el alcance de esta entrega y la firma desde su Mac.
 
 Personal, tarifas y conceptos editables; shows y ajustes de honorarios; kilometraje compartido y adicional; novedades y siete categorías de horas. Cierres con instantáneas, correcciones con historial y permiso delegable. Eliminación completa de quincenas por el propietario.
 
