@@ -1,6 +1,6 @@
 # Correspondencia del webapp y la app de iPhone
 
-La versión 0.2.0 conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
+La versión 0.3.0 conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
 
 | Función existente | Acceso nativo | Integración compartida |
 | --- | --- | --- |
@@ -17,7 +17,8 @@ La versión 0.2.0 conserva las cuentas, los permisos y la base D1 del webapp. To
 | Crear, editar, inactivar, eliminar y restaurar personal | Equipo | Todas las condiciones originales; historia conservada y validación de registros abiertos |
 | Conceptos y valores; empresa, NIT, divisor y siete factores | Gestión → Conceptos y reglas / Parámetros | Permiso `rules`, esquema original |
 | Usuarios, permisos, estado activo, invitación y restablecimiento | Gestión → Usuarios y permisos, solo propietario | `/api/users`, revisión de usuario, enlaces privados de un uso y sesiones invalidadas |
-| Acceso, activación/restablecimiento, contraseña y salir | Inicio de sesión / Mi cuenta | `/api/auth`, sesión segura en Llavero; cualquier contraseña no vacía |
+| Acceso, activación/restablecimiento, contraseña y salir | Inicio de sesión / Gestión → Mi cuenta | `/api/auth`, sesión segura en Llavero; cualquier contraseña no vacía |
+| Calendario mensual, eventos del día y próximos 90 días; detalles | Agenda; Conexión solo propietario | `/api/calendar`, misma selección y autorización de lectura que la web; `America/Bogota` |
 | Configurar, conectar, renovar o desconectar Gmail | Gestión → Correo → Conexión, solo propietario | OAuth/PKCE original con entrega nativa protegida; credenciales cifradas en D1 |
 | Consultar estados, modificar correo de personal y enviar desprendibles conjuntos/individuales | Correo → Quincena / Correos y envíos de este corte | `/api/payroll/email`, permisos `staff`/`send`, mismos estados e idempotencia |
 | PDF de resumen y desprendibles, ZIP y Excel de siete hojas | Quincena cerrada → Documentos | `/api/payroll/export`, permiso `export`; mismos archivos del servidor |
@@ -33,13 +34,15 @@ Los permisos se verifican en servidor y en la interfaz: `payroll`, `staff`, `rul
 
 ## Gmail, documentos y dispositivo
 
-La ventana de autorización de Apple es el único flujo de navegador. Un ticket de dos minutos y de un uso entrega una cookie exclusiva de Gmail; no entrega una sesión de nómina al navegador. El callback verifica PKCE, la sesión vigente del propietario y la cookie, y devuelve resultado y nonce a `jacnomina://gmail`. La app verifica el nonce. No se agregan tablas, migraciones o secretos.
+La ventana de autorización de Apple se utiliza para Gmail y Agenda. Gmail usa un ticket de dos minutos y de un uso que entrega una cookie exclusiva; no entrega una sesión de nómina al navegador. El callback verifica PKCE, la sesión vigente del propietario y la cookie, y devuelve resultado y nonce a `jacnomina://gmail`. La app verifica el nonce. La entrega nativa de Gmail conserva sus tablas y secretos.
+
+Agenda reutiliza el callback registrado y los client ID/secret de Google, con scope `calendar.readonly`, guard independiente y retorno `jacnomina://calendar`. Su conexión y calendario compartido se guardan cifrados y con CAS en `payroll_calendar`, migración `0007`. Solo el propietario puede autorizar y seleccionar; todos los usuarios propios activos pueden consultar. Desconectar Agenda no revoca el grant ni modifica Gmail. La preparación de Google Calendar API y el consentimiento único se describen en `README.md`.
 
 Los documentos y respaldos solicitados se crean temporalmente con protección de archivos y se eliminan al cerrar su vista, salir o arrancar de nuevo. No hay base de nómina ni edición sin conexión persistida. Compartir o guardar un archivo expresamente lo deja bajo control del usuario, igual que descargarlo desde la web.
 
 ## Evidencia y actualización
 
-Las suites del servidor cubren las 30 pruebas originales y siete pruebas adicionales de API móvil y OAuth: edición, previsualización, rutas, horas, permisos, CAS, cierres, correcciones históricas, borrado, entrega de Gmail, expiración y sesión revocada. Usan D1 en memoria y Google simulado. TypeScript y build se verifican con las dependencias preparadas; la incidencia heredada de `npm ci` limpio está documentada en `docs/PROJECT_CONTEXT.md`.
+Las suites del servidor cubren las 30 pruebas originales, siete pruebas de API móvil/OAuth y ocho de Calendar: edición, previsualización, rutas, horas, permisos, CAS, cierres, correcciones históricas, borrado, entrega de Gmail, expiración, sesión revocada, OAuth de Agenda, lectura compartida, paginación, fechas y desconexión independiente. Usan D1 en memoria y Google simulado. TypeScript y build se verifican con las dependencias preparadas; la incidencia heredada de `npm ci` limpio está documentada en `docs/PROJECT_CONTEXT.md`.
 
 El workflow macOS compila la app y ejecuta pruebas unitarias y de interfaz: Llavero, acceso, exportaciones, contrato móvil, conflictos, nonce y activación; formularios de quincenas/shows/rutas/novedades/horas, archivo, reapertura y cuenta de consulta. Las pruebas de red interceptan peticiones a `.invalid`. Las fixtures de interfaz solo existen en DEBUG; las pruebas nunca crean quincenas, borran datos ni envían correo real en producción. Las capturas y `.xcresult` se conservan en GitHub Actions.
 

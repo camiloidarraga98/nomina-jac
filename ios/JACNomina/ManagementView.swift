@@ -7,6 +7,7 @@ struct ManagementView: View {
             List {
                 OperationStatusSection()
                 Section("Administración") {
+                    NavigationLink { AccountView(user: user) } label: { Label("Mi cuenta", systemImage: "person.crop.circle") }
                     NavigationLink { ConceptsRulesView(user: user) } label: { Label("Conceptos y reglas", systemImage: "list.bullet.rectangle") }
                     NavigationLink { MailView(user: user) } label: { Label("Correos y Gmail", systemImage: "envelope") }
                     if user.isOwner { NavigationLink { UsersView() } label: { Label("Usuarios y permisos", systemImage: "person.badge.key") } }

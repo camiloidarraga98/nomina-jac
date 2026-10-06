@@ -139,6 +139,40 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertThrowsError(try GmailAuthorizer.validate(URL(string: "jacnomina://gmail?result=error&nonce=" + nonce), nonce: nonce))
     }
 
+    @MainActor func testAgendaUsesAuthenticatedSharedAPIAndRestrictedOwnerListing() async throws {
+        let client = UITestBackend.client()
+        let data = try await client.agenda(month: CalendarClock.month(Date()))
+        XCTAssertEqual(data.timeZone, "America/Bogota")
+        XCTAssertEqual(data.days.count, 42)
+        XCTAssertEqual(data.events.first?.title, "Concierto simulado")
+        let calendars = try await client.agendaCalendars()
+        XCTAssertEqual(calendars.first?.id, "fixture-calendar")
+        let reader = UITestBackend.client(reader: true)
+        let readable = try await reader.agenda(month: CalendarClock.month(Date()))
+        XCTAssertEqual(readable.connection.selected?.id, "fixture-calendar")
+        do { _ = try await reader.agendaCalendars(); XCTFail("El lector no debe configurar Agenda") } catch { XCTAssertEqual(error.localizedDescription, "Solo Camilo puede elegir el calendario.") }
+    }
+
+    func testCalendarDaysRespectColombiaMidnightAndExclusiveAllDayEnd() {
+        let concert = AgendaEvent(id: "concert", title: "Prueba", start: "2026-10-07T04:30:00.000Z", end: "2026-10-07T05:00:00.000Z", allDay: false, location: "", description: "", url: "https://calendar.google.com/calendar/event?eid=simulado")
+        let trip = AgendaEvent(id: "trip", title: "Viaje", start: "2026-10-06", end: "2026-10-08", allDay: true, location: "", description: "", url: "javascript:alert(1)")
+        XCTAssertEqual(concert.firstDay, "2026-10-06")
+        XCTAssertTrue(concert.occurs(on: "2026-10-06")); XCTAssertFalse(concert.occurs(on: "2026-10-07"))
+        XCTAssertTrue(trip.occurs(on: "2026-10-07")); XCTAssertFalse(trip.occurs(on: "2026-10-08"))
+        let buckets = CalendarClock.eventsByDay([concert, trip], days: ["2026-10-06", "2026-10-07", "2026-10-08"])
+        XCTAssertEqual(buckets["2026-10-06"]?.count, 2); XCTAssertEqual(buckets["2026-10-07"]?.count, 1); XCTAssertNil(buckets["2026-10-08"])
+        XCTAssertNotNil(concert.googleURL); XCTAssertNil(trip.googleURL)
+        XCTAssertEqual(CalendarClock.shift("2026-12", by: 1), "2027-01")
+    }
+
+    @MainActor func testCalendarAuthorizationRejectsMismatchedOrGmailCallbacks() throws {
+        let nonce = String(repeating: "n", count: 43)
+        XCTAssertNoThrow(try CalendarAuthorizer.validate(URL(string: "jacnomina://calendar?result=connected&nonce=" + nonce), nonce: nonce))
+        for value in ["jacnomina://gmail?result=connected&nonce=" + nonce, "other://calendar?result=connected&nonce=" + nonce, "jacnomina://calendar?result=connected&nonce=" + String(repeating: "x", count: 43), "jacnomina://calendar?result=connected&nonce=" + nonce + "&nonce=" + nonce, "jacnomina://calendar?result=error&nonce=" + nonce] {
+            XCTAssertThrowsError(try CalendarAuthorizer.validate(URL(string: value), nonce: nonce))
+        }
+    }
+
     func testJSONEditsPreserveFieldsAndNeverContainWholeHistoricalPeriods() throws {
         let raw = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"id":"employee","withholding":0.095,"unknownFutureField":{"keep":true},"amount":696749.75}"#.utf8))
         var record = raw; record["amount"] = .number(1.25)

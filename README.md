@@ -9,7 +9,7 @@ Node.js 24 LTS recomendado. Consulta la incidencia de instalación limpia del lo
 ```sh
 npm ci
 npx tsc --noEmit
-node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
+node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs tests/calendar.test.mjs
 npm run build
 ```
 
@@ -24,6 +24,8 @@ Personal, tarifas y conceptos editables; shows y ajustes de honorarios; kilometr
 PDF de resumen/desprendibles, ZIP, Excel y buscador para imprimir por empleado. Envío automático de PDF individual por Gmail al cerrar, con estados y reintentos controlados.
 
 Login propio en `/acceso`, administración de usuarios/permisos e invitaciones individuales temporales.
+
+Agenda en la web y en iPhone: mes completo, eventos por día y próximos 90 días, con horarios de Colombia. Consulta Google Calendar de `jacmusicestudios@gmail.com`; Camilo autoriza la lectura y selecciona el calendario compartido. Los eventos se mantienen en Google Calendar. Consulta la [preparación](ios/README.md#agenda-con-google-calendar).
 
 ## Privacidad y publicación
 
