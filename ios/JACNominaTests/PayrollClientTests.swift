@@ -119,4 +119,80 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(routes[0].participants.count, 1)
         XCTAssertEqual(routes[1].participants.count, 2)
     }
+
+    func testActivationLinksAreRestrictedToOurDomainAndAValidOneUseToken() {
+        let token = String(repeating: "n", count: 43)
+        XCTAssertEqual(ActivationInput.token(token), token)
+        XCTAssertEqual(ActivationInput.token("https://jhonalexcastano.com/acceso#activacion=" + token), token)
+        XCTAssertNil(ActivationInput.token("https://other.example.invalid/acceso#activacion=" + token))
+        XCTAssertNil(ActivationInput.token("https://jhonalexcastano.com/acceso?token=" + token))
+        XCTAssertNil(ActivationInput.token("https://jhonalexcastano.com/acceso#activacion=incorrecto"))
+    }
+
+    @MainActor func testGmailCallbackRequiresMatchingNonceAndExpectedDestination() throws {
+        let nonce = String(repeating: "n", count: 43)
+        XCTAssertNoThrow(try GmailAuthorizer.validate(URL(string: "jacnomina://gmail?result=connected&nonce=" + nonce), nonce: nonce))
+        XCTAssertThrowsError(try GmailAuthorizer.validate(URL(string: "jacnomina://gmail?result=connected&nonce=" + String(repeating: "x", count: 43)), nonce: nonce))
+        XCTAssertThrowsError(try GmailAuthorizer.validate(URL(string: "other://gmail?result=connected&nonce=" + nonce), nonce: nonce))
+        XCTAssertThrowsError(try GmailAuthorizer.validate(URL(string: "jacnomina://other?result=connected&nonce=" + nonce), nonce: nonce))
+        XCTAssertThrowsError(try GmailAuthorizer.validate(URL(string: "jacnomina://gmail?result=connected&nonce=" + nonce + "&nonce=" + nonce), nonce: nonce))
+        XCTAssertThrowsError(try GmailAuthorizer.validate(URL(string: "jacnomina://gmail?result=error&nonce=" + nonce), nonce: nonce))
+    }
+
+    func testJSONEditsPreserveFieldsAndNeverContainWholeHistoricalPeriods() throws {
+        let raw = try JSONDecoder().decode(JSONValue.self, from: Data(#"{"id":"employee","withholding":0.095,"unknownFutureField":{"keep":true},"amount":696749.75}"#.utf8))
+        var record = raw; record["amount"] = .number(1.25)
+        let edit = PayrollEdit(kind: "employee", record: record).value
+        let roundtrip = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(edit))
+        XCTAssertEqual(roundtrip["record"]["unknownFutureField"], raw["unknownFutureField"])
+        XCTAssertEqual(roundtrip["record"]["withholding"].number, 0.095)
+        XCTAssertEqual(roundtrip["record"]["amount"].number, 1.25)
+        XCTAssertNil(roundtrip.fields["data"])
+        XCTAssertNil(roundtrip.fields["periods"])
+    }
+
+    @MainActor func testConflictKeepsDraftAndRevisionUntilExplicitRetryOrDiscard() async throws {
+        let store = PayrollStore(client: UITestBackend.client(conflict: true))
+        await store.restore()
+        let workspace = try XCTUnwrap(store.workspace)
+        var employee = try XCTUnwrap(workspace.record("employees", id: "music")); employee["showRate"] = .number(700000)
+        let session = PayrollEditorSession(kind: .employee, workspace: workspace, detail: nil, record: employee)
+        let command = session.command(employee)
+        let saved = await store.submit(command, label: "Personal", editorID: session.id)
+        XCTAssertFalse(saved)
+        XCTAssertEqual(store.pending?.command, command)
+        XCTAssertEqual(store.pending?.baseline, workspace.data)
+        XCTAssertEqual(store.workspace?.version, workspace.version)
+        XCTAssertTrue(try store.client.hasSession(), "Un conflicto no borra la sesión")
+        do { try await store.refresh(); XCTFail("No debe borrar el borrador al actualizar") } catch { }
+        let backup = try store.backupPending(); defer { TemporaryDocuments.remove(backup) }
+        let bytes = try JSONDecoder().decode(JSONValue.self, from: Data(contentsOf: backup.url))
+        XCTAssertEqual(bytes["request"], command)
+        await store.retryPending()
+        XCTAssertNil(store.pending)
+        XCTAssertEqual(store.workspace?.record("employees", id: "music")?["showRate"].number, 700000)
+        XCTAssertEqual(store.workspace?.version, workspace.version + 1)
+    }
+
+    @MainActor func testNativeWorkspaceAndActionsUseTheSameVersionedServerContract() async throws {
+        let client = UITestBackend.client()
+        var workspace = try await client.workspace()
+        let p = try XCTUnwrap(workspace.periods.first)
+        let detail = try await client.detail(periodID: p.id)
+        var movement = PayrollEditorSession.newRecord(.movement, workspace: workspace, detail: detail)
+        movement["concept"] = .string("Novedad desde iPhone")
+        let editor = PayrollEditorSession(kind: .movement, workspace: workspace, detail: detail, record: movement)
+        let preview = try await client.preview(editor.command(movement))
+        XCTAssertEqual(preview.version, workspace.version)
+        let afterPreview = try await client.workspace(); XCTAssertEqual(afterPreview.version, workspace.version)
+        let saved = try await client.payroll(editor.command(movement))
+        workspace = try PayrollWorkspace(envelope: saved, user: workspace.user)
+        XCTAssertEqual(workspace.version, detail.version + 1)
+        let changed = try await client.detail(periodID: p.id)
+        XCTAssertEqual(changed.period.movements.first?.concept, "Novedad desde iPhone")
+        let closed = try await client.payroll(.object(["action": .string("close"), "version": .number(Double(workspace.version)), "periodId": .string(p.id)]))
+        XCTAssertEqual(closed.data["periods"].elements.first?["status"].text, "cerrada")
+        let reopened = try await client.payroll(.object(["action": .string("reopen"), "version": .number(Double(closed.version)), "periodId": .string(p.id)]))
+        XCTAssertEqual(reopened.data["periods"].elements.first?["revisions"].elements.count, 1)
+    }
 }

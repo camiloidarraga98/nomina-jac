@@ -3,14 +3,15 @@ import SwiftUI
 @main
 @MainActor
 struct JACNominaApp: App {
-    @StateObject private var store = PayrollStore()
+    @StateObject private var store = JACNominaApp.makeStore()
     @Environment(\.scenePhase) private var scenePhase
 
     var body: some Scene {
         WindowGroup {
             ZStack {
                 Group {
-                    if store.restoring { ProgressView("Conectando…") }
+                    if Self.isUnitTestHost { Color(uiColor: .systemBackground) }
+                    else if store.restoring { ProgressView("Conectando…") }
                     else if let overview = store.overview { PayrollHomeView(overview: overview) }
                     else { LoginView() }
                 }
@@ -22,8 +23,22 @@ struct JACNominaApp: App {
                     BrandView().frame(width: 220)
                 }
             }
-            .task { await store.restore() }
+            .task { if !Self.isUnitTestHost { await store.restore() } }
         }
+    }
+    private static var isUnitTestHost: Bool {
+        #if DEBUG
+        return Bundle.allBundles.contains { $0.bundleURL.lastPathComponent == "JACNominaTests.xctest" }
+        #else
+        return false
+        #endif
+    }
+    private static func makeStore() -> PayrollStore {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--uitest-payroll") { return PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"))) }
+        #endif
+        return PayrollStore()
     }
 }
 

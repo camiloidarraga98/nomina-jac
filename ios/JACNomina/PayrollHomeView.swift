@@ -19,6 +19,7 @@ struct PeriodsView: View {
     @State private var search = ""
     @State private var editor: PayrollEditorSession?
     @State private var path: [String] = []
+    @State private var createdPeriod: String?
     private var periods: [PeriodSummary] {
         overview.periods.sorted { $0.start > $1.start }.filter {
             (!archive || $0.isClosed) && (search.isEmpty || $0.title.localizedCaseInsensitiveContains(search) || ($0.isClosed ? "cerrada" : "abierta").localizedCaseInsensitiveContains(search))
@@ -64,7 +65,7 @@ struct PeriodsView: View {
                         }
                     }
                 }
-                .sheet(item: $editor) { session in PayrollEditorView(session: session) { if let id = $0 { path.append(id) } } }
+                .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }
         }
     }
 }
