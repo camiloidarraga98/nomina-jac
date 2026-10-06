@@ -16,6 +16,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.secureTextFields["login.password"].exists)
         XCTAssertTrue(app.buttons["login.submit"].exists)
         attachScreen(app, name: "inicio-de-sesion")
+        XCTAssertFalse(app.staticTexts["No se pudo leer la sesión segura de este iPhone."].exists, "El arranque debe poder consultar el Llavero.")
 
         username.tap()
         username.typeText("prueba-local")
