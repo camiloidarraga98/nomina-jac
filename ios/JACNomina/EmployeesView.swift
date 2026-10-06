@@ -34,7 +34,7 @@ struct EmployeesView: View {
                         }
                     }
                 }
-            }.navigationTitle("Equipo JAC").searchable(text: $search, prompt: "Buscar persona o cargo")
+            }.jacSurface().navigationTitle("Equipo JAC").searchable(text: $search, prompt: "Buscar persona o cargo")
                 .refreshable { try? await store.refresh() }
                 .toolbar {
                     if overview.user.can("staff") {
@@ -72,7 +72,7 @@ struct EmployeeDetailView: View {
                     }
                 }
             }
-        }.navigationTitle("Personal").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Personal").navigationBarTitleDisplayMode(.inline)
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
             .confirmationDialog("¿Eliminar esta persona del personal vigente?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Eliminar persona", role: .destructive) { Task { _ = await store.action("deleteEmployee", employeeID: employeeID) } }

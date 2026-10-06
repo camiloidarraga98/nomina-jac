@@ -1,9 +1,10 @@
 'use client';
 import {useState,useEffect,useCallback,useRef} from 'react';
-import {ChevronLeft,ChevronRight,CalendarDays,RefreshCw,MapPin,Clock,ExternalLink,Settings2} from 'lucide-react';
+import {ChevronLeft,ChevronRight,CalendarDays,RefreshCw,MapPin,Clock,ExternalLink,Settings2,Plus,Pencil} from 'lucide-react';
+import AgendaEventEditor from './agenda-event-editor';
 import {Button} from '@/components/ui/button';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
-import {agendaDate,agendaMonth,agendaDayLabel,agendaEventOnDay,agendaEventTime,addAgendaDays,type AgendaData,type AgendaEvent,type AgendaCalendar} from '@/lib/calendar-core';
+import {agendaDate,agendaMonth,agendaDayLabel,agendaEventOnDay,agendaEventTime,addAgendaDays,type AgendaData,type AgendaEvent,type AgendaCalendar,type AgendaEventDraft} from '@/lib/calendar-core';
 
 async function calendarRequest<T>(path:string,body?:unknown):Promise<T>{
  const response=await fetch(path,{cache:'no-store',...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
@@ -14,6 +15,7 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOw
  const today=agendaDate();
  const [month,setMonth]=useState(today.slice(0,7)),[day,setDay]=useState(today),[data,setData]=useState<AgendaData|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[settings,setSettings]=useState(false),[calendars,setCalendars]=useState<AgendaCalendar[]>([]),[calendarId,setCalendarId]=useState(''),[selected,setSelected]=useState<AgendaEvent|null>(null),[confirmDisconnect,setConfirmDisconnect]=useState(false);
  const [listing,setListing]=useState(false);
+ const [editor,setEditor]=useState<{event?:AgendaEvent;day:string;revision:number}|null>(null),[savingEvent,setSavingEvent]=useState(false);
  const generation=useRef(0),lastRefresh=useRef(0),calendarRequestId=useRef(0);
  const refresh=useCallback(async()=>{
   const id=++generation.current;setLoading(true);setError('');lastRefresh.current=Date.now();
@@ -52,15 +54,21 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOw
   finally{setBusy(false);}
  }
  const ready=!!connection?.connected&&!!connection.selected;
+ async function saveEvent(event:AgendaEventDraft,requestId:string){
+  if(!editor)return;
+  const result=await calendarRequest<{event:AgendaEvent;notice:string}>('/api/calendar',{action:editor.event?'updateEvent':'createEvent',revision:editor.revision,event,...(editor.event?{eventId:editor.event.id,etag:editor.event.etag}:{requestId})});
+  setEditor(null);setSelected(null);setNotice(result.notice);await refresh();
+ }
  return <div className="agenda">
   {error&&<div className="message error" role="alert">{error}<Button variant="outline" onClick={()=>void refresh()} disabled={loading}>Reintentar</Button></div>}
   {notice&&<div className="message success" role="status">{notice}</div>}
-  <div className="agenda-status"><div><strong>{connection?.selected?.name||'Agenda de Jhon Alex'}</strong><small>{ready?'Google Calendar · Hora de Colombia':loading?'Consultando conexión…':'Conecta Google y elige el calendario de la agenda.'}</small></div><div className="actions"><Button variant="outline" aria-label="Actualizar agenda" onClick={()=>void refresh()} disabled={loading||busy}><RefreshCw size={16} className={loading?'agenda-spinning':''}/>Actualizar</Button>{isOwner&&<Button variant="outline" onClick={()=>setSettings(!settings)} disabled={busy}><Settings2 size={16}/>{settings?'Cerrar configuración':'Conexión'}</Button>}</div></div>
+  <div className="agenda-status"><div><strong>{connection?.selected?.name||'Agenda de Jhon Alex'}</strong><small>{ready?'Google Calendar · Hora de Colombia':loading?'Consultando conexión…':'Conecta Google y elige el calendario de la agenda.'}</small></div><div className="actions">{data?.canEditEvents&&ready&&<Button className="primary" onClick={()=>setEditor({day,revision:connection!.revision})} disabled={loading||busy}><Plus size={16}/>Crear evento</Button>}<Button variant="outline" aria-label="Actualizar agenda" onClick={()=>void refresh()} disabled={loading||busy}><RefreshCw size={16} className={loading?'agenda-spinning':''}/>Actualizar</Button>{isOwner&&<Button variant="outline" onClick={()=>setSettings(!settings)} disabled={busy}><Settings2 size={16}/>{settings?'Cerrar configuración':'Conexión'}</Button>}</div></div>
+  {ready&&isOwner&&!loading&&!data?.canEditEvents&&<p className="panel-note">{!connection?.writeAuthorized?'Para crear y editar eventos, abre Conexión y vuelve a autorizar Google con el permiso de edición.':'Este calendario permite consultar. Elige en Conexión uno que puedas editar.'}</p>}
   {(!ready||settings)&&!loading&&<section className="panel agenda-connection"><div className="panel-title"><h2>{connection?.connected?'Elegir calendario':'Conectar Google Calendar'}</h2></div>
    <p className="panel-note">{isOwner?'Usa jacmusicestudios@gmail.com y selecciona el calendario de Jhon Alex. La agenda se comparte con los usuarios activos de JAC.':'Camilo prepara la conexión y selecciona el calendario que podrá consultar el equipo.'}</p>
    {isOwner&&<div className="agenda-setup">
     {!connection?.configured?<Button onClick={onGoogleSetup}>Preparar Google en Correos</Button>:<>
-     <p>En el proyecto de Google que utilizas para JAC, activa <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noreferrer">Google Calendar API <ExternalLink size={13}/></a>. Al conectar, elige jacmusicestudios@gmail.com y marca el permiso para consultar tus calendarios antes de continuar.</p>
+     <p>En el proyecto de Google que utilizas para JAC, activa <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noreferrer">Google Calendar API <ExternalLink size={13}/></a>. Al conectar, elige jacmusicestudios@gmail.com y concede el permiso para consultar y editar eventos. La agenda continuará disponible mientras vuelves a autorizar.</p>
      <Button className="primary" onClick={()=>void connect()} disabled={busy||connectBlocked}>{busy?'Preparando…':connection.connected?'Volver a autorizar Google':'Conectar Google'}</Button>
      {connectBlocked&&<p className="muted">Guarda o respalda los cambios pendientes de nómina antes de abrir Google.</p>}
     </>}
@@ -77,7 +85,8 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOw
    </section><section className="panel agenda-day-events"><div className="panel-title"><h2>{agendaDayLabel(day)}</h2><small>{dayEvents.length} {dayEvents.length===1?'evento':'eventos'}</small></div>{dayEvents.length?dayEvents.map(e=><EventButton key={e.id} event={e} onClick={()=>setSelected(e)}/>):<div className="empty agenda-empty"><CalendarDays size={28}/><p>No hay eventos para este día.</p></div>}</section></div>
    <section className="panel agenda-upcoming"><div className="panel-title"><h2>Próximos eventos</h2></div><p className="panel-note">Los próximos 90 días · hasta {agendaDayLabel(visible.upcomingUntil)}</p>{visible.upcoming.length?visible.upcoming.map(e=><EventButton key={e.id} event={e} day={e.allDay?e.start:agendaDate(new Date(e.start))} onClick={()=>setSelected(e)}/>):<div className="empty agenda-empty"><CalendarDays size={28}/><p>No hay eventos programados en los próximos 90 días.</p></div>}<small className="agenda-updated">Actualizado {new Intl.DateTimeFormat('es-CO',{timeZone:'America/Bogota',hour:'numeric',minute:'2-digit'}).format(new Date(visible.updatedAt))}</small></section>
   </div>}
-  <Dialog open={!!selected} onOpenChange={open=>{if(!open)setSelected(null);}}><DialogContent className="payroll-dialog agenda-detail"><DialogTitle>{selected?.title||'Evento'}</DialogTitle><DialogDescription>Agenda de Jhon Alex · Hora de Colombia</DialogDescription>{selected&&<div className="agenda-event-detail"><p><CalendarDays size={17}/>{agendaDayLabel(selected.allDay?selected.start:agendaDate(new Date(selected.start)))}</p><p><Clock size={17}/>{agendaEventTime(selected)}{selected.allDay&&selected.end!==addAgendaDays(selected.start,1)&&' · hasta '+agendaDayLabel(addAgendaDays(selected.end,-1))}</p>{selected.location&&<p><MapPin size={17}/>{selected.location}</p>}{selected.description&&<p className="agenda-description">{selected.description}</p>}{selected.url&&<a className="btn primary" href={selected.url} target="_blank" rel="noreferrer">Ver en Google Calendar <ExternalLink size={16}/></a>}</div>}</DialogContent></Dialog>
+  <Dialog open={!!selected} onOpenChange={open=>{if(!open)setSelected(null);}}><DialogContent className="payroll-dialog agenda-detail"><DialogTitle>{selected?.title||'Evento'}</DialogTitle><DialogDescription>Agenda de Jhon Alex · Hora de Colombia</DialogDescription>{selected&&<div className="agenda-event-detail"><p><CalendarDays size={17}/>{agendaDayLabel(selected.allDay?selected.start:agendaDate(new Date(selected.start)))}</p><p><Clock size={17}/>{agendaEventTime(selected)}{selected.allDay&&selected.end!==addAgendaDays(selected.start,1)&&' · hasta '+agendaDayLabel(addAgendaDays(selected.end,-1))}</p>{selected.location&&<p><MapPin size={17}/>{selected.location}</p>}{selected.description&&<p className="agenda-description">{selected.description}</p>}{data?.canEditEvents&&selected.editable&&<Button className="primary" onClick={()=>{setEditor({event:selected!,day,revision:connection!.revision});setSelected(null);}}><Pencil size={16}/>Editar evento</Button>}{selected.url&&<a className="btn" href={selected.url} target="_blank" rel="noreferrer">Ver en Google Calendar <ExternalLink size={16}/></a>}</div>}</DialogContent></Dialog>
+  <Dialog open={!!editor} onOpenChange={open=>{if(!open&&!savingEvent)setEditor(null);}}><DialogContent className="payroll-dialog agenda-detail" onEscapeKeyDown={e=>{if(savingEvent)e.preventDefault();}} onInteractOutside={e=>{if(savingEvent)e.preventDefault();}}><DialogTitle>{editor?.event?'Editar evento':'Crear evento'}</DialogTitle><DialogDescription>Agenda de Jhon Alex · Hora de Colombia</DialogDescription>{editor&&<AgendaEventEditor key={editor.event?.id??'new'} event={editor.event} day={editor.day} save={saveEvent} onBusy={setSavingEvent}/>}</DialogContent></Dialog>
   <Dialog open={confirmDisconnect} onOpenChange={setConfirmDisconnect}><DialogContent className="payroll-dialog agenda-detail"><DialogTitle>Desconectar Agenda</DialogTitle><DialogDescription>El equipo dejará de consultar este calendario desde JAC. Los eventos continúan en Google Calendar.</DialogDescription><div className="actions"><Button variant="outline" onClick={()=>setConfirmDisconnect(false)} disabled={busy}>Cancelar</Button><Button className="primary" onClick={()=>void operation('disconnect')} disabled={busy}>Desconectar Agenda</Button></div></DialogContent></Dialog>
  </div>;
 }

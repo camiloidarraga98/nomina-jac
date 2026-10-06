@@ -33,7 +33,7 @@ struct UsersView: View {
                 }
             }
             if busy { Section { ProgressView() } }
-        }.navigationTitle("Usuarios y permisos").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Usuarios y permisos").navigationBarTitleDisplayMode(.inline)
             .task { await load() }.refreshable { await load() }
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -88,7 +88,7 @@ struct UserEditorView: View {
                 } header: { Text("Permisos") } footer: {
                     Text("Modificar cierres es un permiso independiente. Guardar cambios invalida las sesiones e invitaciones anteriores.")
                 }
-            }.navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").navigationBarTitleDisplayMode(.inline)
                 .disabled(busy || user.owner)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { Button("Cancelar") { dismiss() }.disabled(busy) }

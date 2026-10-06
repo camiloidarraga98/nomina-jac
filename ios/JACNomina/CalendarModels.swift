@@ -12,6 +12,7 @@ struct AgendaConnection: Codable {
     let email: String
     let selected: AgendaCalendar?
     let revision: Int
+    let writeAuthorized: Bool?
 }
 struct AgendaEvent: Codable, Identifiable {
     let id: String
@@ -22,6 +23,12 @@ struct AgendaEvent: Codable, Identifiable {
     let location: String
     let description: String
     let url: String
+    let etag: String?
+    let editable: Bool?
+    let recurring: Bool?
+    init(id: String, title: String, start: String, end: String, allDay: Bool, location: String, description: String, url: String, etag: String? = nil, editable: Bool? = nil, recurring: Bool? = nil) {
+        self.id = id; self.title = title; self.start = start; self.end = end; self.allDay = allDay; self.location = location; self.description = description; self.url = url; self.etag = etag; self.editable = editable; self.recurring = recurring
+    }
     var firstDay: String { allDay ? start : CalendarClock.day(CalendarClock.instant(start) ?? .distantPast) }
     var timeLabel: String {
         guard !allDay, let from = CalendarClock.instant(start), let to = CalendarClock.instant(end) else { return "Todo el día" }
@@ -49,10 +56,21 @@ struct AgendaData: Decodable {
     let upcomingUntil: String
     let updatedAt: String
     let timeZone: String
+    let canEditEvents: Bool?
 }
 struct AgendaCalendars: Decodable { let calendars: [AgendaCalendar] }
 struct AgendaMutation: Decodable { let connection: AgendaConnection; let notice: String }
 struct AgendaStart: Decodable { let url: URL; let nonce: String }
+struct AgendaEventMutation: Decodable { let event: AgendaEvent; let notice: String }
+struct AgendaEventDraft: Codable {
+    let title: String
+    let start: String
+    let end: String
+    let allDay: Bool
+    let location: String
+    let description: String
+    var value: JSONValue { .object(["title": .string(title), "start": .string(start), "end": .string(end), "allDay": .bool(allDay), "location": .string(location), "description": .string(description)]) }
+}
 
 enum CalendarClock {
     static func eventsByDay(_ events: [AgendaEvent], days: [String]) -> [String: [AgendaEvent]] {

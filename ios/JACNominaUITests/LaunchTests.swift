@@ -112,7 +112,7 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Equipo"].tap(); XCTAssertFalse(app.buttons["employee.create"].exists)
         app.tabBars.buttons["Gestión"].tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
-        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists)
+        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertFalse(app.buttons["agenda.create"].exists)
         attachScreen(app, name: "permisos-solo-consulta")
     }
     @MainActor func testAgendaMonthUpcomingDetailsAndAccountRemainAccessible() {
@@ -129,5 +129,17 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "agenda-proximos")
         app.tabBars.buttons["Gestión"].tap(); tap(app, "Mi cuenta")
         XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
+    }
+    @MainActor func testCreateAndEditAgendaEventKeepNativeFormsAndSharedFeed() {
+        let app = fixture(); app.tabBars.buttons["Agenda"].tap()
+        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15))
+        tap(app, "agenda.create"); fill(app, "agenda.editor.title", "Evento móvil de prueba"); fill(app, "agenda.editor.location", "Lugar de prueba")
+        attachScreen(app, name: "agenda-crear-evento"); tap(app, "agenda.editor.save")
+        XCTAssertTrue(app.staticTexts["Evento creado en Google Calendar."].waitForExistence(timeout: 15))
+        tap(app, "agenda.event.fixture-concert"); tap(app, "agenda.edit")
+        XCTAssertTrue(app.staticTexts["Editarás solo esta ocurrencia. Los demás eventos de la serie se conservan."].waitForExistence(timeout: 10))
+        fill(app, "agenda.editor.title", "Concierto actualizado de prueba"); attachScreen(app, name: "agenda-editar-evento"); tap(app, "agenda.editor.save")
+        XCTAssertTrue(app.staticTexts["Evento actualizado en Google Calendar."].waitForExistence(timeout: 15))
+        attachScreen(app, name: "agenda-identidad-jac")
     }
 }

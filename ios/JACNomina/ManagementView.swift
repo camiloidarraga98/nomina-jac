@@ -12,7 +12,7 @@ struct ManagementView: View {
                     NavigationLink { MailView(user: user) } label: { Label("Correos y Gmail", systemImage: "envelope") }
                     if user.isOwner { NavigationLink { UsersView() } label: { Label("Usuarios y permisos", systemImage: "person.badge.key") } }
                 }
-            }.navigationTitle("Gestión")
+            }.jacSurface().navigationTitle("Gestión")
         }
     }
 }
@@ -44,7 +44,7 @@ struct ConceptsRulesView: View {
                     if user.can("rules") { Button("Agregar concepto") { editor = PayrollEditorSession(kind: .concept, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.concept, workspace: w)) }.disabled(!store.canWrite).accessibilityIdentifier("concept.create") }
                 }
             }
-        }.navigationTitle("Conceptos y reglas").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Conceptos y reglas").navigationBarTitleDisplayMode(.inline)
             .refreshable { try? await store.refresh() }.sheet(item: $editor) { PayrollEditorView(session: $0) }
     }
 }

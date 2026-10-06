@@ -153,6 +153,19 @@ final class PayrollClientTests: XCTestCase {
         do { _ = try await reader.agendaCalendars(); XCTFail("El lector no debe configurar Agenda") } catch { XCTAssertEqual(error.localizedDescription, "Solo Camilo puede elegir el calendario.") }
     }
 
+    @MainActor func testAgendaCreatesAndUpdatesWithRevisionETagAndOwnerSession() async throws {
+        let client = UITestBackend.client(), feed = try await client.agenda(month: CalendarClock.month(Date()))
+        XCTAssertEqual(feed.canEditEvents, true)
+        let draft = AgendaEventDraft(title: "Evento de prueba", start: "2026-10-20T00:00:00.000Z", end: "2026-10-20T02:00:00.000Z", allDay: false, location: "Lugar", description: "Solo simulado")
+        let result = try await client.saveAgendaEvent(draft, revision: feed.connection.revision, event: nil, requestID: UUID())
+        XCTAssertEqual(result.event.title, draft.title); XCTAssertEqual(result.event.start, draft.start); XCTAssertNotNil(result.event.etag)
+        _ = try await client.saveAgendaEvent(draft, revision: feed.connection.revision, event: result.event, requestID: UUID())
+        do { _ = try await client.saveAgendaEvent(draft, revision: feed.connection.revision, event: result.event, requestID: UUID()); XCTFail("No debe sobrescribir un ETag obsoleto") } catch { XCTAssertEqual(error.localizedDescription, "Otra persona modificó este evento.") }
+        let reader = UITestBackend.client(reader: true)
+        let readable = try await reader.agenda(month: CalendarClock.month(Date())); XCTAssertEqual(readable.canEditEvents, false)
+        do { _ = try await reader.saveAgendaEvent(draft, revision: 1, event: nil, requestID: UUID()); XCTFail("La cuenta lectora no edita") } catch { XCTAssertEqual(error.localizedDescription, "Solo Camilo puede editar eventos.") }
+    }
+
     func testCalendarDaysRespectColombiaMidnightAndExclusiveAllDayEnd() {
         let concert = AgendaEvent(id: "concert", title: "Prueba", start: "2026-10-07T04:30:00.000Z", end: "2026-10-07T05:00:00.000Z", allDay: false, location: "", description: "", url: "https://calendar.google.com/calendar/event?eid=simulado")
         let trip = AgendaEvent(id: "trip", title: "Viaje", start: "2026-10-06", end: "2026-10-08", allDay: true, location: "", description: "", url: "javascript:alert(1)")

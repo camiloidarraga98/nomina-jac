@@ -1,6 +1,6 @@
 # Correspondencia del webapp y la app de iPhone
 
-La versión 0.3.0 conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
+La versión 0.4.0 conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
 
 | Función existente | Acceso nativo | Integración compartida |
 | --- | --- | --- |
@@ -18,7 +18,7 @@ La versión 0.3.0 conserva las cuentas, los permisos y la base D1 del webapp. To
 | Conceptos y valores; empresa, NIT, divisor y siete factores | Gestión → Conceptos y reglas / Parámetros | Permiso `rules`, esquema original |
 | Usuarios, permisos, estado activo, invitación y restablecimiento | Gestión → Usuarios y permisos, solo propietario | `/api/users`, revisión de usuario, enlaces privados de un uso y sesiones invalidadas |
 | Acceso, activación/restablecimiento, contraseña y salir | Inicio de sesión / Gestión → Mi cuenta | `/api/auth`, sesión segura en Llavero; cualquier contraseña no vacía |
-| Calendario mensual, eventos del día y próximos 90 días; detalles | Agenda; Conexión solo propietario | `/api/calendar`, misma selección y autorización de lectura que la web; `America/Bogota` |
+| Calendario mensual, eventos del día y próximos 90 días; detalles | Agenda; Conexión solo propietario | `/api/calendar`, misma selección y autorización de eventos/lista que la web; `America/Bogota` |
 | Configurar, conectar, renovar o desconectar Gmail | Gestión → Correo → Conexión, solo propietario | OAuth/PKCE original con entrega nativa protegida; credenciales cifradas en D1 |
 | Consultar estados, modificar correo de personal y enviar desprendibles conjuntos/individuales | Correo → Quincena / Correos y envíos de este corte | `/api/payroll/email`, permisos `staff`/`send`, mismos estados e idempotencia |
 | PDF de resumen y desprendibles, ZIP y Excel de siete hojas | Quincena cerrada → Documentos | `/api/payroll/export`, permiso `export`; mismos archivos del servidor |
@@ -47,3 +47,7 @@ Las suites del servidor cubren las 30 pruebas originales, siete pruebas de API m
 El workflow macOS compila la app y ejecuta pruebas unitarias y de interfaz: Llavero, acceso, exportaciones, contrato móvil, conflictos, nonce y activación; formularios de quincenas/shows/rutas/novedades/horas, archivo, reapertura y cuenta de consulta. Las pruebas de red interceptan peticiones a `.invalid`. Las fixtures de interfaz solo existen en DEBUG; las pruebas nunca crean quincenas, borran datos ni envían correo real en producción. Las capturas y `.xcresult` se conservan en GitHub Actions.
 
 La publicación actualiza el servidor. Para actualizar el binario, usa **Integrate → Pull → origin/main** y **Run** en Xcode, o distribuye una nueva versión ad hoc a los tres iPhones. La firma de dispositivos se hace con la cuenta Apple de Camilo en su Mac. Consulta `README.md` en esta carpeta para instalación y el ajuste local del depurador en Xcode 27.0.
+
+| Crear/editar eventos: título, fechas/horas, todo el día, lugar, descripción | Agenda: + y Editar evento; inicialmente propietario Camilo | `/api/calendar`, calendario elegido, ETag/If-Match, reintentos estables; recurrencia por ocurrencia |
+
+La identidad nativa comparte verde oscuro, lima y superficies claras del webapp, con colores adaptados al modo oscuro y controles SwiftUI. Se conservan las capacidades y el cálculo en servidor.

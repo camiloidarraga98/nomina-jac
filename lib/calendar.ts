@@ -1,9 +1,10 @@
 import {database} from '@/db/raw';
 import {mailKey} from './payroll-mail';
 import {decryptMail,encryptMail} from './payroll-mail-core';
-import {AGENDA_TIME_ZONE,CALENDAR_ACCOUNT,agendaMonth,agendaDate,addAgendaDays,normalizeAgendaEvent,type AgendaCalendar,type AgendaConnection,type AgendaEvent} from './calendar-core';
+import {z} from 'zod';
+import {AGENDA_TIME_ZONE,CALENDAR_ACCOUNT,CALENDAR_SCOPE,agendaMonth,agendaDate,addAgendaDays,validAgendaDate,normalizeAgendaEvent,type AgendaCalendar,type AgendaConnection,type AgendaEvent,type AgendaEventDraft} from './calendar-core';
 
-export type CalendarCredentials={clientId:string;clientSecret:string;refreshToken:string};
+export type CalendarCredentials={clientId:string;clientSecret:string;refreshToken:string;scopes?:string[]};
 export type CalendarConfig={credentials:string;connected_email:string;calendar_id:string;calendar_name:string;timezone:string;version:number};
 type GoogleOAuthError='invalid_grant'|'invalid_client'|'unauthorized_client'|'invalid_scope'|'access_denied';
 export class CalendarFailure extends Error {constructor(message:string,public status=400,public googleError?:GoogleOAuthError){super(message);}}
@@ -16,21 +17,25 @@ export async function calendarClientCredentials(){
 }
 export async function agendaConnection():Promise<AgendaConnection>{
  const [c,gmail]=await Promise.all([calendarConfig(),database().prepare('SELECT id FROM payroll_gmail WHERE id=?').bind('jac').first()]);
- return {configured:!!gmail,connected:!!c?.credentials&&c.connected_email===CALENDAR_ACCOUNT,email:CALENDAR_ACCOUNT,selected:c?.calendar_id?{id:c.calendar_id,name:c.calendar_name,timeZone:c.timezone,primary:false}:null,revision:c?.version??0};
+ const writeAuthorized=!!c?.credentials&&(await decryptMail<CalendarCredentials>(c.credentials,mailKey())).scopes?.includes(CALENDAR_SCOPE)===true;
+ return {configured:!!gmail,connected:!!c?.credentials&&c.connected_email===CALENDAR_ACCOUNT,email:CALENDAR_ACCOUNT,selected:c?.calendar_id?{id:c.calendar_id,name:c.calendar_name,timeZone:c.timezone,primary:false}:null,revision:c?.version??0,writeAuthorized};
 }
 export async function ensureCalendarConfig(){await database().prepare('INSERT OR IGNORE INTO payroll_calendar (id,updated_at) VALUES (?,?)').bind('jac',new Date().toISOString()).run();return (await calendarConfig())!;}
 export async function storeCalendarCredentials(credentials:CalendarCredentials,version:number){
  const encrypted=await encryptMail(credentials,mailKey());
- const changed=await database().prepare('UPDATE payroll_calendar SET credentials=?,connected_email=?,calendar_id=?,calendar_name=?,timezone=?,version=version+1,updated_at=? WHERE id=? AND version=?').bind(encrypted,CALENDAR_ACCOUNT,'','','America/Bogota',new Date().toISOString(),'jac',version).run();
+ // Renewing the grant keeps the selected calendar; the verified Google account is unchanged.
+ const changed=await database().prepare('UPDATE payroll_calendar SET credentials=?,connected_email=?,version=version+1,updated_at=? WHERE id=? AND version=?').bind(encrypted,CALENDAR_ACCOUNT,new Date().toISOString(),'jac',version).run();
  if(changed.meta.changes!==1)throw new CalendarFailure('La conexión de Agenda cambió. Actualiza y vuelve a autorizar.',409);
 }
 async function googleResponse(response:Response) {
- const body=await response.json() as Record<string,unknown>;
+ const body=await response.json().catch(()=>({})) as Record<string,unknown>;
  if(!response.ok){
   const e=body.error as {errors?:{reason?:string}[];status?:string}|string|undefined;
   const reason=typeof e==='object'?e.errors?.[0]?.reason:'';
   const disabled=['accessNotConfigured','serviceDisabled'].includes(reason||'');
   const oauthError=typeof e==='string'&&['invalid_grant','invalid_client','unauthorized_client','invalid_scope','access_denied'].includes(e)?e as GoogleOAuthError:undefined;
+  if(response.status===412)throw new CalendarFailure('Otra persona modificó este evento. Cierra el formulario, actualiza Agenda y abre la versión actual antes de guardar.',409);
+  if(response.status===404||response.status===410)throw new CalendarFailure('El evento ya no está disponible. Actualiza Agenda.',404);
   throw new CalendarFailure(disabled?'Activa Google Calendar API en el proyecto de Google utilizado por JAC.':response.status===401||e==='invalid_grant'?'Google requiere que vuelvas a conectar Agenda.':response.status===403?'Google no concedió acceso al calendario. Revisa la autorización y activa Google Calendar API.':response.status===429?'Google limitó las consultas. Espera un momento y actualiza.':'No pudimos consultar Google Calendar. Intenta actualizar.',502,oauthError);
  }
  return body;
@@ -59,7 +64,7 @@ async function listCalendars(token:string):Promise<AgendaCalendar[]> {
   const r=await googleGet('users/me/calendarList',token,{minAccessRole:'reader',maxResults:'100',fields:'nextPageToken,items(id,summary,timeZone,primary,accessRole)',...(page?{pageToken:page}:{})});
   for(const item of Array.isArray(r.items)?r.items:[]){
    const c=item as Record<string,unknown>;
-   if(typeof c.id==='string'&&c.id.length<=1024&&typeof c.summary==='string'&&['reader','writer','owner'].includes(String(c.accessRole)))calendars.push({id:c.id,name:c.summary.slice(0,300),timeZone:typeof c.timeZone==='string'?c.timeZone:AGENDA_TIME_ZONE,primary:c.primary===true});
+   if(typeof c.id==='string'&&c.id.length<=1024&&typeof c.summary==='string'&&['reader','writer','owner'].includes(String(c.accessRole)))calendars.push({id:c.id,name:c.summary.slice(0,300),timeZone:typeof c.timeZone==='string'?c.timeZone:AGENDA_TIME_ZONE,primary:c.primary===true,writable:['writer','owner'].includes(String(c.accessRole))});
   }
   page=typeof r.nextPageToken==='string'?r.nextPageToken:'';if(!page)return calendars.sort((a,b)=>Number(b.primary)-Number(a.primary)||a.name.localeCompare(b.name,'es'));
  }
@@ -81,7 +86,7 @@ export async function disconnectAgenda(revision:number){
 async function events(c:CalendarConfig,token:string,from:string,to:string):Promise<AgendaEvent[]> {
  const found=new Map<string,AgendaEvent>();let page='';
  for(let i=0;i<10;i++){
-  const r=await googleGet('calendars/'+encodeURIComponent(c.calendar_id)+'/events',token,{timeMin:from,timeMax:to,timeZone:AGENDA_TIME_ZONE,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:'100',fields:'nextPageToken,items(id,status,summary,start,end,location,description,htmlLink)',...(page?{pageToken:page}:{})});
+  const r=await googleGet('calendars/'+encodeURIComponent(c.calendar_id)+'/events',token,{timeMin:from,timeMax:to,timeZone:AGENDA_TIME_ZONE,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:'100',fields:'nextPageToken,items(id,etag,status,eventType,recurringEventId,summary,start,end,location,description,htmlLink)',...(page?{pageToken:page}:{})});
   for(const item of Array.isArray(r.items)?r.items:[]){const event=normalizeAgendaEvent(item);if(event)found.set(event.id,event);}
   page=typeof r.nextPageToken==='string'?r.nextPageToken:'';if(!page)return [...found.values()];
  }
@@ -91,11 +96,61 @@ export async function readAgenda(month?:string){
  if(month!==undefined&&!/^(19|20|21)\d\d-(0[1-9]|1[0-2])$/.test(month))throw new CalendarFailure('Selecciona un mes válido.');
  const grid=agendaMonth(month),today=agendaDate(),until=addAgendaDays(today,90),connection=await agendaConnection(),c=await calendarConfig();
  if((c?.version??0)!==connection.revision)throw new CalendarFailure('La conexión cambió. Actualiza Agenda.',409);
- let monthEvents:AgendaEvent[]=[],upcoming:AgendaEvent[]=[];
+ let monthEvents:AgendaEvent[]=[],upcoming:AgendaEvent[]=[],canEditEvents=false;
  if(connection.connected&&connection.selected&&c){
   const token=await accessToken(c);
   [monthEvents,upcoming]=await Promise.all([events(c,token,grid.from,grid.to),events(c,token,new Date().toISOString(),until+'T00:00:00-05:00')]);
+  if(connection.writeAuthorized)canEditEvents=(await selectedCalendarAccess(c,token));
   const current=await calendarConfig();if(!current||current.version!==c.version||current.credentials!==c.credentials)throw new CalendarFailure('La selección del calendario cambió. Actualiza Agenda.',409);
  }
- return {connection,month:grid.month,monthLabel:grid.monthLabel,days:grid.days,today,events:monthEvents,upcoming,upcomingUntil:until,updatedAt:new Date().toISOString(),timeZone:AGENDA_TIME_ZONE};
+ return {connection,canEditEvents,month:grid.month,monthLabel:grid.monthLabel,days:grid.days,today,events:monthEvents,upcoming,upcomingUntil:until,updatedAt:new Date().toISOString(),timeZone:AGENDA_TIME_ZONE};
+}
+
+async function selectedCalendarAccess(c:CalendarConfig,token:string){
+ const calendar=await googleGet('users/me/calendarList/'+encodeURIComponent(c.calendar_id),token,{fields:'id,accessRole'});
+ return calendar.id===c.calendar_id&&['owner','writer'].includes(String(calendar.accessRole));
+}
+const draftSchema=z.object({title:z.string().trim().min(1).max(300),location:z.string().max(1024),description:z.string().max(8192),allDay:z.boolean(),start:z.string().max(40),end:z.string().max(40)}).strict();
+export function validateAgendaDraft(value:unknown):AgendaEventDraft{
+ const result=draftSchema.safeParse(value);if(!result.success)throw new CalendarFailure('Revisa el título, las fechas, el lugar y la descripción del evento.');
+ const draft=result.data;
+ const date=(v:string)=>validAgendaDate(v)&&/^(19|20|21)\d\d-/.test(v);
+ const instant=(v:string)=>/^\d{4}-\d{2}-\d{2}T(?:[01]\d|2[0-3]):[0-5]\d(?::[0-5]\d(?:\.\d{1,3})?)?(?:Z|[+-](?:0\d|1[0-4]):[0-5]\d)$/.test(v)&&date(v.slice(0,10))&&Number.isFinite(Date.parse(v));
+ if(draft.allDay?(!date(draft.start)||!date(draft.end)||draft.end<=draft.start):(!instant(draft.start)||!instant(draft.end)||Date.parse(draft.end)<=Date.parse(draft.start)))throw new CalendarFailure('La fecha de fin debe ser posterior al inicio. Usa fechas y horas válidas.');
+ return draft.allDay?draft:{...draft,start:new Date(draft.start).toISOString(),end:new Date(draft.end).toISOString()};
+}
+const eventPath=(c:CalendarConfig,id?:string)=>'calendars/'+encodeURIComponent(c.calendar_id)+'/events'+(id?'/'+encodeURIComponent(id):'');
+export async function saveAgendaEvent(action:'createEvent'|'updateEvent',input:Record<string,unknown>,authorize:()=>Promise<boolean>){
+ const draft=validateAgendaDraft(input.event),revision=Number(input.revision),c=await calendarConfig();
+ if(!c||!c.calendar_id||c.version!==revision)throw new CalendarFailure('La conexión o el calendario cambió. Actualiza Agenda antes de guardar.',409);
+ const secret=await decryptMail<CalendarCredentials>(c.credentials,mailKey());
+ if(!secret.scopes?.includes(CALENDAR_SCOPE))throw new CalendarFailure('Camilo debe volver a autorizar Google desde Conexión y conceder el permiso para editar eventos.',403);
+ const token=await accessToken(c);if(!await selectedCalendarAccess(c,token))throw new CalendarFailure('Este calendario solo permite consultar. Camilo debe elegir uno con permiso de edición.',403);
+ let id:string,patch:Record<string,unknown>,etag:string|undefined;
+ const dates={start:draft.allDay?{date:draft.start}:{dateTime:draft.start,timeZone:AGENDA_TIME_ZONE},end:draft.allDay?{date:draft.end}:{dateTime:draft.end,timeZone:AGENDA_TIME_ZONE}};
+ const payloadHash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(draft)))),x=>x.toString(16).padStart(2,'0')).join('');
+ if(action==='createEvent'){
+  if(typeof input.requestId!=='string'||! /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(input.requestId))throw new CalendarFailure('Vuelve a abrir el formulario para crear el evento.');
+  id='jac'+input.requestId.replaceAll('-','');patch={id,summary:draft.title,location:draft.location,description:draft.description,...dates,extendedProperties:{private:{jacRequest:input.requestId,jacPayload:payloadHash}}};
+ }else{
+  if(typeof input.eventId!=='string'||!input.eventId||input.eventId.length>1024||typeof input.etag!=='string'||!input.etag||input.etag.length>1024||/[\r\n]/.test(input.etag))throw new CalendarFailure('Actualiza Agenda y abre de nuevo el evento antes de editar.');
+  id=input.eventId;const raw=await googleGet(eventPath(c,id),token),existing=normalizeAgendaEvent(raw);
+  if(!existing||!existing.editable)throw new CalendarFailure('Este tipo de evento se debe modificar en Google Calendar.');
+  if(existing.etag!==input.etag)throw new CalendarFailure('Otra persona modificó este evento. Cierra el formulario, actualiza Agenda y abre la versión actual antes de guardar.',409);
+  etag=input.etag;patch={};
+  for(const [field,key] of [['title','summary'],['location','location'],['description','description']] as const)if(draft[field]!==existing[field])patch[key]=draft[field];
+  if(draft.allDay!==existing.allDay||draft.start!==existing.start||draft.end!==existing.end)Object.assign(patch,{start:{...dates.start,...(draft.allDay?{dateTime:null,timeZone:null}:{date:null})},end:{...dates.end,...(draft.allDay?{dateTime:null,timeZone:null}:{date:null})}});
+ }
+ // Recheck the active actor and selected connection immediately before any Google write.
+ const current=await calendarConfig();if(!current||current.version!==c.version||current.credentials!==c.credentials||current.calendar_id!==c.calendar_id)throw new CalendarFailure('El calendario cambió. Actualiza Agenda antes de guardar.',409);
+ if(!await authorize())throw new CalendarFailure('Tu sesión o permiso cambió. Inicia sesión de nuevo.',403);
+ const url=new URL('https://www.googleapis.com/calendar/v3/'+eventPath(c,action==='updateEvent'?id:undefined));url.searchParams.set('sendUpdates','none');
+ const response=await calendarGoogleFetch(url,{method:action==='createEvent'?'POST':'PATCH',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json',...(etag?{'If-Match':etag}:{})},body:JSON.stringify(patch)});
+ let raw:Record<string,unknown>;
+ if(action==='createEvent'&&response.status===409){
+  raw=await googleGet(eventPath(c,id),token);const marker=(raw.extendedProperties as {private?:{jacRequest?:string;jacPayload?:string}}|undefined)?.private;
+  if(marker?.jacRequest!==input.requestId||marker?.jacPayload!==payloadHash)throw new CalendarFailure('Esta solicitud ya se utilizó con otros datos. Reabre el formulario para crear otro evento.',409);
+ }else raw=await googleResponse(response);
+ const event=normalizeAgendaEvent(raw);if(!event)throw new CalendarFailure('Google no confirmó el evento. Actualiza Agenda antes de volver a intentarlo.',502);
+ return {event,notice:action==='createEvent'?'Evento creado en Google Calendar.':'Evento actualizado en Google Calendar.'};
 }

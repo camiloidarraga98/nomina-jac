@@ -61,13 +61,13 @@ struct PaymentDetailView: View {
                     }
                 }
                 if let conditions {
-                    Section { NavigationLink("Condiciones utilizadas en este corte") { List { EmployeeConditionsSection(record: conditions) }.navigationTitle("Condiciones del corte") } }
+                    Section { NavigationLink("Condiciones utilizadas en este corte") { List { EmployeeConditionsSection(record: conditions) }.jacSurface().navigationTitle("Condiciones del corte") } }
                 }
                 if period.isClosed && user.can("export") {
                     Section { ExportButton(periodID: period.id, format: .pdf, employeeID: first.employeeId, title: "Desprendible PDF") }
                 }
             }
-        }.navigationTitle("Detalle del pago").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Detalle del pago").navigationBarTitleDisplayMode(.inline)
     }
 }
 
@@ -101,7 +101,7 @@ struct ExportButton: View {
         }) { file in
             NavigationStack {
                 DocumentPreview(url: file.url).ignoresSafeArea(edges: .bottom)
-                    .navigationTitle(title ?? format.title).navigationBarTitleDisplayMode(.inline)
+                    .jacSurface().navigationTitle(title ?? format.title).navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) { Button("Listo") { document = nil } }
                         ToolbarItem(placement: .topBarTrailing) {
