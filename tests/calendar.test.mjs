@@ -277,3 +277,17 @@ test('revalida sesión y selección antes de escribir; fallos y redirecciones no
  }
  assert.deepEqual(gmailRow(),gmail);assert.equal(writes,before);assert.equal(sql.prepare('SELECT count(*) n FROM payroll_mail_jobs').get().n,0);
 });
+
+test('Camilo, Luisa y Paula editan Agenda con sesión activa; configuración continúa exclusiva de Camilo',async()=>{
+ const revision=(await m.agendaConnection()).revision,gmail=gmailRow();
+ for(const [id,email] of [['luisa-agenda','info@jacmusic.co'],['paula-agenda','contabilidad@jacmusic.co']]){
+  const now=new Date().toISOString();sql.prepare('INSERT INTO payroll_users (id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,id,email,'Cuenta simulada',m.hashPassword('1',globalThis.__calendarEnv.PAYROLL_AUTH_KEY),'[]',now,now);
+  const token=await m.makeSession(id);assert.equal((await api(token)).body.canEditEvents,true);
+  for(const action of ['connect','select','disconnect'])assert.equal((await api(token,{action,revision,calendarId:available.id})).status,403);
+  const created=await api(token,{action:'createEvent',revision,event:draft,requestId:crypto.randomUUID()});assert.equal(created.status,200);
+  const updated=await api(token,{action:'updateEvent',revision,event:{...draft,location:'Cambio del equipo'},eventId:created.body.event.id,etag:created.body.event.etag});assert.equal(updated.status,200);
+  sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(id);
+  const before=writes;assert.equal((await api(token,{action:'createEvent',revision,event:draft,requestId:crypto.randomUUID()})).status,401);assert.equal(writes,before);
+ }
+ assert.equal((await api(readerToken)).body.canEditEvents,false);assert.deepEqual(gmailRow(),gmail);
+});

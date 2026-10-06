@@ -19,7 +19,7 @@ La versión 0.4.0 conserva las cuentas, los permisos y la base D1 del webapp. To
 | Usuarios, permisos, estado activo, invitación y restablecimiento | Gestión → Usuarios y permisos, solo propietario | `/api/users`, revisión de usuario, enlaces privados de un uso y sesiones invalidadas |
 | Acceso, activación/restablecimiento, contraseña y salir | Inicio de sesión / Gestión → Mi cuenta | `/api/auth`, sesión segura en Llavero; cualquier contraseña no vacía |
 | Calendario mensual, eventos del día y próximos 90 días; detalles | Agenda; Conexión solo propietario | `/api/calendar`, misma selección y autorización de eventos/lista que la web; `America/Bogota` |
-| Crear/editar eventos: título, fechas/horas, todo el día, lugar, descripción | Agenda: + y Editar evento; inicialmente propietario Camilo | `/api/calendar`, calendario elegido, ETag/If-Match, reintentos estables; recurrencia por ocurrencia |
+| Crear/editar eventos: título, fechas/horas, todo el día, lugar, descripción | Agenda: + y Editar evento; Camilo, Luisa y Paula con sesión activa | `/api/calendar`, calendario elegido, ETag/If-Match, reintentos estables; recurrencia por ocurrencia |
 | Configurar, conectar, renovar o desconectar Gmail | Gestión → Correo → Conexión, solo propietario | OAuth/PKCE original con entrega nativa protegida; credenciales cifradas en D1 |
 | Consultar estados, modificar correo de personal y enviar desprendibles conjuntos/individuales | Correo → Quincena / Correos y envíos de este corte | `/api/payroll/email`, permisos `staff`/`send`, mismos estados e idempotencia |
 | PDF de resumen y desprendibles, ZIP y Excel de siete hojas | Quincena cerrada → Documentos | `/api/payroll/export`, permiso `export`; mismos archivos del servidor |
@@ -43,7 +43,7 @@ Los documentos y respaldos solicitados se crean temporalmente con protección de
 
 ## Evidencia y actualización
 
-Las suites del servidor cubren 59 pruebas de nómina, autenticación, correo, API/OAuth móvil, Calendar y Workerd: edición, previsualización, rutas, horas, permisos, CAS, cierres, correcciones históricas, borrado, entrega de Gmail, expiración, sesión revocada, OAuth de Agenda, lectura compartida, paginación, fechas y desconexión independiente. Usan D1 en memoria y Google simulado. TypeScript y build se verifican con las dependencias preparadas; la incidencia heredada de `npm ci` limpio está documentada en `docs/PROJECT_CONTEXT.md`.
+Las suites del servidor cubren 60 pruebas de nómina, autenticación, correo, API/OAuth móvil, Calendar y Workerd: edición, previsualización, rutas, horas, permisos, CAS, cierres, correcciones históricas, borrado, entrega de Gmail, expiración, sesión revocada, OAuth de Agenda, lectura compartida, paginación, fechas y desconexión independiente. Usan D1 en memoria y Google simulado. TypeScript y build se verifican con las dependencias preparadas; la incidencia heredada de `npm ci` limpio está documentada en `docs/PROJECT_CONTEXT.md`.
 
 El workflow macOS compila la app y ejecuta pruebas unitarias y de interfaz: Llavero, acceso, exportaciones, contrato móvil, conflictos, nonce y activación; formularios de quincenas/shows/rutas/novedades/horas, archivo, reapertura y cuenta de consulta. Las pruebas de red interceptan peticiones a `.invalid`. Las fixtures de interfaz solo existen en DEBUG; las pruebas nunca crean quincenas, borran datos ni envían correo real en producción. Las capturas y `.xcresult` se conservan en GitHub Actions.
 

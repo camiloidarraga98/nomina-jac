@@ -103,7 +103,7 @@ final class LaunchTests: XCTestCase {
         fill(app, "editor.hourDivisor", "200"); tap(app, "editor.save")
         attachScreen(app, name: "correccion-historica")
     }
-    @MainActor func testReadOnlyAccountHasNoEditingOrOwnerActions() {
+    @MainActor func testPayrollReaderHasNoPayrollOrOwnerActionsButCanEditAgenda() {
         let app = fixture(["--uitest-reader"])
         XCTAssertFalse(app.buttons["period.create"].exists)
         tap(app, "period.fixture-period")
@@ -112,7 +112,7 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Equipo"].tap(); XCTAssertFalse(app.buttons["employee.create"].exists)
         app.tabBars.buttons["Gestión"].tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
-        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertFalse(app.buttons["agenda.create"].exists)
+        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertTrue(app.buttons["agenda.create"].exists)
         attachScreen(app, name: "permisos-solo-consulta")
     }
     @MainActor func testAgendaMonthUpcomingDetailsAndAccountRemainAccessible() {

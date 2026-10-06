@@ -53,7 +53,7 @@ private final class FixtureProtocol: URLProtocol {
         if parts.path == "/api/calendar" {
             if request.httpMethod == "POST" {
                 let command = try body(request), action = command["action"].text
-                guard !reader, request.value(forHTTPHeaderField: "Origin") == UITestBackend.base.absoluteString, request.value(forHTTPHeaderField: "Cookie")?.hasPrefix("__Host-jac_session=") == true else { return (403, .object(["error": .string("Solo Camilo puede editar eventos.")])) }
+                guard request.value(forHTTPHeaderField: "Origin") == UITestBackend.base.absoluteString, request.value(forHTTPHeaderField: "Cookie")?.hasPrefix("__Host-jac_session=") == true else { return (403, .object(["error": .string("Inicia sesión con una cuenta autorizada para editar Agenda.")])) }
                 guard ["createEvent", "updateEvent"].contains(action) else { return (403, .object(["error": .string("La conexión real a Google no forma parte de las pruebas.")])) }
                 guard command["revision"].number == 1 else { return (409, .object(["error": .string("La conexión cambió. Actualiza Agenda.")])) }
                 let old = agenda(CalendarClock.month(Date()))["upcoming"].elements.first { $0["id"] == command["eventId"] }
@@ -151,7 +151,7 @@ private final class FixtureProtocol: URLProtocol {
         let days = (0..<42).map { CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: $0, to: start)!) }
         let event: JSONValue = agendaChanges["fixture-concert"] ?? .object(["id": .string("fixture-concert"), "title": .string("Concierto simulado"), "start": .string(today + "T19:00:00-05:00"), "end": .string(today + "T21:00:00-05:00"), "allDay": .bool(false), "location": .string("Teatro simulado"), "description": .string("Prueba sin eventos reales ni acceso a Google."), "url": .string(""), "etag": .string("fixture-v1"), "editable": .bool(true), "recurring": .bool(true)])
         let records = [event] + agendaChanges.filter { $0.key != "fixture-concert" }.map(\.value)
-        return .object(["connection": .object(["configured": .bool(true), "connected": .bool(true), "email": .string("calendar@example.invalid"), "selected": agendaCalendar, "revision": .number(1), "writeAuthorized": .bool(true)]), "canEditEvents": .bool(!reader), "month": .string(month), "monthLabel": .string(CalendarClock.dayLabel(month + "-01")), "days": .array(days.map(JSONValue.string)), "today": .string(today), "events": .array(days.contains(today) ? records : []), "upcoming": .array(records), "upcomingUntil": .string(CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: 90, to: Date())!)), "updatedAt": .string(ISO8601DateFormatter().string(from: Date())), "timeZone": .string("America/Bogota")])
+        return .object(["connection": .object(["configured": .bool(true), "connected": .bool(true), "email": .string("calendar@example.invalid"), "selected": agendaCalendar, "revision": .number(1), "writeAuthorized": .bool(true)]), "canEditEvents": .bool(true), "month": .string(month), "monthLabel": .string(CalendarClock.dayLabel(month + "-01")), "days": .array(days.map(JSONValue.string)), "today": .string(today), "events": .array(days.contains(today) ? records : []), "upcoming": .array(records), "upcomingUntil": .string(CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: 90, to: Date())!)), "updatedAt": .string(ISO8601DateFormatter().string(from: Date())), "timeZone": .string("America/Bogota")])
     }
 }
 #endif
