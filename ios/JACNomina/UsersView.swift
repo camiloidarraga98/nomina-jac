@@ -79,13 +79,13 @@ struct UserEditorView: View {
                     TextField("Correo", text: $user.email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Toggle("Cuenta activa", isOn: $user.active)
                 }
-                Section("Permisos") {
+                Section {
                     ForEach(["payroll", "staff", "rules", "close", "send", "export", "modifyClosed"], id: \.self) { permission in
                         Toggle(PayrollFormat.permissionNames[permission] ?? permission, isOn: Binding(get: { user.permissions.contains(permission) }, set: { enabled in
                             user.permissions.removeAll { $0 == permission }; if enabled { user.permissions.append(permission) }
                         }))
                     }
-                } footer: {
+                } header: { Text("Permisos") } footer: {
                     Text("Modificar cierres es un permiso independiente. Guardar cambios invalida las sesiones e invitaciones anteriores.")
                 }
             }.navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").navigationBarTitleDisplayMode(.inline)

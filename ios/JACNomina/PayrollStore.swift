@@ -69,9 +69,9 @@ final class PayrollStore: ObservableObject {
             return false
         }
     }
-    func action(_ action: String, periodID: String? = nil, employeeID: String? = nil) async -> Bool {
+    func action(_ action: String, periodID: String? = nil, employeeID: String? = nil, version: Int? = nil) async -> Bool {
         guard canWrite, let workspace else { return false }
-        var body: [String: JSONValue] = ["action": .string(action), "version": .number(Double(workspace.version))]
+        var body: [String: JSONValue] = ["action": .string(action), "version": .number(Double(version ?? workspace.version))]
         if let periodID { body["periodId"] = .string(periodID); if action == "deletePeriod" { body["confirmation"] = .string(periodID) } }
         if let employeeID { body["employeeId"] = .string(employeeID) }
         return await submit(.object(body), label: "la operación seleccionada")

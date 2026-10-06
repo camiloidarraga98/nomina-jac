@@ -64,7 +64,8 @@ struct PeriodDetailView: View {
             .confirmationDialog(confirmationTitle, isPresented: Binding(get: { action != nil }, set: { if !$0 { action = nil } }), titleVisibility: .visible) {
                 if let selected = action {
                     Button(selected == "close" ? "Cerrar quincena" : selected == "reopen" ? "Reabrir para corregir" : "Eliminar definitivamente", role: selected == "deletePeriod" ? .destructive : nil) {
-                        Task { if await store.action(selected, periodID: periodID), selected == "deletePeriod" { dismiss() } }; action = nil
+                        let version = period.detail?.version
+                        Task { if await store.action(selected, periodID: periodID, version: version), selected == "deletePeriod" { dismiss() } }; action = nil
                     }
                 }
             } message: { Text(confirmationMessage) }

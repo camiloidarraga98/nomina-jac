@@ -17,8 +17,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: '24'
+          node-version: '24.19.0'
           cache: npm
+      - name: Usar la versión de npm del entorno preparado
+        run: npm install --global npm@11.9.0
       - run: npm ci
       - run: npx tsc --noEmit
       - name: Cálculos, permisos, correo simulado y API móvil
