@@ -5,7 +5,7 @@ import {mkdir,writeFile} from 'node:fs/promises';
 import {PDFDocument} from 'pdf-lib';
 import {unzipSync,strFromU8} from 'fflate';
 const bundled=await build({stdin:{contents:"export * from './lib/payroll';export * from './lib/payroll-seed';export * from './lib/payroll-schema';export * from './lib/payroll-export';export * from './lib/payroll-policy';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
-const {initialPayroll,calculate,closeIssues,newPeriod,stateSchema,payrollPdf,payrollXlsx,payrollSlipZip,reopenPeriod,deleteEmployee,validateSave,sameValue,setShowRoute,updateShow,removeShow}=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].contents).toString('base64'));
+const {initialPayroll,calculate,closeIssues,newPeriod,stateSchema,payrollPdf,payrollXlsx,payrollSlipZip,reopenPeriod,deleteEmployee,validateSave,sameValue,setShowRoute,updateShow,removeShow,normalizeRehearsalMovements}=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].contents).toString('base64'));
 const clean=()=>{const s=initialPayroll();s.employees.forEach(e=>{e.active=false});return s;};
 const activate=(s,find)=>{const e=s.employees.find(find);assert.ok(e);e.active=true;return e;};
 const has=n=>e=>e.name.includes(n);
@@ -13,6 +13,30 @@ const show=(p,people)=>p.shows.push({id:'show-test',date:p.start,name:'Evento de
 const movement=(p,e,kind,amount,quantity=1)=>p.movements.push({id:'move-'+p.movements.length,employeeId:e.id,kind,amount,quantity,concept:'Prueba '+kind,note:''});
 test('personal y tarifas confirmadas, ensayo y pasaje corregido',()=>{const s=initialPayroll();assert.equal(s.employees.filter(e=>e.active).length,32);assert.equal(s.employees.find(has('MAURICIO')).showRate,2000000);assert.ok(s.employees.find(has('YONIER')).active);assert.ok(s.employees.find(has('FERNANDO DUARTE')).active);assert.ok(s.employees.find(has('ANDRES RICARDO')).active);assert.ok(!s.employees.find(has('VICTOR')).active);assert.equal(s.concepts.find(c=>c.name==='Ensayo').amount,80000);assert.equal(s.concepts.find(c=>c.name==='Pasaje Manizales-Pereira').amount,18000);assert.ok(stateSchema.safeParse(s).success);});
 test('honorarios, retenciones, actividades y reintegros',()=>{const s=clean(),e=activate(s,has('YONIER')),p=s.periods[0];show(p,[e]);movement(p,e,'servicio',80000,2);movement(p,e,'reintegro',18000,2);const r=calculate(s,p).rows[0];assert.equal(r.gross,910000);assert.equal(r.deductions,910000*(e.withholding+e.ica));assert.equal(r.net,910000-r.deductions+36000);e.showRate=1234;assert.equal(calculate(s,p).rows[0].gross,910000);p.shows[0].participants[0].amount=0;assert.equal(calculate(s,p).rows[0].gross,160000);});
+test('ensayos registrados como salariales se liquidan por evento con valor editable y retenciones de honorarios',()=>{
+ const s=clean(),e=activate(s,has('YONIER')),p=s.periods[0];
+ p.movements.push({id:'ensayo',employeeId:e.id,concept:' ensayo ',kind:'salarial',quantity:2,amount:87500,note:'Nota conservada'});
+ const before=structuredClone(p),row=calculate(s,p).rows[0];
+ assert.equal(row.gross,175000);assert.equal(row.deductions,175000*(e.withholding+e.ica));assert.equal(row.net,166250);assert.equal(row.category,'musicos');assert.ok(!row.items.some(i=>/EPS|AFP|Salario/.test(i.concept)));assert.equal(row.items[0].concept,' ensayo  · Nota conservada');
+ assert.deepEqual(closeIssues(s,p),[]);assert.deepEqual(p,before,'Consultar no modifica los registros guardados');
+ const normalized=normalizeRehearsalMovements(p);assert.equal(normalized.movements[0].kind,'servicio');assert.deepEqual({...normalized.movements[0],kind:'salarial'},before.movements[0]);
+ movement(p,e,'salarial',50000);assert.ok(closeIssues(s,p).some(x=>x.includes('no tiene un salario')),'Las demás adiciones salariales mantienen su protección');
+});
+test('los ensayos no se pagan ni se pueden registrar a personas con salario fijo; conserva reintegros y descuentos',()=>{
+ const s=clean(),e=activate(s,has('LUISA')),p=s.periods[0],before=calculate(s,p);
+ for(const kind of ['salarial','servicio','reintegro']){
+  p.movements=[{id:'ensayo',employeeId:e.id,concept:'Ensayo',kind,quantity:1,amount:80000,note:''}];
+  assert.deepEqual(calculate(s,p),before);assert.ok(closeIssues(s,p).some(x=>x.includes(e.name)&&x.includes('salario fijo')));assert.equal(stateSchema.safeParse(s).success,false);
+ }
+ p.movements=[{id:'reintegro',employeeId:e.id,concept:'Pasaje para ensayo',kind:'reintegro',quantity:1,amount:18000,note:''}];assert.ok(stateSchema.safeParse(s).success);assert.equal(calculate(s,p).reimbursements,before.reimbursements+18000);
+ p.movements=[{id:'descuento',employeeId:e.id,concept:'Ensayo',kind:'descuento',quantity:1,amount:10000,note:''}];assert.ok(stateSchema.safeParse(s).success);assert.equal(calculate(s,p).deductions,before.deductions+10000);
+});
+test('la corrección de ensayos conserva cierres y revisiones; usa las condiciones históricas al reabrir',()=>{
+ const s=clean(),e=activate(s,has('YONIER')),p=s.periods[0];p.movements.push({id:'ensayo',employeeId:e.id,concept:'Ensayo',kind:'salarial',quantity:1,amount:80000,note:''});
+ p.snapshot={...calculate(s,p),employees:structuredClone(s.employees),closedAt:'2026-10-06T20:00:00Z',closedBy:'owner@example.invalid'};p.status='cerrada';const closed=structuredClone(p),snapshot=structuredClone(p.snapshot);
+ e.salary=3000000;e.withholding=.2;assert.deepEqual(calculate(s,p),snapshot);assert.equal(normalizeRehearsalMovements(p),p);assert.deepEqual(p,closed);assert.ok(stateSchema.safeParse(s).success);
+ reopenPeriod(p,'camilo@mac2you.co');assert.equal(calculate(s,p).gross,80000);assert.equal(calculate(s,p).deductions,4000);assert.deepEqual(closeIssues(s,p),[]);assert.ok(stateSchema.safeParse(s).success);assert.deepEqual(p.revisions,[snapshot]);assert.equal(p.calculationBase.employees.find(x=>x.id===e.id).salary,0);
+});
 test('director y ajuste manual independiente por evento',()=>{const s=clean(),e=activate(s,has('MAURICIO')),p=s.periods[0];show(p,[e]);assert.equal(calculate(s,p).gross,2000000);p.shows[0].participants[0].amount=1500000;assert.equal(calculate(s,p).gross,1500000);});
 test('Javier no tiene AFP; Jenny se paga una vez al mes',()=>{const s=clean(),j=activate(s,has('JAVIER ENRIQUE')),e=activate(s,has('JENNY')),p=s.periods[0];const r=calculate(s,p).rows;assert.equal(r.length,1);assert.ok(!r[0].items.some(i=>i.concept.includes('AFP')));assert.equal(r[0].deductions,Math.round(j.salary/2*.04*100)/100);const second=newPeriod('2026-10-16','2026-10-31');const jr=calculate(s,second).rows.find(r=>r.employeeId===e.id);assert.equal(jr.gross,5000000);assert.equal(jr.net,6000000);});
 test('siete tipos de horas aplican factores y aportes',()=>{const s=clean(),e=activate(s,has('LUISA')),p=s.periods[0];p.hours.push({employeeId:e.id,counts:[1,2,3,4,5,6,7],days:15,vacations:0,note:''});const r=calculate(s,p).rows[0];for(let i=0;i<7;i++){assert.equal(r.items[i+1].amount,Math.round(e.salary/210*s.settings.hourFactors[i]*(i+1)*100)/100);}assert.equal(r.deductions,Math.round(r.gross*.04*100)/100*2);});

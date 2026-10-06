@@ -4,7 +4,7 @@ import {mailWrites,drainMail} from '@/lib/payroll-mail';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {readPayroll,writePayroll,deletePayrollPeriod} from '@/lib/payroll-store';
 import {stateSchema} from '@/lib/payroll-schema';
-import {calculate,closeIssues} from '@/lib/payroll';
+import {calculate,closeIssues,normalizeRehearsalMovements} from '@/lib/payroll';
 import {reopenPeriod,deleteEmployee,validateSave} from '@/lib/payroll-policy';
 import {can,savePermissionIssue} from '@/lib/payroll-permissions';
 export const dynamic='force-dynamic';
@@ -37,6 +37,7 @@ export async function POST(req:Request){
   if(body.action==='close'){
    const p=current.data.periods.find(p=>p.id===body.periodId);if(!p||p.status!=='abierta')return reply({error:'La quincena ya está cerrada o no existe.'},400);
    if(!can(user,p.ownerOnly?'modifyClosed':'close'))return reply({error:p.ownerOnly?'No tienes permiso para modificar cierres de quincena.':'No tienes permiso para cerrar quincenas.'},403);
+   p.movements=normalizeRehearsalMovements(p).movements;
    const issues=closeIssues(current.data,p);if(issues.length)return reply({error:issues.join(' ')},400);
    p.snapshot={...calculate(current.data,p),employees:structuredClone(p.calculationBase?.employees||current.data.employees),closedAt:new Date().toISOString(),closedBy:user.email};p.status='cerrada';
    const plan=planMail(p,current.data.employees);const saved=await writePayroll(current.data,body.version,user.email,(db,nonce)=>mailWrites(db,plan,{nonce}));

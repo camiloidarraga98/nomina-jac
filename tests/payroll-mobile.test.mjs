@@ -14,7 +14,7 @@ class Query{
 }
 globalThis.__mobileEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'independent-mobile-test-key-at-least-32-characters'};
 globalThis.__mobileHeaders=new Headers();
-const bundle=await build({stdin:{contents:"export * as api from './app/api/mobile/payroll/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-store';export * from './lib/payroll';export * from './lib/payroll-mobile';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mobile-platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__mobileEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__mobileHeaders;',loader:'js'}));}}]});
+const bundle=await build({stdin:{contents:"export * as api from './app/api/mobile/payroll/route';export * as webApi from './app/api/payroll/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-store';export * from './lib/payroll';export * from './lib/payroll-mobile';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mobile-platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__mobileEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__mobileHeaders;',loader:'js'}));}}]});
 const m=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'));
 const base='https://mobile.example.invalid';
 globalThis.fetch=async()=>{throw new Error('Las pruebas móviles no permiten red ni correos reales.');};
@@ -183,4 +183,38 @@ test('borrado móvil exige propietario, confirmación, revisión y protección d
  assert.equal((await m.readPayroll()).data.periods.length,0);
  assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_batches').get().n,0);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0);
  assert.equal((await edit(owner,'period',{id:'same-dates',start:p.start,end:p.end})).status,200);
+});
+
+
+test('ensayos antiguos bloqueados se consultan y cierran como honorarios; consultas no escriben ni envían',async()=>{
+ const current=await fakePayroll(),owner=await ownerSession(),reader=await actor('ensayo-reader'),writer=await actor('ensayo-writer',['payroll']);
+ const p=m.newPeriod('2027-04-01','2027-04-15');p.movements.push({id:'old-ensayo',employeeId:'musica',concept:'Ensayo',kind:'salarial',quantity:2,amount:87500,note:'Dato simulado anterior'});
+ // Simulates a previously saved mistake, only in the disposable in-memory D1.
+ await m.writePayroll({...current.data,periods:[p]},current.version,'fixture-only');
+ const before=await m.readPayroll(),detail=await get('?period='+p.id,reader),row=detail.body.calculation.rows.find(r=>r.employeeId==='musica');
+ assert.equal(detail.status,200);assert.equal(row.gross,175000);assert.equal(row.deductions,16625);assert.equal(row.net,158375);assert.equal(detail.body.period.movements[0].kind,'servicio');assert.deepEqual(detail.body.closeIssues,[]);
+ assert.deepEqual(await m.readPayroll(),before,'Leer la proyección no cambia datos ni revisión');assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0);
+ assert.equal((await command(writer,'close',{periodId:p.id})).status,403);assert.deepEqual(await m.readPayroll(),before);
+ const snapshotText=JSON.stringify(p.movements);globalThis.__mobileHeaders=new Headers({host:'mobile.example.invalid',cookie:'__Host-jac_session='+owner});
+ const response=await m.webApi.POST(new Request(base+'/api/payroll',{method:'POST',headers:{origin:base,cookie:'__Host-jac_session='+owner,'content-type':'application/json'},body:JSON.stringify({action:'close',periodId:p.id,version:before.version})}));
+ assert.equal(response.status,200);const closed=await response.json(),stored=closed.data.periods[0];
+ assert.equal(stored.status,'cerrada');assert.equal(stored.movements[0].kind,'servicio');assert.equal(stored.movements[0].amount,87500);assert.equal(stored.movements[0].quantity,2);assert.equal(stored.movements[0].note,'Dato simulado anterior');assert.equal(JSON.stringify(p.movements),snapshotText);
+ assert.equal(stored.snapshot.rows.find(r=>r.employeeId==='musica').gross,175000);const jobs=sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n;assert.ok(jobs>0);
+ assert.equal((await post({action:'close',periodId:p.id,version:before.version},owner)).status,409);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,jobs,'El reintento no duplica correos');
+ const readClosed=await get('?period='+p.id,reader);assert.deepEqual(readClosed.body.calculation,stored.snapshot);
+});
+
+test('API web e iPhone impiden ensayos a salario fijo y normalizan solo la novedad editada',async()=>{
+ const current=await fakePayroll(),writer=await actor('ensayo-editor',['payroll']),p=m.newPeriod('2027-05-01','2027-05-15');
+ await m.writePayroll({...current.data,periods:[p]},current.version,'fixture-only');
+ const movement={id:'new-ensayo',employeeId:'musica',concept:'ENSAYO',kind:'salarial',quantity:1,amount:80000,note:''};
+ const before=await m.readPayroll(),preview=await edit(writer,'movement',movement,p.id,'previewEdit');assert.equal(preview.status,200);assert.equal(preview.body.detail.period.movements[0].kind,'servicio');assert.deepEqual(await m.readPayroll(),before);
+ const saved=await edit(writer,'movement',movement,p.id);assert.equal(saved.status,200);assert.equal(saved.body.data.periods[0].movements[0].kind,'servicio');
+ for(const kind of ['salarial','servicio','reintegro']){
+  const latest=await m.readPayroll(),invalid={...movement,id:'invalid',employeeId:'dependiente',kind};
+  const mobile=await edit(writer,'movement',invalid,p.id);assert.equal(mobile.status,400);assert.match(mobile.body.error,/salario fijo/);assert.deepEqual(await m.readPayroll(),latest);
+  const data=structuredClone(latest.data);data.periods[0].movements.push(invalid);globalThis.__mobileHeaders=new Headers({host:'mobile.example.invalid',cookie:'__Host-jac_session='+writer});
+  const response=await m.webApi.POST(new Request(base+'/api/payroll',{method:'POST',headers:{origin:base,cookie:'__Host-jac_session='+writer,'content-type':'application/json'},body:JSON.stringify({action:'save',version:latest.version,data})}));assert.equal(response.status,400);assert.match((await response.json()).error,/salario fijo/);assert.deepEqual(await m.readPayroll(),latest);
+ }
+ assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0);
 });
