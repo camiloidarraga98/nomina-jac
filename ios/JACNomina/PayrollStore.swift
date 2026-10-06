@@ -72,6 +72,10 @@ final class PayrollStore: ObservableObject {
             install(updated); pending = nil
             notice = result.mailNotice ?? "Cambios guardados."
             return true
+        } catch is CancellationError {
+            // Authentication changed while the request was pending. Never
+            // revive the previous account's form or baseline in a new session.
+            return false
         } catch {
             let keepsDraft = ["edit", "remove"].contains(command["action"].text)
             if keepsDraft { pending = PendingPayrollChange(command: command, baseline: workspace.data, label: label, editorID: editorID) }

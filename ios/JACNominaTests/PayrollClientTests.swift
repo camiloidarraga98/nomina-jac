@@ -229,4 +229,22 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(store.workspace?.version, 8)
         XCTAssertEqual(store.overview?.company, "Vigente")
     }
+
+    @MainActor func testSupersededSessionCannotRestoreAPendingPayrollChange() async throws {
+        let vault = MemorySession(); vault.token = token
+        let store = PayrollStore(client: makeClient(vault))
+        let payload = Data(#"{"version":8,"company":"Prueba","periods":[],"employees":[],"user":{"id":"fixture","username":"prueba","email":"test@example.invalid","displayName":"Prueba","isOwner":true,"permissions":[]},"data":{"employees":[],"periods":[],"concepts":[],"settings":{"company":"Prueba"}}}"#.utf8)
+        MockProtocol.handler = { request in
+            if request.httpMethod == "POST" {
+                vault.token = String(repeating: "b", count: 43)
+                return (HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!, Data("{}".utf8))
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, payload)
+        }
+        try await store.refresh()
+        let saved = await store.submit(.object(["action": .string("edit"), "version": .number(8), "edit": .object(["kind": .string("settings"), "record": .object(["company": .string("No guardado")])])]), label: "Formulario anterior")
+        XCTAssertFalse(saved)
+        XCTAssertNil(store.pending, "Una respuesta de otra sesión no debe recuperar el formulario ni su base privada")
+        XCTAssertEqual(vault.token, String(repeating: "b", count: 43))
+    }
 }

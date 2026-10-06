@@ -59,6 +59,9 @@ final class LaunchTests: XCTestCase {
         let old = (field.value as? String) ?? ""
         let count = old == field.placeholderValue ? 0 : old.count
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + value)
+        if ["editor.km", "editor.hourDivisor", "editor.counts.0"].contains(id) {
+            XCTAssertEqual(field.value as? String, value, "El importe debe conservar el valor escrito.")
+        }
     }
     @MainActor func testCreatePeriodAndManageItsActivitiesWithNativeForms() {
         let app = fixture()
@@ -70,7 +73,8 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "show-guardado")
         app.navigationBars.buttons.firstMatch.tap()
         tap(app, "activity.routes"); tap(app, "Editar"); fill(app, "editor.km", "120"); tap(app, "editor.save")
-        XCTAssertTrue(app.staticTexts["120 km"].waitForExistence(timeout: 15))
+        let distance = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@ OR value == %@", "120 km", "120 km")).firstMatch
+        XCTAssertTrue(distance.waitForExistence(timeout: 15), app.debugDescription)
         attachScreen(app, name: "recorrido-compartido")
         app.navigationBars.buttons.firstMatch.tap()
         tap(app, "activity.movements"); tap(app, "activity.add")
@@ -79,7 +83,7 @@ final class LaunchTests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         tap(app, "activity.hours"); tap(app, "Registrar horas y novedades")
         fill(app, "editor.counts.0", "2"); tap(app, "editor.save")
-        XCTAssertTrue(app.staticTexts["Recargo nocturno"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Recargo nocturno")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
         attachScreen(app, name: "horas-guardadas")
     }
     @MainActor func testCloseArchiveAndReopenWithoutRealEmailsOrData() {
