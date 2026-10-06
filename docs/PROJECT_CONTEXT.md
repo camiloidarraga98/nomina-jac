@@ -45,6 +45,8 @@ Estado global/revisión en `payroll_state`, períodos separados en `payroll_peri
 
 ## Aplicación para iPhone
 
+El nombre visible en el iPhone es **JAC** y su icono es el símbolo azul sobre fondo blanco elegido por Camilo. La imagen opaca de 1024 × 1024 está en `ios/JACNomina/Assets.xcassets/AppIcon.appiconset` y se usa en Debug y Release. Las actualizaciones nativas se instalan desde Xcode sobre `co.jacmusic.nomina`.
+
 Camilo pidió una app nativa para iPhone conectada a las mismas cuentas y D1 del webapp. Vive en `ios/`, SwiftUI para iOS 17+, proyecto `ios/JACNomina.xcodeproj`, esquema `JACNomina`, sin WebViews. La ampliación de paridad incorpora creación y edición de quincenas, shows, novedades, kilómetros y horas; archivo, pagos y documentos/impresión; personal, conceptos y reglas; cierre, reapertura y corrección con condiciones históricas; borrado exclusivo del propietario; correos/Gmail; usuarios, permisos, invitaciones y activación de cuentas. Consulta `ios/PARITY.md`.
 
 Las API móviles conservan cálculos y políticas en el servidor. `GET /api/mobile/payroll?workspace=1` entrega la revisión consistente; `?period=ID` entrega detalle, condiciones históricas y templates de edición. `POST` recibe un comando por formulario y delega las acciones originales después de validar permisos, esquema e historial. `previewEdit` es de solo lectura. La app no reconstruye ni sobrescribe snapshots; CAS y nonces se conservan. Un conflicto deja una solicitud pendiente en memoria con respaldo JSON temporal solicitado por el usuario.

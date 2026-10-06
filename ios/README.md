@@ -79,4 +79,6 @@ node --test tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
 
 Las pruebas del simulador usan firma local ad hoc (`CODE_SIGN_IDENTITY=-`), sin certificados de Apple Developer. El Llavero necesita que el ejecutable del simulador esté firmado; desactivar completamente la firma puede impedir guardar o leer la sesión. La suite comprueba el Llavero real del simulador con una cuenta temporal de prueba, además de las respuestas de red simuladas.
 
-Este entorno Cloud es Linux. La instalación y firma final en los dispositivos se completan desde Xcode en el Mac. El icono de distribución puede configurarse en Assets antes de exportar una versión para TestFlight; el logo oficial se conserva íntegro en la interfaz nativa.
+Este entorno Cloud es Linux. La instalación y firma final en los dispositivos se completan desde Xcode en el Mac.
+
+El icono de **JAC** usa el símbolo azul sobre fondo blanco elegido por Camilo. Está en `JACNomina/Assets.xcassets/AppIcon.appiconset`, como PNG RGB opaco de 1024 × 1024. Xcode genera los tamaños necesarios a partir de esa imagen; el catálogo `AppIcon` está seleccionado tanto en Debug como en Release. Para verlo en el iPhone, actualiza con **Integrate > Pull** y vuelve a instalar con **Run** sobre la misma app. El proyecto y el esquema son `JACNomina` y el identificador es `co.jacmusic.nomina`.
