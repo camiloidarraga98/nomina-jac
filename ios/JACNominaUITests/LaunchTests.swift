@@ -103,7 +103,7 @@ final class LaunchTests: XCTestCase {
         fill(app, "editor.hourDivisor", "200"); tap(app, "editor.save")
         attachScreen(app, name: "correccion-historica")
     }
-    @MainActor func testReadOnlyAccountHasNoEditingOrOwnerActions() {
+    @MainActor func testPayrollReaderHasNoPayrollOrOwnerActionsButCanEditAgenda() {
         let app = fixture(["--uitest-reader"])
         XCTAssertFalse(app.buttons["period.create"].exists)
         tap(app, "period.fixture-period")
@@ -112,7 +112,7 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Equipo"].tap(); XCTAssertFalse(app.buttons["employee.create"].exists)
         app.tabBars.buttons["Gestión"].tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
-        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists)
+        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertTrue(app.buttons["agenda.create"].exists)
         attachScreen(app, name: "permisos-solo-consulta")
     }
     @MainActor func testAgendaMonthUpcomingDetailsAndAccountRemainAccessible() {
@@ -129,5 +129,26 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "agenda-proximos")
         app.tabBars.buttons["Gestión"].tap(); tap(app, "Mi cuenta")
         XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
+    }
+    @MainActor func testCreateAndEditAgendaEventKeepNativeFormsAndSharedFeed() {
+        let app = fixture(); app.tabBars.buttons["Agenda"].tap()
+        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15))
+        tap(app, "agenda.create"); fill(app, "agenda.editor.title", "Evento móvil de prueba"); fill(app, "agenda.editor.location", "Lugar de prueba")
+        attachScreen(app, name: "agenda-crear-evento"); tap(app, "agenda.editor.save")
+        XCTAssertTrue(app.staticTexts["Evento creado en Google Calendar."].waitForExistence(timeout: 15))
+        tap(app, "agenda.event.fixture-concert"); tap(app, "agenda.edit")
+        XCTAssertTrue(app.staticTexts["Editarás solo esta ocurrencia. Los demás eventos de la serie se conservan."].waitForExistence(timeout: 10))
+        fill(app, "agenda.editor.title", "Concierto actualizado de prueba"); attachScreen(app, name: "agenda-editar-evento"); tap(app, "agenda.editor.save")
+        // Agenda keeps the list position after dismissing the editor. Its notice
+        // is the first row, and SwiftUI does not expose offscreen List rows.
+        XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 15), app.debugDescription)
+        let notice = app.staticTexts["Evento actualizado en Google Calendar."]
+        for _ in 0..<8 { if notice.exists { break }; app.swipeDown() }
+        XCTAssertTrue(notice.waitForExistence(timeout: 10), app.debugDescription)
+        tap(app, "agenda.event.fixture-concert")
+        XCTAssertTrue(app.staticTexts["Concierto actualizado de prueba"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Teatro simulado"].exists, "Editar el título debe conservar el lugar.")
+        tap(app, "Listo")
+        attachScreen(app, name: "agenda-identidad-jac")
     }
 }

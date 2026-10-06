@@ -155,6 +155,13 @@ final class PayrollClient {
         let (data, _) = try await request(path: "api/calendar", query: [URLQueryItem(name: "action", value: "calendars")])
         return try decoder.decode(AgendaCalendars.self, from: data).calendars
     }
+    func saveAgendaEvent(_ draft: AgendaEventDraft, revision: Int, event: AgendaEvent?, requestID: UUID) async throws -> AgendaEventMutation {
+        var body: [String: JSONValue] = ["action": .string(event == nil ? "createEvent" : "updateEvent"), "revision": .number(Double(revision)), "event": draft.value]
+        if let event { body["eventId"] = .string(event.id); body["etag"] = .string(event.etag ?? "") }
+        else { body["requestId"] = .string(requestID.uuidString.lowercased()) }
+        let (data, _) = try await request(path: "api/calendar", body: .object(body))
+        return try decoder.decode(AgendaEventMutation.self, from: data)
+    }
     func agendaOperation(action: String, revision: Int, calendarID: String? = nil) async throws -> AgendaMutation {
         var body: [String: JSONValue] = ["action": .string(action), "revision": .number(Double(revision))]
         if let calendarID { body["calendarId"] = .string(calendarID) }

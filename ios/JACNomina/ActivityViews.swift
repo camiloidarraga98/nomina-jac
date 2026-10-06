@@ -22,7 +22,7 @@ struct ActivityView: View {
                 if d.period.isClosed { Section { Label("Consulta de un cierre", systemImage: "lock.fill") } }
                 switch kind { case .shows: shows(d); case .movements: movements(d); case .routes: routes(d); case .hours: hours(d) }
             }
-        }.navigationTitle(kind.title).navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle(kind.title).navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 if let d = period.detail, canEdit(d), kind != .hours {
                     ToolbarItem(placement: .topBarTrailing) {

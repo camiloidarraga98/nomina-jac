@@ -4,7 +4,7 @@ import {mailKey} from './payroll-mail';
 import {GMAIL_CALLBACK,base64Url,encryptMail,decryptMail} from './payroll-mail-core';
 import {tokenHash,sessionToken} from './payroll-auth-crypto';
 import {isOwnerEmail} from './payroll-policy';
-import {CALENDAR_SCOPE,CALENDAR_ACCOUNT} from './calendar-core';
+import {CALENDAR_SCOPE,CALENDAR_LIST_SCOPE,CALENDAR_ACCOUNT} from './calendar-core';
 import type {AccessUser} from './payroll-permissions';
 import type {CalendarOAuthReason} from './calendar-oauth-errors';
 class AuthorizationFailure extends Error {constructor(public reason:CalendarOAuthReason){super(reason);}}
@@ -22,7 +22,7 @@ export async function startCalendarOauth(user:AccessUser,cookies:string,native=f
  const session=sessionToken(cookies,true);if(!valid(session))throw new CalendarFailure('Inicia sesión de nuevo.',401);
  const credentials=await calendarClientCredentials(),config=await ensureCalendarConfig(),state=random(),verifier=random(),guard=random(),nonce=random();
  const challenge=base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))));
- const url=new URL('https://accounts.google.com/o/oauth2/v2/auth');url.search=new URLSearchParams({client_id:credentials.clientId,redirect_uri:GMAIL_CALLBACK,response_type:'code',scope:'openid email '+CALENDAR_SCOPE,access_type:'offline',prompt:'consent',include_granted_scopes:'false',login_hint:CALENDAR_ACCOUNT,state,code_challenge:challenge,code_challenge_method:'S256'}).toString();
+ const url=new URL('https://accounts.google.com/o/oauth2/v2/auth');url.search=new URLSearchParams({client_id:credentials.clientId,redirect_uri:GMAIL_CALLBACK,response_type:'code',scope:'openid email '+CALENDAR_SCOPE+' '+CALENDAR_LIST_SCOPE,access_type:'offline',prompt:'consent',include_granted_scopes:'false',login_hint:CALENDAR_ACCOUNT,state,code_challenge:challenge,code_challenge_method:'S256'}).toString();
  const c:Context={kind:'calendar',mode:native?'native':'web',state,url:url.toString(),actor:user.email,userId:user.id,sessionId:tokenHash(session),nonce,guardHash:tokenHash(guard),verifier,credentials,revision:config.version};
  if(!await activeOwner(c))throw new CalendarFailure('La sesión cambió. Inicia sesión de nuevo.',401);
  await database().prepare('DELETE FROM payroll_oauth WHERE expires_at<?').bind(new Date().toISOString()).run();
@@ -62,7 +62,7 @@ export async function finishCalendarCallback(req:Request){
   stage='google_token';
   const token=await calendarGooglePost({client_id:c.credentials.clientId,client_secret:c.credentials.clientSecret,code,code_verifier:c.verifier,grant_type:'authorization_code',redirect_uri:GMAIL_CALLBACK});
   if(typeof token.access_token!=='string'||!token.access_token)throw new AuthorizationFailure('google_token');
-  if(typeof token.scope!=='string'||!token.scope.split(/\s+/).includes(CALENDAR_SCOPE))throw new AuthorizationFailure('calendar_scope');
+  if(typeof token.scope!=='string'||![CALENDAR_SCOPE,CALENDAR_LIST_SCOPE].every(scope=>(token.scope as string).split(/\s+/).includes(scope)))throw new AuthorizationFailure('calendar_scope');
   if(typeof token.refresh_token!=='string'||!token.refresh_token)throw new AuthorizationFailure('missing_refresh_token');
   stage='account_verification';
   const response=await calendarGoogleFetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{Authorization:'Bearer '+token.access_token}});
@@ -75,7 +75,7 @@ export async function finishCalendarCallback(req:Request){
   stage='configuration_changed';
   if(JSON.stringify(await calendarClientCredentials())!==JSON.stringify(c.credentials))throw new AuthorizationFailure('configuration_changed');
   stage='connection_storage';
-  await storeCalendarCredentials({...c.credentials,refreshToken:token.refresh_token},c.revision);result='connected';
+  await storeCalendarCredentials({...c.credentials,refreshToken:token.refresh_token,scopes:token.scope.split(/\s+/)},c.revision);result='connected';
  }catch(error){
   reason=error instanceof AuthorizationFailure?error.reason:error instanceof CalendarFailure&&error.status===409?'configuration_changed':stage;
   if(stage==='google_token'&&error instanceof CalendarFailure){

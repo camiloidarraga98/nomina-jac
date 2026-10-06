@@ -1,10 +1,12 @@
 export const AGENDA_TIME_ZONE = 'America/Bogota';
-export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.readonly';
+export const CALENDAR_SCOPE = 'https://www.googleapis.com/auth/calendar.events';
+export const CALENDAR_LIST_SCOPE = 'https://www.googleapis.com/auth/calendar.calendarlist.readonly';
 export const CALENDAR_ACCOUNT = 'jacmusicestudios@gmail.com';
-export type AgendaCalendar = {id:string;name:string;timeZone:string;primary:boolean};
-export type AgendaConnection = {configured:boolean;connected:boolean;email:string;selected:AgendaCalendar|null;revision:number};
-export type AgendaEvent = {id:string;title:string;start:string;end:string;allDay:boolean;location:string;description:string;url:string};
-export type AgendaData = {connection:AgendaConnection;month:string;monthLabel:string;days:string[];today:string;events:AgendaEvent[];upcoming:AgendaEvent[];upcomingUntil:string;updatedAt:string;timeZone:string};
+export type AgendaCalendar = {id:string;name:string;timeZone:string;primary:boolean;writable?:boolean};
+export type AgendaConnection = {configured:boolean;connected:boolean;email:string;selected:AgendaCalendar|null;revision:number;writeAuthorized:boolean};
+export type AgendaEvent = {id:string;title:string;start:string;end:string;allDay:boolean;location:string;description:string;url:string;etag:string;editable:boolean;recurring:boolean};
+export type AgendaEventDraft = Pick<AgendaEvent,'title'|'start'|'end'|'allDay'|'location'|'description'>;
+export type AgendaData = {connection:AgendaConnection;canEditEvents:boolean;month:string;monthLabel:string;days:string[];today:string;events:AgendaEvent[];upcoming:AgendaEvent[];upcomingUntil:string;updatedAt:string;timeZone:string};
 
 export function agendaDate(date = new Date()) {
  const parts = new Intl.DateTimeFormat('en-CA',{timeZone:AGENDA_TIME_ZONE,year:'numeric',month:'2-digit',day:'2-digit'}).formatToParts(date);
@@ -43,7 +45,8 @@ export function normalizeAgendaEvent(input:unknown):AgendaEvent|null {
   from=new Date(start.dateTime).toISOString();to=new Date(end.dateTime).toISOString();
  }
  const text=(key:string,max:number)=>typeof e[key]==='string'?(e[key] as string).slice(0,max):'';
- return {id:e.id,title:text('summary',300)||'Evento sin título',start:from,end:to,allDay,location:text('location',1024),description:plainDescription(text('description',20000)),url:agendaGoogleLink(e.htmlLink)};
+ const etag=text('etag',1024);
+ return {id:e.id,title:text('summary',300)||'Evento sin título',start:from,end:to,allDay,location:text('location',1024),description:plainDescription(text('description',20000)),url:agendaGoogleLink(e.htmlLink),etag,editable:!!etag&&!/[\r\n]/.test(etag)&&(!e.eventType||e.eventType==='default'),recurring:typeof e.recurringEventId==='string'};
 }
 export function agendaEventOnDay(event:AgendaEvent,day:string) {
  if(event.allDay)return event.start<=day&&event.end>day;

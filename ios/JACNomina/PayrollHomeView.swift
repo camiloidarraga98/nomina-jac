@@ -9,7 +9,7 @@ struct PayrollHomeView: View {
             CalendarView(user: overview.user).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }
             EmployeesView(overview: overview).tabItem { Label("Equipo", systemImage: "person.2") }
             ManagementView(user: overview.user).tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }
-        }
+        }.tint(JACTheme.lime)
     }
 }
 struct PeriodsView: View {
@@ -51,7 +51,7 @@ struct PeriodsView: View {
                         }
                     }
                 }
-            }.navigationTitle(archive ? "Archivo" : "Quincenas")
+            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas")
                 .navigationDestination(for: String.self) { PeriodDetailView(periodID: $0, user: overview.user) }
                 .searchable(text: $search, prompt: "Buscar mes o estado")
                 .refreshable { try? await store.refresh() }

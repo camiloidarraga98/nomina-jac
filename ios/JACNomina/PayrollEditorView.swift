@@ -31,7 +31,7 @@ struct PayrollEditorView: View {
                 Section {
                     Text(session.kind == .periodEmployee || session.kind == .periodSettings ? "Los ajustes se aplican únicamente a esta quincena en corrección." : "Los cambios se guardan para todo el equipo autorizado.").font(.footnote).foregroundStyle(.secondary)
                 }
-            }.navigationTitle(session.kind.title).navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(session.kind.title).navigationBarTitleDisplayMode(.inline)
                 .toolbar {
                     ToolbarItem(placement: .topBarLeading) { Button("Cancelar") { dismiss() }.disabled(store.busy) }
                     ToolbarItem(placement: .topBarTrailing) {
@@ -43,6 +43,7 @@ struct PayrollEditorView: View {
                                 }
                             }
                         } label: { if store.busy { ProgressView() } else { Text("Guardar").bold() } }
+                            .buttonStyle(JACPrimaryButtonStyle())
                             .disabled(store.busy || !hasRequiredFields || store.workspace?.version != session.version || (store.pending != nil && store.pending?.editorID != session.id))
                             .accessibilityIdentifier("editor.save")
                     }

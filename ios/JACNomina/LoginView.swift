@@ -12,8 +12,8 @@ struct LoginView: View {
             Form {
                 Section {
                     BrandView().frame(maxWidth: 230).frame(maxWidth: .infinity).padding(.vertical, 16)
-                    Text("La nómina de tu equipo, contigo.").font(.title2.weight(.semibold))
-                }.listRowBackground(Color.clear)
+                    Text("La nómina de tu equipo, contigo.").font(.title2.weight(.semibold)).foregroundStyle(.white)
+                }.listRowBackground(JACTheme.forest)
                 Section("Tu cuenta de nómina") {
                     TextField("Usuario o correo", text: $username)
                         .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
@@ -28,13 +28,13 @@ struct LoginView: View {
                 Section {
                     Button(action: signIn) {
                         HStack { Spacer(); if store.busy { ProgressView() }; Text("Iniciar sesión").fontWeight(.semibold); Spacer() }
-                    }.disabled(store.busy).accessibilityIdentifier("login.submit")
+                    }.buttonStyle(JACPrimaryButtonStyle()).disabled(store.busy).accessibilityIdentifier("login.submit")
                 } footer: {
                     Text("Usa el mismo usuario y contraseña que en la web. El acceso es exclusivo para las cuentas autorizadas por Camilo.")
                 }
                 Section { NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() } }
             }
-            .navigationTitle("Nómina JAC")
+            .jacSurface().navigationTitle("Nómina JAC")
             .scrollDismissesKeyboard(.interactively)
             .disabled(store.busy)
         }
@@ -79,7 +79,7 @@ struct ActivateAccountView: View {
                     Task { if await store.activate(token: token, password: password) { link = ""; password = ""; repeated = "" } }
                 }.disabled(store.busy)
             }
-        }.navigationTitle("Activar cuenta").disabled(store.busy).scrollDismissesKeyboard(.interactively)
+        }.jacSurface().navigationTitle("Activar cuenta").disabled(store.busy).scrollDismissesKeyboard(.interactively)
             .onDisappear { link = ""; password = ""; repeated = "" }
     }
 }

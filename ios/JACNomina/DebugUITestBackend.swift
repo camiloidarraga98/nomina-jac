@@ -23,7 +23,8 @@ private final class FixtureProtocol: URLProtocol {
     static var revision = 1
     static var reader = false
     static var conflict = false
-    static func reset(reader: Bool, conflict: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict }
+    static var agendaChanges: [String: JSONValue] = [:]
+    static func reset(reader: Bool, conflict: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; agendaChanges = [:] }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -50,7 +51,17 @@ private final class FixtureProtocol: URLProtocol {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         if parts.path == "/api/calendar" {
-            if request.httpMethod == "POST" { return (403, .object(["error": .string("La conexión real a Google no forma parte de las pruebas.")])) }
+            if request.httpMethod == "POST" {
+                let command = try body(request), action = command["action"].text
+                guard request.value(forHTTPHeaderField: "Origin") == UITestBackend.base.absoluteString, request.value(forHTTPHeaderField: "Cookie")?.hasPrefix("__Host-jac_session=") == true else { return (403, .object(["error": .string("Inicia sesión con una cuenta autorizada para editar Agenda.")])) }
+                guard ["createEvent", "updateEvent"].contains(action) else { return (403, .object(["error": .string("La conexión real a Google no forma parte de las pruebas.")])) }
+                guard command["revision"].number == 1 else { return (409, .object(["error": .string("La conexión cambió. Actualiza Agenda.")])) }
+                let old = agenda(CalendarClock.month(Date()))["upcoming"].elements.first { $0["id"] == command["eventId"] }
+                if action == "updateEvent", old?["etag"] != command["etag"] { return (409, .object(["error": .string("Otra persona modificó este evento.")])) }
+                var event = command["event"]; let id = action == "createEvent" ? "fixture-" + command["requestId"].text : command["eventId"].text
+                event["id"] = .string(id); event["etag"] = .string("fixture-" + UUID().uuidString); event["editable"] = .bool(true); event["recurring"] = old?["recurring"] ?? .bool(false); event["url"] = .string(""); agendaChanges[id] = event
+                return (200, .object(["event": event, "notice": .string(action == "createEvent" ? "Evento creado en Google Calendar." : "Evento actualizado en Google Calendar.")]))
+            }
             if parts.queryItems?.first(where: { $0.name == "action" })?.value == "calendars" { return reader ? (403, .object(["error": .string("Solo Camilo puede elegir el calendario.")])) : (200, .object(["calendars": .array([agendaCalendar])])) }
             return (200, agenda(parts.queryItems?.first(where: { $0.name == "month" })?.value ?? CalendarClock.month(Date())))
         }
@@ -138,8 +149,9 @@ private final class FixtureProtocol: URLProtocol {
         let offset = (CalendarClock.calendar.component(.weekday, from: first) + 5) % 7
         let start = CalendarClock.calendar.date(byAdding: .day, value: -offset, to: first)!
         let days = (0..<42).map { CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: $0, to: start)!) }
-        let event: JSONValue = .object(["id": .string("fixture-concert"), "title": .string("Concierto simulado"), "start": .string(today + "T19:00:00-05:00"), "end": .string(today + "T21:00:00-05:00"), "allDay": .bool(false), "location": .string("Teatro simulado"), "description": .string("Prueba sin eventos reales ni acceso a Google."), "url": .string("")])
-        return .object(["connection": .object(["configured": .bool(true), "connected": .bool(true), "email": .string("calendar@example.invalid"), "selected": agendaCalendar, "revision": .number(1)]), "month": .string(month), "monthLabel": .string(CalendarClock.dayLabel(month + "-01")), "days": .array(days.map(JSONValue.string)), "today": .string(today), "events": .array(days.contains(today) ? [event] : []), "upcoming": .array([event]), "upcomingUntil": .string(CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: 90, to: Date())!)), "updatedAt": .string(ISO8601DateFormatter().string(from: Date())), "timeZone": .string("America/Bogota")])
+        let event: JSONValue = agendaChanges["fixture-concert"] ?? .object(["id": .string("fixture-concert"), "title": .string("Concierto simulado"), "start": .string(today + "T19:00:00-05:00"), "end": .string(today + "T21:00:00-05:00"), "allDay": .bool(false), "location": .string("Teatro simulado"), "description": .string("Prueba sin eventos reales ni acceso a Google."), "url": .string(""), "etag": .string("fixture-v1"), "editable": .bool(true), "recurring": .bool(true)])
+        let records = [event] + agendaChanges.filter { $0.key != "fixture-concert" }.map(\.value)
+        return .object(["connection": .object(["configured": .bool(true), "connected": .bool(true), "email": .string("calendar@example.invalid"), "selected": agendaCalendar, "revision": .number(1), "writeAuthorized": .bool(true)]), "canEditEvents": .bool(true), "month": .string(month), "monthLabel": .string(CalendarClock.dayLabel(month + "-01")), "days": .array(days.map(JSONValue.string)), "today": .string(today), "events": .array(days.contains(today) ? records : []), "upcoming": .array(records), "upcomingUntil": .string(CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: 90, to: Date())!)), "updatedAt": .string(ISO8601DateFormatter().string(from: Date())), "timeZone": .string("America/Bogota")])
     }
 }
 #endif

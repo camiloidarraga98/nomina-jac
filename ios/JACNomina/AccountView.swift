@@ -30,7 +30,7 @@ struct AccountView: View {
                     Text("La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .navigationTitle("Mi cuenta")
+            .jacSurface().navigationTitle("Mi cuenta")
             .confirmationDialog("¿Cerrar sesión en este iPhone? Los cambios pendientes sin guardar se descartarán.", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("Cerrar sesión", role: .destructive) { Task { await store.signOut() } }
             }
@@ -66,6 +66,6 @@ struct ChangePasswordView: View {
                     }
                 } label: { HStack { Text("Guardar contraseña"); Spacer(); if busy { ProgressView() } } }
             }
-        }.navigationTitle("Contraseña").disabled(busy)
+        }.jacSurface().navigationTitle("Contraseña").disabled(busy)
     }
 }
