@@ -56,3 +56,13 @@ next-env.d.ts
 *.key
 *.p12
 *.pfx
+
+# Xcode user state, local builds and Apple signing material
+**/xcuserdata/
+*.xcuserstate
+/ios/DerivedData/
+*.xcarchive/
+*.ipa
+*.mobileprovision
+*.provisionprofile
+*.cer
