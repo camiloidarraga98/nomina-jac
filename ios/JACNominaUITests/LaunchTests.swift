@@ -53,8 +53,9 @@ final class LaunchTests: XCTestCase {
         let field = app.textFields[id].firstMatch
         for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(field.waitForExistence(timeout: 10))
-        // Tap the input itself rather than an adjacent explanatory label.
-        field.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        // Right-aligned numbers end at the trailing inset. A tap farther left
+        // puts the cursor before the number, where backspace cannot clear it.
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "El campo debe recibir el foco del teclado.")
         let old = (field.value as? String) ?? ""
         let count = old == field.placeholderValue ? 0 : old.count
