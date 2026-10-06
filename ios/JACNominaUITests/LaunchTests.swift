@@ -139,7 +139,16 @@ final class LaunchTests: XCTestCase {
         tap(app, "agenda.event.fixture-concert"); tap(app, "agenda.edit")
         XCTAssertTrue(app.staticTexts["Editarás solo esta ocurrencia. Los demás eventos de la serie se conservan."].waitForExistence(timeout: 10))
         fill(app, "agenda.editor.title", "Concierto actualizado de prueba"); attachScreen(app, name: "agenda-editar-evento"); tap(app, "agenda.editor.save")
-        XCTAssertTrue(app.staticTexts["Evento actualizado en Google Calendar."].waitForExistence(timeout: 15))
+        // Agenda keeps the list position after dismissing the editor. Its notice
+        // is the first row, and SwiftUI does not expose offscreen List rows.
+        XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 15), app.debugDescription)
+        let notice = app.staticTexts["Evento actualizado en Google Calendar."]
+        for _ in 0..<8 { if notice.exists { break }; app.swipeDown() }
+        XCTAssertTrue(notice.waitForExistence(timeout: 10), app.debugDescription)
+        tap(app, "agenda.event.fixture-concert")
+        XCTAssertTrue(app.staticTexts["Concierto actualizado de prueba"].waitForExistence(timeout: 10), app.debugDescription)
+        XCTAssertTrue(app.staticTexts["Teatro simulado"].exists, "Editar el título debe conservar el lugar.")
+        tap(app, "Listo")
         attachScreen(app, name: "agenda-identidad-jac")
     }
 }
