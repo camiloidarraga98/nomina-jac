@@ -8,6 +8,7 @@ Lee `docs/PROJECT_CONTEXT.md` antes de modificar el proyecto. Habla con Camilo e
 - Mantén las migraciones aplicadas `drizzle/0000` a `0006`; agrega nuevas cuando cambie el esquema.
 - Respeta permisos en las API, instantáneas, controles de concurrencia y envíos idempotentes.
 - El dominio es `https://jhonalexcastano.com`, Site existente `appgprj_6aa0260b82a88191a47960614238350a`. Mantén `.openai/hosting.json` y los enlaces D1/R2. No crees otro Site ni cambies DNS para corregir código.
+- Cuando Camilo pida un cambio, incorpóralo al repositorio privado y publícalo en el Site existente sin solicitar otra confirmación, salvo que indique expresamente lo contrario.
 - Publica mediante el flujo autenticado de Sites y sus habilidades. Si Cloud carece de ese acceso, conserva los cambios para revisión y explica el acceso faltante; no afirmes haber desplegado.
 - Nunca guardes credenciales de publicación ni claves reales en archivos. `PAYROLL_MAIL_KEY` y `PAYROLL_AUTH_KEY` se administran en Sites. Usa claves independientes de prueba para desarrollo local.
 - El código contiene datos iniciales de personal, documentos y tarifas: repositorio privado. No subas bases de producción, `.env`, `.dev.vars`, sesiones, invitaciones ni exportaciones de nómina.
