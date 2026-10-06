@@ -113,8 +113,10 @@ test('el callback distingue fallos de Google y de guardado sin filtrar secretos 
   ['google_denied',url=>url.href===tokenURL?Response.json({error:'access_denied'},{status:400}):null],
   ['google_token',url=>url.href===tokenURL?Response.json({error:'untrusted-provider-message simulated-client-secret'},{status:500}):null],
   ['google_token',url=>{if(url.href===tokenURL)throw new Error('simulated-client-secret');return null;}],
+  ['google_token',url=>url.href===tokenURL?new Response(null,{status:302,headers:{location:'https://untrusted.example.invalid/token'}}):null],
   ['account_verification',url=>url.href===accountURL?Response.json({email:m.CALENDAR_ACCOUNT,email_verified:false}):null],
   ['account_verification',url=>url.href===accountURL?Response.json({error:'simulated-calendar-access'},{status:401}):null],
+  ['account_verification',url=>url.href===accountURL?new Response(null,{status:307,headers:{location:'https://untrusted.example.invalid/account'}}):null],
   ['connection_storage',url=>{if(url.href===accountURL){sql.exec("CREATE TEMP TRIGGER reject_calendar_save BEFORE UPDATE ON payroll_calendar BEGIN SELECT RAISE(ABORT,'simulated-storage-secret'); END;");}return null;}],
  ];
  try{
@@ -130,6 +132,7 @@ test('el callback distingue fallos de Google y de guardado sin filtrar secretos 
    assert.deepEqual(logs.at(-1),['Calendar authorization failed',{reason,mode:'web'}]);
    for(const secret of [c.state,ownerToken,'simulated-code','simulated-client-secret','simulated-calendar-access','simulated-calendar-refresh','simulated-storage-secret']){assert.ok(!target.href.includes(secret));assert.ok(!JSON.stringify(logs).includes(secret));}
    assert.ok(!calls.some(x=>x.url.pathname==='/revoke'));
+   assert.ok(calls.every(x=>x.options.redirect==='manual'));
   }
  }finally{googleHook=null;console.error=originalError;sql.exec('DROP TRIGGER IF EXISTS reject_calendar_save');}
  assert.match(calendarOAuthMessage('calendar_scope'),/marca la casilla/);
@@ -158,7 +161,7 @@ test('selección comprueba acceso real y revisión; calendario compartido expand
  const selected=await api(ownerToken,{action:'select',revision,calendarId:available.id});assert.equal(selected.status,200);assert.equal(selected.body.connection.selected.id,available.id);
  calls=[];googleHook=async url=>url.pathname.endsWith('/events')?Response.json(url.searchParams.has('pageToken')?{items:[concert,{...concert,id:'another-instance'}]}:{items:[concert,{id:'cancelled',status:'cancelled'}],nextPageToken:'second'}):null;
  const data=await api(readerToken,{query:'&calendarId=untrusted'});googleHook=null;assert.equal(data.status,200);assert.equal(data.body.events.length,2);assert.equal(data.body.upcoming.length,2);assert.equal(data.body.connection.selected.id,available.id);assert.equal(data.body.days.length,42);assert.equal(data.body.events[0].description,'Prueba & ensayo\n\nAgenda');
- for(const {url,options} of calls.filter(x=>x.url.pathname.endsWith('/events'))){assert.equal(url.pathname,'/calendar/v3/calendars/'+encodeURIComponent(available.id)+'/events');assert.equal(url.searchParams.get('singleEvents'),'true');assert.equal(url.searchParams.get('timeZone'),'America/Bogota');assert.equal(url.searchParams.get('showDeleted'),'false');assert.equal(url.searchParams.get('maxResults'),'100');assert.ok(url.searchParams.get('fields').includes('items(id,status'));assert.equal(options.redirect,'error');assert.equal(options.headers.Authorization,'Bearer simulated-calendar-access');}
+ for(const {url,options} of calls.filter(x=>x.url.pathname.endsWith('/events'))){assert.equal(url.pathname,'/calendar/v3/calendars/'+encodeURIComponent(available.id)+'/events');assert.equal(url.searchParams.get('singleEvents'),'true');assert.equal(url.searchParams.get('timeZone'),'America/Bogota');assert.equal(url.searchParams.get('showDeleted'),'false');assert.equal(url.searchParams.get('maxResults'),'100');assert.ok(url.searchParams.get('fields').includes('items(id,status'));assert.equal(options.redirect,'manual');assert.equal(options.headers.Authorization,'Bearer simulated-calendar-access');}
  assert.ok(!JSON.stringify(data.body).includes('simulated-calendar-access'));
 });
 
@@ -169,6 +172,8 @@ test('cambio concurrente de selección descarta consultas y Google API desactiva
  const disabled=await api(readerToken);googleHook=null;assert.equal(disabled.status,502);assert.match(disabled.body.error,/Activa Google Calendar API/);
  googleHook=async url=>url.href==='https://oauth2.googleapis.com/token'?Response.json({error:'invalid_grant'},{status:400}):null;
  const expired=await api(readerToken);googleHook=null;assert.match(expired.body.error,/vuelvas a conectar Agenda/);
+ googleHook=async url=>url.pathname.endsWith('/events')?new Response(null,{status:302,headers:{location:'https://untrusted.example.invalid/events'}}):null;
+ const redirected=await api(readerToken);googleHook=null;assert.equal(redirected.status,502);assert.match(redirected.body.error,/redirección inesperada/);assert.ok(calls.every(x=>x.url.origin!=='https://untrusted.example.invalid'));
 });
 
 test('desconectar agenda requiere CAS y no revoca ni modifica Gmail ni los eventos',async()=>{

@@ -35,7 +35,13 @@ async function googleResponse(response:Response) {
  }
  return body;
 }
-export async function calendarGooglePost(data:Record<string,string>){return googleResponse(await fetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data),redirect:'error',signal:AbortSignal.timeout(15000)}));}
+export async function calendarGoogleFetch(url:string|URL,options:RequestInit={}){
+ // Workerd supports manual/follow, not redirect:error. Reject redirects without forwarding credentials.
+ const response=await fetch(url,{...options,redirect:'manual',signal:AbortSignal.timeout(15000)});
+ if(response.status>=300&&response.status<400)throw new CalendarFailure('Google devolvió una redirección inesperada. Vuelve a intentar la conexión de Agenda.',502);
+ return response;
+}
+export async function calendarGooglePost(data:Record<string,string>){return googleResponse(await calendarGoogleFetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)}));}
 async function accessToken(c:CalendarConfig) {
  if(!c.credentials||c.connected_email!==CALENDAR_ACCOUNT)throw new CalendarFailure('Conecta la cuenta de Google para consultar Agenda.');
  const secret=await decryptMail<CalendarCredentials>(c.credentials,mailKey());
@@ -45,7 +51,7 @@ async function accessToken(c:CalendarConfig) {
 }
 async function googleGet(path:string,token:string,params:Record<string,string>={}) {
  const url=new URL('https://www.googleapis.com/calendar/v3/'+path);url.search=new URLSearchParams(params).toString();
- return googleResponse(await fetch(url,{headers:{Authorization:'Bearer '+token},redirect:'error',signal:AbortSignal.timeout(15000)}));
+ return googleResponse(await calendarGoogleFetch(url,{headers:{Authorization:'Bearer '+token}}));
 }
 async function listCalendars(token:string):Promise<AgendaCalendar[]> {
  const calendars:AgendaCalendar[]=[];let page='';
