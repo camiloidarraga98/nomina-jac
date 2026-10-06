@@ -280,8 +280,9 @@ test('revalida sesión y selección antes de escribir; fallos y redirecciones no
 
 test('Camilo, Luisa y Paula editan Agenda con sesión activa; configuración continúa exclusiva de Camilo',async()=>{
  const revision=(await m.agendaConnection()).revision,gmail=gmailRow();
- for(const [id,email] of [['luisa-agenda','info@jacmusic.co'],['paula-agenda','contabilidad@jacmusic.co']]){
-  const now=new Date().toISOString();sql.prepare('INSERT INTO payroll_users (id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,id,email,'Cuenta simulada',m.hashPassword('1',globalThis.__calendarEnv.PAYROLL_AUTH_KEY),'[]',now,now);
+ for(const email of ['info@jacmusic.co','contabilidad@jacmusic.co']){
+  const {id}=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get(email);
+  sql.prepare('UPDATE payroll_users SET password_hash=?,active=1,permissions=?,version=version+1 WHERE id=?').run(m.hashPassword('1',globalThis.__calendarEnv.PAYROLL_AUTH_KEY),'[]',id);
   const token=await m.makeSession(id);assert.equal((await api(token)).body.canEditEvents,true);
   for(const action of ['connect','select','disconnect'])assert.equal((await api(token,{action,revision,calendarId:available.id})).status,403);
   const created=await api(token,{action:'createEvent',revision,event:draft,requestId:crypto.randomUUID()});assert.equal(created.status,200);
