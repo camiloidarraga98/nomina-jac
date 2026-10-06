@@ -1,5 +1,5 @@
 import {database} from '@/db/raw';
-import {calendarClientCredentials,ensureCalendarConfig,calendarConfig,calendarGooglePost,storeCalendarCredentials,CalendarFailure} from './calendar';
+import {calendarClientCredentials,ensureCalendarConfig,calendarConfig,calendarGooglePost,calendarGoogleFetch,storeCalendarCredentials,CalendarFailure} from './calendar';
 import {mailKey} from './payroll-mail';
 import {GMAIL_CALLBACK,base64Url,encryptMail,decryptMail} from './payroll-mail-core';
 import {tokenHash,sessionToken} from './payroll-auth-crypto';
@@ -65,7 +65,7 @@ export async function finishCalendarCallback(req:Request){
   if(typeof token.scope!=='string'||!token.scope.split(/\s+/).includes(CALENDAR_SCOPE))throw new AuthorizationFailure('calendar_scope');
   if(typeof token.refresh_token!=='string'||!token.refresh_token)throw new AuthorizationFailure('missing_refresh_token');
   stage='account_verification';
-  const response=await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{Authorization:'Bearer '+token.access_token},redirect:'error',signal:AbortSignal.timeout(15000)});
+  const response=await calendarGoogleFetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{Authorization:'Bearer '+token.access_token}});
   if(!response.ok)throw new AuthorizationFailure('account_verification');
   const account=await response.json() as {email?:string;email_verified?:boolean};
   if(typeof account.email!=='string'||account.email_verified!==true)throw new AuthorizationFailure('account_verification');
