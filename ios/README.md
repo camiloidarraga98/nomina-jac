@@ -58,9 +58,11 @@ El workflow `.github/workflows/ios.yml` compila y prueba en un runner macOS. Las
 
 ```sh
 xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
-  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=NO build
+  -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build
 
 node --test tests/payroll-mobile.test.mjs
 ```
+
+Las pruebas del simulador usan firma local ad hoc (`CODE_SIGN_IDENTITY=-`), sin certificados de Apple Developer. El Llavero necesita que el ejecutable del simulador esté firmado; desactivar completamente la firma puede impedir guardar o leer la sesión. La suite comprueba el Llavero real del simulador con una cuenta temporal de prueba, además de las respuestas de red simuladas.
 
 Este entorno Cloud es Linux. La instalación y firma final en los dispositivos se completan desde Xcode en el Mac. El icono de distribución puede configurarse en Assets antes de exportar una versión para TestFlight; el logo oficial se conserva íntegro en la interfaz nativa.

@@ -35,6 +35,18 @@ final class PayrollClientTests: XCTestCase {
     }
     override func tearDown() { MockProtocol.handler = nil; TemporaryDocuments.clear(); super.tearDown() }
 
+    func testDeviceKeychainCanStoreReplaceAndRemoveSession() throws {
+        let vault = KeychainSessionStore(account: "test-\(UUID().uuidString).invalid")
+        defer { try? vault.clear() }
+        XCTAssertNil(try vault.load())
+        try vault.save(String(repeating: "a", count: 43))
+        XCTAssertEqual(try vault.load(), String(repeating: "a", count: 43))
+        try vault.save(String(repeating: "b", count: 43))
+        XCTAssertEqual(try vault.load(), String(repeating: "b", count: 43))
+        try vault.clear()
+        XCTAssertNil(try vault.load())
+    }
+
     @MainActor func testLoginUsesOriginAndStoresSessionWithoutSavingPassword() async throws {
         let vault = MemorySession()
         let client = makeClient(vault)

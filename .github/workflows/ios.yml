@@ -44,7 +44,7 @@ jobs:
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina
           -destination 'generic/platform=iOS Simulator'
           -derivedDataPath work/ios-build
-          CODE_SIGNING_ALLOWED=NO build
+          CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build
       - name: Pruebas nativas y arranque visible en simulador
         run: |
           DEVICE=$(python3 - <<'PY'
@@ -57,7 +57,7 @@ jobs:
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
             -destination "platform=iOS Simulator,id=$DEVICE" \
             -derivedDataPath work/ios-build -resultBundlePath work/ios-tests.xcresult \
-            CODE_SIGNING_ALLOWED=NO test
+            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- test
       - name: Exportar capturas del simulador
         if: always()
         run: |
