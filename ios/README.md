@@ -1,5 +1,7 @@
 # Nómina JAC para iPhone
 
+El nombre visible en el iPhone es **JAC**. El proyecto y el esquema de Xcode siguen siendo `JACNomina`.
+
 Aplicación nativa en SwiftUI para iOS 17 o posterior. Usa las mismas cuentas y la misma base D1 que https://jhonalexcastano.com a través de HTTPS. No contiene WebViews ni otra base de nómina.
 
 ## Funciones de la app
