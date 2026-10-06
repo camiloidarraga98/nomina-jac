@@ -112,6 +112,22 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Equipo"].tap(); XCTAssertFalse(app.buttons["employee.create"].exists)
         app.tabBars.buttons["Gestión"].tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
+        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists)
         attachScreen(app, name: "permisos-solo-consulta")
+    }
+    @MainActor func testAgendaMonthUpcomingDetailsAndAccountRemainAccessible() {
+        let app = fixture()
+        app.tabBars.buttons["Agenda"].tap()
+        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15))
+        tap(app, "agenda.event.fixture-concert")
+        XCTAssertTrue(app.staticTexts["Teatro simulado"].waitForExistence(timeout: 10))
+        attachScreen(app, name: "agenda-detalle-concierto"); tap(app, "Listo")
+        let upcoming = app.segmentedControls["agenda.mode"].buttons["Próximos"]
+        for _ in 0..<4 { if upcoming.isHittable { break }; app.swipeDown() }
+        upcoming.tap()
+        tap(app, "agenda.upcoming.fixture-concert"); tap(app, "Listo")
+        attachScreen(app, name: "agenda-proximos")
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "Mi cuenta")
+        XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
     }
 }

@@ -147,6 +147,30 @@ final class PayrollClient {
         let (data, _) = try await request(path: path, body: body)
         return try decoder.decode(OperationNotice.self, from: data)
     }
+    func agenda(month: String) async throws -> AgendaData {
+        let (data, _) = try await request(path: "api/calendar", query: [URLQueryItem(name: "month", value: month)])
+        return try decoder.decode(AgendaData.self, from: data)
+    }
+    func agendaCalendars() async throws -> [AgendaCalendar] {
+        let (data, _) = try await request(path: "api/calendar", query: [URLQueryItem(name: "action", value: "calendars")])
+        return try decoder.decode(AgendaCalendars.self, from: data).calendars
+    }
+    func agendaOperation(action: String, revision: Int, calendarID: String? = nil) async throws -> AgendaMutation {
+        var body: [String: JSONValue] = ["action": .string(action), "revision": .number(Double(revision))]
+        if let calendarID { body["calendarId"] = .string(calendarID) }
+        let (data, _) = try await request(path: "api/calendar", body: .object(body))
+        return try decoder.decode(AgendaMutation.self, from: data)
+    }
+    func startAgenda() async throws -> AgendaStart {
+        let (data, _) = try await request(path: "api/calendar", body: .object(["action": .string("connect"), "native": .bool(true)]))
+        let start = try decoder.decode(AgendaStart.self, from: data)
+        guard start.url.scheme == "https", start.url.host == baseURL.host, start.url.port == baseURL.port,
+              start.url.path == "/api/calendar/connect", start.url.user == nil, start.url.password == nil, start.url.fragment == nil,
+              start.nonce.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else {
+            throw APIError.message("La autorización de Agenda no es válida.")
+        }
+        return start
+    }
     func startGmail() async throws -> GmailStart {
         let (data, _) = try await request(path: "api/mobile/gmail", body: .object([:]))
         let start = try decoder.decode(GmailStart.self, from: data)

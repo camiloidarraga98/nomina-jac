@@ -50,6 +50,13 @@
       "when": 1791245812300,
       "tag": "0006_blushing_alice",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1791321355490,
+      "tag": "0007_agenda_google_calendar",
+      "breakpoints": true
     }
   ]
 }

@@ -6,9 +6,9 @@ struct PayrollHomeView: View {
         TabView {
             PeriodsView(overview: overview).tabItem { Label("Quincenas", systemImage: "calendar") }
             PeriodsView(overview: overview, archive: true).tabItem { Label("Archivo", systemImage: "archivebox") }
+            CalendarView(user: overview.user).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }
             EmployeesView(overview: overview).tabItem { Label("Equipo", systemImage: "person.2") }
             ManagementView(user: overview.user).tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }
-            AccountView(user: overview.user).tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }
         }
     }
 }

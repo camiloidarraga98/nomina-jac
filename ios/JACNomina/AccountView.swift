@@ -5,7 +5,6 @@ struct AccountView: View {
     let user: PayrollUser
     @State private var confirmLogout = false
     var body: some View {
-        NavigationStack {
             List {
                 Section {
                     BrandView().frame(maxWidth: 220).frame(maxWidth: .infinity).padding(.vertical, 10)
@@ -35,7 +34,6 @@ struct AccountView: View {
             .confirmationDialog("¿Cerrar sesión en este iPhone? Los cambios pendientes sin guardar se descartarán.", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("Cerrar sesión", role: .destructive) { Task { await store.signOut() } }
             }
-        }
     }
 }
 

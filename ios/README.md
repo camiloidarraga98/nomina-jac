@@ -13,8 +13,22 @@ La app cubre las funciones del webapp con formularios y navegación de iOS. Cons
 - **Cierres:** cerrar con instantánea y envío automático cuando Gmail esté conectado; reabrir, corregir condiciones y parámetros históricos y volver a cerrar con `modifyClosed`. El propietario puede eliminar completamente una quincena con confirmación.
 - **Equipo y Gestión:** crear/editar personas y todas sus condiciones, inactivar, eliminar y restaurar; conceptos y parámetros; estados de correo, contactos, envío conjunto/individual y conexión/configuración de Gmail; usuarios, permisos e invitaciones del propietario.
 - **Mi cuenta y acceso:** mismo usuario y contraseña, activación/restablecimiento con enlace privado, cambio de contraseña y cierre de sesión. Cualquier contraseña no vacía sigue permitida.
+- **Agenda:** calendario mensual y eventos por día, próximos 90 días y detalles; sincronización de lectura con Google Calendar. **Mi cuenta** se abre ahora desde **Gestión**.
 
 Cada operación usa los permisos y la validación del servidor. Una pérdida de conexión o conflicto conserva la solicitud en memoria; puedes reintentar, compartir una copia JSON protegida de los cambios o descartarlos y actualizar. No se reinterpreta ni se vuelve a guardar silenciosamente un formulario sobre una revisión diferente. Cerrar la sesión o terminar la app descarta los cambios que no guardaste.
+
+## Agenda con Google Calendar
+
+La pestaña **Agenda** y el sidebar **Agenda** de la web muestran el mismo calendario de Jhon Alex. Los horarios se presentan en hora de Colombia. Puedes cambiar de mes, elegir un día, consultar los próximos conciertos y abrir sus detalles. Se actualiza al entrar, volver a la app tras 30 segundos o actualizar manualmente; en iPhone también puedes deslizar la lista hacia abajo.
+
+Camilo prepara la conexión una vez:
+
+1. Abre [Google Calendar API](https://console.cloud.google.com/apis/library/calendar-json.googleapis.com) en el proyecto de Google que ya utilizas para la conexión de Gmail de JAC y actívala.
+2. En JAC, abre **Agenda → Conexión** (engranaje en iPhone) y **Conectar Google**. Si no existen credenciales de Google, prepara primero las de Correos/Gmail mediante el formulario privado de JAC.
+3. Autoriza con **jacmusicestudios@gmail.com** y concede la lectura del calendario. Si Google muestra `access_denied`, comprueba que esa cuenta esté incluida como usuario de prueba en el consentimiento OAuth del proyecto.
+4. Selecciona el calendario donde mantienes la agenda de Jhon Alex y pulsa **Usar este calendario**. La misma elección sirve para web y los tres iPhones, sin conectar Google individualmente en cada dispositivo.
+
+Todos los usuarios activos pueden consultar esa agenda; solo Camilo puede conectar, elegir o desconectar. Los eventos se crean y modifican en Google Calendar y aparecen en JAC al actualizar. JAC no modifica Google ni genera automáticamente shows de nómina. Desconectar Agenda conserva los eventos y la conexión de Gmail. No se solicitan ni incorporan nuevas claves al repositorio: el servidor reutiliza las credenciales OAuth existentes y almacena el permiso de Agenda cifrado por separado. El callback registrado de Google permanece igual.
 
 ## Actualizar desde Xcode
 
@@ -74,7 +88,7 @@ El workflow `.github/workflows/ios.yml` compila y prueba en un runner macOS. Las
 xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build
 
-node --test tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
+node --test tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs tests/calendar.test.mjs
 ```
 
 Las pruebas del simulador usan firma local ad hoc (`CODE_SIGN_IDENTITY=-`), sin certificados de Apple Developer. El Llavero necesita que el ejecutable del simulador esté firmado; desactivar completamente la firma puede impedir guardar o leer la sesión. La suite comprueba el Llavero real del simulador con una cuenta temporal de prueba, además de las respuestas de red simuladas.

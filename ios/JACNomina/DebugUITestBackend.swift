@@ -49,6 +49,11 @@ private final class FixtureProtocol: URLProtocol {
     static func response(_ request: URLRequest) throws -> (Int, JSONValue) {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+        if parts.path == "/api/calendar" {
+            if request.httpMethod == "POST" { return (403, .object(["error": .string("La conexión real a Google no forma parte de las pruebas.")])) }
+            if parts.queryItems?.first(where: { $0.name == "action" })?.value == "calendars" { return reader ? (403, .object(["error": .string("Solo Camilo puede elegir el calendario.")])) : (200, .object(["calendars": .array([agendaCalendar])])) }
+            return (200, agenda(parts.queryItems?.first(where: { $0.name == "month" })?.value ?? CalendarClock.month(Date())))
+        }
         if request.httpMethod == "POST" {
             let command = try body(request), action = command["action"].text
             if parts.path == "/api/auth" { return (200, .object(["ok": .bool(true)])) }
@@ -126,6 +131,15 @@ private final class FixtureProtocol: URLProtocol {
             .object(["id": .string(id), "name": .string(name), "email": .string(id+"@example.invalid"), "document": .string("PRUEBA"), "role": .string("Simulado"), "category": .string(category), "active": .bool(true), "showRate": .number(750000), "kmRate": .number(rate), "fixedService": .number(0), "withholding": .number(0.095), "ica": .number(0), "salary": .number(salary), "transport": .number(0), "pension": .bool(false), "health": .bool(true), "cycle": .string("quincenal"), "monthlyHalf": .number(2), "nonSalary": .number(0), "contributionBase": .number(1), "incomeTax": .number(0), "solidarity": .number(0)])
         }
         return .object(["employees": .array([employee("music", name: "Música simulada", category: "musicos"), employee("driver-a", name: "Conductor uno", category: "conductores", rate: 1000), employee("driver-b", name: "Conductor dos", category: "conductores", rate: 1250), employee("salary", name: "Dependiente simulado", category: "administracion", salary: 1500000)]), "settings": .object(["company": .string("Empresa simulada"), "nit": .string("PRUEBA"), "hourDivisor": .number(210), "hourFactors": .array([0.35,0.9,1.25,1.25,1.75,2.15,2.65].map { .number($0) })]), "concepts": .array([.object(["id": .string("test-concept"), "name": .string("Ensayo simulado"), "amount": .number(80000), "kind": .string("servicio")])]), "periods": .array([.object(["id": .string("fixture-period"), "start": .string("2025-09-16"), "end": .string("2025-09-30"), "status": .string("abierta"), "shows": .array([]), "movements": .array([]), "hours": .array([]), "routes": .array([]), "excludedEmployees": .array([])])])])
+    }
+    static var agendaCalendar: JSONValue { .object(["id": .string("fixture-calendar"), "name": .string("Agenda simulada"), "timeZone": .string("America/Bogota"), "primary": .bool(true)]) }
+    static func agenda(_ month: String) -> JSONValue {
+        let today = CalendarClock.day(Date()), first = CalendarClock.date(month + "-01")!
+        let offset = (CalendarClock.calendar.component(.weekday, from: first) + 5) % 7
+        let start = CalendarClock.calendar.date(byAdding: .day, value: -offset, to: first)!
+        let days = (0..<42).map { CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: $0, to: start)!) }
+        let event: JSONValue = .object(["id": .string("fixture-concert"), "title": .string("Concierto simulado"), "start": .string(today + "T19:00:00-05:00"), "end": .string(today + "T21:00:00-05:00"), "allDay": .bool(false), "location": .string("Teatro simulado"), "description": .string("Prueba sin eventos reales ni acceso a Google."), "url": .string("")])
+        return .object(["connection": .object(["configured": .bool(true), "connected": .bool(true), "email": .string("calendar@example.invalid"), "selected": agendaCalendar, "revision": .number(1)]), "month": .string(month), "monthLabel": .string(CalendarClock.dayLabel(month + "-01")), "days": .array(days.map(JSONValue.string)), "today": .string(today), "events": .array(days.contains(today) ? [event] : []), "upcoming": .array([event]), "upcomingUntil": .string(CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: 90, to: Date())!)), "updatedAt": .string(ISO8601DateFormatter().string(from: Date())), "timeZone": .string("America/Bogota")])
     }
 }
 #endif
