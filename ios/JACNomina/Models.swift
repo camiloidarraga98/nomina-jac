@@ -1,0 +1,202 @@
+import Foundation
+
+struct PayrollUser: Decodable, Equatable {
+    let id: String
+    let email: String
+    let username: String
+    let displayName: String
+    let isOwner: Bool
+    let permissions: [String]
+
+    func can(_ permission: String) -> Bool { isOwner || permissions.contains(permission) }
+}
+
+struct PayrollOverview: Decodable {
+    let version: Int
+    let company: String
+    let user: PayrollUser
+    let periods: [PeriodSummary]
+    let employees: [Employee]
+}
+
+struct PeriodSummary: Decodable, Identifiable {
+    let id: String
+    let start: String
+    let end: String
+    let status: String
+    let showCount: Int
+    let ownerOnly: Bool
+    let closedAt: String?
+    var isClosed: Bool { status == "cerrada" }
+    var title: String { PayrollFormat.period(start: start, end: end) }
+}
+
+struct PeriodDetail: Decodable {
+    let version: Int
+    let period: PayrollPeriod
+    let employees: [Employee]
+    let calculation: PayrollCalculation
+    let closeIssues: [String]
+
+    func employeeName(_ id: String) -> String {
+        employees.first(where: { $0.id == id })?.name ?? "Persona no disponible"
+    }
+}
+
+struct Employee: Decodable, Identifiable {
+    let id: String
+    let name: String
+    let document: String
+    let role: String
+    let category: String
+    let active: Bool
+    let showRate: Double
+    let kmRate: Double
+    let fixedService: Double
+    let salary: Double
+    let transport: Double
+    let pension: Bool
+    let health: Bool
+    let cycle: String
+    let deleted: Bool?
+    let email: String?
+    var categoryName: String { PayrollFormat.category(category) }
+}
+
+struct PayrollPeriod: Decodable, Identifiable {
+    let id: String
+    let start: String
+    let end: String
+    let status: String
+    let shows: [PayrollShow]
+    let movements: [PayrollMovement]
+    let hours: [PayrollHours]
+    let routes: [PayrollRoute]
+    let ownerOnly: Bool?
+    var isClosed: Bool { status == "cerrada" }
+    var title: String { PayrollFormat.period(start: start, end: end) }
+}
+
+struct PayrollShow: Decodable, Identifiable {
+    struct Participant: Decodable { let employeeId: String; let amount: Double }
+    let id: String
+    let date: String
+    let name: String
+    let sale: Double
+    let participants: [Participant]
+}
+
+struct PayrollMovement: Decodable, Identifiable {
+    let id: String
+    let employeeId: String
+    let concept: String
+    let kind: String
+    let quantity: Double
+    let amount: Double
+    let note: String
+}
+
+struct PayrollHours: Decodable {
+    let employeeId: String
+    let counts: [Double]
+    let days: Double
+    let vacations: Double
+    let note: String
+}
+
+struct PayrollRoute: Decodable, Identifiable {
+    struct Driver: Decodable { let employeeId: String; let rate: Double }
+    let id: String
+    let date: String
+    let name: String
+    let km: Double
+    let kind: String?
+    let showId: String?
+    let drivers: [Driver]?
+    let employeeId: String?
+    let rate: Double?
+    var participants: [Driver] {
+        if let drivers { return drivers }
+        if let employeeId, let rate { return [Driver(employeeId: employeeId, rate: rate)] }
+        return []
+    }
+}
+
+struct PayrollCalculation: Decodable {
+    let rows: [PayrollPayment]
+    let sale: Double
+    let total: Double
+    let gross: Double
+    let deductions: Double
+    let reimbursements: Double
+    let company: String
+    let nit: String
+    let closedAt: String?
+}
+
+struct PayrollPayment: Decodable {
+    let employeeId: String
+    let name: String
+    let document: String
+    let role: String
+    let category: String
+    let gross: Double
+    let reimbursements: Double
+    let deductions: Double
+    let net: Double
+    let items: [PayrollItem]
+}
+
+struct PayrollItem: Decodable {
+    let concept: String
+    let quantity: Double
+    let rate: Double
+    let amount: Double
+    let kind: String
+    let reference: String?
+}
+
+enum DocumentFormat: String, CaseIterable, Identifiable {
+    case pdf, slips, xlsx, zip
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .pdf: return "Resumen PDF"
+        case .slips: return "Todos los desprendibles PDF"
+        case .xlsx: return "Excel de nómina"
+        case .zip: return "Desprendibles en ZIP"
+        }
+    }
+    var fileExtension: String {
+        switch self { case .pdf, .slips: return "pdf"; case .xlsx: return "xlsx"; case .zip: return "zip" }
+    }
+}
+
+enum PayrollFormat {
+    static func money(_ value: Double) -> String {
+        value.formatted(.currency(code: "COP").precision(.fractionLength(0)).locale(Locale(identifier: "es_CO")))
+    }
+    static func number(_ value: Double) -> String {
+        value.formatted(.number.precision(.fractionLength(0...2)).locale(Locale(identifier: "es_CO")))
+    }
+    static func date(_ iso: String) -> String {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.timeZone = TimeZone(secondsFromGMT: 0)
+        parser.dateFormat = "yyyy-MM-dd"
+        guard let date = parser.date(from: iso) else { return iso }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "es_CO")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "d MMM yyyy"
+        return formatter.string(from: date)
+    }
+    static func period(start: String, end: String) -> String {
+        "\(date(start)) – \(date(end))"
+    }
+    static func category(_ value: String) -> String {
+        ["musicos": "Músicos", "tecnica": "Técnica", "conductores": "Conductores", "administracion": "Dependientes", "comision": "Comisiones y otros"][value] ?? value
+    }
+    static let hourNames = ["Recargo nocturno", "Recargo dominical diurno", "Recargo dominical nocturno", "Extra diurna", "Extra nocturna", "Extra dominical diurna", "Extra dominical nocturna"]
+    static let permissionNames = ["payroll": "Registrar nómina", "staff": "Modificar personal", "rules": "Modificar conceptos", "close": "Cerrar quincenas", "modifyClosed": "Modificar cierres", "send": "Enviar desprendibles", "export": "Descargar documentos"]
+}
