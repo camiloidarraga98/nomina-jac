@@ -17,9 +17,10 @@ class Query {
 }
 globalThis.__calendarEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const result=qs.map(q=>q.execute());sql.exec('COMMIT');return result;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'calendar-independent-test-authentication-key-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
 globalThis.__calendarHeaders=new Headers();
-const bundle=await build({stdin:{contents:"export * as api from './app/api/calendar/route';export * as handoff from './app/api/calendar/connect/route';export * as callback from './app/api/payroll/gmail/callback/route';export * from './lib/calendar';export * from './lib/calendar-core';export * from './lib/calendar-oauth';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-mail';export * from './lib/payroll-mail-core';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__calendarEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__calendarHeaders;',loader:'js'}));}}]});
+const bundle=await build({stdin:{contents:"export * as api from './app/api/calendar/route';export * as handoff from './app/api/calendar/connect/route';export * as callback from './app/api/payroll/gmail/callback/route';export * from './lib/calendar';export * from './lib/calendar-core';export * from './lib/calendar-oauth';export * from './lib/calendar-oauth-errors';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-mail';export * from './lib/payroll-mail-core';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__calendarEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__calendarHeaders;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/calendar-tests-')),moduleFile=dir+'/bundle.mjs';await writeFile(moduleFile,bundle.outputFiles[0].contents);
 const m=await import(pathToFileURL(moduleFile).href);await rm(dir,{recursive:true});
+const {calendarOAuthMessage}=m;
 const base='https://calendar.example.invalid',owner=await m.bootstrapOwner('calendar-owner','1');
 let ownerToken=await m.makeSession(owner),readerToken;
 let calls=[],tokenScope=m.CALENDAR_SCOPE,googleEmail=m.CALENDAR_ACCOUNT,googleHook=null;
@@ -67,7 +68,7 @@ test('agenda exige sesión; solo el propietario prepara conexión y selección c
 test('OAuth web usa PKCE, guard y sesión; cifra el permiso de lectura sin alterar Gmail',async()=>{
  calls=[];const gmail=gmailRow(),c=await start();
  assert.equal(c.google.searchParams.get('redirect_uri'),m.GMAIL_CALLBACK);assert.equal(c.google.searchParams.get('scope'),'openid email '+m.CALENDAR_SCOPE);assert.equal(c.google.searchParams.get('include_granted_scopes'),'false');assert.equal(c.google.searchParams.get('code_challenge_method'),'S256');assert.ok(!c.google.searchParams.get('scope').includes('gmail.send'));assert.equal(calls.length,0);
- assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c,c.guard))).url).searchParams.get('calendar'),'error','El callback web también exige la sesión del propietario');assert.equal(calls.length,0);
+ const missingSession=new URL((await m.finishCalendarCallback(callbackRequest(c,c.guard))).url);assert.equal(missingSession.searchParams.get('calendar'),'error','El callback web también exige la sesión del propietario');assert.equal(missingSession.searchParams.get('reason'),'web_session');assert.equal(calls.length,0);
  assert.ok(sql.prepare('SELECT id FROM payroll_oauth WHERE id=?').get('calendar:'+c.state));
  const result=await m.callback.GET(callbackRequest(c));assert.equal(new URL(result.headers.get('location')).searchParams.get('calendar'),'connected');assert.equal(result.headers.get('referrer-policy'),'no-referrer');assert.equal(calls.length,2);
  assert.match(new URLSearchParams(calls[0].options.body).get('code_verifier'),/^[A-Za-z0-9_-]{43}$/);
@@ -79,21 +80,74 @@ test('OAuth web usa PKCE, guard y sesión; cifra el permiso de lectura sin alter
 
 test('OAuth iPhone entrega un ticket de un uso; valida nonce, guard, expiración y sesión activa',async()=>{
  calls=[];const c=await start(true);assert.match(c.nonce,/^[A-Za-z0-9_-]{43}$/);assert.ok(!c.url.includes(ownerToken));assert.equal((await m.handoff.GET(new Request(c.url))).status,400);
- assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c,''))).url).searchParams.get('result'),'error');assert.equal(calls.length,0);
+ const missingGuard=new URL((await m.finishCalendarCallback(callbackRequest(c,''))).url);assert.equal(missingGuard.searchParams.get('result'),'error');assert.equal(missingGuard.searchParams.get('reason'),'browser_guard');assert.equal(calls.length,0);
  const result=await m.callback.GET(callbackRequest(c)),target=new URL(result.headers.get('location'));assert.equal(target.protocol,'jacnomina:');assert.equal(target.host,'calendar');assert.equal(target.searchParams.get('nonce'),c.nonce);assert.equal(target.searchParams.get('result'),'connected');assert.ok(!target.href.includes('simulated-'));
  calls=[];const expired=await api(ownerToken,{action:'connect',native:true});sql.prepare('UPDATE payroll_oauth SET expires_at=? WHERE id=?').run('2000-01-01T00:00:00Z','calendar-ticket:'+m.tokenHash(new URL(expired.body.url).searchParams.get('ticket')));assert.equal((await m.handoff.GET(new Request(expired.body.url))).status,400);
- const stale=await start(true);sql.prepare('UPDATE payroll_oauth SET expires_at=? WHERE id=?').run('2000-01-01T00:00:00Z','calendar:'+stale.state);assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(stale))).url).searchParams.get('result'),'error');
- const revoked=await start(true);sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(ownerToken));assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(revoked))).url).searchParams.get('result'),'error');ownerToken=await m.makeSession(owner);
+ const stale=await start(true);sql.prepare('UPDATE payroll_oauth SET expires_at=? WHERE id=?').run('2000-01-01T00:00:00Z','calendar:'+stale.state);assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(stale))).url).searchParams.get('reason'),'expired');
+ const revoked=await start(true);sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(ownerToken));assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(revoked))).url).searchParams.get('reason'),'session_revoked');ownerToken=await m.makeSession(owner);
  const pending=await api(ownerToken,{action:'connect',native:true});sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(owner);assert.equal((await m.handoff.GET(new Request(pending.body.url))).status,400);ownerToken=await m.makeSession(owner);assert.equal(calls.length,0);
 });
 
 test('cuenta incorrecta, permiso incompleto, cancelación o conexión obsoleta no guardan tokens',async()=>{
  const before=await m.calendarConfig(),gmail=gmailRow();
- googleEmail='wrong@example.invalid';let c=await start();assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('calendar'),'error');googleEmail=m.CALENDAR_ACCOUNT;
- tokenScope='https://www.googleapis.com/auth/gmail.send';c=await start();assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('calendar'),'error');tokenScope=m.CALENDAR_SCOPE;
- calls=[];c=await start();assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c,c.cookie,'error=access_denied'))).url).searchParams.get('calendar'),'error');assert.equal(calls.length,0);
- c=await start();sql.prepare('UPDATE payroll_calendar SET version=version+1 WHERE id=?').run('jac');assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('calendar'),'error');assert.equal(calls.length,0);
+ googleEmail='wrong@example.invalid';let c=await start();assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('reason'),'wrong_account');googleEmail=m.CALENDAR_ACCOUNT;
+ tokenScope='https://www.googleapis.com/auth/gmail.send';c=await start();assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('reason'),'calendar_scope');tokenScope=m.CALENDAR_SCOPE;
+ calls=[];c=await start();assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c,c.cookie,'error=access_denied'))).url).searchParams.get('reason'),'google_denied');assert.equal(calls.length,0);
+ c=await start();sql.prepare('UPDATE payroll_calendar SET version=version+1 WHERE id=?').run('jac');assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('reason'),'configuration_changed');assert.equal(calls.length,0);
  assert.equal((await m.calendarConfig()).credentials,before.credentials);assert.deepEqual(gmailRow(),gmail);assert.ok(!calls.some(x=>x.url.pathname==='/revoke'));
+});
+
+test('el callback distingue fallos de Google y de guardado sin filtrar secretos ni aceptar permisos incompletos',async()=>{
+ const before=await m.calendarConfig(),gmail=gmailRow(),logs=[],originalError=console.error;
+ console.error=(...args)=>logs.push(args);
+ const tokenURL='https://oauth2.googleapis.com/token',accountURL='https://openidconnect.googleapis.com/v1/userinfo';
+ const token={access_token:'simulated-calendar-access',refresh_token:'simulated-calendar-refresh',scope:m.CALENDAR_SCOPE};
+ const cases=[
+  ['calendar_scope',url=>url.href===tokenURL?Response.json({...token,scope:'openid email'}):null],
+  ['missing_refresh_token',url=>url.href===tokenURL?Response.json({...token,refresh_token:undefined}):null],
+  ['google_token',url=>url.href===tokenURL?Response.json({...token,access_token:''}):null],
+  ['google_code_expired',url=>url.href===tokenURL?Response.json({error:'invalid_grant',error_description:'simulated-client-secret'},{status:400}):null],
+  ['google_client',url=>url.href===tokenURL?Response.json({error:'invalid_client'},{status:401}):null],
+  ['google_client',url=>url.href===tokenURL?Response.json({error:'unauthorized_client'},{status:400}):null],
+  ['google_scope',url=>url.href===tokenURL?Response.json({error:'invalid_scope'},{status:400}):null],
+  ['google_denied',url=>url.href===tokenURL?Response.json({error:'access_denied'},{status:400}):null],
+  ['google_token',url=>url.href===tokenURL?Response.json({error:'untrusted-provider-message simulated-client-secret'},{status:500}):null],
+  ['google_token',url=>{if(url.href===tokenURL)throw new Error('simulated-client-secret');return null;}],
+  ['account_verification',url=>url.href===accountURL?Response.json({email:m.CALENDAR_ACCOUNT,email_verified:false}):null],
+  ['account_verification',url=>url.href===accountURL?Response.json({error:'simulated-calendar-access'},{status:401}):null],
+  ['connection_storage',url=>{if(url.href===accountURL){sql.exec("CREATE TEMP TRIGGER reject_calendar_save BEFORE UPDATE ON payroll_calendar BEGIN SELECT RAISE(ABORT,'simulated-storage-secret'); END;");}return null;}],
+ ];
+ try{
+  for(const [reason,hook] of cases){
+   const c=await start();calls=[];googleHook=hook;
+   const response=await m.callback.GET(callbackRequest(c)),target=new URL(response.headers.get('location'));
+   googleHook=null;sql.exec('DROP TRIGGER IF EXISTS reject_calendar_save');
+   assert.equal(response.status,303);assert.equal(target.origin,'https://jhonalexcastano.com');assert.equal(target.searchParams.get('calendar'),'error');assert.equal(target.searchParams.get('reason'),reason);
+   assert.match(response.headers.get('set-cookie'),/Max-Age=0/);assert.match(response.headers.get('cache-control'),/no-store/);
+   assert.equal(sql.prepare('SELECT id FROM payroll_oauth WHERE id=?').get('calendar:'+c.state),undefined);
+   const count=calls.length;assert.equal(await m.finishCalendarCallback(callbackRequest(c)),null);assert.equal(calls.length,count);
+   assert.deepEqual(await m.calendarConfig(),before);assert.deepEqual(gmailRow(),gmail);
+   assert.deepEqual(logs.at(-1),['Calendar authorization failed',{reason,mode:'web'}]);
+   for(const secret of [c.state,ownerToken,'simulated-code','simulated-client-secret','simulated-calendar-access','simulated-calendar-refresh','simulated-storage-secret']){assert.ok(!target.href.includes(secret));assert.ok(!JSON.stringify(logs).includes(secret));}
+   assert.ok(!calls.some(x=>x.url.pathname==='/revoke'));
+  }
+ }finally{googleHook=null;console.error=originalError;sql.exec('DROP TRIGGER IF EXISTS reject_calendar_save');}
+ assert.match(calendarOAuthMessage('calendar_scope'),/marca la casilla/);
+ for(const value of [null,'untrusted-provider-message','__proto__','constructor','toString'])assert.equal(calendarOAuthMessage(value),calendarOAuthMessage(null));
+});
+
+test('revalida sesión, cliente y revisión tras consultar Google antes de guardar la conexión',async()=>{
+ const before=await m.calendarConfig(),gmail=gmailRow();
+ try{
+  let c=await start();googleHook=async url=>{if(url.href==='https://openidconnect.googleapis.com/v1/userinfo')sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(ownerToken));return null;};
+  assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('reason'),'session_revoked');googleHook=null;ownerToken=await m.makeSession(owner);
+  c=await start();googleHook=async url=>{if(url.href==='https://openidconnect.googleapis.com/v1/userinfo')await m.saveMailCredentials('changed.apps.googleusercontent.com','simulated-new-secret');return null;};
+  assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('reason'),'configuration_changed');googleHook=null;
+  sql.prepare('UPDATE payroll_gmail SET credentials=?,connected_email=?,enabled=? WHERE id=?').run(gmail.credentials,gmail.connected_email,gmail.enabled,'jac');
+  c=await start();googleHook=async url=>{if(url.href==='https://openidconnect.googleapis.com/v1/userinfo')sql.prepare('UPDATE payroll_calendar SET version=version+1 WHERE id=?').run('jac');return null;};
+  assert.equal(new URL((await m.finishCalendarCallback(callbackRequest(c))).url).searchParams.get('reason'),'configuration_changed');googleHook=null;
+  assert.equal((await m.calendarConfig()).credentials,before.credentials);
+ }finally{googleHook=null;sql.prepare('UPDATE payroll_gmail SET credentials=?,connected_email=?,enabled=? WHERE id=?').run(gmail.credentials,gmail.connected_email,gmail.enabled,'jac');}
 });
 
 test('selección comprueba acceso real y revisión; calendario compartido expande recurrencias y pagina eventos',async()=>{
