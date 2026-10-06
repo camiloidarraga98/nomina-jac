@@ -21,18 +21,30 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Registrar versión de Xcode y simuladores
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available
       - name: Compilar para iPhone Simulator
         run: >-
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina
           -destination 'generic/platform=iOS Simulator'
           -derivedDataPath work/ios-build
           CODE_SIGNING_ALLOWED=NO build
-      - name: Pruebas nativas con respuestas simuladas
+      - name: Pruebas nativas y arranque visible en simulador
         run: |
           DEVICE=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(x['udid'] for xs in d['devices'].values() for x in xs if x['name'].startswith('iPhone')))" )
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
             -destination "platform=iOS Simulator,id=$DEVICE" \
-            -derivedDataPath work/ios-build CODE_SIGNING_ALLOWED=NO test
+            -derivedDataPath work/ios-build -resultBundlePath work/ios-tests.xcresult \
+            CODE_SIGNING_ALLOWED=NO test
+      - name: Guardar diagnóstico de arranque
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JACNomina-diagnostico-arranque
+          path: work/ios-tests.xcresult
+          retention-days: 7
       - name: Guardar app de simulador
         uses: actions/upload-artifact@v4
         with:
