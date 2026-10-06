@@ -28,7 +28,7 @@ final class CalendarAuthorizer: NSObject, ASWebAuthenticationPresentationContext
               let items = p.queryItems, items.filter({ $0.name == "nonce" }).count == 1, items.first(where: { $0.name == "nonce" })?.value == nonce, items.filter({ $0.name == "result" }).count == 1 else {
             throw APIError.message("La respuesta de Google no corresponde a esta autorización.")
         }
-        guard items.first(where: { $0.name == "result" })?.value == "connected" else { throw APIError.message("Agenda no quedó conectada. Elige jacmusicestudios@gmail.com y concede la lectura del calendario.") }
+        guard items.first(where: { $0.name == "result" })?.value == "connected" else { throw APIError.message("Agenda no quedó conectada. Elige jacmusicestudios@gmail.com y concede consultar calendarios y editar eventos.") }
     }
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first(where: \.isKeyWindow) ?? ASPresentationAnchor()
