@@ -1,0 +1,1 @@
+ALTER TABLE `payroll_users` ADD `write_nonce` text DEFAULT '' NOT NULL;

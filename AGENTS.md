@@ -1,5 +1,15 @@
-# Continuidad del proyecto
+# Nómina JAC Music — continuidad Cloud
 
-Esta importación inicial contiene el código en `nomina-jac-cloud.zip`. Antes de trabajar, extráelo en la raíz con `python3 -m zipfile -e nomina-jac-cloud.zip .` y lee las instrucciones completas en `AGENTS.md` y `docs/PROJECT_CONTEXT.md` extraídos.
+Lee `docs/PROJECT_CONTEXT.md` antes de modificar el proyecto. Habla con Camilo en español.
 
-Habla con Camilo en español. Node.js 24 LTS; npm ci; TypeScript, pruebas de cálculo/autenticación/correo y build. No uses producción para pruebas, envíos o eliminación. Mantén el repositorio privado y el Site existente. No copies secretos ni datos reales de la base.
+- Node.js 24 LTS; instala con `npm ci` y el lockfile existente.
+- Verifica con `npx tsc --noEmit`, `node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs` y `npm run build`. Estas pruebas usan bases en memoria y correo simulado.
+- Las pruebas integradas con servidor solo pueden apuntar a una instancia local desechable. Nunca uses producción para pruebas de envío o eliminación.
+- Mantén las migraciones aplicadas `drizzle/0000` a `0006`; agrega nuevas cuando cambie el esquema.
+- Respeta permisos en las API, instantáneas, controles de concurrencia y envíos idempotentes.
+- El dominio es `https://jhonalexcastano.com`, Site existente `appgprj_6aa0260b82a88191a47960614238350a`. Mantén `.openai/hosting.json` y los enlaces D1/R2. No crees otro Site ni cambies DNS para corregir código.
+- Publica mediante el flujo autenticado de Sites y sus habilidades. Si Cloud carece de ese acceso, conserva los cambios para revisión y explica el acceso faltante; no afirmes haber desplegado.
+- Nunca guardes credenciales de publicación ni claves reales en archivos. `PAYROLL_MAIL_KEY` y `PAYROLL_AUTH_KEY` se administran en Sites. Usa claves independientes de prueba para desarrollo local.
+- El código contiene datos iniciales de personal, documentos y tarifas: repositorio privado. No subas bases de producción, `.env`, `.dev.vars`, sesiones, invitaciones ni exportaciones de nómina.
+
+Esta copia parte del commit de producción `0d26668b0b3361e18b5a471f955cbc4e2a682207`, exportado el 6 de octubre de 2026, con documentación adicional. No contiene historial Git ni datos actuales de la base real. Verifica la publicación y ejecución del entorno Cloud antes de declarar completa la migración.
