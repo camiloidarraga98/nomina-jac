@@ -43,6 +43,16 @@ Estado global/revisión en `payroll_state`, períodos separados en `payroll_peri
 
 Última versión pasó TypeScript, compilación y 30 pruebas de cálculo, autenticación y correo. Borrado probado en bases simuladas: limpieza de lotes históricos, rechazo a no propietarios, versión obsoleta, envío en curso, cero períodos y creación posterior. UI comprobada con propietario/no propietario y sin quincenas. Algunas pruebas integradas heredadas aún describen el bootstrap anterior; no ejecutarlas contra producción.
 
+## Aplicación para iPhone
+
+Camilo pidió una app nativa para iPhone conectada a las mismas cuentas y D1 del webapp. Primera entrega en `ios/`, SwiftUI para iOS 17+, proyecto `ios/JACNomina.xcodeproj`, esquema `JACNomina`. La interfaz no usa WebViews. Consulta quincenas, pagos, actividad, personal y condiciones; permite descargar/compartir documentos, consultar permisos y cambiar contraseña. La edición de nómina, cierres/correcciones, Usuarios y Gmail permanecen en la web en esta primera entrega.
+
+`GET /api/mobile/payroll` devuelve usuario, permisos, índice y personal; con `?period=ID` devuelve detalle y los cálculos del servidor. Requiere sesión propia real y preserva snapshots/condiciones históricas. Autenticación y exportación reutilizan las API existentes. No agrega tablas, claves, permisos ni reglas de cálculo. El iPhone guarda solo la sesión en Llavero; los documentos son temporales y la nómina no se persiste en otra base.
+
+Camilo confirmó que tiene Mac y Apple Developer y que solo usarán la app tres personas. No necesita publicación en App Store: instalación con Xcode o distribución ad hoc a dispositivos registrados; TestFlight es alternativa de beta, con builds de 90 días. La firma se hace con su cuenta en su Mac, nunca copiando certificados o contraseñas al repositorio. Guía completa en `ios/README.md`.
+
+CI en `.github/workflows/ios.yml` compila y ejecuta las pruebas nativas en macOS, con red simulada y sin consultar producción. Las pruebas de la API móvil están en `tests/payroll-mobile.test.mjs`, con D1 en memoria. Conserva este contrato al añadir edición nativa en entregas futuras.
+
 ## Preparar entorno Cloud
 
 Node.js 24 LTS; `npm ci`; `npx tsc --noEmit`; `node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs`; `npm run build`. Para vista local `npm run dev`, D1 local y claves de desarrollo ignoradas, nunca credenciales reales. Para desplegar conecta Sites al mismo proyecto. Si falta ese acceso, deja cambios revisables e indica el bloqueo. Comprueba publicación del entorno Cloud y primera ejecución antes de afirmar que está listo.

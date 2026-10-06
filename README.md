@@ -17,6 +17,8 @@ Las pruebas usan bases en memoria y correo simulado. Para vista local usa `npm r
 
 ## Funciones
 
+La primera app nativa de iPhone está en [`ios/`](ios/README.md), con proyecto SwiftUI/Xcode, acceso a las mismas cuentas, consulta de quincenas/pagos/personal y documentos. Puede instalarse de forma privada en los tres iPhones registrados de Camilo sin publicarla en App Store. La guía detalla el alcance de esta entrega y la firma desde su Mac.
+
 Personal, tarifas y conceptos editables; shows y ajustes de honorarios; kilometraje compartido y adicional; novedades y siete categorías de horas. Cierres con instantáneas, correcciones con historial y permiso delegable. Eliminación completa de quincenas por el propietario.
 
 PDF de resumen/desprendibles, ZIP, Excel y buscador para imprimir por empleado. Envío automático de PDF individual por Gmail al cerrar, con estados y reintentos controlados.
