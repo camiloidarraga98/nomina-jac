@@ -60,7 +60,7 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOw
    <p className="panel-note">{isOwner?'Usa jacmusicestudios@gmail.com y selecciona el calendario de Jhon Alex. La agenda se comparte con los usuarios activos de JAC.':'Camilo prepara la conexión y selecciona el calendario que podrá consultar el equipo.'}</p>
    {isOwner&&<div className="agenda-setup">
     {!connection?.configured?<Button onClick={onGoogleSetup}>Preparar Google en Correos</Button>:<>
-     <p>En el proyecto de Google que utilizas para JAC, activa <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noreferrer">Google Calendar API <ExternalLink size={13}/></a>. Después autoriza la consulta de la agenda.</p>
+     <p>En el proyecto de Google que utilizas para JAC, activa <a href="https://console.cloud.google.com/apis/library/calendar-json.googleapis.com" target="_blank" rel="noreferrer">Google Calendar API <ExternalLink size={13}/></a>. Al conectar, elige jacmusicestudios@gmail.com y marca el permiso para consultar tus calendarios antes de continuar.</p>
      <Button className="primary" onClick={()=>void connect()} disabled={busy||connectBlocked}>{busy?'Preparando…':connection.connected?'Volver a autorizar Google':'Conectar Google'}</Button>
      {connectBlocked&&<p className="muted">Guarda o respalda los cambios pendientes de nómina antes de abrir Google.</p>}
     </>}

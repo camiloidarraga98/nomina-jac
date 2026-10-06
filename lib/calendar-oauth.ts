@@ -6,6 +6,8 @@ import {tokenHash,sessionToken} from './payroll-auth-crypto';
 import {isOwnerEmail} from './payroll-policy';
 import {CALENDAR_SCOPE,CALENDAR_ACCOUNT} from './calendar-core';
 import type {AccessUser} from './payroll-permissions';
+import type {CalendarOAuthReason} from './calendar-oauth-errors';
+class AuthorizationFailure extends Error {constructor(public reason:CalendarOAuthReason){super(reason);}}
 type Context={kind:'calendar';mode:'web'|'native';state:string;url:string;actor:string;userId:string;sessionId:string;nonce:string;guardHash:string;verifier:string;credentials:{clientId:string;clientSecret:string};revision:number};
 const random=()=>base64Url(crypto.getRandomValues(new Uint8Array(32)));
 const valid=(v:string|null|undefined):v is string=>!!v&&/^[A-Za-z0-9_-]{43}$/.test(v);
@@ -43,26 +45,48 @@ export async function finishCalendarCallback(req:Request){
  const db=database(),id='calendar:'+state,row=await db.prepare('SELECT payload,expires_at FROM payroll_oauth WHERE id=?').bind(id).first<{payload:string;expires_at:string}>();if(!row)return null;
  const c=await decryptMail<Context>(row.payload,mailKey());if(c.kind!=='calendar'||c.state!==state)return null;
  const guard=req.headers.get('cookie')?.split(';').map(s=>s.trim()).find(s=>s.startsWith(cookieName+'='))?.slice(cookieName.length+1);
- let result='error';
- const browserSession=c.mode==='native'||tokenHash(sessionToken(req.headers.get('cookie')||'',true)||'')===c.sessionId;
- if(valid(guard)&&tokenHash(guard)===c.guardHash&&browserSession){
+ let result='error',reason:CalendarOAuthReason|undefined,stage:CalendarOAuthReason='connection_storage';
+ try{
+  if(!valid(guard)||tokenHash(guard)!==c.guardHash)throw new AuthorizationFailure('browser_guard');
+  if(c.mode!=='native'&&tokenHash(sessionToken(req.headers.get('cookie')||'',true)||'')!==c.sessionId)throw new AuthorizationFailure('web_session');
   const claimed=await db.prepare('DELETE FROM payroll_oauth WHERE id=? AND payload=? RETURNING payload').bind(id,row.payload).first();
-  if(claimed&&row.expires_at>=new Date().toISOString()&&await activeOwner(c)&&!url.searchParams.has('error')){
-   const code=url.searchParams.get('code');
-   if(code&&code.length<=4096){try{
-    const current=await calendarConfig(),client=await calendarClientCredentials();
-    if(current?.version!==c.revision||JSON.stringify(client)!==JSON.stringify(c.credentials))throw new Error('Configuración cambiada');
-    const token=await calendarGooglePost({client_id:c.credentials.clientId,client_secret:c.credentials.clientSecret,code,code_verifier:c.verifier,grant_type:'authorization_code',redirect_uri:GMAIL_CALLBACK});
-    if(typeof token.access_token!=='string'||typeof token.refresh_token!=='string'||!String(token.scope||'').split(' ').includes(CALENDAR_SCOPE))throw new Error('Permiso incompleto');
-    const response=await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{Authorization:'Bearer '+token.access_token},redirect:'error',signal:AbortSignal.timeout(15000)});
-    if(!response.ok)throw new Error('Cuenta no verificada');
-    const account=await response.json() as {email?:string;email_verified?:boolean};
-    if(account.email?.toLowerCase()!==CALENDAR_ACCOUNT||!account.email_verified||!await activeOwner(c))throw new Error('Cuenta o sesión inválida');
-    if(JSON.stringify(await calendarClientCredentials())!==JSON.stringify(c.credentials))throw new Error('Configuración cambiada');
-    await storeCalendarCredentials({...c.credentials,refreshToken:token.refresh_token},c.revision);result='connected';
-   }catch{result='error';}}
+  if(!claimed)throw new AuthorizationFailure('authorization_used');
+  if(row.expires_at<new Date().toISOString())throw new AuthorizationFailure('expired');
+  if(!await activeOwner(c))throw new AuthorizationFailure('session_revoked');
+  if(url.searchParams.has('error'))throw new AuthorizationFailure('google_denied');
+  const code=url.searchParams.get('code');
+  if(!code||code.length>4096)throw new AuthorizationFailure('missing_code');
+  stage='configuration_changed';
+  const current=await calendarConfig(),client=await calendarClientCredentials();
+  if(current?.version!==c.revision||JSON.stringify(client)!==JSON.stringify(c.credentials))throw new AuthorizationFailure('configuration_changed');
+  stage='google_token';
+  const token=await calendarGooglePost({client_id:c.credentials.clientId,client_secret:c.credentials.clientSecret,code,code_verifier:c.verifier,grant_type:'authorization_code',redirect_uri:GMAIL_CALLBACK});
+  if(typeof token.access_token!=='string'||!token.access_token)throw new AuthorizationFailure('google_token');
+  if(typeof token.scope!=='string'||!token.scope.split(/\s+/).includes(CALENDAR_SCOPE))throw new AuthorizationFailure('calendar_scope');
+  if(typeof token.refresh_token!=='string'||!token.refresh_token)throw new AuthorizationFailure('missing_refresh_token');
+  stage='account_verification';
+  const response=await fetch('https://openidconnect.googleapis.com/v1/userinfo',{headers:{Authorization:'Bearer '+token.access_token},redirect:'error',signal:AbortSignal.timeout(15000)});
+  if(!response.ok)throw new AuthorizationFailure('account_verification');
+  const account=await response.json() as {email?:string;email_verified?:boolean};
+  if(typeof account.email!=='string'||account.email_verified!==true)throw new AuthorizationFailure('account_verification');
+  if(account.email.toLowerCase()!==CALENDAR_ACCOUNT)throw new AuthorizationFailure('wrong_account');
+  stage='connection_storage';
+  if(!await activeOwner(c))throw new AuthorizationFailure('session_revoked');
+  stage='configuration_changed';
+  if(JSON.stringify(await calendarClientCredentials())!==JSON.stringify(c.credentials))throw new AuthorizationFailure('configuration_changed');
+  stage='connection_storage';
+  await storeCalendarCredentials({...c.credentials,refreshToken:token.refresh_token},c.revision);result='connected';
+ }catch(error){
+  reason=error instanceof AuthorizationFailure?error.reason:error instanceof CalendarFailure&&error.status===409?'configuration_changed':stage;
+  if(stage==='google_token'&&error instanceof CalendarFailure){
+   if(error.googleError==='invalid_grant')reason='google_code_expired';
+   else if(error.googleError==='invalid_client'||error.googleError==='unauthorized_client')reason='google_client';
+   else if(error.googleError==='invalid_scope')reason='google_scope';
+   else if(error.googleError==='access_denied')reason='google_denied';
   }
+  // Only fixed reason codes: never log OAuth URLs, codes, credentials or provider bodies.
+  console.error('Calendar authorization failed',{reason,mode:c.mode});
  }
- const target=new URL(c.mode==='native'?'jacnomina://calendar':'https://jhonalexcastano.com/');target.search=new URLSearchParams({...(c.mode==='native'?{result,nonce:c.nonce}:{calendar:result})}).toString();
+ const target=new URL(c.mode==='native'?'jacnomina://calendar':'https://jhonalexcastano.com/');target.search=new URLSearchParams({...(c.mode==='native'?{result,nonce:c.nonce}:{calendar:result}),...(reason?{reason}:{})}).toString();
  return {url:target.toString(),cookie:calendarCookie('',0)};
 }
