@@ -1,4 +1,4 @@
-import {newPeriod,updateShow,removeShow,setShowRoute,type PayrollState,type Period,type Employee,type Concept,type Show,type Movement,type Hours,type Route,type ShowRoute,type Settings} from './payroll';
+import {newPeriod,updateShow,removeShow,setShowRoute,movementPaymentKind,type PayrollState,type Period,type Employee,type Concept,type Show,type Movement,type Hours,type Route,type ShowRoute,type Settings} from './payroll';
 
 export type MobileEdit={kind:string;periodId?:string;record?:Record<string,unknown>;id?:string};
 export class MobileEditError extends Error{}
@@ -27,7 +27,7 @@ export function applyMobileEdit(current:PayrollState,edit:MobileEdit,remove=fals
   case 'concept':upsert(next.concepts,record as Concept,x=>x.id);break;
   case 'settings':next.settings=record as Settings;break;
   case 'show':updateShow(period(),record as Show);break;
-  case 'movement':upsert(period().movements,record as Movement,x=>x.id);break;
+  case 'movement':{const movement=record as Movement;upsert(period().movements,{...movement,kind:movementPaymentKind(movement)},x=>x.id);break;}
   case 'hours':upsert(period().hours,record as Hours,x=>x.employeeId);break;
   case 'route':{
    const p=period();if('showId' in record)setShowRoute(p,record as ShowRoute);else upsert(p.routes,record as Route,x=>x.id);break;

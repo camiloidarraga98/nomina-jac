@@ -21,6 +21,15 @@ export type Snapshot={rows:PayrollRow[];sale:number;total:number;gross:number;de
 export type Period={id:string;start:string;end:string;status:'abierta'|'cerrada';shows:Show[];movements:Movement[];hours:Hours[];routes:Route[];excludedEmployees:string[];snapshot?:Snapshot;revisions?:Snapshot[];calculationBase?:{employees:Employee[];settings:Settings};ownerOnly?:boolean;reopenedAt?:string;reopenedBy?:string};
 export type Settings={company:string;nit:string;hourDivisor:number;hourFactors:number[]};
 export type PayrollState={employees:Employee[];concepts:Concept[];settings:Settings;periods:Period[]};
+export const isRehearsalConcept=(name:string)=>name.trim().normalize('NFC').toLocaleLowerCase('es')==='ensayo';
+export const movementPaymentKind=(m:Pick<Movement,'concept'|'kind'>):Movement['kind']=>isRehearsalConcept(m.concept)&&m.kind!=='descuento'?'servicio':m.kind;
+export function rehearsalPaymentIssue(m:Pick<Movement,'concept'|'kind'>,employee?:Employee){
+ return isRehearsalConcept(m.concept)&&m.kind!=='descuento'&&employee&&employee.salary>0?`${employee.name}: el ensayo solo se paga por evento; no corresponde a una persona con salario fijo.`:null;
+}
+export function normalizeRehearsalMovements(p:Period):Period{
+ if(p.status==='cerrada')return p;
+ return {...p,movements:p.movements.map(m=>{const kind=movementPaymentKind(m);return kind===m.kind?m:{...m,kind};})};
+}
 export const round=(n:number)=>Math.round((n+Number.EPSILON)*100)/100;
 export const money=(n:number)=>'$ '+Math.round(n).toLocaleString('es-CO',{maximumFractionDigits:0}).replace(/[\u00a0\u202f]/g,' ');
 const months=['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
@@ -30,11 +39,12 @@ export function periodLabel(p:Pick<Period,'start'|'end'>){return `${Number(p.sta
 export function newPeriod(start:string,end:string):Period{return {id:crypto.randomUUID(),start,end,status:'abierta',shows:[],movements:[],hours:[],routes:[],excludedEmployees:[]};}
 export function calculate(state:PayrollState,p:Period):Omit<Snapshot,'closedAt'|'closedBy'|'employees'>{
  if(p.status==='cerrada'&&p.snapshot)return p.snapshot;
+ p=normalizeRehearsalMovements(p);
  if(p.calculationBase)state={...state,...p.calculationBase};
  const rows:PayrollRow[]=[];
  for(const e of state.employees){
   if(!e.active||e.deleted||p.excludedEmployees.includes(e.id))continue;
-  const moves=p.movements.filter(m=>m.employeeId===e.id);
+  const moves=p.movements.filter(m=>m.employeeId===e.id&&!rehearsalPaymentIssue(m,e));
   const service:Item[]=[];
   for(const s of p.shows){const part=s.participants.find(x=>x.employeeId===e.id);if(part&&part.amount>0)service.push({concept:s.name,quantity:1,rate:part.amount,amount:part.amount,kind:'ingreso',reference:s.date});}
   for(const r of p.routes){const driver=routeDrivers(r).find(d=>d.employeeId===e.id);if(driver)service.push({concept:'kind' in r?'Kilometraje extra · '+r.name:r.name,quantity:r.km,rate:driver.rate,amount:round(r.km*driver.rate),kind:'ingreso',reference:r.date});}
@@ -71,12 +81,13 @@ export function calculate(state:PayrollState,p:Period):Omit<Snapshot,'closedAt'|
 }
 function makeRow(e:Employee,category:Category,items:Item[]):PayrollRow{const sum=(k:Item['kind'])=>round(items.filter(x=>x.kind===k).reduce((v,x)=>v+x.amount,0));const gross=sum('ingreso'),reimbursements=sum('reintegro'),deductions=sum('deduccion');return {employeeId:e.id,name:e.name,document:e.document,role:e.role,category,gross,reimbursements,deductions,net:round(gross+reimbursements-deductions),items};}
 export function closeIssues(state:PayrollState,p:Period):string[]{
+ p=normalizeRehearsalMovements(p);
  if(p.calculationBase)state={...state,...p.calculationBase};
  const result=calculate(state,p),issues:string[]=[];for(const r of result.rows)if(r.net<0)issues.push(`${r.name}: el neto es negativo.`);if(!result.rows.length)issues.push('La quincena no tiene pagos para cerrar.');
  const valid=(id:string)=>state.employees.find(e=>e.id===id&&e.active&&!e.deleted)&&!p.excludedEmployees.includes(id);
  for(const sh of p.shows)for(const part of sh.participants)if(!valid(part.employeeId))issues.push(`El show ${sh.name} contiene una persona excluida o inactiva. Revisa sus participantes.`);
  for(const r of p.routes)for(const d of routeDrivers(r))if(!valid(d.employeeId))issues.push(`El recorrido ${r.name} contiene una persona excluida o inactiva.`);
- for(const m of p.movements){if(!valid(m.employeeId))issues.push(`La novedad ${m.concept} corresponde a una persona excluida o inactiva.`);if(m.kind==='salarial'&&!result.rows.some(r=>r.employeeId===m.employeeId&&r.category==='administracion'))issues.push(`La novedad salarial ${m.concept} no tiene un salario en este corte.`);if(!result.rows.some(r=>r.employeeId===m.employeeId))issues.push(`La novedad ${m.concept} no está incluida en un pago. Revisa la frecuencia de la persona.`);}
+ for(const m of p.movements){const rehearsalIssue=rehearsalPaymentIssue(m,state.employees.find(e=>e.id===m.employeeId));if(rehearsalIssue)issues.push(rehearsalIssue);if(!valid(m.employeeId))issues.push(`La novedad ${m.concept} corresponde a una persona excluida o inactiva.`);if(m.kind==='salarial'&&!result.rows.some(r=>r.employeeId===m.employeeId&&r.category==='administracion'))issues.push(`La novedad salarial ${m.concept} no tiene un salario en este corte.`);if(!result.rows.some(r=>r.employeeId===m.employeeId))issues.push(`La novedad ${m.concept} no está incluida en un pago. Revisa la frecuencia de la persona.`);}
  for(const h of p.hours)if((h.counts.some(n=>n>0)||h.vacations>0)&&!result.rows.some(r=>r.employeeId===h.employeeId&&r.category==='administracion'))issues.push('Hay horas o vacaciones de una persona fuera de este corte.');
  return [...new Set(issues)];
 }
