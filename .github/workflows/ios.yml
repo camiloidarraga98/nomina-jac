@@ -21,18 +21,58 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - name: Seleccionar el Xcode estable más reciente instalado
+        run: |
+          XCODE_APP=$(python3 - <<'PY'
+          from pathlib import Path
+          import re
+          candidates = []
+          for path in Path('/Applications').glob('Xcode_*.app'):
+              version = re.fullmatch(r'Xcode_(\d+(?:\.\d+)*)\.app', path.name)
+              if version:
+                  candidates.append((tuple(map(int, version[1].split('.'))), path))
+          print(max(candidates)[1] if candidates else '/Applications/Xcode.app')
+          PY
+          )
+          sudo xcode-select --switch "$XCODE_APP/Contents/Developer"
+      - name: Registrar versión de Xcode y simuladores
+        run: |
+          xcodebuild -version
+          xcrun simctl list devices available
       - name: Compilar para iPhone Simulator
         run: >-
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina
           -destination 'generic/platform=iOS Simulator'
           -derivedDataPath work/ios-build
           CODE_SIGNING_ALLOWED=NO build
-      - name: Pruebas nativas con respuestas simuladas
+      - name: Pruebas nativas y arranque visible en simulador
         run: |
-          DEVICE=$(xcrun simctl list devices available -j | python3 -c "import json,sys; d=json.load(sys.stdin); print(next(x['udid'] for xs in d['devices'].values() for x in xs if x['name'].startswith('iPhone')))" )
+          DEVICE=$(python3 - <<'PY'
+          import json, re, subprocess
+          devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '-j']))['devices']
+          runtimes = sorted((key for key in devices if '.iOS-' in key), key=lambda key: tuple(map(int, re.findall(r'\d+', key))), reverse=True)
+          print(next(device['udid'] for runtime in runtimes for device in devices[runtime] if device['name'].startswith('iPhone')))
+          PY
+          )
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
             -destination "platform=iOS Simulator,id=$DEVICE" \
-            -derivedDataPath work/ios-build CODE_SIGNING_ALLOWED=NO test
+            -derivedDataPath work/ios-build -resultBundlePath work/ios-tests.xcresult \
+            CODE_SIGNING_ALLOWED=NO test
+      - name: Exportar capturas del simulador
+        if: always()
+        run: |
+          if [ -d work/ios-tests.xcresult ]; then
+            xcrun xcresulttool export attachments --path work/ios-tests.xcresult --output-path work/ios-screenshots
+          fi
+      - name: Guardar diagnóstico de arranque
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JACNomina-diagnostico-arranque
+          path: |
+            work/ios-tests.xcresult
+            work/ios-screenshots
+          retention-days: 7
       - name: Guardar app de simulador
         uses: actions/upload-artifact@v4
         with:
