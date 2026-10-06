@@ -37,6 +37,20 @@ struct PeriodDetail: Decodable {
     let employees: [Employee]
     let calculation: PayrollCalculation
     let closeIssues: [String]
+    let record: JSONValue
+    let editing: JSONValue?
+
+    private enum CodingKeys: String, CodingKey { case version, period, employees, calculation, closeIssues, editing }
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        version = try c.decode(Int.self, forKey: .version)
+        period = try c.decode(PayrollPeriod.self, forKey: .period)
+        record = try c.decode(JSONValue.self, forKey: .period)
+        employees = try c.decode([Employee].self, forKey: .employees)
+        calculation = try c.decode(PayrollCalculation.self, forKey: .calculation)
+        closeIssues = try c.decode([String].self, forKey: .closeIssues)
+        editing = try c.decodeIfPresent(JSONValue.self, forKey: .editing)
+    }
 
     func employeeName(_ id: String) -> String {
         employees.first(where: { $0.id == id })?.name ?? "Persona no disponible"

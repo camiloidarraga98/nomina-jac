@@ -3,10 +3,12 @@ import Foundation
 enum APIError: LocalizedError {
     case unauthorized
     case message(String)
+    case conflict(String)
     var errorDescription: String? {
         switch self {
         case .unauthorized: return "Tu sesión venció o cambió tu acceso. Inicia sesión de nuevo."
         case .message(let message): return message
+        case .conflict(let message): return message
         }
     }
 }
@@ -44,7 +46,7 @@ final class PayrollClient {
     func hasSession() throws -> Bool { try vault.load() != nil }
     func clearSession() throws { try vault.clear(); TemporaryDocuments.clear() }
 
-    private func request(path: String, query: [URLQueryItem] = [], body: [String: String]? = nil, document: Bool = false) async throws -> (Data, HTTPURLResponse) {
+    private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false) async throws -> (Data, HTTPURLResponse) {
         var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { components.queryItems = query }
         var request = URLRequest(url: components.url!)
@@ -60,7 +62,7 @@ final class PayrollClient {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
             request.setValue(origin, forHTTPHeaderField: "Origin")
-            request.httpBody = try JSONSerialization.data(withJSONObject: body)
+            request.httpBody = try JSONEncoder().encode(body)
         }
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw APIError.message("El servidor no respondió correctamente.") }
@@ -71,6 +73,7 @@ final class PayrollClient {
         guard (200..<300).contains(response.statusCode) else {
             struct ServerError: Decodable { let error: String }
             let message = (try? decoder.decode(ServerError.self, from: data).error) ?? "No se pudo completar la operación. Intenta de nuevo."
+            if response.statusCode == 409 { throw APIError.conflict(message) }
             throw APIError.message(message)
         }
         if path == "api/auth" {
@@ -84,7 +87,7 @@ final class PayrollClient {
     }
 
     func login(username: String, password: String) async throws {
-        _ = try await request(path: "api/auth", body: ["action": "login", "username": username.trimmingCharacters(in: .whitespacesAndNewlines), "password": password])
+        _ = try await request(path: "api/auth", body: .object(["action": .string("login"), "username": .string(username.trimmingCharacters(in: .whitespacesAndNewlines)), "password": .string(password)]))
         guard try hasSession() else { throw APIError.message("No se pudo guardar la sesión. Intenta de nuevo.") }
     }
     func overview() async throws -> PayrollOverview {
@@ -96,12 +99,60 @@ final class PayrollClient {
         return try decoder.decode(PeriodDetail.self, from: data)
     }
     func changePassword(current: String, new: String) async throws {
-        _ = try await request(path: "api/auth", body: ["action": "password", "currentPassword": current, "password": new])
+        _ = try await request(path: "api/auth", body: .object(["action": .string("password"), "currentPassword": .string(current), "password": .string(new)]))
     }
     func logout() async throws {
-        do { _ = try await request(path: "api/auth", body: ["action": "logout"]) }
+        do { _ = try await request(path: "api/auth", body: .object(["action": .string("logout")])) }
         catch { try clearSession(); throw error }
         try clearSession()
+    }
+    func workspace() async throws -> PayrollWorkspace {
+        let (data, _) = try await request(path: "api/mobile/payroll", query: [URLQueryItem(name: "workspace", value: "1")])
+        return try decoder.decode(PayrollWorkspace.self, from: data)
+    }
+    func payroll(_ command: JSONValue) async throws -> PayrollEnvelope {
+        let (data, _) = try await request(path: "api/mobile/payroll", body: command)
+        return try decoder.decode(PayrollEnvelope.self, from: data)
+    }
+    func preview(_ command: JSONValue) async throws -> PayrollPreview {
+        var body = command; body["action"] = .string("previewEdit")
+        let (data, _) = try await request(path: "api/mobile/payroll", body: body)
+        return try decoder.decode(PayrollPreview.self, from: data)
+    }
+    func users() async throws -> UserDirectory {
+        let (data, _) = try await request(path: "api/users")
+        return try decoder.decode(UserDirectory.self, from: data)
+    }
+    func updateUser(_ user: ManagedUser) async throws -> OperationNotice {
+        let record = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(user))
+        return try await notice(path: "api/users", body: .object(["action": .string(user.id.isEmpty ? "create" : "update"), "id": .string(user.id), "version": .number(Double(user.version)), "user": record]))
+    }
+    func invite(userID: String) async throws -> InvitationResult {
+        let (data, _) = try await request(path: "api/users", body: .object(["action": .string("invite"), "id": .string(userID)]))
+        return try decoder.decode(InvitationResult.self, from: data)
+    }
+    func activate(token: String, password: String) async throws {
+        _ = try await request(path: "api/auth", body: .object(["action": .string("activate"), "token": .string(token), "password": .string(password)]))
+        guard try hasSession() else { throw APIError.message("No se pudo guardar la sesión. Intenta de nuevo.") }
+    }
+    func mail(periodID: String?) async throws -> PayrollMail {
+        let (data, _) = try await request(path: "api/payroll/email", query: periodID.map { [URLQueryItem(name: "period", value: $0)] } ?? [])
+        return try decoder.decode(PayrollMail.self, from: data)
+    }
+    func mailOperation(_ body: JSONValue) async throws -> OperationNotice { try await notice(path: "api/payroll/email", body: body) }
+    private func notice(path: String, body: JSONValue) async throws -> OperationNotice {
+        let (data, _) = try await request(path: path, body: body)
+        return try decoder.decode(OperationNotice.self, from: data)
+    }
+    func startGmail() async throws -> GmailStart {
+        let (data, _) = try await request(path: "api/mobile/gmail", body: .object([:]))
+        let start = try decoder.decode(GmailStart.self, from: data)
+        guard start.url.scheme == "https", start.url.host == baseURL.host, start.url.port == baseURL.port,
+              start.url.path == "/api/mobile/gmail", start.url.user == nil, start.url.password == nil,
+              start.nonce.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else {
+            throw APIError.message("La autorización recibida no es válida.")
+        }
+        return start
     }
     func download(periodID: String, format: DocumentFormat, employeeID: String? = nil) async throws -> ExportedDocument {
         var query = [URLQueryItem(name: "period", value: periodID), URLQueryItem(name: "format", value: format.rawValue)]
