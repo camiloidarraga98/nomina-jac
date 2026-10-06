@@ -247,12 +247,12 @@ struct AgendaEventEditor: View {
             Form {
                 if let error { Section { InlineError(message: error); Text("Tus datos siguen en el formulario. Si otra persona cambió el evento, cancela y abre la versión actual desde Agenda.").font(.footnote).foregroundStyle(.secondary) } }
                 if session.event?.recurring == true { Section { Text("Editarás solo esta ocurrencia. Los demás eventos de la serie se conservan.").font(.footnote) } }
-                Section("Evento") {
+                Section {
                     TextField("Título", text: $title).accessibilityIdentifier("agenda.editor.title")
                     Toggle("Todo el día", isOn: $allDay).accessibilityIdentifier("agenda.editor.allDay")
                     DatePicker("Inicio", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute]).accessibilityIdentifier("agenda.editor.start")
                     DatePicker(allDay ? "Último día" : "Fin", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute]).accessibilityIdentifier("agenda.editor.end")
-                } footer: { Text("Hora de Colombia. Se guardará en el calendario seleccionado de Google.") }
+                } header: { Text("Evento") } footer: { Text("Hora de Colombia. Se guardará en el calendario seleccionado de Google.") }
                 Section("Lugar y descripción") {
                     TextField("Lugar", text: $location).accessibilityIdentifier("agenda.editor.location")
                     TextField("Descripción", text: $description, axis: .vertical).lineLimit(4...10).accessibilityIdentifier("agenda.editor.description")
