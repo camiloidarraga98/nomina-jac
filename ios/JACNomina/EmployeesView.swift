@@ -5,62 +5,104 @@ struct EmployeesView: View {
     let overview: PayrollOverview
     @State private var search = ""
     @State private var includeInactive = false
+    @State private var includeDeleted = false
+    @State private var editor: PayrollEditorSession?
     private var employees: [Employee] {
-        overview.employees.filter { $0.deleted != true && (includeInactive || $0.active) && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.role.localizedCaseInsensitiveContains(search)) }.sorted { $0.name < $1.name }
+        overview.employees.filter {
+            (includeDeleted || $0.deleted != true) && (includeInactive || $0.active || (includeDeleted && $0.deleted == true)) &&
+            (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search) || $0.role.localizedCaseInsensitiveContains(search))
+        }.sorted { $0.name < $1.name }
     }
     var body: some View {
         NavigationStack {
             List {
-                if let error = store.error { Section { InlineError(message: error) } }
-                Section { Toggle("Incluir personas inactivas", isOn: $includeInactive) }
+                OperationStatusSection()
+                Section { Toggle("Incluir personas inactivas", isOn: $includeInactive); Toggle("Incluir personas eliminadas", isOn: $includeDeleted) }
                 if employees.isEmpty { ContentUnavailableView("Sin resultados", systemImage: "person.2", description: Text("Prueba con otro nombre o cargo.")) }
-                ForEach(["musicos", "tecnica", "conductores", "administracion", "comision"], id: \.self) { category in
-                    let group = employees.filter { $0.category == category }
+                ForEach(PayrollChoices.categories, id: \.0) { category in
+                    let group = employees.filter { $0.category == category.0 }
                     if !group.isEmpty {
-                        Section(PayrollFormat.category(category)) {
+                        Section(category.1) {
                             ForEach(group) { employee in
-                                NavigationLink { EmployeeDetailView(employee: employee) } label: {
+                                NavigationLink { EmployeeDetailView(employeeID: employee.id, user: overview.user) } label: {
                                     VStack(alignment: .leading, spacing: 4) {
                                         Text(employee.name).font(.headline)
-                                        Text(employee.role + (employee.active ? "" : " · Inactivo")).font(.subheadline).foregroundStyle(.secondary)
+                                        Text(employee.role + (employee.deleted == true ? " · Eliminado" : employee.active ? "" : " · Inactivo")).font(.subheadline).foregroundStyle(.secondary)
                                     }.padding(.vertical, 3)
                                 }
                             }
                         }
                     }
                 }
-            }
-            .navigationTitle("Equipo JAC")
-            .searchable(text: $search, prompt: "Buscar persona o cargo")
-            .refreshable { try? await store.refresh() }
+            }.navigationTitle("Equipo JAC").searchable(text: $search, prompt: "Buscar persona o cargo")
+                .refreshable { try? await store.refresh() }
+                .toolbar {
+                    if overview.user.can("staff") {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                if let w = store.workspace { editor = PayrollEditorSession(kind: .employee, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.employee, workspace: w)) }
+                            } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Agregar persona").accessibilityIdentifier("employee.create").disabled(!store.canWrite)
+                        }
+                    }
+                }.sheet(item: $editor) { PayrollEditorView(session: $0) }
         }
     }
 }
-
 struct EmployeeDetailView: View {
-    let employee: Employee
+    @EnvironmentObject private var store: PayrollStore
+    let employeeID: String
+    let user: PayrollUser
+    @State private var editor: PayrollEditorSession?
+    @State private var confirmDelete = false
+    private var record: JSONValue { store.workspace?.record("employees", id: employeeID) ?? .null }
     var body: some View {
         List {
-            Section("Datos personales") {
-                Text(employee.name).font(.title2.weight(.semibold))
-                LabeledContent("Documento", value: employee.document)
-                LabeledContent("Cargo", value: employee.role)
-                LabeledContent("Categoría", value: employee.categoryName)
-                LabeledContent("Estado", value: employee.active ? "Activo" : "Inactivo")
-                if let email = employee.email, !email.isEmpty { LabeledContent("Correo", value: email).textSelection(.enabled) }
-            }
-            Section("Condiciones de pago") {
-                AmountRow(title: "Honorario por show", value: employee.showRate)
-                if employee.kmRate > 0 { AmountRow(title: "Tarifa por kilómetro", value: employee.kmRate) }
-                if employee.fixedService > 0 { AmountRow(title: "Honorario fijo quincenal", value: employee.fixedService) }
-                if employee.salary > 0 {
-                    AmountRow(title: "Salario mensual", value: employee.salary)
-                    AmountRow(title: "Auxilio de transporte", value: employee.transport)
-                    LabeledContent("Ciclo de pago", value: employee.cycle == "mensual" ? "Mensual" : "Quincenal")
-                    LabeledContent("EPS", value: employee.health ? "Sí" : "No")
-                    LabeledContent("AFP", value: employee.pension ? "Sí" : "No")
+            OperationStatusSection()
+            EmployeeConditionsSection(record: record)
+            if user.can("staff") {
+                Section("Acciones") {
+                    if record["deleted"].flag {
+                        Button("Restaurar persona") { Task { _ = await store.action("restoreEmployee", employeeID: employeeID) } }.disabled(!store.canWrite)
+                        Text("La persona restaurada queda inactiva. Actívala al editar si corresponde.").font(.footnote).foregroundStyle(.secondary)
+                    } else {
+                        Button("Editar persona y condiciones") {
+                            if let w = store.workspace { editor = PayrollEditorSession(kind: .employee, workspace: w, detail: nil, record: record) }
+                        }.disabled(!store.canWrite)
+                        Button("Eliminar persona", role: .destructive) { confirmDelete = true }.disabled(!store.canWrite)
+                    }
                 }
             }
         }.navigationTitle("Personal").navigationBarTitleDisplayMode(.inline)
+            .sheet(item: $editor) { PayrollEditorView(session: $0) }
+            .confirmationDialog("¿Eliminar esta persona del personal vigente?", isPresented: $confirmDelete, titleVisibility: .visible) {
+                Button("Eliminar persona", role: .destructive) { Task { _ = await store.action("deleteEmployee", employeeID: employeeID) } }
+            } message: { Text("Sus registros históricos se conservan. Los registros del corte abierto se ajustan con las mismas reglas del sistema web.") }
+    }
+}
+struct EmployeeConditionsSection: View {
+    let record: JSONValue
+    var body: some View {
+        Section("Datos personales") {
+            Text(record["name"].text).font(.title2.weight(.semibold))
+            LabeledContent("Documento", value: record["document"].text); LabeledContent("Cargo", value: record["role"].text)
+            LabeledContent("Categoría", value: PayrollFormat.category(record["category"].text))
+            LabeledContent("Estado", value: record["deleted"].flag ? "Eliminado" : record["active"].flag ? "Activo" : "Inactivo")
+            if !record["email"].text.isEmpty { LabeledContent("Correo", value: record["email"].text).textSelection(.enabled) }
+        }
+        Section("Servicios y shows") {
+            AmountRow(title: "Honorario por show", value: record["showRate"].number); AmountRow(title: "Tarifa por kilómetro", value: record["kmRate"].number)
+            AmountRow(title: "Honorario fijo quincenal", value: record["fixedService"].number)
+            LabeledContent("Retención", value: PayrollFormat.number(record["withholding"].number * 100) + " %")
+            LabeledContent("ReteICA", value: PayrollFormat.number(record["ica"].number * 100) + " %")
+        }
+        Section("Nómina de dependientes") {
+            AmountRow(title: "Salario mensual", value: record["salary"].number); AmountRow(title: "Auxilio mensual", value: record["transport"].number)
+            LabeledContent("Frecuencia", value: record["cycle"].text == "mensual" ? "Mensual" : "Quincenal")
+            if record["cycle"].text == "mensual" { LabeledContent("Corte mensual", value: record["monthlyHalf"].number == 1 ? "Primera quincena" : "Segunda quincena") }
+            AmountRow(title: "Movilización no salarial", value: record["nonSalary"].number)
+            LabeledContent("Base de aportes", value: PayrollFormat.number(record["contributionBase"].number * 100) + " %")
+            AmountRow(title: "Retención de nómina", value: record["incomeTax"].number); AmountRow(title: "Solidaridad", value: record["solidarity"].number)
+            LabeledContent("EPS", value: record["health"].flag ? "Sí" : "No"); LabeledContent("AFP", value: record["pension"].flag ? "Sí" : "No")
+        }
     }
 }

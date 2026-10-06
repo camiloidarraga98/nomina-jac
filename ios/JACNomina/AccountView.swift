@@ -28,11 +28,11 @@ struct AccountView: View {
                     }
                 }
                 Section {
-                    Text("Esta primera versión permite consultar la nómina y compartir sus documentos. La edición y los cierres siguen disponibles en la web.").font(.footnote).foregroundStyle(.secondary)
+                    Text("La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .navigationTitle("Mi cuenta")
-            .confirmationDialog("¿Cerrar sesión en este iPhone?", isPresented: $confirmLogout, titleVisibility: .visible) {
+            .confirmationDialog("¿Cerrar sesión en este iPhone? Los cambios pendientes sin guardar se descartarán.", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("Cerrar sesión", role: .destructive) { Task { await store.signOut() } }
             }
         }

@@ -1,10 +1,12 @@
 import SwiftUI
 import QuickLook
+import UIKit
 
 struct DocumentsSection: View {
     @EnvironmentObject private var store: PayrollStore
     let detail: PeriodDetail
     let user: PayrollUser
+    @State private var search = ""
     var body: some View {
         Section("Documentos de la quincena") {
             if !detail.period.isClosed {
@@ -19,6 +21,7 @@ struct DocumentsSection: View {
         }
         if detail.period.isClosed && user.can("export") {
             Section("Desprendible individual") {
+                TextField("Buscar persona para imprimir", text: $search)
                 ForEach(uniqueEmployees, id: \.employeeId) { payment in
                     ExportButton(periodID: detail.period.id, format: .pdf, employeeID: payment.employeeId, title: payment.name)
                 }
@@ -27,43 +30,42 @@ struct DocumentsSection: View {
     }
     private var uniqueEmployees: [PayrollPayment] {
         var seen = Set<String>()
-        return detail.calculation.rows.filter { seen.insert($0.employeeId).inserted }.sorted { $0.name < $1.name }
+        return detail.calculation.rows.filter { seen.insert($0.employeeId).inserted && (search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)) }.sorted { $0.name < $1.name }
     }
 }
 
 struct PaymentDetailView: View {
-    let row: PayrollPayment
+    let rows: [PayrollPayment]
     let period: PayrollPeriod
     let user: PayrollUser
+    var conditions: JSONValue? = nil
     var body: some View {
         List {
-            Section {
-                Text(row.name).font(.title2.weight(.semibold))
-                LabeledContent("Documento", value: row.document)
-                LabeledContent("Cargo", value: row.role)
-                AmountRow(title: "Neto a pagar", value: row.net)
-            }
-            Section("Resumen del pago") {
-                AmountRow(title: "Ingresos", value: row.gross)
-                AmountRow(title: "Descuentos", value: row.deductions)
-                AmountRow(title: "Reintegros", value: row.reimbursements)
-            }
-            ForEach(["ingreso", "deduccion", "reintegro"], id: \.self) { kind in
-                let items = row.items.enumerated().filter { $0.element.kind == kind }
-                if !items.isEmpty {
-                    Section(kind == "ingreso" ? "Ingresos" : kind == "deduccion" ? "Descuentos" : "Reintegros") {
-                        ForEach(items, id: \.offset) { _, item in
+            if let first = rows.first {
+                Section {
+                    Text(first.name).font(.title2.weight(.semibold))
+                    LabeledContent("Documento", value: first.document); LabeledContent("Cargo", value: first.role)
+                    AmountRow(title: "Neto total de la persona", value: rows.reduce(0) { $0 + $1.net })
+                }
+                ForEach(Array(rows.enumerated()), id: \.offset) { _, row in
+                    Section(PayrollFormat.category(row.category)) {
+                        AmountRow(title: "Ingresos", value: row.gross); AmountRow(title: "Descuentos", value: row.deductions)
+                        AmountRow(title: "Reintegros", value: row.reimbursements); AmountRow(title: "Neto", value: row.net)
+                        ForEach(Array(row.items.enumerated()), id: \.offset) { _, item in
                             VStack(alignment: .leading, spacing: 5) {
                                 AmountRow(title: item.concept, value: item.amount)
-                                Text("\(PayrollFormat.number(item.quantity)) × \(PayrollFormat.money(item.rate))").font(.caption).foregroundStyle(.secondary)
+                                Text("\(PayrollFormat.number(item.quantity)) × \(PayrollFormat.money(item.rate)) · \(item.kind)").font(.caption).foregroundStyle(.secondary)
                                 if let reference = item.reference { Text(reference).font(.caption).foregroundStyle(.secondary) }
                             }.padding(.vertical, 3)
                         }
                     }
                 }
-            }
-            if period.isClosed && user.can("export") {
-                Section { ExportButton(periodID: period.id, format: .pdf, employeeID: row.employeeId, title: "Desprendible PDF") }
+                if let conditions {
+                    Section { NavigationLink("Condiciones utilizadas en este corte") { List { EmployeeConditionsSection(record: conditions) }.navigationTitle("Condiciones del corte") } }
+                }
+                if period.isClosed && user.can("export") {
+                    Section { ExportButton(periodID: period.id, format: .pdf, employeeID: first.employeeId, title: "Desprendible PDF") }
+                }
             }
         }.navigationTitle("Detalle del pago").navigationBarTitleDisplayMode(.inline)
     }
@@ -102,6 +104,9 @@ struct ExportButton: View {
                     .navigationTitle(title ?? format.title).navigationBarTitleDisplayMode(.inline)
                     .toolbar {
                         ToolbarItem(placement: .topBarLeading) { Button("Listo") { document = nil } }
+                        ToolbarItem(placement: .topBarTrailing) {
+                            if file.url.pathExtension.lowercased() == "pdf" { Button { let printer = UIPrintInteractionController.shared; printer.printingItem = file.url; printer.present(animated: true, completionHandler: nil) } label: { Image(systemName: "printer") }.accessibilityLabel("Imprimir documento") }
+                        }
                         ToolbarItem(placement: .topBarTrailing) { ShareLink(item: file.url) { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("Compartir documento") }
                     }
             }
