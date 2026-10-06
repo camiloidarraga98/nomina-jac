@@ -53,6 +53,8 @@ Camilo confirmó que tiene Mac y Apple Developer y que solo usarán la app tres 
 
 CI en `.github/workflows/ios.yml` compila y ejecuta las pruebas nativas en macOS, con red simulada y sin consultar producción. Las pruebas de la API móvil están en `tests/payroll-mobile.test.mjs`, con D1 en memoria. Conserva este contrato al añadir edición nativa en entregas futuras.
 
+El 6 de octubre de 2026, Camilo informó una pantalla en blanco en el simulador con Xcode 27.0. Tras limpiar la compilación, seguía abierta en blanco; confirmó que el formulario apareció al desmarcar **Debug executable** en **Product > Scheme > Edit Scheme > Run > Info**. Ese ajuste local permite continuar y se documenta en `ios/README.md`; no se desactiva el depurador globalmente en el esquema compartido. Las comprobaciones de arranque y regreso a la app pasaron en Xcode 16.4/iOS 18.5 y Xcode 26.3/iOS 26.2. CI conserva capturas y el `.xcresult`; Xcode 27.0 no está instalado en el runner actual.
+
 ## Preparar entorno Cloud
 
 Node.js 24 LTS; `npm ci`; `npx tsc --noEmit`; `node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs`; `npm run build`. Para vista local `npm run dev`, D1 local y claves de desarrollo ignoradas, nunca credenciales reales. Para desplegar conecta Sites al mismo proyecto. Si falta ese acceso, deja cambios revisables e indica el bloqueo. Comprueba publicación del entorno Cloud y primera ejecución antes de afirmar que está listo.
