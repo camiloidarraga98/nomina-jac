@@ -59,7 +59,7 @@ struct MailView: View {
                                 Text(job.email.isEmpty ? "Falta registrar correo" : job.email).font(.subheadline)
                                 Label(MailLabels.status(job.status), systemImage: job.status == "sent" ? "checkmark.circle" : "envelope").font(.caption)
                                 if !job.error.isEmpty { Text(job.error).font(.footnote).foregroundStyle(.secondary) }
-                                if let sent = job.sentAt { Text(sent).font(.caption).foregroundStyle(.secondary) }
+                                if let sent = job.sentAt { Text(PayrollFormat.timestamp(sent)).font(.caption).foregroundStyle(.secondary) }
                                 Text("Intentos: \(job.attempts)").font(.caption).foregroundStyle(.secondary)
                                 if user.can("staff"), let w = store.workspace, let record = w.record("employees", id: job.employeeId), !record["deleted"].flag {
                                     Button("Editar correo de esta persona") { editor = PayrollEditorSession(kind: .employee, workspace: w, detail: nil, record: record) }.disabled(busy || !store.canWrite)

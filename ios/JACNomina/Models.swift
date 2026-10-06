@@ -208,6 +208,13 @@ enum PayrollFormat {
     static func period(start: String, end: String) -> String {
         "\(date(start)) – \(date(end))"
     }
+    static func timestamp(_ iso: String) -> String {
+        let parser = ISO8601DateFormatter(); parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let date = parser.date(from: iso) ?? ISO8601DateFormatter().date(from: iso)
+        guard let date else { return iso }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "es_CO"); formatter.timeZone = TimeZone(identifier: "America/Bogota"); formatter.dateFormat = "dd/MM/yyyy HH:mm"
+        return formatter.string(from: date)
+    }
     static func category(_ value: String) -> String {
         ["musicos": "Músicos", "tecnica": "Técnica", "conductores": "Conductores", "administracion": "Dependientes", "comision": "Comisiones y otros"][value] ?? value
     }

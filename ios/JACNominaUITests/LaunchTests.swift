@@ -52,7 +52,10 @@ final class LaunchTests: XCTestCase {
     @MainActor private func fill(_ app: XCUIApplication, _ id: String, _ value: String) {
         let field = app.textFields[id].firstMatch
         for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
-        XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap()
+        XCTAssertTrue(field.waitForExistence(timeout: 10))
+        // Numeric fields share a labelled row: tap its input at the right edge.
+        field.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "El campo debe recibir el foco del teclado.")
         let old = (field.value as? String) ?? ""
         let count = old == field.placeholderValue ? 0 : old.count
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + value)
@@ -63,7 +66,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 15))
         tap(app, "Actividad"); tap(app, "activity.shows"); tap(app, "activity.add")
         fill(app, "editor.name", "Show simulado iPhone"); tap(app, "editor.save")
-        XCTAssertTrue(app.staticTexts["Show simulado iPhone"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Show simulado iPhone")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
         attachScreen(app, name: "show-guardado")
         app.navigationBars.buttons.firstMatch.tap()
         tap(app, "activity.routes"); tap(app, "Editar"); fill(app, "editor.km", "120"); tap(app, "editor.save")
@@ -72,7 +75,7 @@ final class LaunchTests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap()
         tap(app, "activity.movements"); tap(app, "activity.add")
         fill(app, "editor.concept", "Novedad simulada iPhone"); tap(app, "editor.save")
-        XCTAssertTrue(app.staticTexts["Novedad simulada iPhone"].firstMatch.waitForExistence(timeout: 15))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Novedad simulada iPhone")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
         app.navigationBars.buttons.firstMatch.tap()
         tap(app, "activity.hours"); tap(app, "Registrar horas y novedades")
         fill(app, "editor.counts.0", "2"); tap(app, "editor.save")

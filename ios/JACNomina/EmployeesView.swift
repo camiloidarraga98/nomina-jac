@@ -76,7 +76,7 @@ struct EmployeeDetailView: View {
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
             .confirmationDialog("¿Eliminar esta persona del personal vigente?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Eliminar persona", role: .destructive) { Task { _ = await store.action("deleteEmployee", employeeID: employeeID) } }
-            } message: { Text("Sus registros históricos se conservan. Los registros del corte abierto se ajustan con las mismas reglas del sistema web.") }
+            } message: { Text("Sus registros históricos se conservan. Si tiene registros en una quincena abierta, primero debes retirarlos o cerrar esa quincena.") }
     }
 }
 struct EmployeeConditionsSection: View {

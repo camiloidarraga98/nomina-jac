@@ -1,17 +1,24 @@
 # Nómina JAC para iPhone
 
-Primera versión nativa en SwiftUI para iOS 17 o posterior. Usa las mismas cuentas y la misma base D1 que https://jhonalexcastano.com a través de HTTPS. No contiene WebViews ni otra base de nómina.
+Aplicación nativa en SwiftUI para iOS 17 o posterior. Usa las mismas cuentas y la misma base D1 que https://jhonalexcastano.com a través de HTTPS. No contiene WebViews ni otra base de nómina.
 
-## Funciones de esta entrega
+## Funciones de la app
 
-- Acceso con el usuario/correo y contraseña actuales, restauración de sesión de 12 horas y cierre de sesión.
-- Consulta y búsqueda de quincenas abiertas y cerradas, resumen y desglose por persona.
-- Consulta de shows, honorarios, recorridos compartidos/anteriores, novedades y siete categorías de horas.
-- Personal activo e inactivo y sus condiciones actuales; los pagos históricos muestran la instantánea del cierre.
-- Resumen PDF, desprendibles conjuntos e individuales, Excel y ZIP, con vista previa y compartir de iOS. Respeta el permiso `export` y exige cierre.
-- Consulta de permisos y cambio de contraseña, conservando la regla de cualquier contraseña no vacía.
+La app cubre las funciones del webapp con formularios y navegación de iOS. Consulte [`PARITY.md`](PARITY.md) para la correspondencia completa.
 
-La edición de nómina, cierres/correcciones, administración de usuarios y Gmail permanecen en la web en esta primera entrega. No hay botones de edición sin implementar. Se incorporarán a la app en entregas posteriores, reutilizando las API y reglas actuales.
+- **Quincenas:** crear por mes y mitad; shows, ventas, participantes y honorarios; novedades y descuentos; recorridos compartidos, anteriores y extras; siete tipos de horas, días, vacaciones y notas.
+- **Pagos y Archivo:** búsqueda, filtros, desglose completo por persona, condiciones utilizadas y documentos de cierres. PDF de resumen/desprendibles, Excel y ZIP, vista previa, compartir e imprimir PDF mediante AirPrint.
+- **Cierres:** cerrar con instantánea y envío automático cuando Gmail esté conectado; reabrir, corregir condiciones y parámetros históricos y volver a cerrar con `modifyClosed`. El propietario puede eliminar completamente una quincena con confirmación.
+- **Equipo y Gestión:** crear/editar personas y todas sus condiciones, inactivar, eliminar y restaurar; conceptos y parámetros; estados de correo, contactos, envío conjunto/individual y conexión/configuración de Gmail; usuarios, permisos e invitaciones del propietario.
+- **Mi cuenta y acceso:** mismo usuario y contraseña, activación/restablecimiento con enlace privado, cambio de contraseña y cierre de sesión. Cualquier contraseña no vacía sigue permitida.
+
+Cada operación usa los permisos y la validación del servidor. Una pérdida de conexión o conflicto conserva la solicitud en memoria; puedes reintentar, compartir una copia JSON protegida de los cambios o descartarlos y actualizar. No se reinterpreta ni se vuelve a guardar silenciosamente un formulario sobre una revisión diferente. Cerrar la sesión o terminar la app descarta los cambios que no guardaste.
+
+## Actualizar desde Xcode
+
+Con el clon ya abierto, usa **Integrate > Pull** (el nombre puede variar según Xcode), selecciona `origin/main` y ejecuta **Run**. Si Git pide credenciales HTTPS, usa tu usuario de GitHub y un token de acceso al repositorio privado en el campo de contraseña. No uses tu contraseña normal de GitHub ni compartas el token en este chat. No necesitas descargar otro ZIP.
+
+La publicación del servidor actualiza las API; el binario instalado en cada iPhone se actualiza al compilar/instalar de nuevo con Xcode o distribuir una nueva versión ad hoc.
 
 ## Abrir y ejecutar en el Mac
 
@@ -20,7 +27,7 @@ La edición de nómina, cierres/correcciones, administración de usuarios y Gmai
 3. Para un iPhone real, selecciona el target **JACNomina**, abre **Signing & Capabilities**, activa la firma automática y elige tu equipo de Apple Developer.
 4. El identificador inicial es `co.jacmusic.nomina`. Si Apple indica que no está disponible para tu equipo, usa otro identificador de tu cuenta antes de la primera instalación y conserva ese identificador para las actualizaciones.
 5. Conecta el iPhone al Mac, acepta la confianza del dispositivo, activa **Modo de desarrollador** si Xcode lo solicita y selecciónalo como destino. Pulsa **Run**.
-6. Inicia sesión con la misma cuenta del webapp. Las cuentas del equipo se activan con los enlaces que Camilo genera desde Usuarios en la web; no hay registro abierto en la app.
+6. Inicia sesión con la misma cuenta del webapp. Las cuentas del equipo se activan con los enlaces que Camilo genera desde Usuarios en la app o la web. En el acceso nativo, abre «Activar cuenta o restablecer contraseña» y pega el enlace. No hay registro abierto.
 
 No necesitamos publicar en la App Store. Camilo confirmó que dispone de Mac y Apple Developer.
 
@@ -47,21 +54,25 @@ La firma y los perfiles se gestionan desde tu Mac/cuenta Apple. No se han solici
 
 ## Integración y privacidad local
 
-La app autentica mediante `/api/auth` y conserva únicamente la sesión en el Llavero, accesible cuando el dispositivo está desbloqueado y sin sincronización a otros dispositivos. No guarda contraseñas ni archivos JSON de nómina en disco. Usa una URLSession efímera, desactiva cookies/cachés globales y rechaza redirecciones para evitar reenviar credenciales.
+La app autentica mediante `/api/auth` y conserva únicamente la sesión en el Llavero, accesible cuando el dispositivo está desbloqueado y sin sincronización a otros dispositivos. No guarda contraseñas ni una base de nómina en disco. Solo crea una copia JSON temporal si el usuario solicita respaldar un cambio pendiente. Usa una URLSession efímera, desactiva cookies/cachés globales y rechaza redirecciones para evitar reenviar credenciales.
 
-`GET /api/mobile/payroll` devuelve el índice de quincenas, personal, usuario y permisos. `GET /api/mobile/payroll?period=ID` añade el detalle con cálculos ejecutados por `lib/payroll.ts`; los cierres conservan sus instantáneas. Solo admite sesiones reales: no acepta el acceso de bootstrap/desarrollo. La ruta es de consulta y no cambia períodos ni dispara correo. La versión compartida de estado acompaña cada respuesta.
+`GET /api/mobile/payroll?workspace=1` devuelve una revisión consistente del estado, usuario y permisos; con `?period=ID`, devuelve el detalle y las mismas liquidaciones de `lib/payroll.ts`. Los snapshots y las versiones históricas permanecen en el servidor.
+
+`POST /api/mobile/payroll` recibe comandos pequeños `edit`/`remove`, con tipo de formulario, registro, período y revisión. El servidor aplica los helpers compartidos, el esquema y las políticas y delega el guardado en la API original con su CAS/nonce. No recibe snapshots reconstruidos por Swift. `previewEdit` aplica la misma validación y calcula sin guardar ni preparar correos. `close`, `reopen`, `deletePeriod`, `deleteEmployee` y `restoreEmployee` delegan las acciones originales.
+
+Usuarios, autenticación, correo y documentos reutilizan las API existentes. La autorización nativa de Gmail comienza en `POST /api/mobile/gmail`: un ticket de dos minutos y un solo uso abre la ventana de autenticación de Apple y entrega una cookie exclusiva de Gmail. Nunca entrega una sesión de nómina al navegador. El callback original verifica la sesión vigente, la cookie de protección, PKCE y la cuenta autorizada, y vuelve a `jacnomina://gmail` con resultado y nonce; la app valida el nonce. No agrega claves, tablas ni cambios de migraciones.
 
 Las descargas usan `/api/payroll/export`. Los documentos se guardan temporalmente con protección de archivos de iOS y se eliminan al cerrar la vista, salir de la cuenta o arrancar de nuevo. El contenido se oculta al dejar de estar activa la app para proteger la vista del selector de aplicaciones. Los documentos que el usuario comparta/guarde expresamente quedan bajo su control, igual que las descargas web.
 
 ## Validación
 
-El workflow `.github/workflows/ios.yml` compila y prueba en un runner macOS. Las pruebas de red nativas interceptan todas las peticiones con URLProtocol y usan dominios `.invalid`: nunca acceden a producción. La suite `tests/payroll-mobile.test.mjs` usa D1 simulado en memoria, credenciales de prueba y la biblioteca de cálculo existente.
+El workflow `.github/workflows/ios.yml` compila y prueba en un runner macOS. Las pruebas de red nativas interceptan todas las peticiones con URLProtocol y usan dominios `.invalid`: nunca acceden a producción. Las suites `tests/payroll-mobile.test.mjs` y `tests/payroll-mobile-oauth.test.mjs` prueban D1 en memoria, ediciones, cierres, historial, CAS, permisos, eliminación y OAuth simulado. Las pruebas de interfaz optan por un backend `.invalid` con argumentos `--uitest-payroll` y `--uitest-reader`, compilado exclusivamente en DEBUG. La aplicación normal usa producción; Release excluye esas fixtures. Las pruebas unitarias ejecutan sus clientes sin montar la navegación de la app; las pruebas de interfaz verifican la navegación real por separado.
 
 ```sh
 xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
   -destination 'generic/platform=iOS Simulator' CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- build
 
-node --test tests/payroll-mobile.test.mjs
+node --test tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
 ```
 
 Las pruebas del simulador usan firma local ad hoc (`CODE_SIGN_IDENTITY=-`), sin certificados de Apple Developer. El Llavero necesita que el ejecutable del simulador esté firmado; desactivar completamente la firma puede impedir guardar o leer la sesión. La suite comprueba el Llavero real del simulador con una cuenta temporal de prueba, además de las respuestas de red simuladas.

@@ -6,12 +6,18 @@ final class PeriodWorkspace: ObservableObject {
     @Published var detail: PeriodDetail?
     @Published var error: String?
     @Published var loading = false
+    private var reloadRequested = false
     func load(_ id: String, store: PayrollStore) async {
-        guard !loading, !store.hasPending else { return }
+        guard !store.hasPending else { return }
+        if loading { reloadRequested = true; return }
         loading = true; error = nil
         defer { loading = false }
-        do { detail = try await store.client.detail(periodID: id) }
-        catch { self.error = error.localizedDescription; store.report(error) }
+        repeat {
+            reloadRequested = false
+            do { detail = try await store.client.detail(periodID: id); error = nil }
+            catch is CancellationError { return }
+            catch { self.error = error.localizedDescription; store.report(error); return }
+        } while reloadRequested && !store.hasPending
     }
 }
 
@@ -36,7 +42,7 @@ struct PeriodDetailView: View {
                     Text(PayrollFormat.money(d.calculation.total)).font(.largeTitle.weight(.bold)).minimumScaleFactor(0.6).lineLimit(1)
                     Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta", systemImage: d.period.isClosed ? "lock.fill" : "pencil")
                     if d.record["ownerOnly"].flag { Text("Corrección con condiciones históricas").font(.caption).foregroundStyle(.orange) }
-                    if let closedAt = d.calculation.closedAt { LabeledContent("Fecha de cierre", value: closedAt) }
+                    if let closedAt = d.calculation.closedAt { LabeledContent("Fecha de cierre", value: PayrollFormat.timestamp(closedAt)) }
                     if !d.record["snapshot"]["closedBy"].text.isEmpty { LabeledContent("Cerrado por", value: d.record["snapshot"]["closedBy"].text) }
                     if !d.record["revisions"].elements.isEmpty { LabeledContent("Versiones de cierre conservadas", value: "\(d.record["revisions"].elements.count)") }
                 }

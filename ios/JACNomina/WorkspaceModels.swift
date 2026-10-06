@@ -116,7 +116,7 @@ struct PayrollEditorSession: Identifiable {
         case .period:
             return newPeriod(month: Date(), half: 1, id: id)
         case .employee:
-            return .object(["id": .string(id), "name": .string(""), "email": .string(""), "document": .string(""), "role": .string(""), "category": .string("musicos"), "active": .bool(true), "showRate": .number(750000), "kmRate": .number(0), "fixedService": .number(0), "withholding": .number(0.095), "ica": .number(0), "salary": .number(0), "transport": .number(0), "pension": .bool(true), "health": .bool(true), "cycle": .string("quincenal"), "monthlyHalf": .number(2), "nonSalary": .number(0), "contributionBase": .number(1), "incomeTax": .number(0), "solidarity": .number(0)])
+            return .object(["id": .string(id), "name": .string(""), "email": .string(""), "document": .string(""), "role": .string(""), "category": .string("musicos"), "active": .bool(true), "showRate": .number(750000), "kmRate": .number(0), "fixedService": .number(0), "withholding": .number(0.06), "ica": .number(0.01), "salary": .number(0), "transport": .number(0), "pension": .bool(true), "health": .bool(true), "cycle": .string("quincenal"), "monthlyHalf": .number(2), "nonSalary": .number(0), "contributionBase": .number(1), "incomeTax": .number(0), "solidarity": .number(0)])
         case .concept:
             return .object(["id": .string(id), "name": .string(""), "kind": .string("servicio"), "amount": .number(80000)])
         case .show:

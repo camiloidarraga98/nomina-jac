@@ -31,7 +31,8 @@ struct ActivityView: View {
                             .accessibilityIdentifier("activity.add").disabled(!store.canWrite)
                     }
                 }
-            }.refreshable { if let id = period.detail?.period.id { await period.load(id, store: store) } }
+            }.refreshable { await reload() }
+            .onChange(of: store.workspace?.version) { _, _ in Task { await reload() } }
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
             .confirmationDialog(kind == .shows ? "¿Eliminar el show y su recorrido compartido?" : "¿Eliminar este registro?", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }), titleVisibility: .visible) {
                 if let id = removal, let d = period.detail {
@@ -39,6 +40,7 @@ struct ActivityView: View {
                 }
             }
     }
+    private func reload() async { if let id = period.detail?.period.id { await period.load(id, store: store) } }
     private func canEdit(_ d: PeriodDetail) -> Bool { !d.period.isClosed && user.can(d.record["ownerOnly"].flag ? "modifyClosed" : "payroll") }
     private func edit(_ record: JSONValue?, detail: PeriodDetail, employeeID: String? = nil) {
         guard let w = store.workspace else { return }

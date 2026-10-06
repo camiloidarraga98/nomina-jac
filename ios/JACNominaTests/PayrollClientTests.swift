@@ -195,4 +195,17 @@ final class PayrollClientTests: XCTestCase {
         let reopened = try await client.payroll(.object(["action": .string("reopen"), "version": .number(Double(closed.version)), "periodId": .string(p.id)]))
         XCTAssertEqual(reopened.data["periods"].elements.first?["revisions"].elements.count, 1)
     }
+
+    @MainActor func testOldResponseCannotClearANewerLogin() async throws {
+        let vault = MemorySession(); vault.token = token
+        let client = makeClient(vault)
+        let replacement = String(repeating: "b", count: 43)
+        MockProtocol.handler = { request in
+            vault.token = replacement
+            return (HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!, Data("{}".utf8))
+        }
+        do { _ = try await client.overview(); XCTFail("Debe descartar la respuesta antigua") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(vault.token, replacement)
+    }
 }

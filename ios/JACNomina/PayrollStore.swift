@@ -43,6 +43,7 @@ final class PayrollStore: ObservableObject {
         workspace = nil; pending = nil; notice = nil
     }
     func report(_ failure: Error) {
+        if failure is CancellationError { return }
         if let apiError = failure as? APIError, case .unauthorized = apiError { overview = nil; workspace = nil; pending = nil; notice = nil; TemporaryDocuments.clear() }
         error = failure.localizedDescription
     }

@@ -66,6 +66,9 @@ final class PayrollClient {
         }
         let (data, response) = try await session.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw APIError.message("El servidor no respondió correctamente.") }
+        // A response from a previous login must not restore payroll data or
+        // invalidate the session of a user who signed in while it was pending.
+        guard sentToken == (try vault.load()) else { throw CancellationError() }
         if response.statusCode == 401 || (300..<400).contains(response.statusCode) {
             if sentToken == (try vault.load()) { try clearSession() }
             throw APIError.unauthorized
