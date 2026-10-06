@@ -31,8 +31,17 @@ final class PayrollStore: ObservableObject {
     }
     func refresh() async throws {
         guard pending == nil else { throw APIError.message("Conserva o descarta tus cambios pendientes antes de actualizar.") }
-        do { let result = try await client.workspace(); workspace = result; overview = result.overview; error = nil }
+        do {
+            let result = try await client.workspace()
+            // A refresh already in flight can finish after a save or conflict.
+            guard pending == nil else { return }
+            if install(result) { error = nil }
+        }
         catch { report(error); throw error }
+    }
+    @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
+        guard result.version >= (workspace?.version ?? 0) else { return false }
+        workspace = result; overview = result.overview; return true
     }
     func signOut() async {
         busy = true
@@ -60,7 +69,7 @@ final class PayrollStore: ObservableObject {
         do {
             let result = try await client.payroll(command)
             let updated = try PayrollWorkspace(envelope: result, user: workspace.user)
-            self.workspace = updated; overview = updated.overview; pending = nil
+            install(updated); pending = nil
             notice = result.mailNotice ?? "Cambios guardados."
             return true
         } catch {

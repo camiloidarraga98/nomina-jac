@@ -208,4 +208,25 @@ final class PayrollClientTests: XCTestCase {
         catch { XCTAssertTrue(error is CancellationError) }
         XCTAssertEqual(vault.token, replacement)
     }
+
+    @MainActor func testLateRefreshCannotReplaceTheNewerPayrollRevision() async throws {
+        let vault = MemorySession(); vault.token = token
+        let store = PayrollStore(client: makeClient(vault))
+        var replies = 0
+        MockProtocol.handler = { request in
+            replies += 1
+            let version = replies == 1 ? 8 : 7
+            let company = replies == 1 ? "Vigente" : "Anterior"
+            let payload = JSONValue.object([
+                "version": .number(Double(version)),
+                "company": .string(company), "periods": .array([]), "employees": .array([]),
+                "user": .object(["id": .string("fixture"), "username": .string("prueba"), "email": .string("test@example.invalid"), "displayName": .string("Prueba"), "isOwner": .bool(true), "permissions": .array([])]),
+                "data": .object(["employees": .array([]), "periods": .array([]), "concepts": .array([]), "settings": .object(["company": .string(company)])])
+            ])
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, try JSONEncoder().encode(payload))
+        }
+        try await store.refresh(); try await store.refresh()
+        XCTAssertEqual(store.workspace?.version, 8)
+        XCTAssertEqual(store.overview?.company, "Vigente")
+    }
 }

@@ -53,10 +53,12 @@ struct RecordNumberField: View {
     let key: String
     var scale: Double = 1
     var body: some View {
-        LabeledContent(title) {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
             TextField(title, value: Binding(get: { record[key].number * scale }, set: { record[key] = .number($0 / scale) }), format: .number.locale(Locale(identifier: "es_CO")))
                 .keyboardType(.decimalPad).multilineTextAlignment(.trailing).monospacedDigit()
-                .frame(minWidth: 90).accessibilityIdentifier("editor.\(key)")
+                .textFieldStyle(.roundedBorder).frame(minHeight: 44)
+                .accessibilityLabel(title).accessibilityIdentifier("editor.\(key)")
         }
     }
 }

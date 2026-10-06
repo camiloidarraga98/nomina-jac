@@ -53,7 +53,7 @@ final class LaunchTests: XCTestCase {
         let field = app.textFields[id].firstMatch
         for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(field.waitForExistence(timeout: 10))
-        // Numeric fields share a labelled row: tap its input at the right edge.
+        // Tap the input itself rather than an adjacent explanatory label.
         field.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "El campo debe recibir el foco del teclado.")
         let old = (field.value as? String) ?? ""

@@ -165,12 +165,14 @@ struct ArrayNumberField: View {
     let key: String
     let index: Int
     var body: some View {
-        LabeledContent(title) {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
             TextField(title, value: Binding(get: {
                 let values = record[key].elements; return index < values.count ? values[index].number : 0
             }, set: { value in
                 var values = record[key].elements; while values.count <= index { values.append(.number(0)) }; values[index] = .number(value); record[key] = .array(values)
-            }), format: .number.locale(Locale(identifier: "es_CO"))).keyboardType(.decimalPad).multilineTextAlignment(.trailing).frame(minWidth: 75).accessibilityIdentifier("editor.\(key).\(index)")
+            }), format: .number.locale(Locale(identifier: "es_CO"))).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                .textFieldStyle(.roundedBorder).frame(minHeight: 44).accessibilityLabel(title).accessibilityIdentifier("editor.\(key).\(index)")
         }
     }
 }

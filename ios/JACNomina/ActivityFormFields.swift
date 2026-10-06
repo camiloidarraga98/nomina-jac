@@ -31,7 +31,8 @@ struct ParticipantField: View {
             record["participants"] = .array(list)
         }))
         if selected {
-            LabeledContent("Honorario") {
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Honorario").font(.subheadline).foregroundStyle(.secondary)
                 TextField("Honorario", value: Binding(get: {
                     record["participants"].elements.first { $0["employeeId"].text == employee.id }?["amount"].number ?? 0
                 }, set: { amount in
@@ -39,6 +40,7 @@ struct ParticipantField: View {
                         var value = entry; if value["employeeId"].text == employee.id { value["amount"] = .number(amount) }; return value
                     })
                 }), format: .number.locale(Locale(identifier: "es_CO"))).keyboardType(.decimalPad).multilineTextAlignment(.trailing)
+                    .textFieldStyle(.roundedBorder).frame(minHeight: 44).accessibilityLabel("Honorario de \(employee.name)")
             }
         }
     }
