@@ -145,12 +145,59 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Recargo nocturno")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
         attachScreen(app, name: "horas-guardadas")
     }
+    @MainActor func testFiveTabsAndManagementKeepArchiveTeamAndAccountAccessible() {
+        let app = fixture()
+        XCTAssertEqual(app.tabBars.buttons.count, 5)
+        for title in ["Quincena", "Agenda", "Itinerarios", "Mi cuenta", "Gestión"] { XCTAssertTrue(app.tabBars.buttons[title].exists) }
+        XCTAssertFalse(app.tabBars.buttons["Archivo"].exists); XCTAssertFalse(app.tabBars.buttons["Equipo"].exists)
+        app.tabBars.buttons["Mi cuenta"].tap()
+        XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.archive")
+        XCTAssertTrue(app.navigationBars["Archivo"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.employees")
+        XCTAssertTrue(app.navigationBars["Equipo JAC"].waitForExistence(timeout: 10))
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.buttons["notices.alerts"].exists); XCTAssertTrue(app.buttons["Correos y Gmail"].exists)
+        attachScreen(app, name: "cinco-pestanas-y-gestion")
+    }
+
+    @MainActor func testAgendaSurvivesOfflineRelaunchAndDisplaysCacheDuringInternetRefresh() {
+        let app = fixture(["--uitest-agenda-cache", "--uitest-reset-agenda"])
+        app.tabBars.buttons["Agenda"].tap()
+        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["agenda.create"].waitForExistence(timeout: 10))
+        app.terminate()
+        app.launchArguments = ["--uitest-payroll", "--uitest-agenda-cache", "--uitest-offline"]
+        app.launch()
+        XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["agenda.offline"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["agenda.create"].exists, "Sin conexión la copia es de consulta")
+        tap(app, "Mes siguiente")
+        XCTAssertTrue(app.staticTexts["Mes sin descargar"].waitForExistence(timeout: 10))
+        tap(app, "Volver a la agenda descargada")
+        tap(app, "agenda.event.fixture-concert")
+        XCTAssertTrue(app.staticTexts["Teatro simulado"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["agenda.edit"].exists)
+        attachScreen(app, name: "agenda-descargada-sin-senal")
+        app.terminate()
+        app.launchArguments = ["--uitest-payroll", "--uitest-agenda-cache", "--uitest-slow-agenda"]
+        app.launch()
+        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["agenda.updating"].waitForExistence(timeout: 5), "La copia debe verse mientras la red sigue pendiente")
+        attachScreen(app, name: "agenda-descargada-mientras-actualiza")
+        for _ in 0..<3 { if app.staticTexts["Concierto actualizado"].exists { break }; app.swipeUp() }
+        XCTAssertTrue(app.staticTexts["Concierto actualizado"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["agenda.create"].exists)
+        attachScreen(app, name: "agenda-actualizada-desde-fixture")
+    }
+
     @MainActor func testCloseArchiveAndReopenWithoutRealEmailsOrData() {
         let app = fixture()
         tap(app, "period.fixture-period"); tap(app, "period.close")
         tap(app, "Cerrar quincena")
         XCTAssertTrue(app.staticTexts["Neto del cierre"].waitForExistence(timeout: 15))
-        app.tabBars.buttons["Archivo"].tap(); tap(app, "period.fixture-period")
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.archive"); tap(app, "period.fixture-period")
         tap(app, "Documentos")
         XCTAssertTrue(app.buttons["Resumen PDF"].waitForExistence(timeout: 10))
         attachScreen(app, name: "archivo-documentos")
@@ -167,8 +214,8 @@ final class LaunchTests: XCTestCase {
         tap(app, "period.fixture-period")
         XCTAssertFalse(app.buttons["period.close"].exists); XCTAssertFalse(app.buttons["period.delete"].exists)
         tap(app, "Actividad"); tap(app, "activity.shows"); XCTAssertFalse(app.buttons["activity.add"].exists)
-        app.tabBars.buttons["Equipo"].tap(); XCTAssertFalse(app.buttons["employee.create"].exists)
-        app.tabBars.buttons["Gestión"].tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.employees"); XCTAssertFalse(app.buttons["employee.create"].exists)
+        app.navigationBars.buttons.firstMatch.tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
         app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertTrue(app.buttons["agenda.create"].exists)
         attachScreen(app, name: "permisos-solo-consulta")
@@ -185,7 +232,7 @@ final class LaunchTests: XCTestCase {
         upcoming.tap()
         tap(app, "agenda.upcoming.fixture-concert"); tap(app, "Listo")
         attachScreen(app, name: "agenda-proximos")
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "Mi cuenta")
+        app.tabBars.buttons["Mi cuenta"].tap()
         XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
     }
     @MainActor func testCreateAndEditAgendaEventKeepNativeFormsAndSharedFeed() {
@@ -214,10 +261,10 @@ final class LaunchTests: XCTestCase {
         tap(app, "period.fixture-period")
         XCTAssertTrue(app.navigationBars["Quincena"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
-        app.tabBars.buttons["Archivo"].tap()
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.archive")
         XCTAssertTrue(app.navigationBars["Archivo"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists, "Una consulta cancelada no debe dejar un error en Archivo")
-        app.tabBars.buttons["Quincenas"].tap()
+        app.tabBars.buttons["Quincena"].tap()
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "period.fixture-period")
         XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 10))
         app.tabBars.buttons["Agenda"].tap()
@@ -225,14 +272,14 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
         tap(app, "Actualizar agenda")
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.itineraries")
+        app.tabBars.buttons["Itinerarios"].tap()
         XCTAssertTrue(app.navigationBars["Itinerarios"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
-        app.navigationBars.buttons.firstMatch.tap(); tap(app, "notices.itineraries")
+        app.tabBars.buttons["Quincena"].tap(); app.tabBars.buttons["Itinerarios"].tap()
         XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].waitForExistence(timeout: 10))
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.detail.close")
-        app.navigationBars.buttons.firstMatch.tap(); tap(app, "Correos y Gmail")
+        app.tabBars.buttons["Gestión"].tap(); app.navigationBars.buttons.firstMatch.tap(); tap(app, "Correos y Gmail")
         XCTAssertTrue(app.buttons["Actualizar estados"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
         tap(app, "Actualizar estados")
@@ -240,17 +287,17 @@ final class LaunchTests: XCTestCase {
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "Usuarios y permisos")
         XCTAssertTrue(app.navigationBars["Usuarios y permisos"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
-        app.tabBars.buttons["Archivo"].tap()
+        app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.archive")
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
         attachScreen(app, name: "archivo-sin-error-de-consulta-cancelada")
     }
 
     @MainActor func testItineraryPDFAndSelectiveAlertAreAccessibleInManagement() {
-        let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.itineraries")
+        let app = fixture(); app.tabBars.buttons["Itinerarios"].tap()
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
         attachScreen(app, name: "itinerario-pdf"); tap(app, "notices.pdf.close"); tap(app, "notices.detail.close")
-        app.navigationBars.buttons.firstMatch.tap(); tap(app, "notices.alerts"); tap(app, "notices.create")
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts"); tap(app, "notices.create")
         fill(app, "notices.editor.title", "Alerta simulada iPhone")
         let message = app.descendants(matching: .any).matching(identifier: "notices.editor.message").firstMatch
         XCTAssertTrue(message.waitForExistence(timeout: 10)); message.tap(); message.typeText("Mensaje para el equipo simulado")
@@ -262,9 +309,9 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "alerta-guardada")
     }
     @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
-        let app = fixture(["--uitest-reader"]); app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.itineraries")
+        let app = fixture(["--uitest-reader"]); app.tabBars.buttons["Itinerarios"].tap()
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
-        app.navigationBars.buttons.firstMatch.tap(); tap(app, "notices.alerts")
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts")
         XCTAssertTrue(app.buttons["notices.enable"].waitForExistence(timeout: 10)); XCTAssertFalse(app.buttons["notices.create"].exists)
     }
 

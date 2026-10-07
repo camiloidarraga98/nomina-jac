@@ -3,6 +3,7 @@ import SwiftUI
 struct EmployeesView: View {
     @EnvironmentObject private var store: PayrollStore
     let overview: PayrollOverview
+    var embedded = false
     @State private var search = ""
     @State private var includeInactive = false
     @State private var includeDeleted = false
@@ -14,7 +15,9 @@ struct EmployeesView: View {
         }.sorted { $0.name < $1.name }
     }
     var body: some View {
-        NavigationStack {
+        Group { if embedded { content } else { NavigationStack { content } } }
+    }
+    private var content: some View {
             List {
                 OperationStatusSection()
                 Section { Toggle("Incluir personas inactivas", isOn: $includeInactive); Toggle("Incluir personas eliminadas", isOn: $includeDeleted) }
@@ -45,7 +48,6 @@ struct EmployeesView: View {
                         }
                     }
                 }.sheet(item: $editor) { PayrollEditorView(session: $0) }
-        }
     }
 }
 struct EmployeeDetailView: View {

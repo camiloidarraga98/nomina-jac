@@ -1,6 +1,6 @@
 import Foundation
 
-struct PayrollUser: Decodable, Equatable {
+struct PayrollUser: Codable, Equatable {
     let id: String
     let email: String
     let username: String

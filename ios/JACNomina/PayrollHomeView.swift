@@ -5,23 +5,39 @@ struct PayrollHomeView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var push = JACNotifications.shared
+    @State private var selected: String
+    init(overview: PayrollOverview, agendaOnly: Bool = false) {
+        self.overview = overview; _selected = State(initialValue: agendaOnly ? "agenda" : "payroll")
+    }
     var body: some View {
-        TabView {
-            PeriodsView(overview: overview).tabItem { Label("Quincenas", systemImage: "wallet.pass") }
-            PeriodsView(overview: overview, archive: true).tabItem { Label("Archivo", systemImage: "archivebox") }
-            CalendarView(user: overview.user).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }
-            EmployeesView(overview: overview).tabItem { Label("Equipo", systemImage: "person.2") }
-            ManagementView(user: overview.user).tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }
+        TabView(selection: $selected) {
+            Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Quincenas") } else { PeriodsView(overview: overview) } }.tabItem { Label("Quincena", systemImage: "wallet.pass") }.tag("payroll")
+            CalendarView(user: overview.user, initialMonth: store.preferredAgendaMonth).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }.tag("agenda")
+            NavigationStack { if store.isAgendaOnly { ConnectionRequiredView(title: "Itinerarios") } else { NoticesView(user: overview.user) } }.tabItem { Label("Itinerarios", systemImage: "doc.text") }.tag("itineraries")
+            NavigationStack { AccountView(user: overview.user) }.tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }.tag("account")
+            Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Gestión") } else { ManagementView(user: overview.user) } }.tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }.tag("management")
         }.tint(JACTheme.lime)
-            .task(id: overview.user.id) { await push.bind(store.client) }
-            .onChange(of: scenePhase) { _, value in if value == .active { Task { await push.bind(store.client) } } }
+            .task(id: store.isAgendaOnly) { if !store.isAgendaOnly { await push.bind(store.client) } }
+            .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly { Task { await push.bind(store.client) } } }
             .sheet(isPresented: Binding(get: { push.noticeID != nil }, set: { if !$0 { push.noticeID = nil } })) { NavigationStack { NoticesView(user: overview.user, initialNotice: push.noticeID).id(push.noticeID).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { push.noticeID = nil } } } } }
+    }
+}
+private struct ConnectionRequiredView: View {
+    @EnvironmentObject private var store: PayrollStore
+    let title: String
+    @State private var loading = false
+    var body: some View {
+        VStack(spacing: 20) {
+            ContentUnavailableView("Necesitas conexión", systemImage: "wifi.slash", description: Text("La última agenda descargada está disponible en Agenda. Conéctate para consultar las demás secciones."))
+            Button("Volver a conectar") { Task { loading = true; defer { loading = false }; try? await store.refresh() } }.disabled(loading)
+        }.padding().jacSurface().navigationTitle(title)
     }
 }
 struct PeriodsView: View {
     @EnvironmentObject private var store: PayrollStore
     let overview: PayrollOverview
     var archive = false
+    var embedded = false
     @State private var search = ""
     @State private var editor: PayrollEditorSession?
     @State private var path: [String] = []
@@ -32,7 +48,12 @@ struct PeriodsView: View {
         }
     }
     var body: some View {
-        NavigationStack(path: $path) {
+        Group {
+            if embedded { content }
+            else { NavigationStack(path: $path) { content.navigationDestination(for: String.self) { PeriodDetailView(periodID: $0, user: overview.user) } } }
+        }
+    }
+    private var content: some View {
             List {
                 OperationStatusSection()
                 if periods.isEmpty {
@@ -43,22 +64,15 @@ struct PeriodsView: View {
                     if !group.isEmpty {
                         Section(closed ? "Quincenas cerradas" : "En preparación") {
                             ForEach(group) { period in
-                                NavigationLink(value: period.id) {
-                                    VStack(alignment: .leading, spacing: 8) {
-                                        Text(period.title).font(.headline)
-                                        HStack {
-                                            Label(period.isClosed ? "Cerrada" : "Abierta", systemImage: period.isClosed ? "lock.fill" : "pencil")
-                                            Spacer(); Text("\(period.showCount) shows")
-                                        }.font(.caption).foregroundStyle(.secondary)
-                                        if period.ownerOnly { Text("Corrección de cierre").font(.caption).foregroundStyle(.orange) }
-                                    }.padding(.vertical, 5)
+                                Group {
+                                    if embedded { NavigationLink { PeriodDetailView(periodID: period.id, user: overview.user) } label: { periodRow(period) } }
+                                    else { NavigationLink(value: period.id) { periodRow(period) } }
                                 }.accessibilityIdentifier("period.\(period.id)")
                             }
                         }
                     }
                 }
             }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas")
-                .navigationDestination(for: String.self) { PeriodDetailView(periodID: $0, user: overview.user) }
                 .searchable(text: $search, prompt: "Buscar mes o estado")
                 .refreshable { try? await store.refresh() }
                 .toolbar {
@@ -72,6 +86,15 @@ struct PeriodsView: View {
                     }
                 }
                 .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }
-        }
+    }
+    private func periodRow(_ period: PeriodSummary) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(period.title).font(.headline)
+            HStack {
+                Label(period.isClosed ? "Cerrada" : "Abierta", systemImage: period.isClosed ? "lock.fill" : "pencil")
+                Spacer(); Text("\(period.showCount) shows")
+            }.font(.caption).foregroundStyle(.secondary)
+            if period.ownerOnly { Text("Corrección de cierre").font(.caption).foregroundStyle(.orange) }
+        }.padding(.vertical, 5)
     }
 }

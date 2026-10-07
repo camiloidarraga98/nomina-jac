@@ -14,10 +14,10 @@ struct AccountView: View {
                     LabeledContent("Perfil", value: user.isOwner ? "Administrador" : "Equipo administrativo")
                 }
                 Section("Acceso") {
-                    NavigationLink("Cambiar contraseña") { ChangePasswordView() }
+                    if !store.isAgendaOnly { NavigationLink("Cambiar contraseña") { ChangePasswordView() } }
                     Button("Cerrar sesión", role: .destructive) { confirmLogout = true }.disabled(store.busy)
                 }
-                Section("Permisos de tu cuenta") {
+                if !store.isAgendaOnly { Section("Permisos de tu cuenta") {
                     ForEach(PayrollFormat.permissionNames.keys.sorted(), id: \.self) { permission in
                         LabeledContent(PayrollFormat.permissionNames[permission] ?? permission) {
                             Image(systemName: user.can(permission) ? "checkmark.circle.fill" : "minus.circle")
@@ -25,7 +25,8 @@ struct AccountView: View {
                                 .accessibilityLabel(user.can(permission) ? "Autorizado" : "Sin permiso")
                         }
                     }
-                }
+                } }
+                if store.isAgendaOnly { Section { Text("Modo sin conexión: puedes consultar la agenda descargada. Tu acceso se comprobará al volver a conectar.").font(.footnote) } }
                 Section {
                     Text("La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
                 }

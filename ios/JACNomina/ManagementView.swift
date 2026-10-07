@@ -1,17 +1,20 @@
 import SwiftUI
 
 struct ManagementView: View {
+    @EnvironmentObject private var store: PayrollStore
     let user: PayrollUser
     var body: some View {
         NavigationStack {
             List {
                 OperationStatusSection()
-                Section("Itinerarios y avisos") {
-                    NavigationLink { NoticesView(user: user) } label: { Label("Itinerarios", systemImage: "doc.text") }.accessibilityIdentifier("notices.itineraries")
+                Section("Avisos") {
                     NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts")
                 }
                 Section("Administración") {
-                    NavigationLink { AccountView(user: user) } label: { Label("Mi cuenta", systemImage: "person.crop.circle") }
+                    if let overview = store.overview {
+                        NavigationLink { PeriodsView(overview: overview, archive: true, embedded: true) } label: { Label("Archivo", systemImage: "archivebox") }.accessibilityIdentifier("management.archive")
+                        NavigationLink { EmployeesView(overview: overview, embedded: true) } label: { Label("Equipo", systemImage: "person.2") }.accessibilityIdentifier("management.employees")
+                    }
                     NavigationLink { ConceptsRulesView(user: user) } label: { Label("Conceptos y reglas", systemImage: "list.bullet.rectangle") }
                     NavigationLink { MailView(user: user) } label: { Label("Correos y Gmail", systemImage: "envelope") }
                     if user.isOwner { NavigationLink { UsersView() } label: { Label("Usuarios y permisos", systemImage: "person.badge.key") } }

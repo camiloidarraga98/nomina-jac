@@ -1,6 +1,10 @@
 # Correspondencia del webapp y la app de iPhone
 
-La versión 0.5.0 conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
+La versión 0.7.0 (build 8) conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
+
+Las cinco pestañas son Quincena, Agenda, Itinerarios, Mi cuenta y Gestión. Archivo y Equipo se consultan dentro de Gestión junto con Alertas, Conceptos y reglas, Correos y Usuarios. Se conservan las funciones y comprobaciones de acceso existentes.
+
+Agenda conserva hasta seis meses consultados en archivos cifrados con AES-GCM (límite total de 4 MB), vinculados a la sesión del Llavero y excluidos del respaldo. Muestra la descarga antes de esperar internet, incluidos detalles y próximos eventos; puede restaurarla tras cerrar la app sin señal. Actualiza al entrar, volver a primer plano, recuperar conexión y cada 30 segundos en primer plano. Indica fecha/hora, actualización y falta de señal; un mes no descargado necesita conexión. Salir, sesión vencida, denegación o cambio/desconexión de calendario retira la copia anterior. Las acciones de edición requieren validación actual del servidor; no se guardan quincenas ni ediciones sin conexión. Sin señal, una revocación remota solo puede comprobarse cuando se recupere internet.
 
 | Función existente | Acceso nativo | Integración compartida |
 | --- | --- | --- |
@@ -11,13 +15,13 @@ La versión 0.5.0 conserva las cuentas, los permisos y la base D1 del webapp. To
 | Siete tipos de horas, días, vacaciones y notas | Actividad → Horas y salarios | Factores y cálculo originales, incluidos cortes mensuales |
 | Liquidación por persona/grupo, ingresos, descuentos y condiciones utilizadas | Quincena → Pagos → Persona | Cálculo del corte, snapshot o condiciones históricas |
 | Cerrar con instantánea y preparar envíos cuando Gmail esté conectado | Quincena → Cerrar quincena, con confirmación | Acción `close` original, validación y lotes idempotentes |
-| Archivo y consulta de cierres | Archivo → Quincena | Mismos períodos y snapshots |
+| Archivo y consulta de cierres | Gestión → Archivo → Quincena | Mismos períodos y snapshots |
 | Reabrir, corregir condiciones y factores históricos, volver a cerrar | Cierre → Reabrir para corregir → Condiciones / Parámetros | `modifyClosed`, cálculo histórico y versiones anteriores conservadas |
 | Eliminar totalmente una quincena | Quincena → Eliminar quincena, solo propietario | `deletePeriod`, confirmación del ID, CAS y protección frente a envíos en curso |
-| Crear, editar, inactivar, eliminar y restaurar personal | Equipo | Todas las condiciones originales; historia conservada y validación de registros abiertos |
+| Crear, editar, inactivar, eliminar y restaurar personal | Gestión → Equipo | Todas las condiciones originales; historia conservada y validación de registros abiertos |
 | Conceptos y valores; empresa, NIT, divisor y siete factores | Gestión → Conceptos y reglas / Parámetros | Permiso `rules`, esquema original |
 | Usuarios, permisos, estado activo, invitación y restablecimiento | Gestión → Usuarios y permisos, solo propietario | `/api/users`, revisión de usuario, enlaces privados de un uso y sesiones invalidadas |
-| Acceso, activación/restablecimiento, contraseña y salir | Inicio de sesión / Gestión → Mi cuenta | `/api/auth`, sesión segura en Llavero; cualquier contraseña no vacía |
+| Acceso, activación/restablecimiento, contraseña y salir | Inicio de sesión / Mi cuenta | `/api/auth`, sesión segura en Llavero; cualquier contraseña no vacía |
 | Calendario mensual, eventos del día y próximos 90 días; detalles | Agenda; Conexión solo propietario | `/api/calendar`, misma selección y autorización de eventos/lista que la web; `America/Bogota` |
 | Crear/editar eventos: título, fechas/horas, todo el día, lugar, descripción | Agenda: + y Editar evento; Camilo, Luisa y Paula con sesión activa | `/api/calendar`, calendario elegido, ETag/If-Match, reintentos estables; recurrencia por ocurrencia |
 | Configurar, conectar, renovar o desconectar Gmail | Gestión → Correo → Conexión, solo propietario | OAuth/PKCE original con entrega nativa protegida; credenciales cifradas en D1 |
@@ -25,9 +29,9 @@ La versión 0.5.0 conserva las cuentas, los permisos y la base D1 del webapp. To
 | PDF de resumen y desprendibles, ZIP y Excel de siete hojas | Quincena cerrada → Documentos | `/api/payroll/export`, permiso `export`; mismos archivos del servidor |
 | Buscar e imprimir desprendible individual; compartir documentos | Documentos → Persona / vista previa → Imprimir o compartir | PDF original, QuickLook, AirPrint y hoja de compartir de iOS |
 
-| PDF de itinerarios nuevos de Slack | Gestión → Itinerarios → Abrir PDF → Compartir | `/api/notices` y `/api/notices/pdf`, R2 privado y sesión propia; conexión solo Camilo en la web |
+| PDF de itinerarios nuevos de Slack | Itinerarios → Abrir PDF → Compartir | `/api/notices` y `/api/notices/pdf`, R2 privado y sesión propia; conexión solo Camilo en la web |
 | Alertas y destinatarios | Gestión → Alertas → +, solo Camilo | Mismos registros/destinatarios que la web, UUID estable, autorización en servidor |
-| Notificaciones push y apertura privada | Gestión → Itinerarios/Alertas → Activar en este iPhone | APNs con clave configurada por Camilo; dispositivo ligado a cuenta/revisión/sesión, baja al salir; web usa Web Push |
+| Notificaciones push y apertura privada | Itinerarios/Alertas → Activar en este iPhone | APNs con clave configurada por Camilo; dispositivo ligado a cuenta/revisión/sesión, baja al salir; web usa Web Push |
 
 ## Guardado y concurrencia
 
@@ -51,7 +55,7 @@ Las suites del servidor cubren 60 pruebas de nómina, autenticación, correo, AP
 
 El workflow macOS compila la app y ejecuta pruebas unitarias y de interfaz: Llavero, acceso, exportaciones, contrato móvil, conflictos, nonce y activación; formularios de quincenas/shows/rutas/novedades/horas, archivo, reapertura y cuenta de consulta. Las pruebas de red interceptan peticiones a `.invalid`. Las fixtures de interfaz solo existen en DEBUG; las pruebas nunca crean quincenas, borran datos ni envían correo real en producción. Las capturas y `.xcresult` se conservan en GitHub Actions.
 
-La publicación actualiza el servidor. Para actualizar el binario, usa **Integrate → Pull → origin/main** y **Run** en Xcode, o distribuye una nueva versión ad hoc a los tres iPhones. La firma de dispositivos se hace con la cuenta Apple de Camilo en su Mac. Consulta `README.md` en esta carpeta para instalación y el ajuste local del depurador en Xcode 27.0.
+La publicación actualiza el servidor. Para actualizar el binario, abre el mismo proyecto de esta carpeta y usa **Run** en Xcode, o distribuye una nueva versión ad hoc a los tres iPhones. La firma de dispositivos se hace con la cuenta Apple de Camilo en su Mac. Consulta `README.md` en esta carpeta para instalación y el ajuste local del depurador en Xcode 27.0.
 
 La identidad nativa comparte verde oscuro, lima y superficies claras del webapp, con colores adaptados al modo oscuro y controles SwiftUI. Se conservan las capacidades y el cálculo en servidor.
 

@@ -4,9 +4,21 @@ El nombre visible en el iPhone es **JAC**. El proyecto y el esquema de Xcode sig
 
 Aplicación nativa en SwiftUI para iOS 17 o posterior. Usa las mismas cuentas y la misma base D1 que https://jhonalexcastano.com a través de HTTPS. No contiene WebViews ni otra base de nómina.
 
+## Distribución y Agenda sin conexión — iPhone 0.7.0, build 8
+
+La barra inferior tiene **Quincena, Agenda, Itinerarios, Mi cuenta y Gestión**, en ese orden. **Gestión** reúne Alertas, Archivo de quincenas, Equipo, Conceptos y reglas, Correos y Gmail, y Usuarios y permisos (solo propietario). Las funciones anteriores siguen disponibles con sus mismos permisos. Archivo y Equipo utilizan la navegación de Gestión, sin anidar otra barra de navegación.
+
+**Agenda** muestra inmediatamente la última copia descargada del mes mientras consulta internet. También puede abrir esa copia después de cerrar y volver a abrir la app sin señal. Se conservan hasta seis meses consultados, dentro de un límite de 4 MB, con sus eventos, detalles y próximos 90 días descargados. Un mes que nunca se descargó necesita conexión. Se indica la fecha y hora de la descarga y si se está actualizando o sin conexión. La actualización se intenta al entrar, volver a primer plano, recuperar conexión y cada 30 segundos mientras Agenda está abierta y activa; también puedes deslizar o pulsar Actualizar. Es actualización automática por consulta, no una conexión en directo a Google.
+
+La copia es de consulta: crear/editar y cambiar la conexión necesitan acceso validado al servidor. En un arranque sin conexión, Agenda y la identidad de Mi cuenta están disponibles; el resto de secciones espera la validación de internet. No se guardan quincenas ni se encolan ediciones sin conexión. Antes de poder usar este modo hay que haber iniciado sesión y descargado la agenda al menos una vez.
+
+Los archivos locales se cifran con AES-GCM y una clave derivada de la sesión que permanece en el Llavero; no se escribe la sesión ni la clave al archivo. Están vinculados al sitio/sesión, solicitan protección completa de iOS y se excluyen de copias de respaldo. Salir, una sesión vencida, denegación de Agenda o desconectar/cambiar el calendario retira la copia anterior. Sin internet no se puede conocer una revocación remota hasta la próxima comprobación; mientras tanto solo se consulta lo previamente descargado en ese iPhone. Se conserva la cubierta de privacidad.
+
+Continúa abriendo **el mismo proyecto de esta carpeta** y usa Run. No necesitas descargar otro proyecto; la aprobación de Apple y la firma siguen siendo necesarias para instalar la configuración con push en un iPhone físico. La verificación local utiliza únicamente fixtures `.invalid`.
+
 ## Itinerarios y Alertas — iPhone 0.6.0, build 7
 
-En **Gestión → Itinerarios / Alertas** consultas el mismo contenido de la web. Camilo puede eliminar cualquiera desde su detalle, con confirmación; se revocan acceso y entregas pendientes y se borran sus adjuntos privados de JAC. El archivo original de Slack se conserva. Los avisos que ya llegaron al dispositivo no se pueden retirar.
+En **Itinerarios** y **Gestión → Alertas** consultas el mismo contenido de la web. Camilo puede eliminar cualquiera desde su detalle, con confirmación; se revocan acceso y entregas pendientes y se borran sus adjuntos privados de JAC. El archivo original de Slack se conserva. Los avisos que ya llegaron al dispositivo no se pueden retirar.
 
 Desde **Alertas → +**, elige **Alerta** o **Itinerario**. Una alerta exige mensaje y destinatarios seleccionados; un itinerario se publica directamente en Itinerarios para todo el equipo activo, sin Slack. Admite hasta cinco PDF, JPG o PNG que sumen 10 MB. En iPhone se eligen desde Archivos o Fotos (las fotos se convierten a JPG); se pueden quitar antes de guardar. Puedes abrir y compartir cada adjunto con la vista previa nativa. Los borradores y archivos elegidos permanecen en memoria; las descargas usan temporales protegidos y se limpian al cerrar o salir de la cuenta.
 
@@ -25,13 +37,13 @@ La app cubre las funciones del webapp con formularios y navegación de iOS. Cons
 - **Cierres:** cerrar con instantánea y envío automático cuando Gmail esté conectado; reabrir, corregir condiciones y parámetros históricos y volver a cerrar con `modifyClosed`. El propietario puede eliminar completamente una quincena con confirmación.
 - **Equipo y Gestión:** crear/editar personas y todas sus condiciones, inactivar, eliminar y restaurar; conceptos y parámetros; estados de correo, contactos, envío conjunto/individual y conexión/configuración de Gmail; usuarios, permisos e invitaciones del propietario.
 - **Mi cuenta y acceso:** mismo usuario y contraseña, activación/restablecimiento con enlace privado, cambio de contraseña y cierre de sesión. Cualquier contraseña no vacía sigue permitida.
-- **Agenda:** calendario mensual y eventos por día, próximos 90 días y detalles; consulta y creación/edición de eventos en Google Calendar para Camilo, Luisa y Paula. **Mi cuenta** se abre ahora desde **Gestión**.
+- **Agenda:** calendario mensual y eventos por día, próximos 90 días y detalles; consulta y creación/edición de eventos en Google Calendar para Camilo, Luisa y Paula. **Mi cuenta** tiene su propia pestaña.
 
 Cada operación usa los permisos y la validación del servidor. Una pérdida de conexión o conflicto conserva la solicitud en memoria; puedes reintentar, compartir una copia JSON protegida de los cambios o descartarlos y actualizar. No se reinterpreta ni se vuelve a guardar silenciosamente un formulario sobre una revisión diferente. Cerrar la sesión o terminar la app descarta los cambios que no guardaste.
 
 ## Agenda con Google Calendar
 
-La pestaña **Agenda** y el sidebar **Agenda** de la web muestran el mismo calendario de Jhon Alex. Los horarios se presentan en hora de Colombia. Puedes cambiar de mes, elegir un día, consultar los próximos conciertos y abrir sus detalles. Se actualiza al entrar, volver a la app tras 30 segundos o actualizar manualmente; en iPhone también puedes deslizar la lista hacia abajo.
+La pestaña **Agenda** y el sidebar **Agenda** de la web muestran el mismo calendario de Jhon Alex. Los horarios se presentan en hora de Colombia. Puedes cambiar de mes, elegir un día, consultar los próximos conciertos y abrir sus detalles. Muestra primero la copia descargada y se actualiza al entrar, volver a la app, recuperar conexión, cada 30 segundos en primer plano o actualizar manualmente; en iPhone también puedes deslizar la lista hacia abajo.
 
 Camilo prepara la conexión una vez:
 

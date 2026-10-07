@@ -5,12 +5,14 @@ enum APIError: LocalizedError {
     case message(String)
     case conflict(String)
     case invalid(String)
+    case forbidden(String)
     var errorDescription: String? {
         switch self {
         case .unauthorized: return "Tu sesión venció o cambió tu acceso. Inicia sesión de nuevo."
         case .message(let message): return message
         case .conflict(let message): return message
         case .invalid(let message): return message
+        case .forbidden(let message): return message
         }
     }
 }
@@ -29,13 +31,15 @@ final class PayrollClient {
     private let vault: SessionStoring
     private let session: URLSession
     private let decoder = JSONDecoder()
+    let agendaCache: AgendaOfflineCache
     private var cookieName: String { "__Host-jac_session" }
     private var origin: String { baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
 
-    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral) {
+    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil) {
         precondition(baseURL.scheme == "https" && baseURL.host != nil && baseURL.path.isEmpty && baseURL.user == nil && baseURL.query == nil)
         self.baseURL = baseURL
         self.vault = vault ?? KeychainSessionStore(account: baseURL.host!)
+        self.agendaCache = agendaCache ?? AgendaOfflineCache()
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
@@ -46,7 +50,20 @@ final class PayrollClient {
     }
 
     func hasSession() throws -> Bool { try vault.load() != nil }
-    func clearSession() throws { try vault.clear(); TemporaryDocuments.clear() }
+    func agendaScope() throws -> AgendaCacheScope? {
+        guard let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { return nil }
+        return AgendaCacheScope(origin: origin, token: token)
+    }
+    func cachedAgenda() -> AgendaOfflineRecord? {
+        guard let scope = try? agendaScope() else { return nil }
+        return agendaCache.load(scope)
+    }
+    func clearCachedAgenda() { if let scope = try? agendaScope() { agendaCache.remove(scope) } }
+    func saveAgenda(_ record: AgendaOfflineRecord, scope: AgendaCacheScope) throws {
+        guard scope.id == (try agendaScope())?.id else { throw CancellationError() }
+        try agendaCache.save(record, scope: scope)
+    }
+    func clearSession() throws { clearCachedAgenda(); try vault.clear(); TemporaryDocuments.clear() }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false) async throws -> (Data, HTTPURLResponse) {
         var components = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
@@ -79,6 +96,7 @@ final class PayrollClient {
             struct ServerError: Decodable { let error: String }
             let message = (try? decoder.decode(ServerError.self, from: data).error) ?? "No se pudo completar la operación. Intenta de nuevo."
             if response.statusCode == 409 { throw APIError.conflict(message) }
+            if response.statusCode == 403 { if path == "api/calendar" { clearCachedAgenda() }; throw APIError.forbidden(message) }
             if response.statusCode == 400 || response.statusCode == 413 { throw APIError.invalid(message) }
             throw APIError.message(message)
         }
@@ -86,7 +104,7 @@ final class PayrollClient {
             let fields = Dictionary(uniqueKeysWithValues: response.allHeaderFields.map { (String(describing: $0.key), String(describing: $0.value)) })
             if let cookie = HTTPCookie.cookies(withResponseHeaderFields: fields, for: baseURL).first(where: { $0.name == cookieName }) {
                 if cookie.value.isEmpty { try clearSession() }
-                else if cookie.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { try vault.save(cookie.value) }
+                else if cookie.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { if cookie.value != sentToken { clearCachedAgenda() }; try vault.save(cookie.value) }
             }
         }
         return (data, response)

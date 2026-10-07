@@ -4,10 +4,10 @@ struct CalendarView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var phase
     let user: PayrollUser
+    @StateObject private var connectivity = AgendaConnectivity()
     @State private var month = CalendarClock.month(Date())
     @State private var day = CalendarClock.day(Date())
     @State private var feed: AgendaData?
-    @State private var byDay: [String: [AgendaEvent]] = [:]
     @State private var mode = "Mes"
     @State private var loading = false
     @State private var error: String?
@@ -18,23 +18,48 @@ struct CalendarView: View {
     @State private var notice: String?
     @State private var requestID = UUID()
     @State private var refreshedAt = Date.distantPast
-    private var visible: AgendaData? { feed?.month == month ? feed : nil }
+    @State private var liveMonth: String?
+    @State private var offlineMessage: String?
+    init(user: PayrollUser, initialMonth: String? = nil) {
+        self.user = user
+        let month = initialMonth ?? CalendarClock.month(Date())
+        _month = State(initialValue: month)
+        _day = State(initialValue: month == CalendarClock.month(Date()) ? CalendarClock.day(Date()) : month + "-01")
+    }
+    private var visible: AgendaData? { (feed?.month == month ? feed : nil) ?? store.cachedAgenda(month: month, userID: user.id)?.data }
+    private var live: Bool { liveMonth == month && !store.isAgendaOnly && connectivity.connected != false }
     var body: some View {
-        NavigationStack {
+        let byDay = visible.map { CalendarClock.eventsByDay($0.events, days: $0.days) } ?? [:]
+        return NavigationStack {
             List {
+                if visible != nil {
+                    Section {
+                        if loading { Label("Actualizando agenda…", systemImage: "arrow.triangle.2.circlepath").font(.footnote).accessibilityIdentifier("agenda.updating") }
+                        else if let offlineMessage { Label(offlineMessage, systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
+                        else if !live { Text("Mostrando la última agenda descargada.").font(.footnote).accessibilityIdentifier("agenda.cached") }
+                        if let saved = store.cachedAgenda(month: month, userID: user.id) { Text("Última descarga: " + CalendarClock.dayLabel(CalendarClock.day(saved.receivedAt)) + ", " + CalendarClock.time(saved.receivedAt)).font(.caption).foregroundStyle(.secondary) }
+                        if let warning = store.agendaStorageWarning { Text(warning).font(.footnote).foregroundStyle(.secondary) }
+                    }
+                }
                 if let notice { Section { Label(notice, systemImage: "checkmark.circle").foregroundStyle(JACTheme.action) } }
                 if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
-                if let connection = feed?.connection {
+                if visible == nil, let offlineMessage {
+                    Section {
+                        ContentUnavailableView("Mes sin descargar", systemImage: "wifi.slash", description: Text(offlineMessage))
+                        if store.savedAgenda != nil { Button("Volver a la agenda descargada") { month = store.preferredAgendaMonth; day = month == CalendarClock.month(Date()) ? CalendarClock.day(Date()) : month + "-01" } }
+                    }
+                }
+                if let connection = visible?.connection {
                     Section {
                         VStack(alignment: .leading, spacing: 5) {
                             Text(connection.selected?.name ?? "Agenda de Jhon Alex").font(.headline)
                             Text(connection.connected ? "Google Calendar · Hora de Colombia" : "Conecta Google y selecciona el calendario de Jhon Alex.").font(.caption).foregroundStyle(.secondary)
                         }
-                        if !connection.connected || connection.selected == nil {
+                        if live && (!connection.connected || connection.selected == nil) {
                             if user.isOwner { Button("Preparar conexión") { settings = true }.accessibilityIdentifier("agenda.configure") }
                             else { Text("Camilo prepara la agenda compartida para el equipo.").font(.footnote).foregroundStyle(.secondary) }
                         }
-                        if user.isOwner && connection.connected && visible?.canEditEvents != true {
+                        if live && user.isOwner && connection.connected && visible?.canEditEvents != true {
                             Text(connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary)
                         }
                     }
@@ -82,18 +107,25 @@ struct CalendarView: View {
             }.jacSurface().navigationTitle("Agenda").refreshable { await refresh() }
                 .toolbar {
                     ToolbarItemGroup(placement: .topBarTrailing) {
-                        if let visible, visible.canEditEvents == true {
+                        if live, let visible, visible.canEditEvents == true {
                             Button { editor = AgendaEditorSession(event: nil, day: day, revision: visible.connection.revision) } label: { Image(systemName: "plus") }.accessibilityLabel("Crear evento").accessibilityIdentifier("agenda.create").disabled(loading)
                         }
                         Button { Task { await refresh() } } label: { if loading { ProgressView() } else { Image(systemName: "arrow.clockwise") } }.accessibilityLabel("Actualizar agenda").disabled(loading)
-                        if user.isOwner { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(feed == nil) }
+                        if user.isOwner { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) }
                     }
                 }
-                .task(id: month) { await refresh() }
-                .onChange(of: phase) { _, value in if value == .active && Date().timeIntervalSince(refreshedAt) > 30 { Task { await refresh() } } }
+                .task(id: month) {
+                    await refresh()
+                    while !Task.isCancelled {
+                        do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                        if phase == .active && connectivity.connected != false { await refresh() }
+                    }
+                }
+                .onChange(of: phase) { _, value in if value == .active { Task { await refresh() } } }
+                .onChange(of: connectivity.connected) { old, new in if old == false && new == true { Task { await refresh() } } }
                 .sheet(isPresented: $settings) { if let connection = feed?.connection { CalendarConnectionView(connection: connection, user: user) { await refresh() } } }
                 .sheet(item: $event, onDismiss: { if let item = editAfterDetail, let visible { editor = AgendaEditorSession(event: item, day: day, revision: visible.connection.revision); editAfterDetail = nil } }) { item in
-                    AgendaEventDetail(event: item, onEdit: visible?.canEditEvents == true && item.editable == true ? { editAfterDetail = item; event = nil } : nil)
+                    AgendaEventDetail(event: item, onEdit: live && visible?.canEditEvents == true && item.editable == true ? { editAfterDetail = item; event = nil } : nil)
                 }
                 .sheet(item: $editor) { session in AgendaEventEditor(session: session) { result in notice = result.notice; await refresh() } }
         }
@@ -103,10 +135,27 @@ struct CalendarView: View {
     }
     private func refresh() async {
         let id = UUID(); requestID = id; let currentMonth = month
-        loading = true; error = nil
+        loading = true; error = nil; offlineMessage = nil
         defer { if requestID == id { loading = false } }
-        do { let result = try await store.client.agenda(month: currentMonth); guard requestID == id, month == currentMonth else { return }; byDay = CalendarClock.eventsByDay(result.events, days: result.days); feed = result; refreshedAt = Date() }
-        catch { if requestID == id { self.error = store.reportReadFailure(error) } }
+        do {
+            if store.isAgendaOnly { try await store.refresh() }
+            guard let scope = try store.client.agendaScope() else { throw APIError.unauthorized }
+            let result = try await store.client.agenda(month: currentMonth)
+            guard requestID == id, month == currentMonth else { return }
+            try store.rememberAgenda(result, userID: user.id, scope: scope)
+            feed = result; liveMonth = currentMonth; refreshedAt = Date()
+        } catch {
+            guard requestID == id else { return }
+            liveMonth = nil
+            if let api = error as? APIError {
+                switch api {
+                case .unauthorized, .forbidden: store.forgetAgenda(); feed = nil
+                default: break
+                }
+            }
+            if AgendaOfflineCache.isUnavailable(error) { offlineMessage = visible != nil ? "Sin conexión. Puedes consultar la última agenda descargada." : "Necesitas conexión para descargar este mes. Los meses guardados siguen disponibles." }
+            else { self.error = store.reportReadFailure(error) }
+        }
     }
 }
 struct AgendaEventRow: View {

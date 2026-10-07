@@ -15,7 +15,7 @@ struct JACNominaApp: App {
                 Group {
                     if Self.isUnitTestHost { Color(uiColor: .systemBackground) }
                     else if store.restoring { ProgressView("Conectando…") }
-                    else if let overview = store.overview { PayrollHomeView(overview: overview) }
+                    else if let overview = store.overview { PayrollHomeView(overview: overview, agendaOnly: store.isAgendaOnly) }
                     else { LoginView() }
                 }
                 .environmentObject(store)
@@ -39,7 +39,7 @@ struct JACNominaApp: App {
     private static func makeStore() -> PayrollStore {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("--uitest-payroll") { return PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"))) }
+        if arguments.contains("--uitest-payroll") { return PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"), offline: arguments.contains("--uitest-offline"), slowAgenda: arguments.contains("--uitest-slow-agenda"), persistentAgenda: arguments.contains("--uitest-agenda-cache"), resetAgenda: arguments.contains("--uitest-reset-agenda"))) }
         #endif
         return PayrollStore()
     }

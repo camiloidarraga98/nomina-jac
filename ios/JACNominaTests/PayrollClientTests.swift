@@ -36,10 +36,10 @@ final class PayrollClientTests: XCTestCase {
     private let base = URL(string: "https://payroll.example.invalid")!
     private let token = String(repeating: "a", count: 43)
 
-    @MainActor private func makeClient(_ vault: MemorySession) -> PayrollClient {
+    @MainActor private func makeClient(_ vault: MemorySession, cache: AgendaOfflineCache? = nil) -> PayrollClient {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.protocolClasses = [MockProtocol.self]
-        return PayrollClient(baseURL: base, vault: vault, configuration: configuration)
+        return PayrollClient(baseURL: base, vault: vault, configuration: configuration, agendaCache: cache ?? AgendaOfflineCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
     }
     override func tearDown() { MockProtocol.handler = nil; TemporaryDocuments.clear(); super.tearDown() }
 
@@ -249,6 +249,96 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(closed.data["periods"].elements.first?["status"].text, "cerrada")
         let reopened = try await client.payroll(.object(["action": .string("reopen"), "version": .number(Double(closed.version)), "periodId": .string(p.id)]))
         XCTAssertEqual(reopened.data["periods"].elements.first?["revisions"].elements.count, 1)
+    }
+
+    @MainActor func testAgendaDiskCacheIsEncryptedSessionBoundAndRejectsCorruption() async throws {
+        let client = UITestBackend.client(), feed = try await client.agenda(month: CalendarClock.month(Date())), user = try await client.workspace().user
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = AgendaOfflineCache(root: root), scope = AgendaCacheScope(origin: base.absoluteString, token: token)
+        let record = AgendaOfflineRecord(schema: 1, user: user, months: [SavedAgenda(data: feed, receivedAt: Date())])
+        try cache.save(record, scope: scope)
+        XCTAssertEqual(cache.load(scope)?.latest?.data.events.first?.title, "Concierto simulado")
+        let bytes = try Data(contentsOf: cache.file(scope))
+        XCTAssertNil(bytes.range(of: Data("Concierto simulado".utf8))); XCTAssertNil(bytes.range(of: Data(token.utf8)))
+        XCTAssertEqual(try root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+        let otherSession = AgendaCacheScope(origin: base.absoluteString, token: String(repeating: "b", count: 43))
+        try bytes.write(to: cache.file(otherSession))
+        XCTAssertNil(cache.load(otherSession), "Ni copiando el archivo puede abrirse con otra sesión")
+        let otherSite = AgendaCacheScope(origin: "https://another.example.invalid", token: token)
+        try bytes.write(to: cache.file(otherSite)); XCTAssertNil(cache.load(otherSite))
+        var corrupt = bytes; corrupt[corrupt.count / 2] ^= 1; try corrupt.write(to: cache.file(scope))
+        XCTAssertNil(cache.load(scope), "Un archivo alterado nunca debe restaurar eventos ni identidad")
+    }
+
+    @MainActor func testAgendaRestoresImmediatelyOfflineThenRevalidatesAndLogoutPurgesCache() async throws {
+        let fixture = UITestBackend.client(), feed = try await fixture.agenda(month: CalendarClock.month(Date())), workspace = try await fixture.workspace()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = AgendaOfflineCache(root: root), vault = MemorySession(); vault.token = token
+        let client = makeClient(vault, cache: cache), scope = try XCTUnwrap(client.agendaScope())
+        try cache.save(AgendaOfflineRecord(schema: 1, user: workspace.user, months: [SavedAgenda(data: feed, receivedAt: Date())]), scope: scope)
+        MockProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        let store = PayrollStore(client: client)
+        XCTAssertFalse(store.restoring, "La agenda ya debe estar disponible antes de cualquier petición")
+        XCTAssertTrue(store.isAgendaOnly); XCTAssertFalse(store.canWrite)
+        XCTAssertNotNil(store.cachedAgenda(month: feed.month, userID: workspace.user.id))
+        XCTAssertNil(store.cachedAgenda(month: feed.month, userID: "otra-cuenta"))
+        await store.restore()
+        XCTAssertTrue(store.isAgendaOnly); XCTAssertNil(store.error); XCTAssertNotNil(store.overview)
+        let payload = try JSONEncoder().encode(JSONValue.object(["version": .number(Double(workspace.version)), "company": .string("Prueba"), "periods": .array([]), "employees": .array([]), "user": try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace.user)), "data": workspace.data]))
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, request.httpMethod == "POST" ? Data("{}".utf8) : payload) }
+        try await store.refresh()
+        XCTAssertFalse(store.isAgendaOnly); XCTAssertTrue(store.canWrite)
+        await store.signOut()
+        XCTAssertNil(vault.token); XCTAssertNil(store.savedAgenda); XCTAssertNil(store.overview)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: cache.file(scope).path))
+        vault.token = String(repeating: "b", count: 43)
+        XCTAssertNil(PayrollStore(client: client).overview)
+    }
+
+    @MainActor func testRevokedAgendaSessionAndForbiddenCalendarPurgeOfflineCopy() async throws {
+        let fixture = UITestBackend.client(), feed = try await fixture.agenda(month: CalendarClock.month(Date())), workspace = try await fixture.workspace()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = AgendaOfflineCache(root: root), vault = MemorySession(); vault.token = token
+        let client = makeClient(vault, cache: cache), scope = try XCTUnwrap(client.agendaScope())
+        let record = AgendaOfflineRecord(schema: 1, user: workspace.user, months: [SavedAgenda(data: feed, receivedAt: Date())])
+        try cache.save(record, scope: scope)
+        let store = PayrollStore(client: client)
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!, Data("{}".utf8)) }
+        await store.restore()
+        XCTAssertNil(store.savedAgenda); XCTAssertNil(store.overview); XCTAssertNil(vault.token); XCTAssertNil(cache.load(scope))
+        vault.token = token; try cache.save(record, scope: scope)
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: nil)!, Data("{\"error\":\"Sin acceso a Agenda\"}".utf8)) }
+        do { _ = try await client.agenda(month: feed.month); XCTFail("No debe servir una copia en respuesta a una denegación") } catch { XCTAssertEqual(error.localizedDescription, "Sin acceso a Agenda") }
+        XCTAssertNil(client.cachedAgenda()); XCTAssertEqual(vault.token, token)
+    }
+
+    @MainActor func testAgendaCacheDropsOldCalendarAndCannotRollbackConnectionOrRetainDisconnectedEvents() async throws {
+        let client = UITestBackend.client(), store = PayrollStore(client: client)
+        defer { store.forgetAgenda() }
+        await store.restore()
+        let feed = try await client.agenda(month: CalendarClock.month(Date())), user = try XCTUnwrap(store.overview?.user), scope = try XCTUnwrap(client.agendaScope())
+        func changed(_ month: String, revision: Int, connected: Bool = true) throws -> AgendaData {
+            var value = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(feed))
+            value["month"] = .string(month); value["connection"]["revision"] = .number(Double(revision)); value["connection"]["connected"] = .bool(connected)
+            return try JSONDecoder().decode(AgendaData.self, from: JSONEncoder().encode(value))
+        }
+        try store.rememberAgenda(feed, userID: user.id, scope: scope)
+        for offset in 1...7 { try store.rememberAgenda(changed(CalendarClock.shift(feed.month, by: offset)!, revision: feed.connection.revision), userID: user.id, scope: scope) }
+        XCTAssertEqual(store.savedAgenda?.months.count, 6)
+        try store.rememberAgenda(changed(feed.month, revision: feed.connection.revision + 1), userID: user.id, scope: scope)
+        XCTAssertEqual(store.savedAgenda?.months.count, 1, "Una nueva conexión descarta los meses de la conexión anterior")
+        do { try store.rememberAgenda(feed, userID: user.id, scope: scope); XCTFail("No restaurar una revisión antigua") } catch { XCTAssertTrue(error is CancellationError) }
+        do { try store.rememberAgenda(feed, userID: "otra-cuenta", scope: scope); XCTFail("No guardar para otra identidad") } catch { XCTAssertTrue(error is CancellationError) }
+        var large = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(changed(feed.month, revision: feed.connection.revision + 2)))
+        large["events"] = .array([.object(["id": .string("large"), "title": .string("Prueba"), "start": .string("2026-10-07"), "end": .string("2026-10-08"), "allDay": .bool(true), "location": .string(""), "description": .string(String(repeating: "x", count: AgendaOfflineCache.maximumBytes)), "url": .string("")])])
+        try store.rememberAgenda(JSONDecoder().decode(AgendaData.self, from: JSONEncoder().encode(large)), userID: user.id, scope: scope)
+        XCTAssertNotNil(store.agendaStorageWarning)
+        XCTAssertNil(client.cachedAgenda(), "Si falla la nueva copia no se conserva el calendario anterior en disco")
+        try store.rememberAgenda(changed(feed.month, revision: feed.connection.revision + 3, connected: false), userID: user.id, scope: scope)
+        XCTAssertNil(store.savedAgenda); XCTAssertNil(client.cachedAgenda())
     }
 
     @MainActor func testCancelledReadsDoNotPublishErrorsOrClearExistingData() async throws {

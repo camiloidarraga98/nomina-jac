@@ -5,10 +5,12 @@ import Foundation
 // excluded from Release and never read or write the real payroll or Keychain.
 enum UITestBackend {
     static let base = URL(string: "https://ui-fixture.example.invalid")!
-    @MainActor static func client(reader: Bool = false, conflict: Bool = false, cancelledReads: Bool = false) -> PayrollClient {
-        FixtureProtocol.reset(reader: reader, conflict: conflict, cancelledReads: cancelledReads)
+    @MainActor static func client(reader: Bool = false, conflict: Bool = false, cancelledReads: Bool = false, offline: Bool = false, slowAgenda: Bool = false, persistentAgenda: Bool = false, resetAgenda: Bool = false) -> PayrollClient {
+        FixtureProtocol.reset(reader: reader, conflict: conflict, cancelledReads: cancelledReads, offline: offline, slowAgenda: slowAgenda)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [FixtureProtocol.self]
-        return PayrollClient(baseURL: base, vault: FixtureSession(), configuration: configuration)
+        let cache = AgendaOfflineCache(root: persistentAgenda ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACAgendaUITest") : FileManager.default.temporaryDirectory.appendingPathComponent("agenda-fixture-" + UUID().uuidString))
+        if resetAgenda { try? FileManager.default.removeItem(at: cache.root) }
+        return PayrollClient(baseURL: base, vault: FixtureSession(), configuration: configuration, agendaCache: cache)
     }
 }
 private final class FixtureSession: SessionStoring {
@@ -28,7 +30,9 @@ private final class FixtureProtocol: URLProtocol {
     static var deletedNotices = Set<String>()
     static var attachments: [String: Data] = [:]
     static var readsToCancel = Set<String>()
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; agendaChanges = [:]; alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static var offline = false
+    static var slowAgenda = false
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; agendaChanges = [:]; alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func cancelRead(_ request: URLRequest) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard request.httpMethod == "GET", let url = request.url else { return false }
@@ -40,6 +44,8 @@ private final class FixtureProtocol: URLProtocol {
     override func startLoading() {
         do {
             guard request.url?.host == "ui-fixture.example.invalid" else { throw URLError(.unsupportedURL) }
+            if Self.offline { throw URLError(.notConnectedToInternet) }
+            if Self.slowAgenda, request.url?.path == "/api/calendar", request.httpMethod == "GET" { Thread.sleep(forTimeInterval: 3) }
             if Self.cancelRead(request) { throw URLError(.cancelled) }
             if request.url?.path == "/api/notices/file" {
                 Self.lock.lock(); defer { Self.lock.unlock() }; let q = URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? []; let notice = q.first { $0.name == "id" }?.value ?? "", id = q.first { $0.name == "file" }?.value ?? ""
@@ -209,7 +215,7 @@ private final class FixtureProtocol: URLProtocol {
         let offset = (CalendarClock.calendar.component(.weekday, from: first) + 5) % 7
         let start = CalendarClock.calendar.date(byAdding: .day, value: -offset, to: first)!
         let days = (0..<42).map { CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: $0, to: start)!) }
-        let event: JSONValue = agendaChanges["fixture-concert"] ?? .object(["id": .string("fixture-concert"), "title": .string("Concierto simulado"), "start": .string(today + "T19:00:00-05:00"), "end": .string(today + "T21:00:00-05:00"), "allDay": .bool(false), "location": .string("Teatro simulado"), "description": .string("Prueba sin eventos reales ni acceso a Google."), "url": .string(""), "etag": .string("fixture-v1"), "editable": .bool(true), "recurring": .bool(true)])
+        let event: JSONValue = agendaChanges["fixture-concert"] ?? .object(["id": .string("fixture-concert"), "title": .string(slowAgenda ? "Concierto actualizado" : "Concierto simulado"), "start": .string(today + "T19:00:00-05:00"), "end": .string(today + "T21:00:00-05:00"), "allDay": .bool(false), "location": .string("Teatro simulado"), "description": .string("Prueba sin eventos reales ni acceso a Google."), "url": .string(""), "etag": .string("fixture-v1"), "editable": .bool(true), "recurring": .bool(true)])
         let records = [event] + agendaChanges.filter { $0.key != "fixture-concert" }.map(\.value)
         return .object(["connection": .object(["configured": .bool(true), "connected": .bool(true), "email": .string("calendar@example.invalid"), "selected": agendaCalendar, "revision": .number(1), "writeAuthorized": .bool(true)]), "canEditEvents": .bool(true), "month": .string(month), "monthLabel": .string(CalendarClock.dayLabel(month + "-01")), "days": .array(days.map(JSONValue.string)), "today": .string(today), "events": .array(days.contains(today) ? records : []), "upcoming": .array(records), "upcomingUntil": .string(CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: 90, to: Date())!)), "updatedAt": .string(ISO8601DateFormatter().string(from: Date())), "timeZone": .string("America/Bogota")])
     }
