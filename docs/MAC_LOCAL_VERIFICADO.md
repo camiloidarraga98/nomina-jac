@@ -1,5 +1,7 @@
 # Comprobación local de JAC — 6 de octubre de 2026
 
+**Actualización posterior:** se corrigió y verificó localmente el fallo de segundo plano descrito abajo. La versión final pasa 23 pruebas unitarias y 10 de interfaz en otro simulador nuevo. Se conserva la navegación y la privacidad protege también las hojas abiertas. El diagnóstico original se mantiene como evidencia histórica; ver [causa, corrección y comprobaciones](IOS_REGRESO_SEGUNDO_PLANO.md). La firma del iPhone sigue pendiente de la aprobación de Apple.
+
 La carpeta de trabajo es `/Users/camiloidarraga/Documents/Proyectos/JAC`, sobre macOS 27.0 (26A428), con ejecución de comandos y compilaciones en este Mac. No se crearon trabajos Cloud ni se usó GitHub/Actions. La etiqueta visual Local/This computer no pudo inspeccionarse desde la herramienta de interfaz de Codex; la ruta y ejecución macOS sí se comprobaron directamente.
 
 ## Herramientas y arranque web

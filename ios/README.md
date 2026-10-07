@@ -49,6 +49,8 @@ No necesitamos publicar en la App Store. Camilo confirmó que dispone de Mac y A
 
 ## Si el simulador queda en blanco o se cierra
 
+El cierre local de Xcode 27/iOS 27 al pasar a segundo plano con un campo enfocado se diagnosticó por separado: `.privacySensitive()` envolvía la navegación raíz y UIKit intentaba distribuir un elemento perteneciente a otra barra. El marcado ahora se aplica al contenido de formularios, listas y documentos; la cubierta opaca con logo protege también las hojas presentadas. Al desactivarse se oculta el teclado sin vaciar los campos ni descartar borradores; puedes volver a tocar el campo al regresar. No se alteran las rutas ni se elimina ninguna comprobación. Diagnóstico, comparaciones y resultados locales: [regreso desde segundo plano](../docs/IOS_REGRESO_SEGUNDO_PLANO.md). Desactivar el depurador no corregía esta excepción.
+
 Los mensajes `Failed to send CA Event`, `com.apple.PointerUI` y `cannot add handler to 0` proceden de componentes de Apple y, por sí solos, no identifican un cierre de la app. Conserva el mensaje que diga `Thread 1`, `Fatal error`, `Precondition failed` o la excepción, si aparece.
 
 1. Comprueba que abres `ios/JACNomina.xcodeproj` y que el esquema seleccionado es **JACNomina**.

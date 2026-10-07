@@ -20,12 +20,12 @@ struct JACNominaApp: App {
                 }
                 .environmentObject(store)
                 .tint(JACTheme.action)
-                .privacySensitive()
                 if scenePhase != .active {
                     Color(uiColor: .systemBackground).ignoresSafeArea()
-                    BrandView().frame(width: 220)
+                    BrandView().frame(width: 220).accessibilityIdentifier("privacy.cover")
                 }
             }
+            .background(WindowPrivacyShield())
             .task { if !Self.isUnitTestHost { await store.restore() } }
         }
     }
@@ -43,6 +43,78 @@ struct JACNominaApp: App {
         #endif
         return PayrollStore()
     }
+}
+
+// A scene's window also contains presented sheets. The SwiftUI root cover sits
+// below those sheets, so cover the window before the system takes its snapshot.
+private struct WindowPrivacyShield: UIViewRepresentable {
+    func makeUIView(context: Context) -> PrivacyShieldAnchor {
+        let view = PrivacyShieldAnchor()
+        view.isUserInteractionEnabled = false
+        return view
+    }
+    func updateUIView(_ view: PrivacyShieldAnchor, context: Context) {}
+    static func dismantleUIView(_ view: PrivacyShieldAnchor, coordinator: ()) { view.stop() }
+}
+
+private final class PrivacyShieldAnchor: UIView {
+    private var observers: [NSObjectProtocol] = []
+    private var cover: UIView?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        stop()
+        guard let scene = window?.windowScene else { return }
+        for name in [UIScene.willDeactivateNotification, UIScene.didEnterBackgroundNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: scene, queue: .main) { [weak self] _ in
+                MainActor.assumeIsolated { self?.conceal() }
+            })
+        }
+        observers.append(NotificationCenter.default.addObserver(forName: UIScene.didActivateNotification, object: scene, queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated { self?.reveal() }
+        })
+        if scene.activationState != .foregroundActive { conceal() }
+    }
+
+    func stop() {
+        observers.forEach { NotificationCenter.default.removeObserver($0) }
+        observers.removeAll()
+        reveal()
+    }
+
+    private func conceal() {
+        guard let window else { return }
+        // Remove keyboard suggestions from the snapshot without clearing any
+        // field or dismissing its editor/navigation destination.
+        UIView.performWithoutAnimation { _ = window.endEditing(true) }
+        if let cover { window.bringSubviewToFront(cover); return }
+        let shade = UIView(frame: window.bounds)
+        shade.autoresizingMask = [.flexibleWidth, .flexibleHeight]
+        shade.backgroundColor = .systemBackground
+        shade.accessibilityViewIsModal = true
+        let brand = UIView()
+        brand.backgroundColor = .white; brand.layer.cornerRadius = 14
+        let logo = UIImageView(image: UIImage(named: "JACLogo"))
+        logo.contentMode = .scaleAspectFit
+        logo.isAccessibilityElement = true
+        logo.accessibilityLabel = "JAC Music Estudios"
+        logo.accessibilityIdentifier = "privacy.cover"
+        brand.translatesAutoresizingMaskIntoConstraints = false
+        logo.translatesAutoresizingMaskIntoConstraints = false
+        shade.addSubview(brand); brand.addSubview(logo)
+        let ratio = (logo.image?.size.height ?? 1) / (logo.image?.size.width ?? 1)
+        NSLayoutConstraint.activate([
+            brand.centerXAnchor.constraint(equalTo: shade.centerXAnchor), brand.centerYAnchor.constraint(equalTo: shade.centerYAnchor),
+            brand.widthAnchor.constraint(equalToConstant: 220),
+            logo.leadingAnchor.constraint(equalTo: brand.leadingAnchor, constant: 14), logo.trailingAnchor.constraint(equalTo: brand.trailingAnchor, constant: -14),
+            logo.topAnchor.constraint(equalTo: brand.topAnchor, constant: 14), logo.bottomAnchor.constraint(equalTo: brand.bottomAnchor, constant: -14),
+            logo.heightAnchor.constraint(equalTo: logo.widthAnchor, multiplier: ratio)
+        ])
+        cover = shade
+        window.addSubview(shade)
+    }
+
+    private func reveal() { cover?.removeFromSuperview(); cover = nil }
 }
 
 struct BrandView: View {
@@ -84,5 +156,8 @@ struct JACPrimaryButtonStyle: ButtonStyle {
     }
 }
 extension View {
-    func jacSurface() -> some View { scrollContentBackground(.hidden).background(JACTheme.canvas).foregroundStyle(JACTheme.ink).tint(JACTheme.action) }
+    // Mark the content, not the NavigationStack/TabView that owns it. On iOS 27
+    // redacting the whole navigation hierarchy for a background snapshot can
+    // attach its UINavigationItem to a second bar while the keyboard resigns.
+    func jacSurface() -> some View { scrollContentBackground(.hidden).background(JACTheme.canvas).foregroundStyle(JACTheme.ink).tint(JACTheme.action).privacySensitive() }
 }

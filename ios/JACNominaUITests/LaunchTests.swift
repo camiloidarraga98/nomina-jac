@@ -29,6 +29,64 @@ final class LaunchTests: XCTestCase {
         waitForExpectations(timeout: 10)
         XCTAssertEqual(app.state, .runningForeground)
         attachScreen(app, name: "regreso-a-la-app")
+        XCTAssertEqual(username.value as? String, "prueba-local", "El regreso debe conservar el formulario, sin relanzar la app.")
+        for suffix in ["-uno", "-dos"] {
+            username.tap(); username.typeText(suffix)
+            let value = username.value as? String
+            XCUIDevice.shared.press(.home); app.activate()
+            XCTAssertTrue(username.waitForExistence(timeout: 10))
+            XCTAssertTrue(username.isHittable)
+            XCTAssertEqual(username.value as? String, value, "Cada regreso debe conservar el texto y el foco utilizable.")
+        }
+    }
+
+    @MainActor func testActivationNavigationAndFocusedPasswordSurviveBackground() {
+        let app = XCUIApplication(); app.launch()
+        XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout: 20))
+        tap(app, "Activar cuenta o restablecer contraseña")
+        let password = app.secureTextFields["Nueva contraseña"]
+        XCTAssertTrue(password.waitForExistence(timeout: 10))
+        password.tap(); password.typeText("solo-prueba-local")
+        let value = password.value as? String
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(app.navigationBars["Activar cuenta"].waitForExistence(timeout: 10))
+        XCTAssertTrue(password.isHittable)
+        XCTAssertEqual(password.value as? String, value, "La navegación y el formulario deben sobrevivir al regreso.")
+        app.navigationBars.buttons.firstMatch.tap()
+        XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout: 10))
+    }
+
+    @MainActor func testPrivacyCoverAndPayrollEditorSurviveAppSwitcher() {
+        let app = fixture()
+        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995))
+        let middle = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        bottom.press(forDuration: 0.1, thenDragTo: middle, withVelocity: .slow, thenHoldForDuration: 1)
+        let cover = app.images["privacy.cover"]
+        XCTAssertTrue(cover.waitForExistence(timeout: 10), "La escena inactiva debe conservar la cubierta de privacidad.")
+        let snapshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        snapshot.name = "privacidad-en-selector-de-apps"; snapshot.lifetime = .keepAlways; add(snapshot)
+        app.activate()
+        XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.images["privacy.cover"].exists)
+        tap(app, "period.fixture-period"); tap(app, "Actividad"); tap(app, "activity.shows"); tap(app, "activity.add")
+        let title = app.textFields["editor.name"]
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        title.tap(); title.typeText("Borrador local")
+        let value = title.value as? String
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertTrue(title.isHittable)
+        XCTAssertEqual(title.value as? String, value, "El borrador debe conservarse sin guardar ni enviar datos.")
+        XCTAssertFalse(app.images["privacy.cover"].exists)
+        bottom.press(forDuration: 0.1, thenDragTo: middle, withVelocity: .slow, thenHoldForDuration: 1)
+        XCTAssertTrue(app.images["privacy.cover"].waitForExistence(timeout: 10), "La cubierta debe quedar también por encima de las hojas.")
+        let editorSnapshot = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        editorSnapshot.name = "privacidad-de-borrador-en-selector-de-apps"
+        editorSnapshot.lifetime = .keepAlways; add(editorSnapshot)
+        app.activate()
+        XCTAssertTrue(title.waitForExistence(timeout: 10))
+        XCTAssertTrue(title.isHittable)
+        XCTAssertEqual(title.value as? String, value)
     }
 
     @MainActor private func attachScreen(_ app: XCUIApplication, name: String) {
