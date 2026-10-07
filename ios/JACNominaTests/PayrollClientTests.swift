@@ -294,4 +294,39 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNil(store.pending, "Una respuesta de otra sesión no debe recuperar el formulario ni su base privada")
         XCTAssertEqual(vault.token, String(repeating: "b", count: 43))
     }
+    @MainActor func testItinerariesUseAuthenticatedAPIAndProtectedTemporaryPDF() async throws {
+        let client = UITestBackend.client()
+        let feed = try await client.notices()
+        let item = try XCTUnwrap(feed.notices.first)
+        XCTAssertEqual(item.kind, "itinerary"); XCTAssertEqual(item.body, "")
+        let direct = try await client.notice(id: item.id); XCTAssertEqual(direct.id, item.id)
+        let document = try await client.itinerary(item)
+        defer { TemporaryDocuments.remove(document) }
+        XCTAssertEqual(String(data: try Data(contentsOf: document.url).prefix(5), encoding: .utf8), "%PDF-")
+        XCTAssertEqual(document.url.lastPathComponent, "Itinerario_simulado.pdf")
+        try await client.noticeCommand(.object(["action": .string("read"), "id": .string(item.id)]))
+    }
+    @MainActor func testAlertCreationAndReaderPermissionUseTheSharedServerContract() async throws {
+        let client = UITestBackend.client(), id = UUID().uuidString.lowercased()
+        let command: JSONValue = .object(["action": .string("alert"), "alert": .object(["id": .string(id), "title": .string("Aviso simulado"), "body": .string("Mensaje de prueba"), "recipients": .array([.string("22222222-2222-4222-8222-222222222222")])])])
+        try await client.noticeCommand(command); try await client.noticeCommand(command)
+        let feed = try await client.notices()
+        XCTAssertEqual(feed.notices.filter { $0.id == id }.count, 1)
+        let reader = UITestBackend.client(reader: true)
+        let readerFeed = try await reader.notices(); XCTAssertTrue(readerFeed.users.isEmpty)
+        do { try await reader.noticeCommand(command); XCTFail("La API debe rechazar al lector") } catch { XCTAssertTrue(error.localizedDescription.contains("Solo Camilo")) }
+    }
+    @MainActor func testPushRoutingValidatesIdentifiersAndLogoutNamesOnlyThisDevice() async throws {
+        let hub = JACNotifications.shared; hub.noticeID = nil
+        hub.received("https://untrusted.example.invalid"); XCTAssertNil(hub.noticeID)
+        let id = UUID().uuidString; hub.received(id); XCTAssertEqual(hub.noticeID, id.lowercased()); hub.noticeID = nil
+        let vault = MemorySession(); vault.token = token
+        MockProtocol.handler = { request in
+            let body = try JSONDecoder().decode(JSONValue.self, from: request.httpBody!)
+            XCTAssertEqual(body["action"].text, "logout"); XCTAssertEqual(body["notificationDeviceId"].text, JACNotifications.deviceID)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{}".utf8))
+        }
+        try await makeClient(vault).logout(); XCTAssertNil(vault.token)
+    }
+
 }

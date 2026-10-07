@@ -1,0 +1,5 @@
+import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
+import {itineraryPdf} from '@/lib/notifications';
+import {NoticeFailure} from '@/lib/notifications-core';
+export const dynamic='force-dynamic';
+export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return Response.json({error:'Inicia sesión con tu cuenta de JAC.'},{status:401,headers:payrollHeaders});try{const {item,object}=await itineraryPdf(u,new URL(req.url).searchParams.get('id')??'');return new Response(object.body,{headers:{...payrollHeaders,'Content-Type':'application/pdf','Content-Disposition':"inline; filename*=UTF-8''"+encodeURIComponent(item.filename),'X-Content-Type-Options':'nosniff'}});}catch(e){return Response.json({error:e instanceof NoticeFailure?e.message:'No se pudo abrir el PDF.'},{status:e instanceof NoticeFailure?e.status:502,headers:payrollHeaders});}}

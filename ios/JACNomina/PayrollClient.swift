@@ -105,13 +105,29 @@ final class PayrollClient {
         _ = try await request(path: "api/auth", body: .object(["action": .string("password"), "currentPassword": .string(current), "password": .string(new)]))
     }
     func logout() async throws {
-        do { _ = try await request(path: "api/auth", body: .object(["action": .string("logout")])) }
+        do { _ = try await request(path: "api/auth", body: .object(["action": .string("logout"), "notificationDeviceId": .string(JACNotifications.deviceID)])) }
         catch { try clearSession(); throw error }
         try clearSession()
     }
     func workspace() async throws -> PayrollWorkspace {
         let (data, _) = try await request(path: "api/mobile/payroll", query: [URLQueryItem(name: "workspace", value: "1")])
         return try decoder.decode(PayrollWorkspace.self, from: data)
+    }
+    func notices(cursor: String = "") async throws -> NoticeFeed {
+        let (data, _) = try await request(path: "api/notices", query: cursor.isEmpty ? [] : [URLQueryItem(name: "cursor", value: cursor)])
+        return try decoder.decode(NoticeFeed.self, from: data)
+    }
+    func noticeCommand(_ command: JSONValue) async throws { _ = try await request(path: "api/notices", body: command) }
+    func notice(id: String) async throws -> JACNotice {
+        struct Response: Decodable { let item: JACNotice }
+        let (data, _) = try await request(path: "api/notices", query: [URLQueryItem(name: "item", value: id)])
+        return try decoder.decode(Response.self, from: data).item
+    }
+    func itinerary(_ notice: JACNotice) async throws -> ExportedDocument {
+        let (data, response) = try await request(path: "api/notices/pdf", query: [URLQueryItem(name: "id", value: notice.id)], document: true)
+        guard response.mimeType == "application/pdf", data.count <= 10*1024*1024, data.starts(with: Data("%PDF-".utf8)) else { throw APIError.message("No se recibió un PDF válido.") }
+        let name = (notice.filename as NSString).lastPathComponent
+        return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Itinerario.pdf" : name)
     }
     func payroll(_ command: JSONValue) async throws -> PayrollEnvelope {
         let (data, _) = try await request(path: "api/mobile/payroll", body: command)
