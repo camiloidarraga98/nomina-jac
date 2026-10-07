@@ -36,9 +36,23 @@ export async function webPushRequest(subscription:WebSubscription,credentials:No
  const token=await jwt({typ:'JWT',alg:'ES256'},{aud:url.origin,exp:Math.floor(Date.now()/1000)+3600,sub:'mailto:camilo@mac2you.co'},key);
  return {url,options:{method:'POST',headers:{Authorization:'vapid t='+token+', k='+credentials.publicKey,'Content-Encoding':'aes128gcm','Content-Type':'application/octet-stream',TTL:'86400',Urgency:'normal'},body:concat(header,publicKey,encrypted),redirect:'manual',signal:AbortSignal.timeout(8000)} satisfies RequestInit};
 }
+// APNs requires reuse of provider tokens: keep a validated token in isolate
+// memory for 50 minutes, keyed by a fingerprint so key rotation invalidates it.
+const appleTokens=new Map<string,{expires:number;token:Promise<string>}>();
+async function appleAuthorization(credentials:NonNullable<PushCredentials['apns']>){
+ const fingerprint=base64url(new Uint8Array(await crypto.subtle.digest('SHA-256',utf8(credentials.teamId+'|'+credentials.keyId+'|'+credentials.privateKey))));
+ let cached=appleTokens.get(fingerprint);
+ if(!cached||cached.expires<=Date.now()){
+  if(appleTokens.size>=4)appleTokens.clear();
+  const token=(async()=>jwt({alg:'ES256',kid:credentials.keyId},{iss:credentials.teamId,iat:Math.floor(Date.now()/1000)},await appleKey(credentials.privateKey)))();
+  cached={expires:Date.now()+50*60*1000,token};appleTokens.set(fingerprint,cached);
+  token.catch(()=>{if(appleTokens.get(fingerprint)?.token===token)appleTokens.delete(fingerprint);});
+ }
+ return cached.token;
+}
 export async function applePushRequest(token:string,environment:string,credentials:NonNullable<PushCredentials['apns']>,id:string){
  if(!/^[a-f0-9]{64,200}$/.test(token)||!['sandbox','production'].includes(environment))throw new NoticeFailure('El registro del iPhone no es válido.');
- const authorization=await jwt({alg:'ES256',kid:credentials.keyId},{iss:credentials.teamId,iat:Math.floor(Date.now()/1000)},await appleKey(credentials.privateKey));
+ const authorization=await appleAuthorization(credentials);
  const url='https://'+(environment==='sandbox'?'api.sandbox.push.apple.com':'api.push.apple.com')+'/3/device/'+token;
  return {url,options:{method:'POST',headers:{Authorization:'bearer '+authorization,'Content-Type':'application/json','apns-topic':APP_TOPIC,'apns-push-type':'alert','apns-priority':'10','apns-id':id,'apns-collapse-id':id,'apns-expiration':String(Math.floor(Date.now()/1000)+86400)},body:JSON.stringify({aps:{alert:{title:'JAC',body:'Tienes un aviso nuevo. Abre JAC para consultarlo.'},sound:'default'},noticeId:id}),redirect:'manual',signal:AbortSignal.timeout(8000)} satisfies RequestInit};
 }
