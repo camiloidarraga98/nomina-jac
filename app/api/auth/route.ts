@@ -10,7 +10,7 @@ export async function POST(req:Request){
  if(req.headers.get('origin')!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);
  const secure=!/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname);
  try{const text=await req.text();if(text.length>4000)return reply({error:'Solicitud demasiado grande.'},413);const body=JSON.parse(text);
- if(body.action==='logout'){await revokeSession(sessionToken(req.headers.get('cookie')||'',secure));return reply({ok:true},200,sessionCookie('',secure,0));}
+ if(body.action==='logout'){await revokeSession(sessionToken(req.headers.get('cookie')||'',secure),body.notificationDeviceId);return reply({ok:true},200,sessionCookie('',secure,0));}
  if(body.action==='login'){const input=z.object({username:z.string().trim().toLowerCase().min(1).max(254),password:passwordSchema}).safeParse(body);if(!input.success)return reply({error:'Usuario o contraseña incorrectos.'},401);await rateLimit(req,input.data.username);const row=await passwordLogin(input.data.username,input.data.password);if(!row)return reply({error:'Usuario o contraseña incorrectos.'},401);return reply({ok:true},200,sessionCookie(await makeSession(row.id),secure));}
  if(body.action==='activate'){const input=z.object({token:z.string().regex(/^[A-Za-z0-9_-]{43}$/),password:passwordSchema}).safeParse(body);if(!input.success)return reply({error:'Revisa el enlace e ingresa una contraseña.'},400);await rateLimit(req,'activation:'+input.data.token);const id=await activateUser(input.data.token,input.data.password);return reply({ok:true},200,sessionCookie(await makeSession(id),secure));}
  const user=await payrollUser();if(!user)return reply({error:'Inicia sesión para continuar.'},401);

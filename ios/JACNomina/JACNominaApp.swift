@@ -4,6 +4,7 @@ import UIKit
 @main
 @MainActor
 struct JACNominaApp: App {
+    @UIApplicationDelegateAdaptor(JACPushDelegate.self) private var pushDelegate
     @StateObject private var store = JACNominaApp.makeStore()
     @Environment(\.scenePhase) private var scenePhase
     init() { JACTheme.configure() }

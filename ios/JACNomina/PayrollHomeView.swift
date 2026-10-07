@@ -2,6 +2,9 @@ import SwiftUI
 
 struct PayrollHomeView: View {
     let overview: PayrollOverview
+    @EnvironmentObject private var store: PayrollStore
+    @Environment(\.scenePhase) private var scenePhase
+    @ObservedObject private var push = JACNotifications.shared
     var body: some View {
         TabView {
             PeriodsView(overview: overview).tabItem { Label("Quincenas", systemImage: "calendar") }
@@ -10,6 +13,9 @@ struct PayrollHomeView: View {
             EmployeesView(overview: overview).tabItem { Label("Equipo", systemImage: "person.2") }
             ManagementView(user: overview.user).tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }
         }.tint(JACTheme.lime)
+            .task(id: overview.user.id) { await push.bind(store.client) }
+            .onChange(of: scenePhase) { _, value in if value == .active { Task { await push.bind(store.client) } } }
+            .sheet(isPresented: Binding(get: { push.noticeID != nil }, set: { if !$0 { push.noticeID = nil } })) { NavigationStack { NoticesView(user: overview.user, initialNotice: push.noticeID).id(push.noticeID).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { push.noticeID = nil } } } } }
     }
 }
 struct PeriodsView: View {

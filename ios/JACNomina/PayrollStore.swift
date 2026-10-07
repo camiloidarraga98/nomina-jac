@@ -44,6 +44,7 @@ final class PayrollStore: ObservableObject {
         workspace = result; overview = result.overview; return true
     }
     func signOut() async {
+        JACNotifications.shared.stop()
         busy = true
         defer { busy = false }
         do { try await client.logout() }

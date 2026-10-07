@@ -10,6 +10,14 @@ private final class MemorySession: SessionStoring {
 
 private final class MockProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    static func requestBody(_ request: URLRequest) throws -> Data {
+        if let data = request.httpBody { return data }
+        guard let stream = request.httpBodyStream else { throw URLError(.badServerResponse) }
+        stream.open(); defer { stream.close() }
+        var data = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+        while true { let count = stream.read(&buffer, maxLength: buffer.count); if count < 0 { throw stream.streamError ?? URLError(.cannotDecodeRawData) }; if count == 0 { break }; data.append(contentsOf: buffer.prefix(count)) }
+        return data
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -294,4 +302,48 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNil(store.pending, "Una respuesta de otra sesión no debe recuperar el formulario ni su base privada")
         XCTAssertEqual(vault.token, String(repeating: "b", count: 43))
     }
+    @MainActor func testItinerariesUseAuthenticatedAPIAndProtectedTemporaryPDF() async throws {
+        let client = UITestBackend.client()
+        let feed = try await client.notices()
+        let item = try XCTUnwrap(feed.notices.first)
+        XCTAssertEqual(item.kind, "itinerary"); XCTAssertEqual(item.body, "")
+        let direct = try await client.notice(id: item.id); XCTAssertEqual(direct.id, item.id)
+        let document = try await client.itinerary(item)
+        defer { TemporaryDocuments.remove(document) }
+        XCTAssertEqual(String(data: try Data(contentsOf: document.url).prefix(5), encoding: .utf8), "%PDF-")
+        XCTAssertEqual(document.url.lastPathComponent, "Itinerario_simulado.pdf")
+        try await client.noticeCommand(.object(["action": .string("read"), "id": .string(item.id)]))
+    }
+    @MainActor func testAlertCreationAndReaderPermissionUseTheSharedServerContract() async throws {
+        let client = UITestBackend.client(), id = UUID().uuidString.lowercased()
+        let command: JSONValue = .object(["action": .string("alert"), "alert": .object(["id": .string(id), "title": .string("Aviso simulado"), "body": .string("Mensaje de prueba"), "recipients": .array([.string("22222222-2222-4222-8222-222222222222")])])])
+        try await client.noticeCommand(command); try await client.noticeCommand(command)
+        let feed = try await client.notices()
+        XCTAssertEqual(feed.notices.filter { $0.id == id }.count, 1)
+        let reader = UITestBackend.client(reader: true)
+        let readerFeed = try await reader.notices(); XCTAssertTrue(readerFeed.users.isEmpty)
+        do { try await reader.noticeCommand(command); XCTFail("La API debe rechazar al lector") } catch { XCTAssertTrue(error.localizedDescription.contains("Solo Camilo")) }
+    }
+    @MainActor func testPushRoutingValidatesIdentifiersAndLogoutNamesOnlyThisDevice() async throws {
+        let hub = JACNotifications.shared; hub.noticeID = nil
+        hub.received("https://untrusted.example.invalid"); XCTAssertNil(hub.noticeID)
+        let id = UUID().uuidString; hub.received(id); XCTAssertEqual(hub.noticeID, id.lowercased()); hub.noticeID = nil
+        let vault = MemorySession(); vault.token = token
+        MockProtocol.handler = { request in
+            let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request))
+            XCTAssertEqual(body["action"].text, "logout"); XCTAssertEqual(body["notificationDeviceId"].text, JACNotifications.deviceID)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{}".utf8))
+        }
+        try await makeClient(vault).logout(); XCTAssertNil(vault.token)
+    }
+
+    func testNoticeTimestampsUseColombiaDayAndTimeIncludingFractionalSeconds() {
+        for timestamp in ["2026-10-07T00:00:00Z", "2026-10-07T00:00:00.000Z"] {
+            let item = JACNotice(id: UUID().uuidString, kind: "alert", title: "Prueba", body: "", filename: "", size: 0, createdAt: timestamp, read: false)
+            XCTAssertNotNil(item.createdLabel.range(of: "^6\\D", options: .regularExpression), "Debe mostrar el 6 de octubre en Colombia, no el día 7 de UTC")
+            XCTAssertTrue(item.createdLabel.contains("7:00") || item.createdLabel.contains("19:00"))
+            XCTAssertFalse(item.createdLabel.contains(timestamp))
+        }
+    }
+
 }

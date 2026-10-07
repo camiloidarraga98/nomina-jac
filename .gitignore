@@ -54,6 +54,7 @@ next-env.d.ts
 *.db
 *.db-*
 *.key
+*.p8
 *.p12
 *.pfx
 

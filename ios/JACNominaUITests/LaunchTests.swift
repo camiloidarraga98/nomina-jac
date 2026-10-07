@@ -151,4 +151,27 @@ final class LaunchTests: XCTestCase {
         tap(app, "Listo")
         attachScreen(app, name: "agenda-identidad-jac")
     }
+    @MainActor func testItineraryPDFAndSelectiveAlertAreAccessibleInManagement() {
+        let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.itineraries")
+        tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
+        tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
+        attachScreen(app, name: "itinerario-pdf"); tap(app, "notices.pdf.close"); tap(app, "notices.detail.close")
+        app.navigationBars.buttons.firstMatch.tap(); tap(app, "notices.alerts"); tap(app, "notices.create")
+        fill(app, "notices.editor.title", "Alerta simulada iPhone")
+        let message = app.descendants(matching: .any).matching(identifier: "notices.editor.message").firstMatch
+        XCTAssertTrue(message.waitForExistence(timeout: 10)); message.tap(); message.typeText("Mensaje para el equipo simulado")
+        app.swipeUp()
+        let recipient = app.switches["notices.recipient.11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(recipient.waitForExistence(timeout: 10)); recipient.tap()
+        attachScreen(app, name: "alerta-destinatarios"); tap(app, "notices.editor.save")
+        XCTAssertTrue(app.staticTexts["Alerta guardada para los destinatarios elegidos."].waitForExistence(timeout: 15))
+        attachScreen(app, name: "alerta-guardada")
+    }
+    @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
+        let app = fixture(["--uitest-reader"]); app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.itineraries")
+        tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
+        app.navigationBars.buttons.firstMatch.tap(); tap(app, "notices.alerts")
+        XCTAssertTrue(app.buttons["notices.enable"].waitForExistence(timeout: 10)); XCTAssertFalse(app.buttons["notices.create"].exists)
+    }
+
 }

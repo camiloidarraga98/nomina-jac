@@ -1,6 +1,6 @@
 # Correspondencia del webapp y la app de iPhone
 
-La versión 0.4.0 conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
+La versión 0.5.0 conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
 
 | Función existente | Acceso nativo | Integración compartida |
 | --- | --- | --- |
@@ -24,6 +24,10 @@ La versión 0.4.0 conserva las cuentas, los permisos y la base D1 del webapp. To
 | Consultar estados, modificar correo de personal y enviar desprendibles conjuntos/individuales | Correo → Quincena / Correos y envíos de este corte | `/api/payroll/email`, permisos `staff`/`send`, mismos estados e idempotencia |
 | PDF de resumen y desprendibles, ZIP y Excel de siete hojas | Quincena cerrada → Documentos | `/api/payroll/export`, permiso `export`; mismos archivos del servidor |
 | Buscar e imprimir desprendible individual; compartir documentos | Documentos → Persona / vista previa → Imprimir o compartir | PDF original, QuickLook, AirPrint y hoja de compartir de iOS |
+
+| PDF de itinerarios nuevos de Slack | Gestión → Itinerarios → Abrir PDF → Compartir | `/api/notices` y `/api/notices/pdf`, R2 privado y sesión propia; conexión solo Camilo en la web |
+| Alertas y destinatarios | Gestión → Alertas → +, solo Camilo | Mismos registros/destinatarios que la web, UUID estable, autorización en servidor |
+| Notificaciones push y apertura privada | Gestión → Itinerarios/Alertas → Activar en este iPhone | APNs con clave configurada por Camilo; dispositivo ligado a cuenta/revisión/sesión, baja al salir; web usa Web Push |
 
 ## Guardado y concurrencia
 

@@ -6,6 +6,10 @@ struct ManagementView: View {
         NavigationStack {
             List {
                 OperationStatusSection()
+                Section("Itinerarios y avisos") {
+                    NavigationLink { NoticesView(user: user) } label: { Label("Itinerarios", systemImage: "doc.text") }.accessibilityIdentifier("notices.itineraries")
+                    NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts")
+                }
                 Section("Administración") {
                     NavigationLink { AccountView(user: user) } label: { Label("Mi cuenta", systemImage: "person.crop.circle") }
                     NavigationLink { ConceptsRulesView(user: user) } label: { Label("Conceptos y reglas", systemImage: "list.bullet.rectangle") }
