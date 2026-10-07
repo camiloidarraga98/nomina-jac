@@ -1,0 +1,13 @@
+Continuemos el proyecto Nómina JAC Music desde esta carpeta en mi Mac. Quiero edición, manejo de Codex, pruebas y compilaciones locales, sin Codex Cloud, GitHub ni GitHub Actions.
+
+Lee AGENTS.md, docs/PROJECT_CONTEXT.md, EMPIEZA_AQUI.md, ios/README.md y docs/ITINERARIES_PUSH_SETUP.md. El paquete parte de la fuente del Site versión 25, commit 73b2cc223907d0c80b03beae92d16cf9bcc95a3c, y mantiene sus archivos de aplicación. Conserva funciones, cálculos, permisos, Agenda, correo, logo y nombre JAC. Producción es https://jhonalexcastano.com, Site appgprj_6aa0260b82a88191a47960614238350a, con DB y BUCKET existentes.
+
+Primero comprueba que trabajas en una carpeta real del Mac y en modo Local/This computer. Revisa las herramientas instaladas y la versión de Node 24. Prepara las dependencias sin actualizar versiones indiscriminadamente: hay un fallo heredado de npm ci por entradas opcionales WASI faltantes del lockfile. Si aparece, diagnostícalo y prepara una reparación mínima que conserve las versiones existentes, documentando qué cambia y verificando la instalación. No borres el lockfile ni uses npm update.
+
+Ejecuta scripts/prepare-local.mjs con Node 24, prepara las migraciones solo en D1 local y arranca la web en localhost. Usa claves de desarrollo nuevas, no las de producción. Comprueba que responde y que el acceso local está disponible. No conectes servicios externos reales para las pruebas. No envíes correos, notificaciones, eventos de calendario o PDF reales, ni cierres o borres quincenas de producción.
+
+Verifica Xcode y el proyecto ios/JACNomina.xcodeproj con el esquema JACNomina en simulador, usando sus fixtures .invalid. Ayúdame a seleccionar mi equipo Apple Developer de pago e instalar con Run sobre mi iPhone, conservando co.jacmusic.nomina. No copies certificados, claves .p8 o contraseñas al proyecto.
+
+Comprueba si tienes el plugin y las herramientas Sites para leer el Site existente con mi cuenta propietaria. Si falta esa conexión, guíame para habilitarla en este Codex local. No crees otro Site ni cambies hosting o DNS. Esta preparación no debe ejecutar un despliegue; las publicaciones futuras por cambios que solicite siguen autorizadas en el Site existente.
+
+Puedes guardar versiones con un Git local sin remoto GitHub. Dime qué comprobaste realmente en este Mac y qué pasos de instalación, firma o conexión requieren que yo intervenga. No afirmes que el traslado está terminado antes de que el arranque local y Xcode estén verificados.
