@@ -26,7 +26,7 @@ export async function noticeFeed(u:AccessUser,cursor=''){
  const failures=noticeOwner(u)?(await database().prepare("SELECT id,error FROM jac_slack_files WHERE status='failed' ORDER BY created_at DESC LIMIT 20").all<{id:string;error:string}>()).results:[];
  return {notices:list.map(view),nextCursor:all.length>40&&last?last.created_at+'|'+last.id:'',settings:await settings(),users,failures};
 }
-export async function allowedNotice(u:AccessUser,id:string){if(!uuid.safeParse(id).success)throw new NoticeFailure('El aviso no existe.',404);const row=await database().prepare(`SELECT n.* FROM jac_notices n WHERE n.id=? AND ${accessSql}`).bind(id,u.id,noticeOwner(u)?1:0).first<Row>();if(!row)throw new NoticeFailure('El aviso no está disponible para esta cuenta.',404);return row;}
+export async function allowedNotice(u:AccessUser,id:string){if(!uuid.safeParse(id).success)throw new NoticeFailure('El aviso no existe.',404);const row=await database().prepare(`SELECT n.*,r.read_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.id=? AND ${accessSql}`).bind(u.id,id,u.id,noticeOwner(u)?1:0).first<Row>();if(!row)throw new NoticeFailure('El aviso no está disponible para esta cuenta.',404);return row;}
 export async function noticeItem(u:AccessUser,id:string){return view(await allowedNotice(u,id));}
 export async function markNoticeRead(u:AccessUser,id:string){await allowedNotice(u,id);await database().prepare('INSERT INTO jac_notice_recipients (id,notice_id,user_id,read_at,push_target) VALUES (?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET read_at=excluded.read_at').bind(id+'|'+u.id,id,u.id,now()).run();}
 export async function saveManualNotice(u:AccessUser,body:unknown,authorize:()=>Promise<boolean>){

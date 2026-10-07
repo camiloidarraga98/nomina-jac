@@ -11,6 +11,7 @@ struct NoticeUser: Decodable, Identifiable { let id: String; let name: String }
 
 struct NoticesView: View {
     @EnvironmentObject private var store: PayrollStore
+    @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var push = JACNotifications.shared
     let user: PayrollUser
     var kind = "itinerary"
@@ -23,6 +24,8 @@ struct NoticesView: View {
     @State private var editor = false
     @State private var loading = false
     @State private var handledInitial = false
+    @State private var incomingKind: String?
+    private var effectiveKind: String { incomingKind ?? kind }
     var body: some View {
         List {
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
@@ -34,23 +37,24 @@ struct NoticesView: View {
                 if feed?.settings.appleConfigured == false { Text(user.isOwner ? "Prepara Apple desde Itinerarios → Conexión en el webapp para habilitar los avisos push." : "Camilo está preparando los avisos push del iPhone.").font(.footnote).foregroundStyle(.secondary) }
             }
             if loading && feed == nil { ProgressView("Consultando…") }
-            Section(kind == "itinerary" ? "PDF de itinerarios" : "Avisos del equipo") {
-                let items = records.filter { $0.kind == kind }
-                if items.isEmpty && feed != nil { Text(kind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
+            Section(effectiveKind == "itinerary" ? "PDF de itinerarios" : "Avisos del equipo") {
+                let items = records.filter { $0.kind == effectiveKind }
+                if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
                 ForEach(items) { item in Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(PayrollFormat.date(item.createdAt) + (item.kind == "itinerary" ? " · PDF" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             }
-            if kind == "itinerary", feed?.settings.slackConnected == false { Section { Text(user.isOwner ? "Conecta Slack desde Itinerarios → Conexión en el webapp. Solo se comparten los PDF de #itinerarios-finales." : "Camilo está preparando la conexión de itinerarios.").font(.footnote).foregroundStyle(.secondary) } }
-        }.jacSurface().navigationTitle(kind == "itinerary" ? "Itinerarios" : "Alertas").refreshable { await refresh() }
-            .toolbar { if user.isOwner && kind == "alert" { ToolbarItem(placement: .topBarTrailing) { Button { editor = true } label: { Image(systemName: "plus") }.accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil) } } }
+            if effectiveKind == "itinerary", feed?.settings.slackConnected == false { Section { Text(user.isOwner ? "Conecta Slack desde Itinerarios → Conexión en el webapp. Solo se comparten los PDF de #itinerarios-finales." : "Camilo está preparando la conexión de itinerarios.").font(.footnote).foregroundStyle(.secondary) } }
+        }.jacSurface().navigationTitle(effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").refreshable { await refresh() }
+            .toolbar { if user.isOwner && effectiveKind == "alert" { ToolbarItem(placement: .topBarTrailing) { Button { editor = true } label: { Image(systemName: "plus") }.accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil) } } }
             .task { await refresh() }
+            .onChange(of: scenePhase) { _, value in if value == .active { Task { await refresh() } } }
             .sheet(item: $detail, onDismiss: { Task { await refresh() } }) { item in NoticeDetail(item: item) }
             .sheet(isPresented: $editor) { if let feed { NoticeComposer(users: feed.users) { notice = "Alerta guardada para los destinatarios elegidos."; await refresh() } } }
     }
     private func refresh(_ cursor: String = "") async {
         guard !loading else { return }; loading = true; defer { loading = false }
         do { let result = try await store.client.notices(cursor: cursor); feed = result; if cursor.isEmpty { records = result.notices } else { records += result.notices.filter { item in !records.contains { $0.id == item.id } } }; error = nil
-            if !handledInitial, let initialNotice { handledInitial = true; if let item = records.first(where: { $0.id == initialNotice }) { detail = item } else { detail = try await store.client.notice(id: initialNotice) } }
+            if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; detail = item }
         } catch { self.error = error.localizedDescription; store.report(error) }
     }
 }

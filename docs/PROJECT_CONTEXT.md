@@ -89,6 +89,16 @@ La app nativa usa verde oscuro #172c24, lima #c4f464 y fondo claro #f3f6f3 del w
 
 Las comprobaciones usan Google/correo simulados, D1 en memoria y fixtures nativos DEBUG `.invalid`; nunca escribir eventos, cerrar quincenas ni enviar correos reales como prueba. CI macOS verifica compilación, modelos, permisos y creación/edición visibles en simulador. Las pruebas de Workerd incluyen POST/PATCH y rechazo de redirecciones.
 
+## Itinerarios PDF, alertas selectivas y push (0.5.0/build 6)
+
+La web agrega **Itinerarios** y **Alertas**; iPhone las muestra en **Gestión**. Todas las cuentas activas consultan los PDF. Solo Camilo crea alertas y elige destinatarios, desde ambas interfaces; el servidor controla el acceso, independientemente de los permisos financieros. Los PDF nuevos del agente llegan a JAC Music `#itinerarios-finales` (`C0C6V85SRL6`, espacio `T0C5NQZE8HL`). JAC recibe eventos firmados de Slack y descarga exclusivamente el PDF. No copia texto del canal ni importa histórico automáticamente.
+
+El archivo se almacena en R2 privado antes del aviso. La migración nueva `0008` agrega configuración cifrada, avisos, destinatarios, dispositivos, entregas e importaciones, sin alterar tablas de nómina. Los reintentos deduplican el archivo/aviso. Las entregas usan APNs y Web Push cifrado con VAPID, solo a dispositivos registrados de usuarios activos con revisión vigente. Salir desactiva el registro asociado; un resultado incierto del proveedor no se reenvía automáticamente. Las notificaciones muestran texto genérico y abren el contenido autorizado en JAC; no incluyen una URL pública al PDF.
+
+La activación externa se completa desde **Itinerarios → Conexión**, exclusivamente por Camilo: app Slack con permisos de lectura y `message.channels`; clave APNs .p8/Team ID/Key ID de membresía de pago; generación VAPID para navegador. Cada usuario concede permisos en sus dispositivos. La conexión Slack del chat no sustituye el bot/event listener del servidor. El código puede publicarse antes de activar esas conexiones y no envía avisos de prueba ni importa archivos reales. La guía completa es `docs/ITINERARIES_PUSH_SETUP.md`. iPhone requiere Pull y Run desde Xcode con el equipo de pago y Push Notifications; la publicación web no actualiza la app instalada.
+
+Las pruebas de servidor usan Slack/APNs/R2 simulados; Workerd verifica WebCrypto interoperable y redirecciones manuales. Las pruebas nativas DEBUG usan dominios `.invalid`, un PDF ficticio y cuentas de prueba. No cambian cálculos, dependencias, lockfile ni reglas de Agenda/correo.
+
 ## Preparar entorno Cloud
 
 Node.js 24 LTS; `npm ci`; `npx tsc --noEmit`; `node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs`; `npm run build`. Para vista local `npm run dev`, D1 local y claves de desarrollo ignoradas, nunca credenciales reales. Para desplegar conecta Sites al mismo proyecto. Si falta ese acceso, deja cambios revisables e indica el bloqueo. Comprueba publicación del entorno Cloud y primera ejecución antes de afirmar que está listo.

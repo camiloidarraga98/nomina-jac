@@ -104,3 +104,11 @@ Camilo, Luisa y Paula pueden pulsar **+** en Agenda para crear un evento, o abri
 La conexión existente sigue consultando. Para habilitar edición, Camilo abre **Agenda → Conexión → Volver a autorizar Google**, elige `jacmusicestudios@gmail.com` y acepta consultar calendarios/editar eventos. El calendario seleccionado se conserva. Los calendarios de solo lectura no permiten guardar. Si alguien modificó el evento, cancela, actualiza Agenda y vuelve a abrirlo; el formulario conserva tus datos ante un error.
 
 La interfaz usa los verdes oscuro y lima y los fondos claros del webapp, conservando controles nativos, modo oscuro, logo y nombre **JAC**. Para instalar estos cambios: **Integrate → Pull** (o **Source Control → Pull** según Xcode), abre `ios/JACNomina.xcodeproj`, elige tu iPhone y pulsa **Run**. Conserva tu Team y firma local.
+
+## Itinerarios y alertas (0.5.0/build 6)
+
+**Gestión → Itinerarios** muestra los PDF recibidos de `#itinerarios-finales`, con vista previa y hoja para compartir. **Gestión → Alertas** permite consultar avisos; únicamente Camilo ve **+**, escribe el mensaje y elige destinatarios. Una notificación abre el aviso privado y permite abrir su PDF. La API aplica los mismos controles que la web.
+
+Para recibir esta versión usa Pull y Run. Para **push real**, selecciona un equipo con membresía vigente de Apple Developer Program: Personal Team gratuito no admite APNs. El proyecto incorpora Push Notifications y el entitlement sandbox en Debug/producción en Release. Camilo debe preparar Slack y la clave APNs desde **Itinerarios → Conexión** en la web; cada usuario activa después sus notificaciones en el iPhone. Sigue [la guía de configuración](../docs/ITINERARIES_PUSH_SETUP.md). No necesita publicación en App Store.
+
+Las pruebas nativas usan un PDF ficticio y URLProtocol `.invalid`; no registran el simulador en los servicios reales ni envían avisos. El registro de dispositivos se desactiva al salir de la cuenta y respeta la desactivación elegida por el usuario.

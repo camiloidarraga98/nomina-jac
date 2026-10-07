@@ -160,7 +160,9 @@ final class LaunchTests: XCTestCase {
         fill(app, "notices.editor.title", "Alerta simulada iPhone")
         let message = app.descendants(matching: .any).matching(identifier: "notices.editor.message").firstMatch
         XCTAssertTrue(message.waitForExistence(timeout: 10)); message.tap(); message.typeText("Mensaje para el equipo simulado")
-        app.swipeUp(); tap(app, "notices.recipient.11111111-1111-4111-8111-111111111111")
+        app.swipeUp()
+        let recipient = app.switches["notices.recipient.11111111-1111-4111-8111-111111111111"]
+        XCTAssertTrue(recipient.waitForExistence(timeout: 10)); recipient.tap()
         attachScreen(app, name: "alerta-destinatarios"); tap(app, "notices.editor.save")
         XCTAssertTrue(app.staticTexts["Alerta guardada para los destinatarios elegidos."].waitForExistence(timeout: 15))
         attachScreen(app, name: "alerta-guardada")
