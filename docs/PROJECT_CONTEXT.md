@@ -1,5 +1,13 @@
 # Contexto de Nómina JAC Music
 
+## Diagnóstico de avisos en Chrome — 7 de octubre de 2026
+
+Camilo indicó que había pulsado **Activar en este navegador** antes del PDF, pero no vio el aviso en Chrome. La consulta de solo lectura de D1 encontró una entrega web `sent` del PDF (aceptación del proveedor, no comprobante de presentación en pantalla). Mediante la interfaz real del Mac se verificó que las dos entradas **Google Chrome** tenían desactivado **Permitir notificaciones** en macOS. Camilo autorizó expresamente activarlas; ambas quedaron habilitadas. En la información del sitio de Chrome, el permiso de notificaciones de `jhonalexcastano.com` también estaba activado.
+
+Camilo autorizó después una única alerta **PRUEBA JAC · Notificaciones en Chrome**, dirigida exclusivamente a su cuenta, para comprobar el aviso tras habilitar macOS. Se excluyó a Luisa antes de enviar. Aviso `6211342e-1444-4f9b-b170-f6e754cdc00c`, creado a las 10:56 a. m. de Colombia: los dos dispositivos web registraron `sent`; el dispositivo iOS continúa `unconfigured` (APNs pendiente). **Camilo confirmó que el aviso llegó al Mac.** No se envió otro PDF, no se borraron datos ni se cambió código o desplegó. Estas autorizaciones son puntuales y no permiten futuros envíos de prueba sin solicitud. Evidencias locales: `outputs/chrome-notificaciones-activadas.png` y `outputs/prueba-chrome-enviada.jpg`.
+
+Camilo informó después que Safari también recibió el aviso, pero lo encontró en el Centro de notificaciones. Se verificaron Safari → Configuración → Sitios → Notificaciones → `jhonalexcastano.com` en **Permitir**, y macOS → Notificaciones → `jhonalexcastano.com` habilitado con Escritorio/Centro/Pantalla bloqueada y sonido. El estilo era **Temporal**. Con autorización expresa de Camilo se seleccionó y verificó **Persistente** para ese sitio; evidencia `outputs/safari-avisos-persistentes.png`. El cambio es una preferencia local de presentación, no una alerta crítica ni una excepción a Enfoque. No se envió una segunda alerta para probar el estilo persistente.
+
 ## Prueba real de Slack autorizada — 7 de octubre de 2026
 
 Después de activar Slack, Camilo pidió una prueba con PDF y confirmó expresamente compartir un único documento ficticio en JAC Music → `#itinerarios-finales`, con el mensaje de prueba mostrado y con conocimiento de que aparecería para las cuentas activas y podría generar avisos en dispositivos. Se envió **PRUEBA-JAC-Slack-2026-10-07-2EC924A0.pdf**, una página sin datos personales ni operativos, claramente marcada PRUEBA. Archivo Slack `F0C7GEGCFGS`; aviso importado `b5400870-7733-4a82-9eae-b2ba48daff6b`.
