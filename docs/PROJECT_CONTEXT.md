@@ -1,5 +1,12 @@
 # Contexto de Nómina JAC Music
 
+## Prueba real de Slack autorizada — 7 de octubre de 2026
+
+Después de activar Slack, Camilo pidió una prueba con PDF y confirmó expresamente compartir un único documento ficticio en JAC Music → `#itinerarios-finales`, con el mensaje de prueba mostrado y con conocimiento de que aparecería para las cuentas activas y podría generar avisos en dispositivos. Se envió **PRUEBA-JAC-Slack-2026-10-07-2EC924A0.pdf**, una página sin datos personales ni operativos, claramente marcada PRUEBA. Archivo Slack `F0C7GEGCFGS`; aviso importado `b5400870-7733-4a82-9eae-b2ba48daff6b`.
+
+La web recibió el evento, mostró una única entrada de prueba en Itinerarios y permitió abrir el detalle y descargar el PDF privado desde la sesión de Camilo. La descarga coincide exactamente con el original: 52.365 bytes, SHA-256 `a2578c5ada083ba90dea7e14a8d31767bb54a3fb5d0bc655672205795e6f7d0c`; una página con el identificador esperado. Evidencia visual: `outputs/slack-prueba-recibida-jac.png`. La vista PDF integrada del navegador de Codex quedó vacía; se verificó el archivo mediante su descarga autenticada, lectura de PDF y comparación de bytes. No se verificó recepción de notificaciones en dispositivos. El PDF de prueba queda visible; no se borraron datos reales ni se importaron archivos históricos. No hubo cambios de código ni despliegue; Site sigue en versión 29. Esta prueba solicitada es una excepción explícita para este único PDF, no autorización general para futuras pruebas con servicios reales.
+
+
 ## Slack conectado — 7 de octubre de 2026
 
 Camilo inició sesión en Slack y en su cuenta del sitio y autorizó expresamente la instalación y activación de la integración. Se creó e instaló la app dedicada **JAC Itinerarios**, ID `A0C7EE5N58E`, en **JAC Music** (`T0C5NQZE8HL`), con los únicos permisos de bot `files:read`, `channels:read` y `channels:history`, sin permisos de usuario ni escritura. Se añadió a `#itinerarios-finales` (`C0C6V85SRL6`); el agente existente manager-milo se conserva.
