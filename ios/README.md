@@ -38,10 +38,10 @@ La publicación del servidor actualiza las API; el binario instalado en cada iPh
 
 ## Abrir y ejecutar en el Mac
 
-1. Clona/actualiza el repositorio privado `camiloidarraga98/nomina-jac` y abre `ios/JACNomina.xcodeproj` con Xcode 16 o posterior.
+1. Abre `ios/JACNomina.xcodeproj` desde esta carpeta estable del Mac con Xcode 16 o posterior. El flujo actual es local, sin GitHub ni Actions.
 2. Selecciona el esquema **JACNomina** y un simulador de iPhone para compilar sin certificados.
 3. Para un iPhone real, selecciona el target **JACNomina**, abre **Signing & Capabilities**, activa la firma automática y elige tu equipo de Apple Developer.
-4. El identificador inicial es `co.jacmusic.nomina`. Si Apple indica que no está disponible para tu equipo, usa otro identificador de tu cuenta antes de la primera instalación y conserva ese identificador para las actualizaciones.
+4. Conserva `co.jacmusic.nomina`. Si Apple indica que no pertenece al equipo, revisa la cuenta/equipo y su registro antes de continuar; no cambies el identificador de una app ya instalada.
 5. Conecta el iPhone al Mac, acepta la confianza del dispositivo, activa **Modo de desarrollador** si Xcode lo solicita y selecciónalo como destino. Pulsa **Run**.
 6. Inicia sesión con la misma cuenta del webapp. Las cuentas del equipo se activan con los enlaces que Camilo genera desde Usuarios en la app o la web. En el acceso nativo, abre «Activar cuenta o restablecer contraseña» y pega el enlace. No hay registro abierto.
 
@@ -93,7 +93,7 @@ node --test tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs te
 
 Las pruebas del simulador usan firma local ad hoc (`CODE_SIGN_IDENTITY=-`), sin certificados de Apple Developer. El Llavero necesita que el ejecutable del simulador esté firmado; desactivar completamente la firma puede impedir guardar o leer la sesión. La suite comprueba el Llavero real del simulador con una cuenta temporal de prueba, además de las respuestas de red simuladas.
 
-Este entorno Cloud es Linux. La instalación y firma final en los dispositivos se completan desde Xcode en el Mac.
+Las comprobaciones actuales se ejecutan en el Mac de Camilo. Consulta `../docs/MAC_LOCAL_VERIFICADO.md` para el resultado real de Xcode y los pasos de firma pendientes.
 
 El icono de **JAC** usa el símbolo azul sobre fondo blanco elegido por Camilo. Está en `JACNomina/Assets.xcassets/AppIcon.appiconset`, como PNG RGB opaco de 1024 × 1024. Xcode genera los tamaños necesarios a partir de esa imagen; el catálogo `AppIcon` está seleccionado tanto en Debug como en Release. Para verlo en el iPhone, abre el proyecto actualizado del ZIP y vuelve a instalar con **Run** sobre la misma app. El proyecto y el esquema son `JACNomina` y el identificador es `co.jacmusic.nomina`.
 

@@ -1,5 +1,7 @@
 # Continuar JAC desde tu Mac
 
+Comprobación local del 6 de octubre de 2026: consulta `docs/MAC_LOCAL_VERIFICADO.md` para los resultados, las incidencias de simulador y el estado de firma. En este Mac Node/npm están instalados dentro de `work/local/toolchain`, sin modificar el PATH global. Usa `scripts/local-env.sh` antes de los comandos, por ejemplo `scripts/local-env.sh npm run dev -- --host 127.0.0.1`.
+
 Este paquete contiene el proyecto completo, incluido el webapp y `ios/JACNomina.xcodeproj`. Parte de la fuente publicada en la versión 25 de https://jhonalexcastano.com. Los archivos de aplicación coinciden con esa fuente; las novedades de este paquete son las instrucciones de continuidad local y un ayudante de preparación. No incluye bases actuales, secretos, certificados, dependencias instaladas ni historial Git.
 
 ## 1. Descargar y guardar
@@ -27,7 +29,7 @@ node -v
 npm ci
 ```
 
-Hay una incidencia ya registrada: el lockfile heredado tiene entradas opcionales WASI incompletas y una instalación limpia puede fallar. No se ha cambiado en este traslado. Si falla, deja que Codex local lea el error, compruebe las versiones fijadas y prepare una reparación mínima de esas entradas; no uses `npm update`, no borres el lockfile ni cambies versiones para intentar resolverlo. No es necesario instalar Node para abrir y compilar el proyecto iPhone en Xcode.
+La incidencia WASI heredada se reparó en este Mac añadiendo únicamente `@emnapi/core@1.10.0` y `@emnapi/runtime@1.10.0` al lockfile. Todas las entradas anteriores conservan su contenido y `package.json` permanece igual. `npm ci` pasó con Node 24.21.0/npm 11.19.0. No uses `npm update` ni borres el lockfile. No es necesario instalar Node para abrir y compilar el proyecto iPhone en Xcode.
 
 Con las dependencias disponibles:
 
