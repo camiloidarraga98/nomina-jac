@@ -15,8 +15,8 @@ class Query {
  execute(){const q=sql.prepare(this.text);if(q.columns().length)return {results:q.all(...this.args),meta:{changes:Number(sql.prepare('SELECT changes() n').get().n)}};return {results:[],meta:{changes:Number(q.run(...this.args).changes)}};}
  async run(){return this.execute();}async all(){return this.execute();}async first(){if(beforeFirst)await beforeFirst(this);return sql.prepare(this.text).get(...this.args)||null;}
 }
-const bucket=new Map();let writes=0,waiting=[],beforeFirst;
-globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},get:async k=>bucket.has(k)?{body:new Response(bucket.get(k)).body}:null},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
+const bucket=new Map();let writes=0,waiting=[],beforeFirst,beforePut,beforeDelete;
+globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(beforePut)await beforePut(k);if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},delete:async k=>{const after=await beforeDelete?.(k);bucket.delete(k);if(after)await after();},get:async k=>bucket.has(k)?{body:new Response(bucket.get(k)).body}:null},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
 globalThis.__noticesHeaders=new Headers();globalThis.__noticesWait=p=>waiting.push(p);
 const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/notices-tests-')),file=dir+'/bundle.mjs';await writeFile(file,bundle.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
@@ -62,9 +62,9 @@ test('configuración cifra claves y comprueba Slack; CAS protege cambios y no ex
  const cipher=(await m.noticeConfig()).credentials;assert.ok(!cipher.includes(slackToken));const feed=await api(ownerToken);const json=JSON.stringify(feed.body);assert.ok(!json.includes(slackToken));assert.ok(!json.includes('PRIVATE KEY'));assert.equal(feed.body.settings.slackConnected,true);
  hook=url=>url.pathname==='/api/auth.test'?Response.json({ok:true,team_id:'T_OTHER_WORKSPACE'}):null;assert.equal((await configure('slack',{token:slackToken,signingSecret:slackSecret})).status,400);hook=null;
 });
-let iosID=crypto.randomUUID(),webID=crypto.randomUUID(),subscription;
+let iosID=crypto.randomUUID(),webID=crypto.randomUUID(),subscription,webReceiver;
 test('dispositivos se asocian al usuario autenticado; suscripciones inválidas y destinos ajenos se rechazan',async()=>{
- const ecdh=createECDH('prime256v1');ecdh.generateKeys();subscription={endpoint:'https://fcm.googleapis.com/fcm/send/simulated-device',keys:{p256dh:ecdh.getPublicKey().toString('base64url'),auth:Buffer.alloc(16,4).toString('base64url')}};
+ const ecdh=createECDH('prime256v1');ecdh.generateKeys();webReceiver=ecdh;subscription={endpoint:'https://fcm.googleapis.com/fcm/send/simulated-device',keys:{p256dh:ecdh.getPublicKey().toString('base64url'),auth:Buffer.alloc(16,4).toString('base64url')}};
  assert.equal((await api(luisaToken,{action:'register',id:iosID,platform:'ios',token:'ab'.repeat(32),environment:'sandbox'})).status,200);
  assert.equal((await api(paulaToken,{action:'register',id:webID,platform:'web',subscription})).status,200);
  assert.equal((await api(luisaToken,{action:'register',id:crypto.randomUUID(),platform:'web',subscription:{...subscription,endpoint:'http://127.0.0.1/private'}})).status,400);
@@ -73,7 +73,7 @@ test('dispositivos se asocian al usuario autenticado; suscripciones inválidas y
 });
 let manual;
 test('alerta llega solo a seleccionados; reintentos conservan un registro y no duplican push',async()=>{
- manual=alert();calls=[];const r=await api(ownerToken,{action:'alert',alert:manual});assert.equal(r.status,200);const pushes=calls.filter(x=>x.url.hostname.includes('push.apple.com'));assert.equal(pushes.length,1);assert.ok(pushes[0].url.hostname.startsWith('api.sandbox.'));assert.equal(pushes[0].options.redirect,'manual');assert.equal(pushes[0].options.headers['apns-topic'],m.APP_TOPIC);assert.equal(JSON.parse(pushes[0].options.body).noticeId,manual.id);
+ manual=alert();calls=[];const r=await api(ownerToken,{action:'alert',alert:manual});assert.equal(r.status,200);const pushes=calls.filter(x=>x.url.hostname.includes('push.apple.com'));assert.equal(pushes.length,1);assert.ok(pushes[0].url.hostname.startsWith('api.sandbox.'));assert.equal(pushes[0].options.redirect,'manual');assert.equal(pushes[0].options.headers['apns-topic'],m.APP_TOPIC);assert.equal(JSON.parse(pushes[0].options.body).noticeId,manual.id);assert.deepEqual(JSON.parse(pushes[0].options.body).aps.alert,{title:manual.title,body:manual.body});
  const jwt=pushes[0].options.headers.Authorization.split(' ')[1],parts=jwt.split('.');assert.equal(JSON.parse(Buffer.from(parts[1],'base64url')).iss,'TESTTEAM01');assert.ok(verify('sha256',Buffer.from(parts.slice(0,2).join('.')),{key:createPublicKey({key:applePublic,format:'jwk'}),dsaEncoding:'ieee-p1363'},Buffer.from(parts[2],'base64url')));
  assert.ok((await api(luisaToken)).body.notices.some(x=>x.id===manual.id));assert.ok(!(await api(paulaToken)).body.notices.some(x=>x.id===manual.id));assert.equal((await api(paulaToken,undefined,'?item='+manual.id)).status,404);
  await api(ownerToken,{action:'read',id:manual.id});calls=[];assert.equal((await api(ownerToken,{action:'alert',alert:manual})).status,200);assert.equal(calls.filter(x=>x.url.hostname.includes('push.apple.com')).length,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jac_notices WHERE id=?').get(manual.id).n,1);
@@ -90,7 +90,7 @@ test('firma/timestamp/workspace/canal y tipo PDF controlan los eventos de Slack'
 let imported;
 test('PDF se guarda antes del aviso, sin texto Slack; replays no duplican archivo ni notificación',async()=>{
  calls=[];const before=writes;assert.equal((await slack(event())).status,200);imported=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:FTESTPDF001');assert.ok(imported);assert.equal(imported.body,'');assert.equal(imported.kind,'itinerary');assert.equal(writes,before+1);assert.ok(bucket.has(imported.file_key));
- const delivered=sql.prepare('SELECT COUNT(*) n FROM jac_push_deliveries WHERE notice_id=? AND status=?').get(imported.id,'sent').n;assert.equal(delivered,2);
+ const delivered=sql.prepare('SELECT COUNT(*) n FROM jac_push_deliveries WHERE notice_id=? AND status=?').get(imported.id,'sent').n;assert.equal(delivered,2);assert.deepEqual(JSON.parse(calls.find(x=>x.url.hostname==='api.sandbox.push.apple.com').options.body).aps.alert,{title:'JAC',body:'Ya llegó tu itinerario para el día de hoy'});
  calls=[];await slack(event());assert.equal(writes,before+1);assert.equal(calls.filter(x=>x.options.method==='POST').length,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM jac_notices WHERE source=?').get('slack:FTESTPDF001').n,1);
  assert.ok((await api(luisaToken)).body.notices.some(x=>x.id===imported.id));assert.ok((await api(paulaToken)).body.notices.some(x=>x.id===imported.id));
 });
@@ -177,4 +177,72 @@ test('borrar durante el cifrado cancela el envío ya seleccionado; no resucita u
  assert.equal(checks,2);assert.equal(calls.length,0);assert.equal(sql.prepare('SELECT id FROM jac_push_deliveries WHERE notice_id=?').get(input.id),undefined);
  const racing=alert([paula]);await assert.rejects(()=>m.saveManualNotice(actor,racing,async()=>{sql.prepare('INSERT INTO jac_deleted_alerts (id,deleted_at) VALUES (?,?)').run(racing.id,new Date().toISOString());return true;}),e=>e.status===410);
  assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(racing.id),undefined);assert.equal(sql.prepare('SELECT id FROM jac_notice_recipients WHERE notice_id=?').get(racing.id),undefined);
+});
+
+function decodeRegisteredWeb(call){
+ const bytes=Buffer.from(call.options.body),salt=bytes.subarray(0,16),sender=bytes.subarray(21,21+bytes[20]),cipher=bytes.subarray(21+bytes[20]);
+ const ikm=Buffer.from(hkdfSync('sha256',webReceiver.computeSecret(sender),Buffer.from(subscription.keys.auth,'base64url'),Buffer.concat([Buffer.from('WebPush: info\0'),webReceiver.getPublicKey(),sender]),32));
+ const decipher=createDecipheriv('aes-128-gcm',Buffer.from(hkdfSync('sha256',ikm,salt,Buffer.from('Content-Encoding: aes128gcm\0'),16)),Buffer.from(hkdfSync('sha256',ikm,salt,Buffer.from('Content-Encoding: nonce\0'),12)));
+ decipher.setAuthTag(cipher.subarray(-16));const clear=Buffer.concat([decipher.update(cipher.subarray(0,-16)),decipher.final()]);return JSON.parse(clear.subarray(0,-1));
+}
+test('envío web cifra el título y mensaje de la alerta solo para sus destinatarios',async()=>{
+ calls=[];const input={...alert([paula]),title:'Cambio de hora',body:'Llegar a las 8:00. Información ficticia.'};await api(ownerToken,{action:'alert',alert:input});
+ const push=calls.find(x=>x.url.hostname==='fcm.googleapis.com');assert.ok(push);assert.deepEqual(decodeRegisteredWeb(push),{id:input.id,title:input.title,body:input.body});
+ assert.equal(calls.filter(x=>x.url.hostname.includes('push.apple.com')).length,0);
+});
+test('mensajes Unicode largos caben en push sin modificar el contenido guardado',async()=>{
+ const body='🎵'.repeat(1000),content=m.noticePushContent({kind:'alert',title:'Aviso largo',body});assert.ok(Buffer.byteLength(JSON.stringify(content))<=2800);assert.ok(content.body.endsWith('…'));assert.ok(!content.body.includes('\ufffd'));
+ const short={kind:'alert',title:'Información',body:'Texto completo con tildes y emojis 🎵'};assert.deepEqual(m.noticePushContent(short),{title:short.title,body:short.body});
+ calls=[];const input={...alert([paula]),body};await api(ownerToken,{action:'alert',alert:input});assert.equal(sql.prepare('SELECT body FROM jac_notices WHERE id=?').get(input.id).body,body);const delivered=decodeRegisteredWeb(calls.find(x=>x.url.hostname==='fcm.googleapis.com'));assert.equal(delivered.title,input.title);assert.ok(delivered.body.endsWith('…'));assert.ok(body.startsWith(delivered.body.slice(0,-1)));assert.ok(Buffer.byteLength(JSON.stringify(delivered))<3000);
+});
+async function fixtureItinerary(file='FDELETEPDF01'){
+ await slack(event(file));return sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:'+file);
+}
+test('borrado de itinerario exige propietario, confirmación, origen y sesión vigente',async()=>{
+ const item=await fixtureItinerary(),remove={action:'deleteItinerary',id:item.id,confirmation:item.id},actor=await m.authenticatedSession(ownerToken);
+ assert.equal((await api('',remove)).status,401);assert.equal((await api(paulaToken,remove)).status,403);assert.equal((await api(ownerToken,{...remove,confirmation:'bad'})).status,400);
+ await assert.rejects(()=>m.deleteItinerary(actor,item.id,item.id,async()=>false),e=>e.status===403);
+ globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+ownerToken});assert.equal((await m.api.POST(new Request(base+'/api/notices',{method:'POST',headers:{origin:'https://untrusted.example.invalid'},body:JSON.stringify(remove)}))).status,403);
+ assert.equal((await api(ownerToken,{action:'deleteItinerary',id:manual.id,confirmation:manual.id})).status,400);
+ const unknown=crypto.randomUUID();assert.equal((await api(ownerToken,{...remove,id:unknown,confirmation:unknown})).status,404);
+ assert.ok(bucket.has(item.file_key));assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(item.id));
+});
+test('borrar retira PDF, acceso, destinatarios y entregas, sin restaurar por replay de Slack',async()=>{
+ const item=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:FDELETEPDF01'),remove={action:'deleteItinerary',id:item.id,confirmation:item.id};
+ calls=[];assert.equal((await api(ownerToken,remove)).status,200);assert.equal((await api(ownerToken,remove)).status,200);
+ assert.equal(bucket.has(item.file_key),false);for(const table of ['jac_notices','jac_notice_recipients','jac_push_deliveries'])assert.equal(sql.prepare('SELECT count(*) n FROM '+table+' WHERE '+(table==='jac_notices'?'id':'notice_id')+'=?').get(item.id).n,0);
+ assert.equal((await api(paulaToken,undefined,'?item='+item.id)).status,404);globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+paulaToken});assert.equal((await m.pdf.GET(new Request(base+'/api/notices/pdf?id='+item.id))).status,404);
+ sql.prepare("UPDATE jac_slack_files SET status='ignored' WHERE status='failed'").run();const before=writes;await slack(event('FDELETEPDF01'));sql.prepare("UPDATE jac_slack_files SET status='pending' WHERE id='FDELETEPDF01'").run();await m.importSlackFiles();await m.retryImports();await m.importSlackFiles();
+ assert.equal(writes,before);assert.equal(calls.length,0);assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get(item.source),undefined);assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get('FDELETEPDF01').status,'deleted');
+ assert.ok(bucket.has(imported.file_key));assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(manual.id));
+});
+test('fallo D1 revierte el borrado y fallo R2 mantiene el PDF inaccesible hasta reintentar limpieza',async()=>{
+ const item=await fixtureItinerary('FDELETEPDF02'),remove={action:'deleteItinerary',id:item.id,confirmation:item.id};
+ sql.exec("CREATE TRIGGER fixture_itinerary_rollback BEFORE DELETE ON jac_notice_recipients WHEN OLD.notice_id='"+item.id+"' BEGIN SELECT RAISE(ABORT,'fixture rollback'); END;");
+ try{assert.equal((await api(ownerToken,remove)).status,502);assert.ok(bucket.has(item.file_key));assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(item.id));assert.equal(sql.prepare('SELECT id FROM jac_deleted_itineraries WHERE id=?').get(item.id),undefined);}finally{sql.exec('DROP TRIGGER fixture_itinerary_rollback');}
+ beforeDelete=async()=>{throw new Error('simulated R2 outage');};try{assert.equal((await api(ownerToken,remove)).status,200);assert.ok(bucket.has(item.file_key));assert.equal(sql.prepare('SELECT file_deleted FROM jac_deleted_itineraries WHERE id=?').get(item.id).file_deleted,0);assert.equal((await api(paulaToken,undefined,'?item='+item.id)).status,404);}finally{beforeDelete=undefined;}
+ await m.purgeDeletedItineraries();assert.equal(bucket.has(item.file_key),false);assert.equal(sql.prepare('SELECT file_deleted FROM jac_deleted_itineraries WHERE id=?').get(item.id).file_deleted,1);
+});
+test('una importación concurrente no restaura el itinerario borrado ni su PDF',async()=>{
+ const item=await fixtureItinerary('FDELETEPDF03'),actor=await m.authenticatedSession(ownerToken);let deleted=false;
+ // Simulate an older import lease that saw no notice before the first importer saved it.
+ beforeFirst=async q=>{if(!deleted&&q.text==='SELECT id FROM jac_notices WHERE source=?'&&q.args[0]===item.source){deleted=true;await m.deleteItinerary(actor,item.id,item.id,async()=>true);}};
+ sql.prepare("UPDATE jac_slack_files SET status='pending' WHERE id='FDELETEPDF03'").run();calls=[];
+ try{await m.importSlackFiles();}finally{beforeFirst=undefined;}
+ assert.equal(deleted,true);assert.equal(bucket.has(item.file_key),false);assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get(item.source),undefined);assert.equal(calls.filter(x=>x.options.method==='POST').length,0);
+});
+test('borrar un itinerario durante el cifrado cancela su entrega pendiente',async()=>{
+ const item=await fixtureItinerary('FDELETEPDF04'),actor=await m.authenticatedSession(ownerToken);sql.prepare("UPDATE jac_push_deliveries SET status='pending' WHERE notice_id=?").run(item.id);calls=[];let checks=0;
+ beforeFirst=async q=>{if(q.text.includes("p.status='sending'")&&q.args[0]===item.id&&++checks===2)await m.deleteItinerary(actor,item.id,item.id,async()=>true);};
+ try{await m.dispatchPush();}finally{beforeFirst=undefined;}
+ assert.equal(checks,2);assert.equal(calls.length,0);assert.equal(bucket.has(item.file_key),false);
+});
+
+test('una limpieza antigua no marca como retirado un PDF recién subido por una importación tardía',async()=>{
+ const item=await fixtureItinerary('FDELETEPDF05'),actor=await m.authenticatedSession(ownerToken);await m.deleteItinerary(actor,item.id,item.id,async()=>true);
+ sql.prepare('UPDATE jac_deleted_itineraries SET file_deleted=0 WHERE id=?').run(item.id);bucket.set(item.file_key,pdfBytes);
+ beforeDelete=async()=>async()=>{bucket.set(item.file_key,pdfBytes);sql.prepare('UPDATE jac_deleted_itineraries SET file_deleted=0,cleanup_version=cleanup_version+1 WHERE id=?').run(item.id);};
+ try{await m.purgeDeletedItineraries(item.id);}finally{beforeDelete=undefined;}
+ assert.ok(bucket.has(item.file_key));assert.equal(sql.prepare('SELECT file_deleted FROM jac_deleted_itineraries WHERE id=?').get(item.id).file_deleted,0);
+ await m.purgeDeletedItineraries(item.id);assert.equal(bucket.has(item.file_key),false);
 });
