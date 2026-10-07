@@ -97,7 +97,7 @@ struct MailView: View {
     private func load() async {
         guard !busy else { return }; busy = true; defer { busy = false }
         do { mail = try await store.client.mail(periodID: selectedPeriod.isEmpty ? nil : selectedPeriod); error = nil }
-        catch { self.error = error.localizedDescription; store.report(error) }
+        catch { self.error = store.reportReadFailure(error) }
     }
     private func operate(_ body: JSONValue) async {
         guard !busy else { return }; busy = true; error = nil

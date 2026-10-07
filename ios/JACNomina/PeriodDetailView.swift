@@ -15,8 +15,7 @@ final class PeriodWorkspace: ObservableObject {
         repeat {
             reloadRequested = false
             do { detail = try await store.client.detail(periodID: id); error = nil }
-            catch is CancellationError { return }
-            catch { self.error = error.localizedDescription; store.report(error); return }
+            catch { self.error = store.reportReadFailure(error); return }
         } while reloadRequested && !store.hasPending
     }
 }

@@ -17,7 +17,7 @@ final class PayrollStore: ObservableObject {
         defer { restoring = false }
         TemporaryDocuments.clear()
         do { if try client.hasSession() { try await refresh() } }
-        catch { report(error) }
+        catch { reportReadFailure(error) }
     }
     func signIn(username: String, password: String) async {
         guard !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !password.isEmpty else {
@@ -37,7 +37,7 @@ final class PayrollStore: ObservableObject {
             guard pending == nil else { return }
             if install(result) { error = nil }
         }
-        catch { report(error); throw error }
+        catch { reportReadFailure(error); throw error }
     }
     @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
         guard result.version >= (workspace?.version ?? 0) else { return false }
@@ -56,6 +56,18 @@ final class PayrollStore: ObservableObject {
         if failure is CancellationError { return }
         if let apiError = failure as? APIError, case .unauthorized = apiError { overview = nil; workspace = nil; pending = nil; notice = nil; TemporaryDocuments.clear() }
         error = failure.localizedDescription
+    }
+
+    @discardableResult func reportReadFailure(_ failure: Error) -> String? {
+        // SwiftUI cancels view-bound reads when navigating away. URLSession
+        // can report this as NSURLErrorCancelled instead of CancellationError.
+        // Keep this policy separate from writes: a cancelled save may have
+        // reached the server and must retain its draft and retry controls.
+        let networkError = failure as NSError
+        if failure is CancellationError ||
+            (networkError.domain == NSURLErrorDomain && networkError.code == NSURLErrorCancelled) { return nil }
+        report(failure)
+        return failure.localizedDescription
     }
 
     var hasPending: Bool { pending != nil }
@@ -99,7 +111,7 @@ final class PayrollStore: ObservableObject {
     func discardAndRefresh() async {
         guard !busy else { return }
         pending = nil
-        do { try await refresh() } catch { report(error) }
+        do { try await refresh() } catch { reportReadFailure(error) }
     }
     func backupPending() throws -> ExportedDocument {
         guard let pending else { throw APIError.message("No hay cambios pendientes.") }

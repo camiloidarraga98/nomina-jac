@@ -44,9 +44,15 @@ Todos los usuarios activos pueden consultar esa agenda; solo Camilo puede conect
 
 ## Actualizar desde Xcode
 
-El flujo actual usa ZIP y Xcode, sin depender de GitHub ni Actions. Descarga el proyecto actualizado entregado por Codex, descomprímelo en una carpeta nueva y abre `ios/JACNomina.xcodeproj`. Selecciona tu equipo de pago en **Signing & Capabilities**, conserva `co.jacmusic.nomina` como identificador y pulsa **Run** con tu iPhone seleccionado. Instala sobre la app existente; no hace falta borrarla. Conserva la carpeta anterior hasta confirmar que la nueva versión funciona. El repositorio de GitHub queda como copia histórica.
+Seguimos editando esta misma carpeta del Mac, sin depender de GitHub ni Actions. Abre su `ios/JACNomina.xcodeproj`; no necesitas descargar otro proyecto ni reemplazar la carpeta. Selecciona tu equipo de pago en **Signing & Capabilities**, conserva `co.jacmusic.nomina` como identificador y pulsa **Run** con tu iPhone seleccionado. Instala sobre la app existente; no hace falta borrarla. Los ZIP entregados son copias de respaldo opcionales. El repositorio de GitHub queda como copia histórica.
 
 La publicación del servidor actualiza las API; el binario instalado en cada iPhone se actualiza al compilar/instalar de nuevo con Xcode o distribuir una nueva versión ad hoc.
+
+## Mensaje «Operación cancelada» al navegar
+
+Las consultas ligadas a una pantalla pueden cancelarse al salir de ella. SwiftUI/URLSession pueden devolver `CancellationError` o `NSURLErrorCancelled` (-999). Antes se mostraban algunas de estas cancelaciones como un error local y compartido, que reaparecía en Archivo y otros menús. Las lecturas de quincenas, Agenda/calendarios, Correos, Usuarios e Itinerarios/Alertas ahora reconocen ambas cancelaciones sin publicar ese error ni borrar los datos consultados. Los demás errores siguen visibles y la sesión vencida sigue revocando el acceso.
+
+El manejo de guardados no cambia: una cancelación de transporte puede tener resultado incierto en el servidor, por lo que conserva el borrador y sus controles de reintento. Se mantienen las comprobaciones de sesión, versión y privacidad. Las pruebas usan únicamente URLProtocol `.invalid` y un simulador local.
 
 ## Abrir y ejecutar en el Mac
 

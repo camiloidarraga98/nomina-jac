@@ -251,6 +251,68 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(reopened.data["periods"].elements.first?["revisions"].elements.count, 1)
     }
 
+    @MainActor func testCancelledReadsDoNotPublishErrorsOrClearExistingData() async throws {
+        let store = PayrollStore(client: UITestBackend.client())
+        await store.restore()
+        let revision = store.workspace?.version
+        let period = PeriodWorkspace()
+        await period.load("fixture-period", store: store)
+        XCTAssertNotNil(period.detail)
+        for cancellation: Error in [CancellationError(), URLError(.cancelled), NSError(domain: NSURLErrorDomain, code: NSURLErrorCancelled)] {
+            XCTAssertNil(store.reportReadFailure(cancellation))
+            XCTAssertNil(store.error)
+        }
+        // Exercise URLSession's actual error path, not just classification.
+        let vault = MemorySession(); vault.token = token
+        let interrupted = PayrollStore(client: makeClient(vault))
+        MockProtocol.handler = { _ in throw URLError(.cancelled) }
+        do { try await interrupted.refresh(); XCTFail("La consulta sigue cancelada para su llamador") } catch {}
+        await period.load("fixture-period", store: interrupted)
+        await interrupted.restore()
+        XCTAssertNil(interrupted.error); XCTAssertNil(period.error); XCTAssertFalse(period.loading)
+        XCTAssertFalse(interrupted.restoring)
+        XCTAssertNotNil(period.detail, "Una cancelación no borra la consulta anterior")
+        XCTAssertEqual(store.workspace?.version, revision)
+        XCTAssertEqual(vault.token, token)
+        let existingFailure = "Error real anterior"
+        store.error = existingFailure
+        XCTAssertNil(store.reportReadFailure(URLError(.cancelled)))
+        XCTAssertEqual(store.error, existingFailure, "Una cancelación no oculta otro error pendiente")
+    }
+
+    @MainActor func testRealReadFailuresRemainVisibleAndExpiredAccessIsRevoked() async throws {
+        let store = PayrollStore(client: UITestBackend.client())
+        await store.restore()
+        for failure: Error in [URLError(.timedOut), URLError(.notConnectedToInternet), APIError.message("Sin permiso"), NSError(domain: "OtherDomain", code: NSURLErrorCancelled)] {
+            XCTAssertEqual(store.reportReadFailure(failure), failure.localizedDescription)
+            XCTAssertEqual(store.error, failure.localizedDescription)
+        }
+        XCTAssertNotNil(store.workspace)
+        XCTAssertEqual(store.reportReadFailure(APIError.unauthorized), APIError.unauthorized.localizedDescription)
+        XCTAssertNil(store.workspace); XCTAssertNil(store.overview)
+    }
+
+    @MainActor func testCancelledSaveStillRetainsDraftAndUncertainFailure() async throws {
+        let vault = MemorySession(); vault.token = token
+        let store = PayrollStore(client: makeClient(vault))
+        let fixture = UITestBackend.client()
+        let workspace = try await fixture.workspace()
+        let payload = try JSONEncoder().encode(JSONValue.object([
+            "version": .number(Double(workspace.version)), "company": .string("Prueba"), "periods": .array([]), "employees": .array([]),
+            "user": .object(["id": .string("fixture"), "username": .string("prueba"), "email": .string("test@example.invalid"), "displayName": .string("Prueba"), "isOwner": .bool(true), "permissions": .array([])]), "data": workspace.data
+        ]))
+        MockProtocol.handler = { request in
+            if request.httpMethod == "POST" { throw URLError(.cancelled) }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, payload)
+        }
+        try await store.refresh()
+        let command: JSONValue = .object(["action": .string("edit"), "version": .number(Double(workspace.version)), "edit": .object(["kind": .string("settings"), "record": .object(["company": .string("Borrador")])])])
+        let saved = await store.submit(command, label: "Formulario")
+        XCTAssertFalse(saved); XCTAssertEqual(store.pending?.command, command)
+        XCTAssertNotNil(store.error); XCTAssertFalse(store.busy)
+        XCTAssertEqual(vault.token, token)
+    }
+
     @MainActor func testOldResponseCannotClearANewerLogin() async throws {
         let vault = MemorySession(); vault.token = token
         let client = makeClient(vault)

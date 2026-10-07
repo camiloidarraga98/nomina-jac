@@ -78,7 +78,7 @@ struct NoticesView: View {
         guard !loading else { return }; loading = true; defer { loading = false }
         do { let result = try await store.client.notices(cursor: cursor); feed = result; if cursor.isEmpty { records = result.notices } else { records += result.notices.filter { item in !records.contains { $0.id == item.id } } }; error = nil
             if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; detail = item }
-        } catch { self.error = error.localizedDescription; store.report(error) }
+        } catch { self.error = store.reportReadFailure(error) }
     }
 }
 
@@ -108,7 +108,9 @@ struct NoticeDetail: View {
                 if owner { Section { Button("Eliminar " + (item.kind == "itinerary" ? "itinerario" : "alerta"), role: .destructive) { confirmingDelete = true }.disabled(deleting || downloading).accessibilityIdentifier("notices.delete") } }
             }.jacSurface().navigationTitle(item.kind == "itinerary" ? "Itinerario" : "Alerta").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() }.disabled(deleting).accessibilityIdentifier("notices.detail.close") } }
-                .task { do { try await store.client.noticeCommand(.object(["action": .string("read"), "id": .string(item.id)])) } catch { store.report(error) } }
+                // Closing the detail also cancels its best-effort read receipt.
+                // Do not leave that cancellation in unrelated menus.
+                .task { do { try await store.client.noticeCommand(.object(["action": .string("read"), "id": .string(item.id)])) } catch { store.reportReadFailure(error) } }
                 .alert("Eliminar " + (item.kind == "itinerary" ? "itinerario" : "alerta"), isPresented: $confirmingDelete) {
                     Button("Cancelar", role: .cancel) {}.accessibilityIdentifier("notices.delete.cancel")
                     Button("Eliminar", role: .destructive) { Task { await remove() } }.accessibilityIdentifier("notices.delete.confirm")

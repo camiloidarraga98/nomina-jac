@@ -48,7 +48,7 @@ struct UsersView: View {
     }
     private func load() async {
         guard !busy else { return }; busy = true; defer { busy = false }
-        do { users = try await store.client.users().users } catch { store.report(error) }
+        do { users = try await store.client.users().users } catch { store.reportReadFailure(error) }
     }
     private func invite(_ user: ManagedUser) async {
         guard !busy else { return }; busy = true; invitation = nil; defer { busy = false }

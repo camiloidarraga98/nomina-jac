@@ -106,8 +106,7 @@ struct CalendarView: View {
         loading = true; error = nil
         defer { if requestID == id { loading = false } }
         do { let result = try await store.client.agenda(month: currentMonth); guard requestID == id, month == currentMonth else { return }; byDay = CalendarClock.eventsByDay(result.events, days: result.days); feed = result; refreshedAt = Date() }
-        catch is CancellationError { }
-        catch { if requestID == id { self.error = error.localizedDescription; store.report(error) } }
+        catch { if requestID == id { self.error = store.reportReadFailure(error) } }
     }
 }
 struct AgendaEventRow: View {
@@ -186,7 +185,7 @@ struct CalendarConnectionView: View {
     private func loadCalendars() async {
         guard connection.connected else { return }; loading = true; error = nil; defer { loading = false }
         do { calendars = try await store.client.agendaCalendars(); selection = connection.selected?.id ?? calendars.first?.id ?? "" }
-        catch { self.error = error.localizedDescription; store.report(error) }
+        catch { self.error = store.reportReadFailure(error) }
     }
     private func connect() async {
         loading = true; error = nil

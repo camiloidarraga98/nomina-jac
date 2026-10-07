@@ -39,7 +39,7 @@ struct JACNominaApp: App {
     private static func makeStore() -> PayrollStore {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
-        if arguments.contains("--uitest-payroll") { return PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"))) }
+        if arguments.contains("--uitest-payroll") { return PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"))) }
         #endif
         return PayrollStore()
     }
@@ -128,7 +128,7 @@ struct BrandView: View {
 
 struct InlineError: View {
     let message: String
-    var body: some View { Label(message, systemImage: "exclamationmark.circle").font(.subheadline).foregroundStyle(.red) }
+    var body: some View { Label(message, systemImage: "exclamationmark.circle").font(.subheadline).foregroundStyle(.red).accessibilityIdentifier("error.inline") }
 }
 
 enum JACTheme {

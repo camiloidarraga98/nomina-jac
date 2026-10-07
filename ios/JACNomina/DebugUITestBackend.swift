@@ -5,8 +5,8 @@ import Foundation
 // excluded from Release and never read or write the real payroll or Keychain.
 enum UITestBackend {
     static let base = URL(string: "https://ui-fixture.example.invalid")!
-    @MainActor static func client(reader: Bool = false, conflict: Bool = false) -> PayrollClient {
-        FixtureProtocol.reset(reader: reader, conflict: conflict)
+    @MainActor static func client(reader: Bool = false, conflict: Bool = false, cancelledReads: Bool = false) -> PayrollClient {
+        FixtureProtocol.reset(reader: reader, conflict: conflict, cancelledReads: cancelledReads)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [FixtureProtocol.self]
         return PayrollClient(baseURL: base, vault: FixtureSession(), configuration: configuration)
     }
@@ -27,12 +27,20 @@ private final class FixtureProtocol: URLProtocol {
     static var alerts: [JSONValue] = []
     static var deletedNotices = Set<String>()
     static var attachments: [String: Data] = [:]
-    static func reset(reader: Bool, conflict: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; agendaChanges = [:]; alerts = []; deletedNotices = []; attachments = [:] }
+    static var readsToCancel = Set<String>()
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; agendaChanges = [:]; alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static func cancelRead(_ request: URLRequest) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        guard request.httpMethod == "GET", let url = request.url else { return false }
+        let key = url.path + (url.path == "/api/mobile/payroll" && url.query?.contains("period=") == true ? "?period" : "")
+        return readsToCancel.remove(key) != nil
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         do {
             guard request.url?.host == "ui-fixture.example.invalid" else { throw URLError(.unsupportedURL) }
+            if Self.cancelRead(request) { throw URLError(.cancelled) }
             if request.url?.path == "/api/notices/file" {
                 Self.lock.lock(); defer { Self.lock.unlock() }; let q = URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? []; let notice = q.first { $0.name == "id" }?.value ?? "", id = q.first { $0.name == "file" }?.value ?? ""
                 guard !Self.deletedNotices.contains(notice), let bytes = Self.attachments[id] else { throw URLError(.fileDoesNotExist) }
@@ -81,6 +89,7 @@ private final class FixtureProtocol: URLProtocol {
         if parts.path == "/api/notices" {
             if request.httpMethod == "POST" {
                 let command = try body(request)
+                if command["action"].text == "read", readsToCancel.remove("/api/notices?read") != nil { throw URLError(.cancelled) }
                 if ["deleteAlert","deleteItinerary"].contains(command["action"].text) {
                     guard !reader else { return (403,.object(["error":.string("Solo Camilo puede eliminar.")])) }
                     guard command["confirmation"] == command["id"] else { return (400,.object(["error":.string("Confirma el aviso.")])) }
