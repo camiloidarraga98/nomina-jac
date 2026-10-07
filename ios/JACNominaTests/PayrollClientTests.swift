@@ -10,6 +10,14 @@ private final class MemorySession: SessionStoring {
 
 private final class MockProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
+    static func requestBody(_ request: URLRequest) throws -> Data {
+        if let data = request.httpBody { return data }
+        guard let stream = request.httpBodyStream else { throw URLError(.badServerResponse) }
+        stream.open(); defer { stream.close() }
+        var data = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+        while true { let count = stream.read(&buffer, maxLength: buffer.count); if count < 0 { throw stream.streamError ?? URLError(.cannotDecodeRawData) }; if count == 0 { break }; data.append(contentsOf: buffer.prefix(count)) }
+        return data
+    }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
@@ -322,7 +330,7 @@ final class PayrollClientTests: XCTestCase {
         let id = UUID().uuidString; hub.received(id); XCTAssertEqual(hub.noticeID, id.lowercased()); hub.noticeID = nil
         let vault = MemorySession(); vault.token = token
         MockProtocol.handler = { request in
-            let body = try JSONDecoder().decode(JSONValue.self, from: request.httpBody!)
+            let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request))
             XCTAssertEqual(body["action"].text, "logout"); XCTAssertEqual(body["notificationDeviceId"].text, JACNotifications.deviceID)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{}".utf8))
         }

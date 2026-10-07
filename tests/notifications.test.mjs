@@ -125,3 +125,11 @@ test('paginación y apertura directa permiten consultar avisos antiguos con el m
  const first=await api(paulaToken);assert.equal(first.body.notices.length,40);assert.ok(first.body.nextCursor);const next=await api(paulaToken,undefined,'?cursor='+encodeURIComponent(first.body.nextCursor));assert.ok(next.body.notices.length);assert.ok(!next.body.notices.some(x=>first.body.notices.some(y=>y.id===x.id)));assert.equal((await api(paulaToken,undefined,'?item='+imported.id)).status,200);
  assert.equal(sql.prepare('SELECT COUNT(*) n FROM payroll_mail_jobs').get().n,0);assert.equal(sql.prepare('SELECT COUNT(*) n FROM payroll_periods').get().n,0);
 });
+
+test('un mensaje con varios PDF importa todos antes de preparar sus avisos, sin copiar otros adjuntos',async()=>{
+ const ids=['FMULTIPDF01','FMULTIPDF02','FMULTIPDF03'],before=writes;
+ const body=event(ids[0]);body.event.files=[...ids.map(id=>({id,mimetype:'application/pdf'})),{id:'FIGNORED999',mimetype:'image/png'}];
+ assert.equal((await slack(body)).status,200);assert.equal(writes,before+ids.length);
+ for(const id of ids){const row=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:'+id);assert.ok(row);assert.equal(row.body,'');assert.ok(bucket.has(row.file_key));assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get(id).status,'ready');}
+ assert.equal(sql.prepare('SELECT COUNT(*) n FROM jac_slack_files WHERE id=?').get('FIGNORED999').n,0);
+});
