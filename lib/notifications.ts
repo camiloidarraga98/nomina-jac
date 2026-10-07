@@ -28,17 +28,34 @@ export async function noticeFeed(u:AccessUser,cursor=''){
 }
 export async function allowedNotice(u:AccessUser,id:string){if(!uuid.safeParse(id).success)throw new NoticeFailure('El aviso no existe.',404);const row=await database().prepare(`SELECT n.*,r.read_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.id=? AND ${accessSql}`).bind(u.id,id,u.id,noticeOwner(u)?1:0).first<Row>();if(!row)throw new NoticeFailure('El aviso no está disponible para esta cuenta.',404);return row;}
 export async function noticeItem(u:AccessUser,id:string){return view(await allowedNotice(u,id));}
-export async function markNoticeRead(u:AccessUser,id:string){await allowedNotice(u,id);await database().prepare('INSERT INTO jac_notice_recipients (id,notice_id,user_id,read_at,push_target) VALUES (?,?,?,?,0) ON CONFLICT(id) DO UPDATE SET read_at=excluded.read_at').bind(id+'|'+u.id,id,u.id,now()).run();}
+export async function markNoticeRead(u:AccessUser,id:string){await allowedNotice(u,id);await database().prepare('INSERT INTO jac_notice_recipients (id,notice_id,user_id,read_at,push_target) SELECT ?,?,?,?,0 WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=?) ON CONFLICT(id) DO UPDATE SET read_at=excluded.read_at').bind(id+'|'+u.id,id,u.id,now(),id).run();}
 export async function saveManualNotice(u:AccessUser,body:unknown,authorize:()=>Promise<boolean>){
  const parsed=z.object({id:uuid,title:z.string().trim().min(1).max(120),body:z.string().trim().min(1).max(2000),recipients:z.array(uuid).min(1).max(100)}).strict().safeParse(body);
  if(!parsed.success)throw new NoticeFailure('Ingresa título, mensaje y al menos un destinatario.');const p=parsed.data,ids=[...new Set(p.recipients)].sort();
  const recipients=(await database().prepare(`SELECT id FROM payroll_users WHERE active=1 AND password_hash<>'' AND id IN (${ids.map(()=>'?').join(',')})`).bind(...ids).all<{id:string}>()).results;
  if(recipients.length!==ids.length)throw new NoticeFailure('Algún destinatario ya no está activo. Actualiza el listado.',409);
+ if(await database().prepare('SELECT id FROM jac_deleted_alerts WHERE id=?').bind(p.id).first())throw new NoticeFailure('Esta alerta fue eliminada. Abre un formulario nuevo.',410);
  const existing=await database().prepare('SELECT title,body FROM jac_notices WHERE id=?').bind(p.id).first<{title:string;body:string}>();
  if(existing){if(!noticeOwner(u)||!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);const previous=(await database().prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=? AND push_target=1 ORDER BY user_id').bind(p.id).all<{user_id:string}>()).results.map(x=>x.user_id);if(existing.title!==p.title||existing.body!==p.body||JSON.stringify(previous)!==JSON.stringify(ids))throw new NoticeFailure('Esta solicitud ya guardó otra alerta. Abre un formulario nuevo.',409);await queuePush(p.id);return p.id;}
  if(!noticeOwner(u)||!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
- const stamp=now();await database().batch([database().prepare("INSERT INTO jac_notices (id,kind,title,body,created_at) VALUES (?,'alert',?,?,?)").bind(p.id,p.title,p.body,stamp),...ids.map(id=>database().prepare('INSERT INTO jac_notice_recipients (id,notice_id,user_id) VALUES (?,?,?)').bind(p.id+'|'+id,p.id,id))]);
+ const stamp=now();const saved=await database().batch([database().prepare("INSERT INTO jac_notices (id,kind,title,body,created_at) SELECT ?,'alert',?,?,? WHERE NOT EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)").bind(p.id,p.title,p.body,stamp,p.id),...ids.map(id=>database().prepare("INSERT INTO jac_notice_recipients (id,notice_id,user_id) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=? AND kind='alert')").bind(p.id+'|'+id,p.id,id,p.id))]);if(saved[0].meta.changes!==1)throw new NoticeFailure('Esta alerta fue eliminada. Abre un formulario nuevo.',410);
  await queuePush(p.id);return p.id;
+}
+// Keep only the deleted UUID so delayed creation retries cannot restore content or pushes.
+export async function deleteManualNotice(u:AccessUser,id:unknown,confirmation:unknown,authorize:()=>Promise<boolean>){
+ if(!noticeOwner(u))throw new NoticeFailure('Solo Camilo puede eliminar alertas.',403);
+ if(!uuid.safeParse(id).success||confirmation!==id)throw new NoticeFailure('Confirma la alerta que deseas eliminar.');
+ const target=id as string,db=database();
+ const item=await db.prepare('SELECT kind FROM jac_notices WHERE id=?').bind(target).first<{kind:string}>();
+ if(item&&item.kind!=='alert')throw new NoticeFailure('Solo se pueden eliminar alertas; los itinerarios se conservan.');
+ if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
+ await db.batch([
+  db.prepare("INSERT OR IGNORE INTO jac_deleted_alerts (id,deleted_at) SELECT id,? FROM jac_notices WHERE id=? AND kind='alert'").bind(now(),target),
+  db.prepare('DELETE FROM jac_push_deliveries WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)').bind(target,target),
+  db.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)').bind(target,target),
+  db.prepare("DELETE FROM jac_notices WHERE id=? AND kind='alert' AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)").bind(target,target),
+ ]);
+ if(!await db.prepare('SELECT id FROM jac_deleted_alerts WHERE id=?').bind(target).first())throw new NoticeFailure('La alerta no está disponible.',404);
 }
 export async function configureNotices(kind:string,input:Record<string,unknown>,authorize:()=>Promise<boolean>){
  const c=await noticeConfig();if(input.version!==c.version)throw new NoticeFailure('La configuración cambió. Actualiza antes de guardar.',409);const keys=await pushCredentials(c);
@@ -67,7 +84,7 @@ export async function registerDevice(u:AccessUser,body:Record<string,unknown>,se
  const result=await database().prepare("INSERT INTO jac_push_devices (id,user_id,user_version,platform,data,session_id,updated_at) SELECT ?,id,version,?,?,?,? FROM payroll_users WHERE id=? AND active=1 AND password_hash<>'' ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id,user_version=excluded.user_version,platform=excluded.platform,data=excluded.data,session_id=excluded.session_id,enabled=1,updated_at=excluded.updated_at").bind(body.id,body.platform,cipher,tokenHash(sessionId),now(),u.id).run();if(result.meta.changes!==1)throw new NoticeFailure('Tu acceso cambió. Inicia sesión de nuevo.',403);
 }
 export async function unregisterDevice(u:AccessUser,id:unknown){if(!uuid.safeParse(id).success)throw new NoticeFailure('Selecciona un dispositivo válido.');await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND user_id=?').bind(id,u.id).run();}
-async function queuePush(id:string){await database().prepare("INSERT OR IGNORE INTO jac_push_deliveries (id,notice_id,device_id,updated_at) SELECT ?||'|'||d.id,?,d.id,? FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? WHERE r.push_target=1 AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(id,id,now(),id).run();}
+async function queuePush(id:string){await database().prepare("INSERT OR IGNORE INTO jac_push_deliveries (id,notice_id,device_id,updated_at) SELECT ?||'|'||d.id,?,d.id,? FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? JOIN jac_notices n ON n.id=r.notice_id WHERE r.push_target=1 AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(id,id,now(),id).run();}
 export async function dispatchPush(){
  const keys=await pushCredentials();
  const rows=(await database().prepare("SELECT p.id,p.notice_id,p.device_id,d.user_id,d.platform,d.data FROM jac_push_deliveries p JOIN jac_push_devices d ON d.id=p.device_id JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.notice_id=p.notice_id AND r.user_id=u.id WHERE p.status='pending' AND d.enabled=1 AND u.active=1 AND u.password_hash<>'' ORDER BY p.updated_at LIMIT 24").all<{id:string;notice_id:string;device_id:string;user_id:string;platform:string;data:string}>()).results;
@@ -76,11 +93,14 @@ export async function dispatchPush(){
   let state='uncertain';
   try{
    // A permission/account change after listing must prevent the provider call.
-   const active=await database().prepare("SELECT d.id FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? AND r.push_target=1 WHERE d.id=? AND d.data=? AND d.user_id=? AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(row.notice_id,row.device_id,row.data,row.user_id).first();
+   const activeDelivery=()=>database().prepare("SELECT d.id FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? AND r.push_target=1 JOIN jac_notices n ON n.id=r.notice_id JOIN jac_push_deliveries p ON p.device_id=d.id AND p.notice_id=n.id WHERE p.id=? AND p.status='sending' AND d.id=? AND d.data=? AND d.user_id=? AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(row.notice_id,row.id,row.device_id,row.data,row.user_id).first();
+   const active=await activeDelivery();
    if(!active)state='disabled';else if(row.platform==='ios'?!keys.apns:!keys.web)state='unconfigured';
    else{
     const data=await decryptMail<Record<string,string>|WebSubscription>(row.data,mailKey());
     const request=row.platform==='ios'?await applePushRequest((data as Record<string,string>).token,(data as Record<string,string>).environment,keys.apns!,row.notice_id):await webPushRequest(data as WebSubscription,keys.web!,JSON.stringify({id:row.notice_id,title:'JAC',body:'Tienes un aviso nuevo. Abre JAC para consultarlo.'}));
+    // Encryption/signing can yield: revalidate deletion and access immediately before sending.
+    if(!await activeDelivery()){await database().prepare("UPDATE jac_push_deliveries SET status='disabled',updated_at=? WHERE id=? AND status='sending'").bind(now(),row.id).run();return;}
     const response=await fetch(request.url,request.options);state=response.ok?'sent':response.status===404||response.status===410?'expired':'failed';
     if(state==='expired')await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND data=?').bind(row.device_id,row.data).run();
    }

@@ -50,8 +50,18 @@ Un push muestra un texto genérico para proteger información en la pantalla blo
 
 Las notificaciones requieren permiso y conexión del dispositivo y la aceptación de Apple/navegador. No se garantiza recepción ni lectura. Un resultado incierto del proveedor no se reenvía automáticamente, para evitar duplicados; el aviso permanece consultable en JAC. Los cambios de esta función no envían correos ni modifican quincenas.
 
+## Eliminar una alerta
+
+En la web, Camilo abre **Configuración general → Alertas** y pulsa la papelera de una alerta o **Eliminar alerta** dentro de su detalle. La confirmación indica que se eliminará para todos sus destinatarios y no se puede deshacer. Cancelar conserva la alerta. Solo Camilo puede ejecutar esta operación; los destinatarios mantienen su acceso de consulta.
+
+El borrado elimina mensaje, destinatarios y entregas pendientes de esa alerta en una transacción. No borra itinerarios, PDF, dispositivos ni conexiones. Las notificaciones ya recibidas y las solicitudes que el proveedor ya está procesando no se pueden retirar. Un reintento de creación con el mismo identificador eliminado se rechaza, para no restaurar contenido ni generar nuevos avisos.
+
 ## Continuidad técnica
 
 `drizzle/0008_itineraries_notifications.sql` crea tablas independientes para configuración cifrada, avisos, destinatarios, dispositivos, entregas e importaciones. Conserva `DB`, `BUCKET` y las migraciones anteriores. `/api/notices` aplica sesión propia y autorización; `/api/notices/pdf` sirve PDF privados; `/api/notices/slack` verifica firma HMAC, timestamp, espacio/canal y metadatos del archivo. No solicita scopes de escritura en Slack.
 
+`drizzle/0009_deleted_alerts.sql` agrega únicamente `jac_deleted_alerts`: conserva el UUID y la fecha de borrado, sin título, mensaje ni destinatarios. Mantiene intactas las migraciones 0000–0008 y los datos existentes. Se aplica primero en D1 local; la publicación normal incorpora esta migración adicional al mismo DB.
+
 Las pruebas usan D1/R2 en memoria, Slack/APNs/servicios push simulados y Workerd con todas las salidas interceptadas. Verifican destinatarios, revocación, reintentos, tamaño/formato del PDF, firmas ES256, descifrado independiente RFC 8291 y rechazo de redirecciones. Swift usa URLProtocol y dominios `.invalid` y prueba el PDF, las alertas y sus permisos. No usar producción para probar envíos, importaciones o cierres.
+
+La eliminación se prueba con permisos, origen, confirmación, repetición idempotente, rollback atómico, rechazo de reintentos de creación y cancelación antes de entregar push. También se verifica en D1 de Workerd local sin salidas externas. No eliminar alertas reales como prueba.

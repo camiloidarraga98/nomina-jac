@@ -39,3 +39,30 @@ test('Workerd cifra Web Push interoperable y firma APNs/Slack sin seguir redirec
   assert.equal((await run({kind:'slack',raw:rawSlack,timestamp,signature,secret})).valid,true);assert.equal((await run({kind:'slack',raw:rawSlack+' ',timestamp,signature,secret})).valid,false);
  } finally {await mf.dispose();}
 });
+
+test('Workerd/D1 elimina alertas de forma atómica, conserva itinerarios y bloquea reintentos',async()=>{
+ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
+  import {env} from 'cloudflare:workers';
+  import {deleteManualNotice,saveManualNotice} from './lib/notifications';
+  const owner={id:'11111111-1111-4111-8111-111111111111',email:'camilo@mac2you.co',username:'fixture',displayName:'Fixture',fullName:null,isOwner:true,permissions:[]};
+  export default {async fetch(req:Request){const b=await req.json();try{
+   if(b.action==='create')return Response.json({id:await saveManualNotice(owner,b.alert,async()=>true)});
+   await deleteManualNotice({...owner,isOwner:b.owner!==false},b.id,b.confirmation,async()=>b.validSession!==false);return Response.json({ok:true});
+  }catch(e){return Response.json({error:e.message},{status:e.status||502});}}};
+ `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*']});
+ let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-notices-delete'},bindings:{PAYROLL_MAIL_KEY:Buffer.alloc(32,7).toString('base64url')},outboundService:async()=>{outbound++;throw new Error('No external traffic in deletion tests');}});
+ const {readFile,readdir}=await import('node:fs/promises');
+ try{
+  const db=await mf.getD1Database('DB');for(const name of (await readdir('drizzle')).filter(x=>x.endsWith('.sql')).sort())for(const statement of (await readFile('drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(x=>x.trim()).filter(Boolean))await db.prepare(statement).run();
+  const user='11111111-1111-4111-8111-111111111111';await db.prepare("INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,'fixture','user@example.invalid','Fixture','fixture','[]','fixture','fixture')").bind(user).run();
+  const input={id:crypto.randomUUID(),title:'Alerta ficticia',body:'Sin notificaciones reales',recipients:[user]};
+  const run=async body=>mf.dispatchFetch('https://local.example.invalid/notices',{method:'POST',body:JSON.stringify(body)});
+  assert.equal((await run({action:'create',alert:input})).status,200);
+  const remove={action:'deleteAlert',id:input.id,confirmation:input.id};assert.equal((await run({...remove,owner:false})).status,403);assert.equal((await run({...remove,validSession:false})).status,403);assert.equal((await run({...remove,confirmation:'bad'})).status,400);
+  const itinerary=crypto.randomUUID();await db.prepare("INSERT INTO jac_notices(id,kind,title,created_at) VALUES (?,'itinerary','PDF ficticio','fixture')").bind(itinerary).run();assert.equal((await run({action:'deleteAlert',id:itinerary,confirmation:itinerary})).status,400);
+  await db.prepare("CREATE TRIGGER fixture_abort_delete BEFORE DELETE ON jac_notice_recipients BEGIN SELECT RAISE(ABORT,'fixture rollback'); END").run();assert.equal((await run(remove)).status,502);assert.ok(await db.prepare('SELECT id FROM jac_notices WHERE id=?').bind(input.id).first());assert.equal(await db.prepare('SELECT id FROM jac_deleted_alerts WHERE id=?').bind(input.id).first(),null);await db.prepare('DROP TRIGGER fixture_abort_delete').run();
+  assert.equal((await run(remove)).status,200);assert.equal((await run(remove)).status,200);assert.equal((await run({action:'create',alert:input})).status,410);
+  assert.equal(await db.prepare('SELECT id FROM jac_notices WHERE id=?').bind(input.id).first(),null);assert.equal(await db.prepare('SELECT id FROM jac_notice_recipients WHERE notice_id=?').bind(input.id).first(),null);assert.ok(await db.prepare('SELECT id FROM jac_notices WHERE id=?').bind(itinerary).first());assert.equal(outbound,0);
+ }finally{await mf.dispose();}
+});

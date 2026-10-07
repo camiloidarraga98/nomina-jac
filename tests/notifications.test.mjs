@@ -13,9 +13,9 @@ const sql=new DatabaseSync(':memory:');for(const f of (await readdir('drizzle'))
 class Query {
  constructor(text,args=[]){this.text=text;this.args=args;}bind(...args){return new Query(this.text,args);}
  execute(){const q=sql.prepare(this.text);if(q.columns().length)return {results:q.all(...this.args),meta:{changes:Number(sql.prepare('SELECT changes() n').get().n)}};return {results:[],meta:{changes:Number(q.run(...this.args).changes)}};}
- async run(){return this.execute();}async all(){return this.execute();}async first(){return sql.prepare(this.text).get(...this.args)||null;}
+ async run(){return this.execute();}async all(){return this.execute();}async first(){if(beforeFirst)await beforeFirst(this);return sql.prepare(this.text).get(...this.args)||null;}
 }
-const bucket=new Map();let writes=0,waiting=[];
+const bucket=new Map();let writes=0,waiting=[],beforeFirst;
 globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},get:async k=>bucket.has(k)?{body:new Response(bucket.get(k)).body}:null},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
 globalThis.__noticesHeaders=new Headers();globalThis.__noticesWait=p=>waiting.push(p);
 const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
@@ -132,4 +132,49 @@ test('un mensaje con varios PDF importa todos antes de preparar sus avisos, sin 
  assert.equal((await slack(body)).status,200);assert.equal(writes,before+ids.length);
  for(const id of ids){const row=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:'+id);assert.ok(row);assert.equal(row.body,'');assert.ok(bucket.has(row.file_key));assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get(id).status,'ready');}
  assert.equal(sql.prepare('SELECT COUNT(*) n FROM jac_slack_files WHERE id=?').get('FIGNORED999').n,0);
+});
+
+
+test('eliminar alertas exige propietario, confirmación, origen y sesión vigente; conserva itinerarios',async()=>{
+ const input=alert([paula]);const actor=await m.authenticatedSession(ownerToken);await m.saveManualNotice(actor,input,async()=>true);
+ const remove={action:'deleteAlert',id:input.id,confirmation:input.id};
+ assert.equal((await api('',remove)).status,401);assert.equal((await api(paulaToken,remove)).status,403);
+ assert.equal((await api(ownerToken,{...remove,confirmation:crypto.randomUUID()})).status,400);
+ assert.equal((await api(ownerToken,{...remove,id:'bad',confirmation:'bad'})).status,400);
+ globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+ownerToken});
+ assert.equal((await m.api.POST(new Request(base+'/api/notices',{method:'POST',headers:{origin:'https://untrusted.example.invalid'},body:JSON.stringify(remove)}))).status,403);
+ await assert.rejects(()=>m.deleteManualNotice(actor,input.id,input.id,async()=>false),e=>e.status===403);
+ assert.equal((await api(ownerToken,{action:'deleteAlert',id:imported.id,confirmation:imported.id})).status,400);
+ const unknown=crypto.randomUUID();assert.equal((await api(ownerToken,{action:'deleteAlert',id:unknown,confirmation:unknown})).status,404);
+ assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(input.id));assert.ok(bucket.has(imported.file_key));
+ await m.deleteManualNotice(actor,input.id,input.id,async()=>true);
+});
+test('borrado atómico retira contenido, destinatarios y push; reintentos no restauran ni reenvían',async()=>{
+ calls=[];const actor=await m.authenticatedSession(ownerToken),input=alert([paula]);await m.saveManualNotice(actor,input,async()=>true);
+ const keep=alert([paula]);await m.saveManualNotice(actor,keep,async()=>true);
+ assert.ok(sql.prepare('SELECT id FROM jac_push_deliveries WHERE notice_id=?').get(input.id));
+ const remove={action:'deleteAlert',id:input.id,confirmation:input.id};assert.equal((await api(ownerToken,remove)).status,200);assert.equal((await api(ownerToken,remove)).status,200);
+ for(const table of ['jac_notices','jac_notice_recipients','jac_push_deliveries'])assert.equal(sql.prepare('SELECT count(*) n FROM '+table+' WHERE '+(table==='jac_notices'?'id':'notice_id')+'=?').get(input.id).n,0);
+ assert.deepEqual(Object.keys(sql.prepare('SELECT * FROM jac_deleted_alerts WHERE id=?').get(input.id)).sort(),['deleted_at','id']);
+ assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(keep.id));assert.ok(sql.prepare('SELECT id FROM jac_push_deliveries WHERE notice_id=?').get(keep.id));
+ assert.equal((await api(ownerToken,{action:'alert',alert:input})).status,410);assert.equal((await api(ownerToken,{action:'alert',alert:{...input,title:'Reintento cambiado'}})).status,410);
+ await m.deleteManualNotice(actor,keep.id,keep.id,async()=>true);await m.dispatchPush();assert.equal(calls.length,0);
+ assert.equal((await api(ownerToken,undefined,'?item='+input.id)).status,404);assert.equal((await api(paulaToken,undefined,'?item='+input.id)).status,404);
+ assert.ok(!(await api(paulaToken)).body.notices.some(x=>x.id===input.id));assert.ok(!(await api(ownerToken)).body.notices.some(x=>x.id===input.id));
+});
+test('un fallo en el lote revierte el borrado completo y conserva la alerta',async()=>{
+ const actor=await m.authenticatedSession(ownerToken),input=alert([paula]);await m.saveManualNotice(actor,input,async()=>true);
+ sql.exec("CREATE TRIGGER fixture_delete_failure BEFORE DELETE ON jac_notice_recipients WHEN OLD.notice_id='"+input.id+"' BEGIN SELECT RAISE(ABORT,'simulated failure'); END;");
+ try{assert.equal((await api(ownerToken,{action:'deleteAlert',id:input.id,confirmation:input.id})).status,502);
+ assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(input.id));assert.ok(sql.prepare('SELECT id FROM jac_push_deliveries WHERE notice_id=?').get(input.id));assert.ok(sql.prepare('SELECT id FROM jac_notice_recipients WHERE notice_id=?').get(input.id));assert.equal(sql.prepare('SELECT id FROM jac_deleted_alerts WHERE id=?').get(input.id),undefined);
+ }finally{sql.exec('DROP TRIGGER fixture_delete_failure');}
+ await m.deleteManualNotice(actor,input.id,input.id,async()=>true);
+});
+test('borrar durante el cifrado cancela el envío ya seleccionado; no resucita una creación concurrente',async()=>{
+ const actor=await m.authenticatedSession(ownerToken),input=alert([paula]);await m.saveManualNotice(actor,input,async()=>true);calls=[];let checks=0;
+ beforeFirst=async query=>{if(query.text.includes("p.status='sending'")&&query.args[0]===input.id&&++checks===2)await m.deleteManualNotice(actor,input.id,input.id,async()=>true);};
+ try{await m.dispatchPush();}finally{beforeFirst=undefined;}
+ assert.equal(checks,2);assert.equal(calls.length,0);assert.equal(sql.prepare('SELECT id FROM jac_push_deliveries WHERE notice_id=?').get(input.id),undefined);
+ const racing=alert([paula]);await assert.rejects(()=>m.saveManualNotice(actor,racing,async()=>{sql.prepare('INSERT INTO jac_deleted_alerts (id,deleted_at) VALUES (?,?)').run(racing.id,new Date().toISOString());return true;}),e=>e.status===410);
+ assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(racing.id),undefined);assert.equal(sql.prepare('SELECT id FROM jac_notice_recipients WHERE notice_id=?').get(racing.id),undefined);
 });

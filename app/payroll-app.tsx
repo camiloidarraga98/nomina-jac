@@ -23,7 +23,7 @@ type Modal={kind:'period'|'show'|'employee'|'movement'|'route'|'legacyRoute'|'ex
 const categories=Object.keys(categoryNames) as Category[];
 const emptyPeriod:Period={id:'',start:'2000-01-01',end:'2000-01-15',status:'abierta',shows:[],movements:[],hours:[],routes:[],excludedEmployees:[]};
 const kindNames={servicio:'Honorario / actividad',reintegro:'Pasaje / reintegro no salarial',salarial:'Adición salarial',descuento:'Descuento'};
-const mainNavigation=[{key:'quincena',label:'Quincena',Icon:CalendarDays},{key:'agenda',label:'Agenda',Icon:CalendarDays},{key:'itinerarios',label:'Itinerarios',Icon:FileText},{key:'cuenta',label:'Mi cuenta',Icon:LockKeyhole}];
+const mainNavigation=[{key:'quincena',label:'Quincena',Icon:Wallet},{key:'agenda',label:'Agenda',Icon:CalendarDays},{key:'itinerarios',label:'Itinerarios',Icon:FileText},{key:'cuenta',label:'Mi cuenta',Icon:LockKeyhole}];
 const generalNavigation=[{key:'alertas',label:'Alertas',Icon:Bell},{key:'personal',label:'Personal',Icon:Users},{key:'reglas',label:'Conceptos y reglas',Icon:SlidersHorizontal},{key:'archivo',label:'Archivo',Icon:FolderClosed},{key:'correos',label:'Correos',Icon:Mail},{key:'usuarios',label:'Usuarios',Icon:Users}];
 const uid=()=>crypto.randomUUID();
 function Field({label,children}:{label:string;children:ReactNode}){const id=useId();return <div className="field"><span id={id} className="field-label">{label}</span><div aria-labelledby={id}>{children}</div></div>;}
