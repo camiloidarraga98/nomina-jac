@@ -18,7 +18,7 @@ class Query {
 const bucket=new Map();let writes=0,waiting=[],beforeFirst,beforePut,beforeDelete;
 globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(beforePut)await beforePut(k);if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},delete:async k=>{const after=await beforeDelete?.(k);bucket.delete(k);if(after)await after();},get:async k=>bucket.has(k)?{body:new Response(bucket.get(k)).body}:null},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
 globalThis.__noticesHeaders=new Headers();globalThis.__noticesWait=p=>waiting.push(p);
-const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
+const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as publish from './app/api/notices/publish/route';export * as attachment from './app/api/notices/file/route';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/notices-tests-')),file=dir+'/bundle.mjs';await writeFile(file,bundle.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const owner=await m.bootstrapOwner('notice-owner','1'),ownerToken=await m.makeSession(owner),luisa=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('info@jacmusic.co').id,paula=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('contabilidad@jacmusic.co').id;
 for(const id of [luisa,paula])sql.prepare('UPDATE payroll_users SET password_hash=?,permissions=? WHERE id=?').run(m.hashPassword('1',globalThis.__noticesEnv.PAYROLL_AUTH_KEY),'[]',id);
@@ -245,4 +245,48 @@ test('una limpieza antigua no marca como retirado un PDF recién subido por una 
  try{await m.purgeDeletedItineraries(item.id);}finally{beforeDelete=undefined;}
  assert.ok(bucket.has(item.file_key));assert.equal(sql.prepare('SELECT file_deleted FROM jac_deleted_itineraries WHERE id=?').get(item.id).file_deleted,0);
  await m.purgeDeletedItineraries(item.id);assert.equal(bucket.has(item.file_key),false);
+});
+
+async function manualAPI(token,payload,{origin=base}={}){
+ const cookie=token?'__Host-jac_session='+token:'';globalThis.__noticesHeaders=new Headers({cookie,host:'notices.example.invalid'});
+ const r=await m.publish.POST(new Request(base+'/api/notices/publish',{method:'POST',headers:{cookie,origin,'Content-Type':'application/json'},body:JSON.stringify(payload)}));return {status:r.status,body:await r.json()};
+}
+const manualInput=(kind='alert',files=[])=>({id:crypto.randomUUID(),kind,title:'Contenido ficticio',body:'Adjuntos privados de prueba',recipients:kind==='alert'?[paula]:[],files});
+const upload=(filename='Prueba.pdf',data=pdfBytes)=>({filename,data:Buffer.from(data).toString('base64')});
+async function readAttachment(token,id,file){const cookie='__Host-jac_session='+token;globalThis.__noticesHeaders=new Headers({cookie,host:'notices.example.invalid'});return m.attachment.GET(new Request(base+'/api/notices/file?id='+id+'&file='+file,{headers:{cookie}}));}
+test('Publicación manual: origen/sesión, destinatarios y archivos privados para ambas secciones',async()=>{
+ luisaToken=await m.makeSession(luisa);const actor=await m.authenticatedSession(ownerToken),p=manualInput('alert',[upload(),upload('Foto.png',Uint8Array.from([137,80,78,71,13,10,26,10,0]))]);
+ assert.equal((await manualAPI('',p)).status,401);assert.equal((await manualAPI(paulaToken,p)).status,403);assert.equal((await manualAPI(ownerToken,p,{origin:'https://untrusted.example.invalid'})).status,403);
+ assert.equal((await manualAPI(ownerToken,p)).status,200);assert.equal((await manualAPI(ownerToken,p)).status,200);
+ const item=await m.noticeItem(actor,p.id);assert.equal(item.attachments.length,2);assert.equal(sql.prepare('SELECT count(*) n FROM jac_notice_attachments WHERE notice_id=? AND state=?').get(p.id,'ready').n,2);
+ assert.equal((await readAttachment(luisaToken,p.id,item.attachments[0].id)).status,404);
+ for(const file of item.attachments){const response=await readAttachment(paulaToken,p.id,file.id);assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),file.mimeType);assert.equal(response.headers.get('x-content-type-options'),'nosniff');assert.ok(response.headers.get('cache-control').includes('no-store'));}
+ assert.equal((await manualAPI(ownerToken,{...p,title:'Otro contenido'})).status,409);
+ const itinerary=manualInput('itinerary',[upload()]);assert.equal((await manualAPI(ownerToken,itinerary)).status,200);const shared=await m.noticeItem(await m.authenticatedSession(luisaToken),itinerary.id);assert.equal(shared.kind,'itinerary');assert.equal(shared.attachments.length,1);
+ await m.deleteManualNotice(actor,p.id,p.id,async()=>true);assert.equal((await readAttachment(paulaToken,p.id,item.attachments[0].id)).status,404);assert.equal((await manualAPI(ownerToken,p)).status,410);
+ await m.deleteItinerary(actor,itinerary.id,itinerary.id,async()=>true);assert.equal((await manualAPI(ownerToken,itinerary)).status,410);
+});
+test('Valida firmas de archivo, cantidad, tamaño y no publica archivos rechazados',async()=>{
+ const before=bucket.size;for(const files of [[upload('script.pdf',new TextEncoder().encode('<script>fake</script>'))],Array.from({length:6},()=>upload()),[upload('big.pdf',Buffer.concat([Buffer.from('%PDF-'),Buffer.alloc(10*1024*1024)]))],[{filename:'bad.pdf',data:'a==='}]]){
+  const p=manualInput('alert',files),r=await manualAPI(ownerToken,p);assert.ok([400,413].includes(r.status),JSON.stringify(r));assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(p.id),undefined);
+ }assert.equal(bucket.size,before);
+});
+test('Reintentos simultáneos conservan un único juego de adjuntos y no añaden destinatarios',async()=>{
+ const actor=await m.authenticatedSession(ownerToken),p=manualInput('alert',[upload()]);await Promise.all([m.publishManualNotice(actor,p,async()=>true),m.publishManualNotice(actor,p,async()=>true)]);
+ const ready=sql.prepare("SELECT * FROM jac_notice_attachments WHERE notice_id=? AND state='ready'").all(p.id);assert.equal(ready.length,1);assert.equal(bucket.has(ready[0].file_key),true);
+ const deleted=sql.prepare("SELECT * FROM jac_notice_attachments WHERE state='deleted' AND cleaned=0").all();assert.equal(deleted.length,0);
+ const recipients=sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(p.id).map(x=>x.user_id);assert.deepEqual(recipients,[paula]);await m.deleteManualNotice(actor,p.id,p.id,async()=>true);
+});
+test('Cambio de sesión durante R2 no publica; un fallo parcial conserva limpieza pendiente',async()=>{
+ const actor=await m.authenticatedSession(ownerToken),p=manualInput('alert',[upload()]);let valid=true;beforePut=async()=>{valid=false;};
+ try{await assert.rejects(()=>m.publishManualNotice(actor,p,async()=>valid),e=>e.status===403);}finally{beforePut=undefined;}
+ assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(p.id),undefined);
+ let count=0;const failing=manualInput('alert',[upload(),upload('Otro.pdf')]);beforePut=async()=>{if(++count===2)throw Error('fixture R2 failure');};beforeDelete=async()=>{throw Error('fixture cleanup failure');};
+ try{await assert.rejects(()=>m.publishManualNotice(actor,failing,async()=>true));}finally{beforePut=undefined;beforeDelete=undefined;}
+ assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(failing.id),undefined);assert.ok(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='deleted' AND cleaned=0").get());await m.purgeNoticeAttachments();assert.equal(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='deleted' AND cleaned=0").get(),undefined);
+});
+test('Un borrado mientras se sube el adjunto bloquea la publicación y limpia la copia tardía',async()=>{
+ const actor=await m.authenticatedSession(ownerToken),p=manualInput('itinerary',[upload()]);beforePut=async()=>{sql.prepare('INSERT INTO jac_deleted_itineraries(id,source,deleted_at) VALUES (?,?,?)').run(p.id,'manual:'+p.id,new Date().toISOString());};
+ try{await assert.rejects(()=>m.publishManualNotice(actor,p,async()=>true),e=>e.status===410);}finally{beforePut=undefined;}
+ assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(p.id),undefined);assert.equal(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='deleted' AND cleaned=0").get(),undefined);
 });

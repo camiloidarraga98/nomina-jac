@@ -232,4 +232,20 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["notices.enable"].waitForExistence(timeout: 10)); XCTAssertFalse(app.buttons["notices.create"].exists)
     }
 
+    @MainActor func testManualItineraryWithAttachmentAndDeleteConfirmation() {
+        let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
+        app.segmentedControls["notices.editor.kind"].buttons["Itinerario"].tap()
+        fill(app,"notices.editor.title","Itinerario manual ficticio")
+        tap(app,"notices.editor.fixture"); app.swipeUp(); tap(app,"notices.editor.save")
+        XCTAssertTrue(app.staticTexts["Itinerario publicado para todo el equipo."].waitForExistence(timeout:15))
+        let item = app.buttons.matching(NSPredicate(format:"label CONTAINS %@", "Itinerario manual ficticio")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout:15)); item.tap(); tap(app,"notices.pdf")
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout:15)); tap(app,"notices.pdf.close")
+        tap(app,"notices.delete"); tap(app,"notices.delete.cancel"); XCTAssertTrue(app.buttons["notices.pdf"].exists)
+        tap(app,"notices.delete"); tap(app,"notices.delete.confirm")
+        XCTAssertTrue(app.navigationBars["Itinerarios"].waitForExistence(timeout:15))
+        XCTAssertFalse(app.staticTexts["Itinerario manual ficticio"].exists)
+        attachScreen(app,name:"itinerario-manual-eliminado")
+    }
+
 }

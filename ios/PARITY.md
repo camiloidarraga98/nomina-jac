@@ -54,3 +54,7 @@ El workflow macOS compila la app y ejecuta pruebas unitarias y de interfaz: Llav
 La publicación actualiza el servidor. Para actualizar el binario, usa **Integrate → Pull → origin/main** y **Run** en Xcode, o distribuye una nueva versión ad hoc a los tres iPhones. La firma de dispositivos se hace con la cuenta Apple de Camilo en su Mac. Consulta `README.md` en esta carpeta para instalación y el ajuste local del depurador en Xcode 27.0.
 
 La identidad nativa comparte verde oscuro, lima y superficies claras del webapp, con colores adaptados al modo oscuro y controles SwiftUI. Se conservan las capacidades y el cálculo en servidor.
+
+## Itinerarios y Alertas (0.6.0/build 7)
+
+Web e iPhone comparten consulta, lectura, notificaciones con contenido, creación manual de alerta o itinerario desde Alertas, destinatarios y hasta cinco adjuntos PDF/JPG/PNG (10 MB en total). Camilo puede borrar alertas e itinerarios con confirmación. Itinerarios sigue admitiendo Slack; la creación manual no usa Slack. Los adjuntos privados se descargan con sesión y permisos; en iPhone se abren con QuickLook y compartir, en temporales protegidos. Las conexiones Slack/APNs/Web Push se preparan desde la web. No se cambian funciones, rutas ni permisos de nómina o Agenda.

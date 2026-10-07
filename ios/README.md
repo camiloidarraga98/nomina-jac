@@ -4,6 +4,18 @@ El nombre visible en el iPhone es **JAC**. El proyecto y el esquema de Xcode sig
 
 Aplicación nativa en SwiftUI para iOS 17 o posterior. Usa las mismas cuentas y la misma base D1 que https://jhonalexcastano.com a través de HTTPS. No contiene WebViews ni otra base de nómina.
 
+## Itinerarios y Alertas — iPhone 0.6.0, build 7
+
+En **Gestión → Itinerarios / Alertas** consultas el mismo contenido de la web. Camilo puede eliminar cualquiera desde su detalle, con confirmación; se revocan acceso y entregas pendientes y se borran sus adjuntos privados de JAC. El archivo original de Slack se conserva. Los avisos que ya llegaron al dispositivo no se pueden retirar.
+
+Desde **Alertas → +**, elige **Alerta** o **Itinerario**. Una alerta exige mensaje y destinatarios seleccionados; un itinerario se publica directamente en Itinerarios para todo el equipo activo, sin Slack. Admite hasta cinco PDF, JPG o PNG que sumen 10 MB. En iPhone se eligen desde Archivos o Fotos (las fotos se convierten a JPG); se pueden quitar antes de guardar. Puedes abrir y compartir cada adjunto con la vista previa nativa. Los borradores y archivos elegidos permanecen en memoria; las descargas usan temporales protegidos y se limpian al cerrar o salir de la cuenta.
+
+Los avisos de itinerarios dicen **Ya llegó tu itinerario para el día de hoy**. Las alertas muestran su título y descripción (los textos muy largos se abrevian solo en push). Se conserva `co.jacmusic.nomina`, la sesión en Llavero, la cubierta de privacidad y el procesamiento en el servidor. El push del iPhone requiere membresía/equipo de Apple habilitado, firma con Push Notifications y configuración APNs en Conexión; no basta con instalar el binario. No se han generado ni copiado certificados o claves.
+
+Para actualizar el iPhone abre `ios/JACNomina.xcodeproj`, esquema JACNomina, selecciona tu equipo y tu iPhone y pulsa **Run** sobre la app existente, sin borrarla. La web y las API se actualizan con Sites; instalar el binario requiere Xcode o distribución ad hoc.
+
+La verificación usa Xcode 27/iOS 27 en un simulador nuevo y fixtures `.invalid`, sin servicios ni sesiones reales. La comprobación de cifrado `NSFileProtectionKey` se conserva en una prueba específica para iPhone físico: CoreSimulator no expone esa propiedad. La aplicación solicita protección completa para carpeta y archivos; el cifrado efectivo y el push real quedan pendientes de un iPhone firmado. Las pruebas de acceso, adjuntos, borrado, privacidad de vistas y regreso desde segundo plano sí se ejecutan en simulador.
+
 ## Funciones de la app
 
 La app cubre las funciones del webapp con formularios y navegación de iOS. Consulte [`PARITY.md`](PARITY.md) para la correspondencia completa.

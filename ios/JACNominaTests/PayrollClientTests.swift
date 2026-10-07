@@ -346,4 +346,40 @@ final class PayrollClientTests: XCTestCase {
         }
     }
 
+    @MainActor func testManualItineraryAttachmentsArePrivateAndDeletionIsIdempotent() async throws {
+        let client = UITestBackend.client(), id = UUID().uuidString.lowercased(), data = Data("%PDF-1.4 simulated only".utf8)
+        let file = NoticeUpload(filename:"Prueba.pdf",data:data)
+        try await client.publishNotice(id:id,kind:"itinerary",title:"Itinerario manual",body:"Sin Slack",recipients:[],files:[file])
+        try await client.publishNotice(id:id,kind:"itinerary",title:"Itinerario manual",body:"Sin Slack",recipients:[],files:[file])
+        let feed = try await client.notices(); XCTAssertEqual(feed.notices.filter { $0.id == id }.count,1)
+        let item = try await client.notice(id:id), attachment = try XCTUnwrap(item.files.first)
+        let document = try await client.noticeFile(item,file:attachment); defer { TemporaryDocuments.remove(document) }
+        XCTAssertEqual(try Data(contentsOf:document.url),data)
+        try await client.deleteNotice(item); try await client.deleteNotice(item)
+        do { _ = try await client.notice(id:id); XCTFail("El itinerario eliminado no debe estar disponible") } catch {}
+        do { try await client.publishNotice(id:id,kind:"itinerary",title:"Itinerario manual",body:"Sin Slack",recipients:[],files:[file]); XCTFail("No restaurar un aviso eliminado") } catch {}
+    }
+    @MainActor func testManualUploadPreservesServerContractAndRejectsUnsafeFileData() async throws {
+        let vault = MemorySession(); vault.token = token; let client = makeClient(vault), id = UUID().uuidString.lowercased()
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path,"/api/notices/publish"); XCTAssertEqual(request.value(forHTTPHeaderField:"Origin"),self.base.absoluteString); XCTAssertEqual(request.value(forHTTPHeaderField:"Cookie"),"__Host-jac_session=" + self.token)
+            let body = try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(request)); XCTAssertEqual(body["id"].text,id); XCTAssertEqual(body["kind"].text,"alert"); XCTAssertEqual(body["files"].elements.count,1)
+            XCTAssertEqual(Data(base64Encoded:body["files"].elements[0]["data"].text),Data("%PDF-1.4 fixture".utf8))
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!,Data("{}".utf8))
+        }
+        try await client.publishNotice(id:id,kind:"alert",title:"Alerta",body:"Descripción",recipients:["fixture"],files:[NoticeUpload(filename:"Prueba.pdf",data:Data("%PDF-1.4 fixture".utf8))])
+        do { try await client.publishNotice(id:id,kind:"alert",title:"Alerta",body:"Descripción",recipients:[],files:[NoticeUpload(filename:"fake.pdf",data:Data("<html>unsafe</html>".utf8))]); XCTFail("Rechazar archivo inválido antes de enviarlo") } catch {}
+    }
+
+    @MainActor func testTemporaryDocumentProtectionOnPhysicaliPhone() throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("CoreSimulator no expone NSFileProtectionKey ni reproduce el cifrado del iPhone. Esta comprobación se conserva para un dispositivo físico.")
+        #else
+        let document = try TemporaryDocuments.save(Data("%PDF-1.4 fixture".utf8), filename:"Proteccion.pdf")
+        defer { TemporaryDocuments.remove(document) }
+        let protected = try FileManager.default.attributesOfItem(atPath:document.url.path)
+        XCTAssertEqual(protected[.protectionKey] as? FileProtectionType,.complete)
+        #endif
+    }
+
 }

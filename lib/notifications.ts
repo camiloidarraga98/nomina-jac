@@ -1,4 +1,5 @@
 import {env} from 'cloudflare:workers';
+import {manualNoticeSchema,decodeNoticeFiles} from './notice-files';
 import {z} from 'zod';
 import {database} from '@/db/raw';
 import {decryptMail,encryptMail} from './payroll-mail-core';
@@ -17,6 +18,10 @@ export async function pushCredentials(c?:Config):Promise<PushCredentials>{const 
 async function settings(){const c=await noticeConfig(),keys=await pushCredentials(c);return {version:c.version,slackConnected:!!keys.slack,appleConfigured:!!keys.apns,webPublicKey:keys.web?.publicKey??'',channel:'#itinerarios-finales',webhook:'https://jhonalexcastano.com/api/notices/slack'};}
 function view(row:Row):Notice{return {id:row.id,kind:row.kind,title:row.title,body:row.body,filename:row.filename,size:row.size,createdAt:row.created_at,read:!!row.read_at};}
 const accessSql="(n.kind='itinerary' OR EXISTS(SELECT 1 FROM jac_notice_recipients a WHERE a.notice_id=n.id AND a.user_id=?) OR ?=1)";
+async function noticeViews(rows:Row[]){
+ if(!rows.length)return [];const attachments=(await database().prepare(`SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments WHERE state='ready' AND notice_id IN (${rows.map(()=>'?').join(',')}) ORDER BY id`).bind(...rows.map(r=>r.id)).all<{id:string;notice_id:string;filename:string;mime_type:string;size:number}>()).results;
+ return rows.map(row=>({...view(row),attachments:[...(row.file_key?[{id:row.id,filename:row.filename,mimeType:'application/pdf',size:row.size}]:[]),...attachments.filter(a=>a.notice_id===row.id).map(a=>({id:a.id,filename:a.filename,mimeType:a.mime_type,size:a.size}))]}));
+}
 export async function noticeFeed(u:AccessUser,cursor=''){
  if(cursor&&!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\|[a-f0-9-]{36}$/.test(cursor))throw new NoticeFailure('Actualiza el listado.');
  const [time,id]=cursor.split('|');
@@ -24,10 +29,10 @@ export async function noticeFeed(u:AccessUser,cursor=''){
  const all=rows.results,list=all.slice(0,40),last=list.at(-1);
  const users=noticeOwner(u)?(await database().prepare("SELECT id,name FROM payroll_users WHERE active=1 AND password_hash<>'' ORDER BY name").all<{id:string;name:string}>()).results:[];
  const failures=noticeOwner(u)?(await database().prepare("SELECT id,error FROM jac_slack_files WHERE status='failed' ORDER BY created_at DESC LIMIT 20").all<{id:string;error:string}>()).results:[];
- return {notices:list.map(view),nextCursor:all.length>40&&last?last.created_at+'|'+last.id:'',settings:await settings(),users,failures};
+ return {notices:await noticeViews(list),nextCursor:all.length>40&&last?last.created_at+'|'+last.id:'',settings:await settings(),users,failures};
 }
 export async function allowedNotice(u:AccessUser,id:string){if(!uuid.safeParse(id).success)throw new NoticeFailure('El aviso no existe.',404);const row=await database().prepare(`SELECT n.*,r.read_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.id=? AND ${accessSql}`).bind(u.id,id,u.id,noticeOwner(u)?1:0).first<Row>();if(!row)throw new NoticeFailure('El aviso no está disponible para esta cuenta.',404);return row;}
-export async function noticeItem(u:AccessUser,id:string){return view(await allowedNotice(u,id));}
+export async function noticeItem(u:AccessUser,id:string){return (await noticeViews([await allowedNotice(u,id)]))[0];}
 export async function markNoticeRead(u:AccessUser,id:string){await allowedNotice(u,id);await database().prepare('INSERT INTO jac_notice_recipients (id,notice_id,user_id,read_at,push_target) SELECT ?,?,?,?,0 WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=?) ON CONFLICT(id) DO UPDATE SET read_at=excluded.read_at').bind(id+'|'+u.id,id,u.id,now(),id).run();}
 export async function saveManualNotice(u:AccessUser,body:unknown,authorize:()=>Promise<boolean>){
  const parsed=z.object({id:uuid,title:z.string().trim().min(1).max(120),body:z.string().trim().min(1).max(2000),recipients:z.array(uuid).min(1).max(100)}).strict().safeParse(body);
@@ -35,8 +40,8 @@ export async function saveManualNotice(u:AccessUser,body:unknown,authorize:()=>P
  const recipients=(await database().prepare(`SELECT id FROM payroll_users WHERE active=1 AND password_hash<>'' AND id IN (${ids.map(()=>'?').join(',')})`).bind(...ids).all<{id:string}>()).results;
  if(recipients.length!==ids.length)throw new NoticeFailure('Algún destinatario ya no está activo. Actualiza el listado.',409);
  if(await database().prepare('SELECT id FROM jac_deleted_alerts WHERE id=?').bind(p.id).first())throw new NoticeFailure('Esta alerta fue eliminada. Abre un formulario nuevo.',410);
- const existing=await database().prepare('SELECT title,body FROM jac_notices WHERE id=?').bind(p.id).first<{title:string;body:string}>();
- if(existing){if(!noticeOwner(u)||!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);const previous=(await database().prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=? AND push_target=1 ORDER BY user_id').bind(p.id).all<{user_id:string}>()).results.map(x=>x.user_id);if(existing.title!==p.title||existing.body!==p.body||JSON.stringify(previous)!==JSON.stringify(ids))throw new NoticeFailure('Esta solicitud ya guardó otra alerta. Abre un formulario nuevo.',409);await queuePush(p.id);return p.id;}
+ const existing=await database().prepare('SELECT kind,title,body,manual_hash FROM jac_notices WHERE id=?').bind(p.id).first<{kind:string;title:string;body:string;manual_hash:string}>();
+ if(existing){if(!noticeOwner(u)||!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);const previous=(await database().prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=? AND push_target=1 ORDER BY user_id').bind(p.id).all<{user_id:string}>()).results.map(x=>x.user_id);if(existing.kind!=='alert'||existing.manual_hash||existing.title!==p.title||existing.body!==p.body||JSON.stringify(previous)!==JSON.stringify(ids))throw new NoticeFailure('Esta solicitud ya guardó otra alerta. Abre un formulario nuevo.',409);await queuePush(p.id);return p.id;}
  if(!noticeOwner(u)||!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
  const stamp=now();const saved=await database().batch([database().prepare("INSERT INTO jac_notices (id,kind,title,body,created_at) SELECT ?,'alert',?,?,? WHERE NOT EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)").bind(p.id,p.title,p.body,stamp,p.id),...ids.map(id=>database().prepare("INSERT INTO jac_notice_recipients (id,notice_id,user_id) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=? AND kind='alert')").bind(p.id+'|'+id,p.id,id,p.id))]);if(saved[0].meta.changes!==1)throw new NoticeFailure('Esta alerta fue eliminada. Abre un formulario nuevo.',410);
  await queuePush(p.id);return p.id;
@@ -51,11 +56,13 @@ export async function deleteManualNotice(u:AccessUser,id:unknown,confirmation:un
  if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
  await db.batch([
   db.prepare("INSERT OR IGNORE INTO jac_deleted_alerts (id,deleted_at) SELECT id,? FROM jac_notices WHERE id=? AND kind='alert'").bind(now(),target),
+  db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)").bind(target,target),
   db.prepare('DELETE FROM jac_push_deliveries WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)').bind(target,target),
   db.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)').bind(target,target),
   db.prepare("DELETE FROM jac_notices WHERE id=? AND kind='alert' AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)").bind(target,target),
  ]);
  if(!await db.prepare('SELECT id FROM jac_deleted_alerts WHERE id=?').bind(target).first())throw new NoticeFailure('La alerta no está disponible.',404);
+ await purgeNoticeAttachments();
 }
 // D1 deletion is atomic. Failed R2 cleanup remains queued without restoring access.
 export async function purgeDeletedItineraries(id?:string){
@@ -70,13 +77,14 @@ export async function deleteItinerary(u:AccessUser,id:unknown,confirmation:unkno
  if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
  await db.batch([
   db.prepare("INSERT OR IGNORE INTO jac_deleted_itineraries (id,source,file_key,deleted_at) SELECT id,source,file_key,? FROM jac_notices WHERE id=? AND kind='itinerary'").bind(now(),target),
+  db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)").bind(target,target),
   db.prepare('DELETE FROM jac_push_deliveries WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)').bind(target,target),
   db.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)').bind(target,target),
   db.prepare("DELETE FROM jac_notices WHERE id=? AND kind='itinerary' AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)").bind(target,target),
   db.prepare("UPDATE jac_slack_files SET status='deleted',error='' WHERE 'slack:'||id=(SELECT source FROM jac_deleted_itineraries WHERE id=?)").bind(target),
  ]);
  if(!await db.prepare('SELECT id FROM jac_deleted_itineraries WHERE id=?').bind(target).first())throw new NoticeFailure('El itinerario no está disponible.',404);
- await purgeDeletedItineraries(target);
+ await purgeDeletedItineraries(target);await purgeNoticeAttachments();
 }
 export async function configureNotices(kind:string,input:Record<string,unknown>,authorize:()=>Promise<boolean>){
  const c=await noticeConfig();if(input.version!==c.version)throw new NoticeFailure('La configuración cambió. Actualiza antes de guardar.',409);const keys=await pushCredentials(c);
@@ -165,3 +173,46 @@ export async function importSlackFiles(){
 }
 export async function retryImports(){await database().prepare("UPDATE jac_slack_files SET status='pending',error='' WHERE status='failed'").run();}
 export async function itineraryPdf(u:AccessUser,id:string){const item=await allowedNotice(u,id);if(item.kind!=='itinerary'||!item.file_key)throw new NoticeFailure('Este aviso no tiene un PDF.',404);const object=await env.BUCKET.get(item.file_key);if(!object)throw new NoticeFailure('El PDF todavía no está disponible.',404);await allowedNotice(u,id);return {item,object};}
+
+// Staged uploads are tracked before R2 writes. Cleanup leases cannot discard a late upload.
+export async function purgeNoticeAttachments(){
+ const db=database();await db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE state='staged' AND expires_at<?").bind(now()).run();
+ const rows=(await db.prepare("SELECT id,file_key,cleanup_version FROM jac_notice_attachments WHERE state='deleted' AND cleaned=0 LIMIT 30").all<{id:string;file_key:string;cleanup_version:number}>()).results;
+ for(const row of rows){try{await env.BUCKET.delete(row.file_key);await db.prepare("UPDATE jac_notice_attachments SET cleaned=1,filename='',notice_id='' WHERE id=? AND state='deleted' AND cleanup_version=?").bind(row.id,row.cleanup_version).run();}catch{/* Access stays revoked; refresh retries private-file cleanup. */}}
+}
+export async function publishManualNotice(u:AccessUser,input:unknown,authorize:()=>Promise<boolean>){
+ if(!noticeOwner(u))throw new NoticeFailure('Solo Camilo puede crear alertas e itinerarios.',403);
+ const parsed=manualNoticeSchema.safeParse(input);if(!parsed.success)throw new NoticeFailure('Revisa título, mensaje, destinatarios y adjuntos.');const p=parsed.data;
+ if(p.kind==='alert'&&(!p.body||!p.recipients.length))throw new NoticeFailure('Ingresa un mensaje y elige al menos un destinatario.');
+ const files=decodeNoticeFiles(p.files),db=database();
+ const digest=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes as BufferSource)),b=>b.toString(16).padStart(2,'0')).join('');
+ const hash=await digest(new TextEncoder().encode(JSON.stringify({kind:p.kind,title:p.title,body:p.body,recipients:p.kind==='alert'?[...new Set(p.recipients)].sort():[],files:await Promise.all(files.map(async f=>({filename:f.filename,mimeType:f.mimeType,hash:await digest(f.bytes)})))})));
+ const isDeleted=async()=>!!await db.prepare('SELECT id FROM jac_deleted_alerts WHERE id=? UNION ALL SELECT id FROM jac_deleted_itineraries WHERE id=?').bind(p.id,p.id).first();
+ const existing=async()=>db.prepare('SELECT manual_hash FROM jac_notices WHERE id=?').bind(p.id).first<{manual_hash:string}>();
+ if(await isDeleted())throw new NoticeFailure('Este aviso fue eliminado. Abre un formulario nuevo.',410);
+ const previous=await existing();if(previous){if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);if(previous.manual_hash!==hash)throw new NoticeFailure('Esta solicitud ya guardó otro contenido. Abre un formulario nuevo.',409);await queuePush(p.id);return p.id;}
+ const ids=p.kind==='itinerary'?(await db.prepare("SELECT id FROM payroll_users WHERE active=1 AND password_hash<>'' ORDER BY id").all<{id:string}>()).results.map(x=>x.id):[...new Set(p.recipients)].sort();
+ const active=(await db.prepare(`SELECT id FROM payroll_users WHERE active=1 AND password_hash<>'' AND id IN (${ids.map(()=>'?').join(',')||"''"})`).bind(...ids).all()).results;if(active.length!==ids.length)throw new NoticeFailure('Algún destinatario cambió. Actualiza el listado.',409);
+ if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
+ const uploadToken=crypto.randomUUID();const uploads=files.map(f=>({...f,id:crypto.randomUUID(),key:'notice-attachments/'+crypto.randomUUID()}));let committed=false;
+ try{
+  for(const file of uploads){await db.prepare("INSERT INTO jac_notice_attachments(id,file_key,filename,mime_type,size,expires_at) VALUES (?,?,?,?,?,?)").bind(file.id,file.key,file.filename,file.mimeType,file.size,new Date(Date.now()+3600000).toISOString()).run();await env.BUCKET.put(file.key,file.bytes,{httpMetadata:{contentType:file.mimeType}});}
+  if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
+  const validUploads=uploads.length?` AND (SELECT count(*) FROM jac_notice_attachments WHERE id IN (${uploads.map(()=>'?').join(',')}) AND state='staged')=${uploads.length}`:'';
+  const result=await db.batch([
+   db.prepare(`INSERT OR IGNORE INTO jac_notices(id,kind,title,body,source,manual_hash,upload_token,created_at) SELECT ?,?,?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?) AND NOT EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)${validUploads}`).bind(p.id,p.kind,p.title,p.body,'manual:'+p.id,hash,uploadToken,now(),p.id,p.id,...uploads.map(f=>f.id)),
+   ...uploads.map(file=>db.prepare("UPDATE jac_notice_attachments SET notice_id=?,state='ready' WHERE id=? AND state='staged' AND EXISTS(SELECT 1 FROM jac_notices WHERE id=? AND upload_token=?)").bind(p.id,file.id,p.id,uploadToken)),
+   ...ids.map(id=>db.prepare("INSERT OR IGNORE INTO jac_notice_recipients(id,notice_id,user_id) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=? AND upload_token=?)").bind(p.id+'|'+id,p.id,id,p.id,uploadToken))
+  ]);
+  committed=result[0].meta.changes===1;
+  if(await isDeleted())throw new NoticeFailure('Este aviso fue eliminado. Abre un formulario nuevo.',410);
+  const saved=await existing();if(!saved)throw new NoticeFailure('No se pudieron guardar los archivos. Intenta de nuevo.',409);if(saved.manual_hash!==hash)throw new NoticeFailure('Esta solicitud ya guardó otro contenido. Abre un formulario nuevo.',409);
+  await queuePush(p.id);return p.id;
+ }finally{if(!committed){for(const file of uploads)await db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE id=? AND state<>'ready'").bind(file.id).run();await purgeNoticeAttachments();}}
+}
+export async function noticeAttachment(u:AccessUser,id:string,file:string){
+ const item=await allowedNotice(u,id);if(file===id&&item.file_key){const object=await env.BUCKET.get(item.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);await allowedNotice(u,id);return {filename:item.filename,mimeType:'application/pdf',object};}
+ if(!uuid.safeParse(file).success)throw new NoticeFailure('El archivo no está disponible.',404);
+ const get=()=>database().prepare("SELECT file_key,filename,mime_type FROM jac_notice_attachments WHERE id=? AND notice_id=? AND state='ready'").bind(file,id).first<{file_key:string;filename:string;mime_type:string}>();
+ const row=await get();if(!row)throw new NoticeFailure('El archivo no está disponible.',404);const object=await env.BUCKET.get(row.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);await allowedNotice(u,id);if(!await get())throw new NoticeFailure('El archivo fue eliminado.',404);return {filename:row.filename,mimeType:row.mime_type,object};
+}

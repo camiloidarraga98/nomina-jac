@@ -7,7 +7,7 @@ struct PayrollHomeView: View {
     @ObservedObject private var push = JACNotifications.shared
     var body: some View {
         TabView {
-            PeriodsView(overview: overview).tabItem { Label("Quincenas", systemImage: "calendar") }
+            PeriodsView(overview: overview).tabItem { Label("Quincenas", systemImage: "wallet.pass") }
             PeriodsView(overview: overview, archive: true).tabItem { Label("Archivo", systemImage: "archivebox") }
             CalendarView(user: overview.user).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }
             EmployeesView(overview: overview).tabItem { Label("Equipo", systemImage: "person.2") }

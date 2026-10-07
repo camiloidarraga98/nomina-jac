@@ -1,12 +1,12 @@
 import {waitUntil} from 'cloudflare:workers';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {sessionToken} from '@/lib/payroll-auth-crypto';
-import {noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports} from '@/lib/notifications';
+import {noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
 import {NoticeFailure} from '@/lib/notifications-core';
 export const dynamic='force-dynamic';
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:payrollHeaders});
 const failure=(e:unknown)=>reply({error:e instanceof NoticeFailure?e.message:'No pudimos completar la operación. Conserva tus datos e intenta de nuevo.'},e instanceof NoticeFailure?e.status:502);
-export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);try{const query=new URL(req.url).searchParams;if(query.has('item'))return reply({item:await noticeItem(u,query.get('item')??'')});const feed=await noticeFeed(u,query.get('cursor')??'');waitUntil(importSlackFiles().catch(()=>{}));return reply(feed);}catch(e){return failure(e);}}
+export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);try{const query=new URL(req.url).searchParams;if(query.has('item'))return reply({item:await noticeItem(u,query.get('item')??'')});const feed=await noticeFeed(u,query.get('cursor')??'');waitUntil(Promise.all([importSlackFiles(),purgeNoticeAttachments()]).catch(()=>{}));return reply(feed);}catch(e){return failure(e);}}
 export async function POST(req:Request){
  const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);
  if(req.headers.get('origin')!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);

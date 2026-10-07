@@ -3,7 +3,8 @@ export const ITINERARY_CHANNEL='C0C6V85SRL6';
 export const APP_TOPIC='co.jacmusic.nomina';
 export const MAX_PDF_BYTES=10*1024*1024;
 export class NoticeFailure extends Error {constructor(message:string,public status=400){super(message);}}
-export type Notice={id:string;kind:'itinerary'|'alert';title:string;body:string;filename:string;size:number;createdAt:string;read:boolean};
+export type NoticeAttachment={id:string;filename:string;mimeType:string;size:number};
+export type Notice={id:string;kind:'itinerary'|'alert';title:string;body:string;filename:string;size:number;createdAt:string;read:boolean;attachments?:NoticeAttachment[]};
 export type PushContent={title:string;body:string};
 export function noticePushContent(notice:Pick<Notice,'kind'|'title'|'body'>):PushContent{
  if(notice.kind==='itinerary')return {title:'JAC',body:'Ya llegó tu itinerario para el día de hoy'};

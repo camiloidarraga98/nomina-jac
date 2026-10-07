@@ -97,3 +97,33 @@ test('Workerd/D1/R2 borra un itinerario privado, revierte fallos y bloquea su re
   assert.equal((await run({action:'queue',file})).status,200);assert.equal((await db.prepare('SELECT status FROM jac_slack_files WHERE id=?').bind(file).first()).status,'deleted');assert.equal(outbound,0);
  }finally{await mf.dispose();}
 });
+
+test('Workerd publica adjuntos privados de alertas e itinerarios y limpia R2 sin servicios reales',async()=>{
+ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
+  import {publishManualNotice,noticeItem,noticeAttachment,deleteManualNotice,deleteItinerary} from './lib/notifications';
+  const owner={id:'11111111-1111-4111-8111-111111111111',email:'camilo@mac2you.co',username:'fixture',displayName:'Fixture',fullName:null,isOwner:true,permissions:[]};
+  export default {async fetch(req:Request){const b=await req.json();try{
+   const actor=b.reader?{...owner,id:'22222222-2222-4222-8222-222222222222',email:'reader@example.invalid',isOwner:false}:owner;
+   if(b.action==='create')return Response.json({id:await publishManualNotice(actor,b.input,async()=>b.valid!==false)});
+   if(b.action==='item')return Response.json(await noticeItem(actor,b.id));
+   if(b.action==='file'){const f=await noticeAttachment(actor,b.id,b.file);return new Response(f.object.body,{headers:{'Content-Type':f.mimeType}});}
+   await (b.kind==='alert'?deleteManualNotice:deleteItinerary)(actor,b.id,b.id,async()=>true);return Response.json({ok:true});
+  }catch(e){return Response.json({error:e.message},{status:e.status||502});}}};
+ `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*']});
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-manual-uploads'},r2Buckets:['BUCKET'],outboundService:async()=>{throw Error('No external requests');}});
+ const {readFile,readdir}=await import('node:fs/promises');
+ try{
+  const db=await mf.getD1Database('DB'),bucket=await mf.getR2Bucket('BUCKET');for(const name of (await readdir('drizzle')).filter(x=>x.endsWith('.sql')).sort())for(const statement of (await readFile('drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(x=>x.trim()).filter(Boolean))await db.prepare(statement).run();
+  const owner='11111111-1111-4111-8111-111111111111',reader='22222222-2222-4222-8222-222222222222';for(const [id,name] of [[owner,'owner'],[reader,'reader']])await db.prepare("INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,'fixture','[]','fixture','fixture')").bind(id,name,name+'@example.invalid',name).run();
+  const run=body=>mf.dispatchFetch('https://fixture.example.invalid/notices',{method:'POST',body:JSON.stringify(body)});
+  for(const kind of ['alert','itinerary']){
+   const input={id:crypto.randomUUID(),kind,title:'Prueba local',body:'Contenido ficticio',recipients:kind==='alert'?[owner]:[],files:[{filename:'Prueba.pdf',data:Buffer.from('%PDF-1.4 local fixture').toString('base64')},{filename:'Foto.png',data:Buffer.from([137,80,78,71,13,10,26,10,0]).toString('base64')}]};
+   assert.equal((await run({action:'create',input,reader:true})).status,403);assert.equal((await run({action:'create',input,valid:false})).status,403);
+   assert.equal((await run({action:'create',input})).status,200);assert.equal((await run({action:'create',input})).status,200);const item=await (await run({action:'item',id:input.id})).json();assert.equal(item.attachments.length,2);
+   assert.equal((await run({action:'file',id:input.id,file:item.attachments[0].id,reader:true})).status,kind==='alert'?404:200);
+   const keys=(await db.prepare("SELECT file_key FROM jac_notice_attachments WHERE notice_id=? AND state='ready'").bind(input.id).all()).results.map(x=>x.file_key);assert.equal(keys.length,2);for(const key of keys)assert.ok(await bucket.get(key));
+   await db.prepare("CREATE TRIGGER fixture_upload_delete BEFORE DELETE ON jac_notice_recipients BEGIN SELECT RAISE(ABORT,'rollback'); END").run();assert.equal((await run({action:'delete',id:input.id,kind})).status,502);for(const key of keys)assert.ok(await bucket.get(key));await db.prepare('DROP TRIGGER fixture_upload_delete').run();
+   assert.equal((await run({action:'delete',id:input.id,kind})).status,200);assert.equal((await run({action:'delete',id:input.id,kind})).status,200);assert.equal((await run({action:'create',input})).status,410);for(const key of keys)assert.equal(await bucket.get(key),null);
+  }
+ }finally{await mf.dispose();}
+});

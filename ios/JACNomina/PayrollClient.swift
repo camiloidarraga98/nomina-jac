@@ -4,11 +4,13 @@ enum APIError: LocalizedError {
     case unauthorized
     case message(String)
     case conflict(String)
+    case invalid(String)
     var errorDescription: String? {
         switch self {
         case .unauthorized: return "Tu sesión venció o cambió tu acceso. Inicia sesión de nuevo."
         case .message(let message): return message
         case .conflict(let message): return message
+        case .invalid(let message): return message
         }
     }
 }
@@ -77,6 +79,7 @@ final class PayrollClient {
             struct ServerError: Decodable { let error: String }
             let message = (try? decoder.decode(ServerError.self, from: data).error) ?? "No se pudo completar la operación. Intenta de nuevo."
             if response.statusCode == 409 { throw APIError.conflict(message) }
+            if response.statusCode == 400 || response.statusCode == 413 { throw APIError.invalid(message) }
             throw APIError.message(message)
         }
         if path == "api/auth" {
@@ -128,6 +131,20 @@ final class PayrollClient {
         guard response.mimeType == "application/pdf", data.count <= 10*1024*1024, data.starts(with: Data("%PDF-".utf8)) else { throw APIError.message("No se recibió un PDF válido.") }
         let name = (notice.filename as NSString).lastPathComponent
         return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Itinerario.pdf" : name)
+    }
+    func publishNotice(id: String, kind: String, title: String, body: String, recipients: [String], files: [NoticeUpload]) async throws {
+        guard files.count <= 5, files.reduce(0, { $0 + $1.data.count }) <= 10*1024*1024 else { throw APIError.message("Elige hasta 5 archivos que sumen como máximo 10 MB.") }
+        for file in files { _ = try NoticeUpload.mime(file.data) }
+        _ = try await request(path: "api/notices/publish", body: .object(["id": .string(id), "kind": .string(kind), "title": .string(title), "body": .string(body), "recipients": .array(recipients.sorted().map(JSONValue.string)), "files": .array(files.map { .object(["filename": .string($0.filename), "data": .string($0.data.base64EncodedString())]) })]))
+    }
+    func noticeFile(_ item: JACNotice, file: NoticeAttachment) async throws -> ExportedDocument {
+        let (data, response) = try await request(path: "api/notices/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "file", value: file.id)], document: true)
+        guard data.count <= 10*1024*1024, response.mimeType == file.mimeType, (try NoticeUpload.mime(data)) == file.mimeType else { throw APIError.message("No se recibió un archivo válido.") }
+        let name = (file.filename as NSString).lastPathComponent
+        return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Adjunto" : name)
+    }
+    func deleteNotice(_ item: JACNotice) async throws {
+        try await noticeCommand(.object(["action": .string(item.kind == "itinerary" ? "deleteItinerary" : "deleteAlert"), "id": .string(item.id), "confirmation": .string(item.id)]))
     }
     func payroll(_ command: JSONValue) async throws -> PayrollEnvelope {
         let (data, _) = try await request(path: "api/mobile/payroll", body: command)
@@ -228,9 +245,10 @@ enum TemporaryDocuments {
     static func save(_ data: Data, filename: String) throws -> ExportedDocument {
         let id = UUID()
         let folder = root.appendingPathComponent(id.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
         let url = folder.appendingPathComponent(filename)
         try data.write(to: url, options: [.atomic, .completeFileProtection])
+        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
         return ExportedDocument(id: id, url: url)
     }
     static func remove(_ document: ExportedDocument) { try? FileManager.default.removeItem(at: root.appendingPathComponent(document.id.uuidString)) }

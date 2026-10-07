@@ -25,12 +25,19 @@ private final class FixtureProtocol: URLProtocol {
     static var conflict = false
     static var agendaChanges: [String: JSONValue] = [:]
     static var alerts: [JSONValue] = []
-    static func reset(reader: Bool, conflict: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; agendaChanges = [:]; alerts = [] }
+    static var deletedNotices = Set<String>()
+    static var attachments: [String: Data] = [:]
+    static func reset(reader: Bool, conflict: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; agendaChanges = [:]; alerts = []; deletedNotices = []; attachments = [:] }
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
         do {
             guard request.url?.host == "ui-fixture.example.invalid" else { throw URLError(.unsupportedURL) }
+            if request.url?.path == "/api/notices/file" {
+                Self.lock.lock(); defer { Self.lock.unlock() }; let q = URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? []; let notice = q.first { $0.name == "id" }?.value ?? "", id = q.first { $0.name == "file" }?.value ?? ""
+                guard !Self.deletedNotices.contains(notice), let bytes = Self.attachments[id] else { throw URLError(.fileDoesNotExist) }
+                let reply = HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":try NoticeUpload.mime(bytes)])!; client?.urlProtocol(self,didReceive:reply,cacheStoragePolicy:.notAllowed); client?.urlProtocol(self,didLoad:bytes); client?.urlProtocolDidFinishLoading(self); return
+            }
             if request.url?.path == "/api/notices/pdf" {
                 let reply = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/pdf"])!
                 client?.urlProtocol(self, didReceive: reply, cacheStoragePolicy: .notAllowed)
@@ -57,9 +64,28 @@ private final class FixtureProtocol: URLProtocol {
     static func response(_ request: URLRequest) throws -> (Int, JSONValue) {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+        if parts.path == "/api/notices/publish" {
+            guard !reader else { return (403,.object(["error":.string("Solo Camilo puede publicar.")])) }
+            guard request.value(forHTTPHeaderField:"Origin") == UITestBackend.base.absoluteString, request.value(forHTTPHeaderField:"Cookie")?.hasPrefix("__Host-jac_session=") == true else { return (403,.object(["error":.string("Sesión requerida.")])) }
+            var item = try body(request); let id = item["id"].text
+            if deletedNotices.contains(id) { return (410,.object(["error":.string("Aviso eliminado.")])) }
+            if !alerts.contains(where: { $0["id"].text == id }) {
+                let files = try item["files"].elements.map { file -> JSONValue in
+                    guard let data = Data(base64Encoded:file["data"].text) else { throw APIError.message("Adjunto inválido") }; let fid = UUID().uuidString.lowercased(); attachments[fid] = data
+                    return .object(["id":.string(fid),"filename":file["filename"],"mimeType":.string(try NoticeUpload.mime(data)),"size":.number(Double(data.count))])
+                }
+                item["attachments"] = .array(files); item["files"] = .null; item["filename"] = .string(""); item["size"] = .number(0); item["createdAt"] = .string("2026-10-07T12:00:00Z"); item["read"] = .bool(false); alerts.append(item)
+            }
+            return (200,.object(["id":.string(id)]))
+        }
         if parts.path == "/api/notices" {
             if request.httpMethod == "POST" {
                 let command = try body(request)
+                if ["deleteAlert","deleteItinerary"].contains(command["action"].text) {
+                    guard !reader else { return (403,.object(["error":.string("Solo Camilo puede eliminar.")])) }
+                    guard command["confirmation"] == command["id"] else { return (400,.object(["error":.string("Confirma el aviso.")])) }
+                    deletedNotices.insert(command["id"].text)
+                }
                 if command["action"].text == "alert" {
                     guard !reader else { return (403, .object(["error": .string("Solo Camilo puede crear alertas.")])) }
                     var item = command["alert"]; item["kind"] = .string("alert"); item["filename"] = .string(""); item["size"] = .number(0); item["createdAt"] = .string("2026-10-07T12:00:00Z"); item["read"] = .bool(false)
@@ -68,10 +94,10 @@ private final class FixtureProtocol: URLProtocol {
                 return (200, .object(["ok": .bool(true)]))
             }
             if let id = parts.queryItems?.first(where: { $0.name == "item" })?.value {
-                guard let item = ([itinerary] + alerts).first(where: { $0["id"].text == id }) else { return (404, .object(["error": .string("El aviso no está disponible.")])) }
+                guard let item = ([itinerary] + alerts).filter { !deletedNotices.contains($0["id"].text) }.first(where: { $0["id"].text == id }) else { return (404, .object(["error": .string("El aviso no está disponible.")])) }
                 return (200, .object(["item": item]))
             }
-            return (200, .object(["notices": .array([itinerary] + alerts), "nextCursor": .string(""), "settings": .object(["version": .number(0), "slackConnected": .bool(true), "appleConfigured": .bool(true), "webPublicKey": .string("")]), "users": reader ? .array([]) : .array([.object(["id": .string("11111111-1111-4111-8111-111111111111"), "name": .string("Camilo simulado")]), .object(["id": .string("22222222-2222-4222-8222-222222222222"), "name": .string("Luisa simulada")])])]))
+            return (200, .object(["notices": .array(([itinerary] + alerts).filter { !deletedNotices.contains($0["id"].text) }), "nextCursor": .string(""), "settings": .object(["version": .number(0), "slackConnected": .bool(true), "appleConfigured": .bool(true), "webPublicKey": .string("")]), "users": reader ? .array([]) : .array([.object(["id": .string("11111111-1111-4111-8111-111111111111"), "name": .string("Camilo simulado")]), .object(["id": .string("22222222-2222-4222-8222-222222222222"), "name": .string("Luisa simulada")])])]))
         }
         if parts.path == "/api/calendar" {
             if request.httpMethod == "POST" {

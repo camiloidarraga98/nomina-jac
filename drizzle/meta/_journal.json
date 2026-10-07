@@ -78,6 +78,20 @@
       "when": 1791389496035,
       "tag": "0010_deleted_itineraries",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791391287660,
+      "tag": "0011_manual_notice_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791391413428,
+      "tag": "0012_manual_upload_token",
+      "breakpoints": true
     }
   ]
 }
