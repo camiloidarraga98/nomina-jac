@@ -1,5 +1,14 @@
 # Contexto de Nómina JAC Music
 
+## Slack conectado — 7 de octubre de 2026
+
+Camilo inició sesión en Slack y en su cuenta del sitio y autorizó expresamente la instalación y activación de la integración. Se creó e instaló la app dedicada **JAC Itinerarios**, ID `A0C7EE5N58E`, en **JAC Music** (`T0C5NQZE8HL`), con los únicos permisos de bot `files:read`, `channels:read` y `channels:history`, sin permisos de usuario ni escritura. Se añadió a `#itinerarios-finales` (`C0C6V85SRL6`); el agente existente manager-milo se conserva.
+
+Desde la interfaz existente de producción, Itinerarios → Conexión → Slack, se guardaron Bot Token y Signing Secret cifrados: el servidor validó el espacio y la pertenencia al canal y la interfaz confirmó **Slack: conectado**. No se guardaron claves en archivos, Git ni documentación. Slack verificó `https://jhonalexcastano.com/api/notices/slack`; Enable Events quedó On y `message.channels` persistió después de recargar. Socket Mode estaba activado en la app recién creada y se desactivó para usar el receptor HTTPS firmado. No se cambiaron APNs ni Web Push.
+
+Evidencias locales sin claves: `outputs/slack-conectado-jac.png` y `outputs/slack-eventos-verificados.png`. No se enviaron mensajes, PDF ni notificaciones de prueba ni se importaron archivos históricos. Se verificaron configuración, pertenencia y challenge firmado; la recepción completa del primer PDF nuevo queda para el uso real. No hubo cambios de código ni nueva publicación del Site: continúa la versión 29 con el mismo dominio, DB, BUCKET y datos existentes. Esta anotación se guarda solo en el Git local.
+
+
 ## Borrado de alertas e iconos — versión 29
 
 Publicación confirmada `succeeded` en el mismo Site, fuente Sites `246f2fdaf9e369f328cb765194f97ce5b478bbcd`, despliegue `appgdep_6ac5d647941481919a91e626005010c9`, secretos/conexiones conservados (`env_set_revision=2`). Quincena usa billetera y Agenda calendario. La web permite a Camilo borrar alertas desde el listado o detalle, con confirmación blanca. El borrado atómico elimina contenido, destinatarios y entregas pendientes; conserva itinerarios, PDF y conexiones. Los avisos ya recibidos o procesados por el proveedor no se pueden retirar. La migración adicional `0009_deleted_alerts.sql` guarda solo UUID/fecha para impedir que un reintento restaure alertas eliminadas; las migraciones 0000–0008 siguen intactas. Se aplicó primero a D1 local desechable y se incluyó después en la publicación normal del Site existente.
