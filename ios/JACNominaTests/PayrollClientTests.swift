@@ -337,4 +337,13 @@ final class PayrollClientTests: XCTestCase {
         try await makeClient(vault).logout(); XCTAssertNil(vault.token)
     }
 
+    func testNoticeTimestampsUseColombiaDayAndTimeIncludingFractionalSeconds() {
+        for timestamp in ["2026-10-07T00:00:00Z", "2026-10-07T00:00:00.000Z"] {
+            let item = JACNotice(id: UUID().uuidString, kind: "alert", title: "Prueba", body: "", filename: "", size: 0, createdAt: timestamp, read: false)
+            XCTAssertNotNil(item.createdLabel.range(of: "^6\\D", options: .regularExpression), "Debe mostrar el 6 de octubre en Colombia, no el día 7 de UTC")
+            XCTAssertTrue(item.createdLabel.contains("7:00") || item.createdLabel.contains("19:00"))
+            XCTAssertFalse(item.createdLabel.contains(timestamp))
+        }
+    }
+
 }

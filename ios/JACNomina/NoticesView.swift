@@ -2,6 +2,12 @@ import SwiftUI
 
 struct JACNotice: Decodable, Identifiable {
     let id: String; let kind: String; let title: String; let body: String; let filename: String; let size: Int; let createdAt: String; let read: Bool
+    var createdLabel: String {
+        guard let date = CalendarClock.instant(createdAt) else { return "Fecha no disponible" }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "es_CO"); formatter.timeZone = CalendarClock.calendar.timeZone
+        formatter.dateStyle = .medium; formatter.timeStyle = .short
+        return formatter.string(from: date)
+    }
 }
 struct NoticeFeed: Decodable {
     let notices: [JACNotice]; let nextCursor: String; let settings: NoticeSettings; let users: [NoticeUser]
@@ -40,7 +46,7 @@ struct NoticesView: View {
             Section(effectiveKind == "itinerary" ? "PDF de itinerarios" : "Avisos del equipo") {
                 let items = records.filter { $0.kind == effectiveKind }
                 if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
-                ForEach(items) { item in Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(PayrollFormat.date(item.createdAt) + (item.kind == "itinerary" ? " · PDF" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
+                ForEach(items) { item in Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(item.createdLabel + (item.kind == "itinerary" ? " · PDF" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             }
             if effectiveKind == "itinerary", feed?.settings.slackConnected == false { Section { Text(user.isOwner ? "Conecta Slack desde Itinerarios → Conexión en el webapp. Solo se comparten los PDF de #itinerarios-finales." : "Camilo está preparando la conexión de itinerarios.").font(.footnote).foregroundStyle(.secondary) } }
@@ -70,7 +76,7 @@ struct NoticeDetail: View {
     var body: some View {
         NavigationStack {
             List {
-                Section { Text(item.title).font(.title2.bold()); Text(PayrollFormat.date(item.createdAt)).foregroundStyle(.secondary) }
+                Section { Text(item.title).font(.title2.bold()); Text(item.createdLabel).foregroundStyle(.secondary) }
                 if let error { Section { InlineError(message: error) } }
                 if item.kind == "itinerary" { Section { Text(item.filename); Text("\(max(1,item.size/1024)) KB · PDF").font(.caption).foregroundStyle(.secondary)
                     Button { Task { downloading = true; defer { downloading = false }; do { let file = try await store.client.itinerary(item); previousDocument = file; document = file } catch { self.error = error.localizedDescription; store.report(error) } } } label: { HStack { Label("Abrir PDF", systemImage: "doc.text"); if downloading { ProgressView() } } }.buttonStyle(JACPrimaryButtonStyle()).disabled(downloading).accessibilityIdentifier("notices.pdf")
