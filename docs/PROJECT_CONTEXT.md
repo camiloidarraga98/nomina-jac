@@ -1,5 +1,10 @@
 # Contexto de Nómina JAC Music
 
+## Corrección visual de Conexión — versión 27
+
+Publicada desde este Mac en el mismo Site, despliegue confirmado `succeeded`, commit Sites `1813ffc9f54db6baa8204ee62baf85b80ec82574`. El diálogo de Conexión de Itinerarios/Alertas usaba un fondo transparente; `app/notices-panel.tsx` aplica ahora la clase existente `payroll-dialog` (blanco opaco, desplazamiento vertical, mismo estilo de nómina). Único archivo de aplicación cambiado. TypeScript, compilación y 47 pruebas existentes pasaron; navegador local con base desechable confirmó `rgb(255, 255, 255)`, desplazamiento y cierre. Captura local: `outputs/itinerarios-conexion-blanca.png`. No se guardaron conexiones ni se usaron servicios reales en las pruebas.
+
+
 ## Actualización web local — URLs independientes (versión 26)
 
 El 6 de octubre de 2026 se prepararon y publicaron desde este Mac las rutas independientes de las secciones y pestañas web, con TypeScript/build, 68 pruebas simuladas y comprobación de navegación local. Sites confirmó `succeeded` para la versión 26 del mismo Site; la URL activa continúa `https://jhonalexcastano.com`. Detalles y archivos en `docs/WEB_URLS.md`. Se preservaron DB/BUCKET, secretos, manifiesto y migraciones. Esta publicación tomó directamente la fuente remota 25 e incorporó exclusivamente el cambio web; no incorporó modificaciones locales de firma de Xcode ni estado local.
