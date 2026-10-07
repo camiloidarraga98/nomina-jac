@@ -9,3 +9,9 @@ No cambia el esquema, las migraciones, cálculos, comandos de nómina, conexione
 Verificación: TypeScript; 68 pruebas de rutas/cálculos/autenticación/correo/Agenda/avisos (incluido Workerd local); navegador local con D1 desechable, claves independientes y sin conexiones externas: inicio de sesión vuelve a Agenda, enlaces de menú, pestañas, Atrás/Adelante, recarga y período. No se ejecutaron envíos, eventos reales ni cierres/borrados como pruebas.
 
 Publicación confirmada: versión 26, commit de fuente Sites `fb609a3b05208bd2f70cac200c00f626c33f709b`, despliegue `appgdep_6ac5cea092e88191bc2b74f59a289516` con estado `succeeded`. El Site sigue declarando `https://jhonalexcastano.com` como URL activa. El manifiesto, DB/BUCKET, package.json, lockfile y migraciones de producción no cambiaron.
+
+## Menú simplificado y cuadros legibles — octubre de 2026
+
+La barra lateral contiene únicamente Quincena, Agenda, Itinerarios y Mi cuenta. El enlace Configuración general de la barra superior abre `/configuracion`, que reúne Alertas, Personal, Conceptos y reglas, Archivo, Correos y Usuarios. Usuarios permanece exclusivo del propietario; los permisos en las acciones/API no cambian. Las URLs anteriores y el período seleccionado se conservan. En pantallas estrechas se mantienen visibles el acceso a Configuración y el estado del guardado.
+
+El mapa añade la ruta de Configuración; `app/payroll-app.tsx` agrupa los accesos y `app/globals.css` incorpora los estilos de la página general. Los tres cuadros de `app/notices-panel.tsx` (detalle, crear alerta y conexión) utilizan el fondo blanco existente y desplazamiento vertical. La verificación local cubrió los cuadros sin conexiones reales, usuario propietario y usuario ficticio sin permisos, navegación, historial y recarga. TypeScript, 51 pruebas existentes de navegación/nómina/autenticación/correo/avisos y compilación verificados para esta actualización.

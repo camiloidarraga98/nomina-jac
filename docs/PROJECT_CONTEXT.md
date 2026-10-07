@@ -1,5 +1,10 @@
 # Contexto de Nómina JAC Music
 
+## Menú simplificado y fondos de Alertas — versión 28
+
+Publicación confirmada `succeeded` en el mismo Site, fuente `8dc186c84d5a5534b6bd0a1e2b590bccd2f046ff`. La barra lateral tiene solo Quincena, Agenda, Itinerarios y Mi cuenta. El acceso superior Configuración general abre `/configuracion` y reúne Alertas, Personal, Conceptos y reglas, Archivo, Correos y Usuarios (solo propietario). Se mantienen URLs anteriores, permisos, período y estado de guardado. Los cuadros de crear y consultar avisos se suman al fondo blanco ya aplicado a Conexión. TypeScript, 51 pruebas existentes y compilación pasaron. Navegador local: cuatro accesos laterales, menú general con propietario/no propietario, historial/recarga y tres cuadros blancos; aviso y cuenta ficticios únicamente en D1 desechable, sin entregas push. Archivos/evidencias: `docs/WEB_URLS.md`, `outputs/configuracion-general-local.png`, `outputs/alertas-fondo-blanco.png`. No cambia producción en datos, conexiones, secretos, migraciones ni manifiesto.
+
+
 ## Corrección visual de Conexión — versión 27
 
 Publicada desde este Mac en el mismo Site, despliegue confirmado `succeeded`, commit Sites `1813ffc9f54db6baa8204ee62baf85b80ec82574`. El diálogo de Conexión de Itinerarios/Alertas usaba un fondo transparente; `app/notices-panel.tsx` aplica ahora la clase existente `payroll-dialog` (blanco opaco, desplazamiento vertical, mismo estilo de nómina). Único archivo de aplicación cambiado. TypeScript, compilación y 47 pruebas existentes pasaron; navegador local con base desechable confirmó `rgb(255, 255, 255)`, desplazamiento y cierre. Captura local: `outputs/itinerarios-conexion-blanca.png`. No se guardaron conexiones ni se usaron servicios reales en las pruebas.
