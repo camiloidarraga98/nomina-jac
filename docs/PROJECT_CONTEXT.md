@@ -1,5 +1,10 @@
 # Contexto de Nómina JAC Music
 
+## Actualización web local — URLs independientes (versión 26)
+
+El 6 de octubre de 2026 se prepararon y publicaron desde este Mac las rutas independientes de las secciones y pestañas web, con TypeScript/build, 68 pruebas simuladas y comprobación de navegación local. Sites confirmó `succeeded` para la versión 26 del mismo Site; la URL activa continúa `https://jhonalexcastano.com`. Detalles y archivos en `docs/WEB_URLS.md`. Se preservaron DB/BUCKET, secretos, manifiesto y migraciones. Esta publicación tomó directamente la fuente remota 25 e incorporó exclusivamente el cambio web; no incorporó modificaciones locales de firma de Xcode ni estado local.
+
+
 ## Objetivo y estado
 
 **Comprobación en el Mac, 6 de octubre de 2026:** ejecución local en `/Users/camiloidarraga/Documents/Proyectos/JAC`. Node 24.21.0/npm 11.19.0 en runtime privado del proyecto; reparación mínima del lockfile con dos entradas WASI nuevas, conservando todas las anteriores. Instalación, TypeScript, 74 pruebas simuladas de servidor, build web y localhost pasaron. Xcode 27 compila y pasa 23 pruebas unitarias y 10 de interfaz en un simulador nuevo sin sesiones. Se corrigió la excepción de barra de navegación al pasar a segundo plano: el marcado de privacidad se trasladó al contenido, conservando la navegación. La cubierta de ventana protege también hojas y teclado; campos y borradores se conservan. Se mantienen todas las pruebas y comprobaciones originales. Diagnóstico y evidencia: `IOS_REGRESO_SEGUNDO_PLANO.md`. Sites reconoce la misma versión 25 y rol propietario; no hubo publicación. Camilo ya pagó Apple Developer y espera aprobación de documentación legal; la instalación firmada queda pendiente. Ver `MAC_LOCAL_VERIFICADO.md`. Las referencias a Cloud/GitHub siguientes son contexto histórico, no el flujo actual. Antes de la primera publicación local se verifica de nuevo el mismo Site y se explican los archivos cambiados; jamás se reemplazan datos de producción por localhost.

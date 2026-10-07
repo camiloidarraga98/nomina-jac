@@ -1,6 +1,7 @@
 /** Cloudflare Worker entry point for the vinext-starter template. */
 import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } from "vinext/server/image-optimization";
 import handler from "vinext/server/app-router-entry";
+import {payrollRoute} from "../lib/payroll-navigation";
 
 interface Env {
   ASSETS: Fetcher;
@@ -41,7 +42,7 @@ const worker = {
     }
 
     const response = await handler.fetch(request, env, ctx);
-    if (url.pathname === '/' || url.pathname === '/acceso' || url.pathname.startsWith('/payroll/') || url.pathname === '/admin' || url.pathname.startsWith('/admin/') || url.pathname.startsWith('/api/')) {
+    if (payrollRoute(url.pathname) !== null || url.pathname === '/acceso' || url.pathname.startsWith('/payroll/') || url.pathname === '/admin' || url.pathname.startsWith('/admin/') || url.pathname.startsWith('/api/')) {
       const secured = new Response(response.body, response);
       secured.headers.set('Cache-Control', 'private, no-store, max-age=0');
       secured.headers.set('X-Robots-Tag', 'noindex, nofollow');

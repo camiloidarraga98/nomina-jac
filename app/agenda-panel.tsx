@@ -8,7 +8,7 @@ import {agendaDate,agendaMonth,agendaDayLabel,agendaEventOnDay,agendaEventTime,a
 
 async function calendarRequest<T>(path:string,body?:unknown):Promise<T>{
  const response=await fetch(path,{cache:'no-store',...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
- if(response.status===401){location.assign('/acceso');throw new Error('Tu sesión venció. Inicia sesión de nuevo.');}
+ if(response.status===401){location.assign('/acceso?returnTo='+encodeURIComponent(location.pathname+location.search));throw new Error('Tu sesión venció. Inicia sesión de nuevo.');}
  const result=await response.json() as T&{error?:string};if(!response.ok)throw new Error(result.error||'No pudimos consultar Agenda.');return result;
 }
 export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOwner:boolean;connectBlocked:boolean;onGoogleSetup:()=>void}){

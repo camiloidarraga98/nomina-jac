@@ -1,0 +1,11 @@
+# URLs de navegación web — 6 de octubre de 2026
+
+El inicio conserva `/`. Menú: `/agenda`, `/itinerarios`, `/alertas`, `/personal`, `/conceptos`, `/archivo`, `/correos`, `/mi-cuenta`, `/usuarios`. Pestañas: Shows en `/`; Novedades en `/quincena/novedades`, Recorridos en `/quincena/recorridos`, Horas y salarios en `/quincena/horas`, Liquidación en `/quincena/liquidacion`. `periodo=ID` conserva el corte al compartir o recargar enlaces de nómina/correos.
+
+Se agregan el mapa de navegación (`lib/payroll-navigation.ts`), una página compartida autenticada (`app/payroll-page.tsx`) y la resolución de rutas (`app/[...section]/page.tsx`). `app/page.tsx` reutiliza esa página. `app/payroll-app.tsx` usa enlaces reales e historial del navegador sin sustituir datos pendientes; integra los retornos OAuth y enlaces antiguos de avisos. `app/globals.css` conserva el aspecto de los botones convertidos a enlaces. `app/agenda-panel.tsx` conserva el destino al pedir login por sesión vencida. `worker/index.ts` aplica las cabeceras privadas existentes a todas las rutas nuevas. Se añade `tests/payroll-navigation.test.mjs` para enlaces directos, permisos y privacidad.
+
+No cambia el esquema, las migraciones, cálculos, comandos de nómina, conexiones, secretos ni `.openai/hosting.json`. Esta publicación parte directamente de la fuente remota versión 25; no incluye cambios de firma de Xcode, datos locales ni cambios nativos anteriores. El lockfile de publicación conserva el de versión 25; las dependencias ya verificadas del Mac se reutilizan sin instalar ni actualizar versiones.
+
+Verificación: TypeScript; 68 pruebas de rutas/cálculos/autenticación/correo/Agenda/avisos (incluido Workerd local); navegador local con D1 desechable, claves independientes y sin conexiones externas: inicio de sesión vuelve a Agenda, enlaces de menú, pestañas, Atrás/Adelante, recarga y período. No se ejecutaron envíos, eventos reales ni cierres/borrados como pruebas.
+
+Publicación confirmada: versión 26, commit de fuente Sites `fb609a3b05208bd2f70cac200c00f626c33f709b`, despliegue `appgdep_6ac5cea092e88191bc2b74f59a289516` con estado `succeeded`. El Site sigue declarando `https://jhonalexcastano.com` como URL activa. El manifiesto, DB/BUCKET, package.json, lockfile y migraciones de producción no cambiaron.
