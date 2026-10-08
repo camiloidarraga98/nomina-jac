@@ -1,5 +1,6 @@
 import XCTest
 import UserNotifications
+import UIKit
 @testable import JACNomina
 
 @MainActor
@@ -42,6 +43,78 @@ private final class MockProtocol: URLProtocol {
 }
 
 final class PayrollClientTests: XCTestCase {
+    func testReceiptParserChoosesTotalAndIssueDateInsteadOfTaxesCashAndDueDate() {
+        let value = ReceiptParser.parse(["Restaurante Ficticio", "FACTURA 882299", "FECHA EMISIÓN 08/10/2026", "VENCE 10/10/2026", "SUBTOTAL 40.000", "IVA 7.600", "TOTAL A PAGAR COP 47.600,00", "EFECTIVO 50.000", "CAMBIO 2.400"])
+        XCTAssertEqual(value.amount, 47600); XCTAssertEqual(value.date, "2026-10-08")
+        XCTAssertEqual(value.kind, .food); XCTAssertEqual(value.concept, "Restaurante Ficticio")
+        XCTAssertTrue(value.warnings.isEmpty)
+        XCTAssertEqual(ReceiptParser.parse(["HOTEL DE PRUEBA", "Fecha: 8 de octubre de 2026", "TOTAL", "$ 123,000.00"]).amount, 123000)
+        XCTAssertEqual(ReceiptParser.parse(["HOTEL DE PRUEBA", "Fecha: 8 de octubre de 2026", "TOTAL", "$ 123,000.00"]).date, "2026-10-08")
+    }
+    func testReceiptOCRPairsSeparatedPriceColumnsWithoutMergingAdjacentLines() {
+        let lines = ReceiptOCR.orderedLines([
+            ("47.600", CGRect(x: 0.7, y: 0.50, width: 0.2, height: 0.04)),
+            ("SUBTOTAL", CGRect(x: 0.1, y: 0.60, width: 0.3, height: 0.04)),
+            ("TOTAL A PAGAR", CGRect(x: 0.1, y: 0.505, width: 0.4, height: 0.04)),
+            ("40.000", CGRect(x: 0.7, y: 0.60, width: 0.2, height: 0.04)),
+            ("CAMBIO 2.400", CGRect(x: 0.1, y: 0.40, width: 0.8, height: 0.04))])
+        XCTAssertEqual(lines, ["SUBTOTAL 40.000", "TOTAL A PAGAR 47.600", "CAMBIO 2.400"])
+        XCTAssertEqual(ReceiptParser.parse(lines).amount, 47600)
+    }
+    func testReceiptAmbiguityForeignCurrencyInvalidDatesAndDecimalPesosNeedReview() {
+        for rows in [["SUBTOTAL 10.000", "IVA 1.900", "EFECTIVO 20.000"], ["TOTAL 10.000", "TOTAL 20.000"], ["TOTAL USD 15.00"], ["TOTAL US$ 15.00"], ["TOTAL EUR 15"], ["TOTAL COP 10.000,50"], ["TOTAL -10.000"], ["TOTAL 1.000.000.001"], ["FACTURA 20261008"]] {
+            let value = ReceiptParser.parse(rows); XCTAssertNil(value.amount, rows.description); XCTAssertFalse(value.warnings.isEmpty)
+        }
+        for rows in [["FECHA: 31/02/2026"], ["FECHA: 08/10/2026", "FECHA: 09/10/2026"], ["RESOLUCION 2026-10-08"], ["VENCIMIENTO 08/10/2026"]] { XCTAssertNil(ReceiptParser.parse(rows).date, rows.description) }
+        XCTAssertNil(ReceiptParser.parse(["HOTEL Y RESTAURANTE"]).kind)
+        XCTAssertEqual(ReceiptParser.parse(["TOTAL 10.000", "VALOR TOTAL 11.900"]).amount, 11900)
+        XCTAssertEqual(ReceiptParser.parse(["TAXI FICTICIO", "FECHA 2026-10-08", "TOTAL 25000"]).kind, .transport)
+        XCTAssertEqual(ReceiptParser.parse(["TERPEL", "TOTAL 80 000"]).amount, 80000)
+        XCTAssertEqual(ReceiptParser.parse(["TERPEL", "TOTAL 80 000"]).kind, .fuel)
+        XCTAssertNil(ReceiptParser.money("1,000,00")); XCTAssertNil(ReceiptParser.money("1.000.00"))
+    }
+    @MainActor func testNativeVisionReadsPhotographedFictitiousReceiptWithoutAnyServer() async throws {
+        MockProtocol.handler = { _ in XCTFail("El OCR no debe usar el servidor"); throw URLError(.unsupportedURL) }
+        let bytes = try ReceiptOCR.photograph(ReceiptOCR.fixture())
+        let lines = try await ReceiptOCR.recognize(bytes)
+        let value = ReceiptParser.parse(lines)
+        XCTAssertEqual(value.amount, 47600, lines.description); XCTAssertEqual(value.date, "2026-10-08", lines.description)
+        XCTAssertEqual(value.kind, .food); XCTAssertEqual(value.concept, "RESTAURANTE FICTICIO JAC")
+        let format = UIGraphicsImageRendererFormat(); format.scale = 1
+        let blank = UIGraphicsImageRenderer(size: CGSize(width: 1000, height: 1000), format: format).image { context in UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1000, height: 1000)) }
+        let emptyLines = try await ReceiptOCR.recognize(ReceiptOCR.photograph(blank))
+        XCTAssertTrue(emptyLines.isEmpty)
+    }
+    @MainActor func testExpenseDraftIsEncryptedSessionScopedAndKeepsIdempotentSubmissionOnRelaunch() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let vault = MemorySession(); vault.token = token
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: base, vault: vault, configuration: config, offlineCache: cache)
+        let scope = try XCTUnwrap(client.offlineScope())
+        var draft = ExpenseDraft(); draft.concept = "Factura privada ficticia"; draft.kind = ExpenseKind.food.rawValue
+        draft.amount = "47600"; draft.note = "Solo prueba"; draft.attempted = true
+        draft.files = [.init(filename: "Ficticio.jpg", data: try ReceiptOCR.photograph(ReceiptOCR.fixture()))]
+        client.beginOfflineRestore(); try client.saveExpenseDraft(draft, scope: scope)
+        let sealed = try Data(contentsOf: cache.file(scope, key: "local-expense-draft-v1"))
+        XCTAssertNil(sealed.range(of: Data(draft.concept.utf8))); XCTAssertNil(sealed.range(of: draft.files[0].data))
+        let relaunched = PayrollClient(baseURL: base, vault: vault, configuration: config, offlineCache: cache)
+        XCTAssertEqual(relaunched.expenseDraft(), draft)
+        XCTAssertEqual(draft.submissionNote, "Tipo de gasto: Alimentación\nSolo prueba")
+        let other = MemorySession(); other.token = String(repeating: "z", count: 43)
+        let otherClient = PayrollClient(baseURL: URL(string: "https://other.invalid")!, vault: other, configuration: config, offlineCache: OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
+        XCTAssertNil(otherClient.expenseDraft())
+        vault.token = String(repeating: "b", count: 43)
+        XCTAssertNil(client.expenseDraft()); XCTAssertThrowsError(try client.saveExpenseDraft(draft, scope: scope))
+        vault.token = token; try client.clearSession(); XCTAssertNil(client.expenseDraft()); XCTAssertNil(cache.load(scope, key: "local-expense-draft-v1"))
+    }
+    @MainActor func testDraftStorageRejectsInvalidAttachmentsAndDeletionRemovesLocalReceipt() throws {
+        let vault = MemorySession(); vault.token = token; let client = makeClient(vault)
+        let scope = try XCTUnwrap(client.offlineScope()); var draft = ExpenseDraft()
+        draft.files = [.init(filename: "fake.jpg", data: Data("invalid".utf8))]
+        XCTAssertThrowsError(try client.saveExpenseDraft(draft, scope: scope)); XCTAssertNil(client.expenseDraft())
+        draft.files = []; draft.concept = "Borrador ficticio"; try client.saveExpenseDraft(draft, scope: scope)
+        XCTAssertNotNil(client.expenseDraft()); try client.removeExpenseDraft(scope: scope); XCTAssertNil(client.expenseDraft())
+    }
     private let base = URL(string: "https://payroll.example.invalid")!
     private let token = String(repeating: "a", count: 43)
 

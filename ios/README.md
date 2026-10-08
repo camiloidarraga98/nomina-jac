@@ -1,3 +1,13 @@
+## Escanear facturas — iPhone 0.12.0 (20)
+
+En **Gestión → Gastos de viaje → Registrar gasto → Escanear factura** puedes tomar una foto o elegir una de Fotos. El OCR nativo de Apple se ejecuta en el iPhone, sin subir la imagen a un servicio de reconocimiento. Sugiere tipo de gasto, concepto, total en COP y fecha; muestra una vista previa y permite corregir todo antes de **Enviar a revisión**. El tipo elegido se conserva en la nota como `Tipo de gasto: …`, visible también desde la web. La foto queda como comprobante privado y se mantiene el proceso de revisión/incorporación existente.
+
+Los totales ambiguos, fechas incompatibles, otra moneda o centavos distintos de cero se dejan para revisión manual. No hay conversión de moneda, clasificación garantizada ni aprobación automática. Si una foto no contiene texto legible puedes repetirla o usar el formulario/adjuntos de siempre. El escaneo admite una foto a la vez; el gasto conserva hasta cinco comprobantes y 10 MB en conjunto.
+
+El formulario guarda automáticamente un único borrador cifrado por sesión en este iPhone, incluyendo sus fotos. También ofrece **Guardar borrador y cerrar**, **Continuar borrador** y eliminación confirmada del borrador. Funciona sin red; enviar y aprobar siguen necesitando conexión. Cerrar sesión o una revocación comprobada elimina el borrador junto con la copia local. Un envío incierto conserva UUID y datos bloqueados para reintentar sin duplicados; no se encola ningún envío automático. Los borradores no se sincronizan con otros dispositivos.
+
+Actualiza **este mismo proyecto con Run**, conservando tu firma personal y `co.jacmusic.nomina`. El push permanece suspendido. La cámara física y la calidad con tus facturas deben probarse en el iPhone; las pruebas locales usan imágenes de facturas ficticias y el motor Vision real, sin servicios externos.
+
 ## Contenido sin conexión — iPhone 0.11.0 (19)
 
 Actualiza **este mismo proyecto con Run**, conservando tu firma personal y `co.jacmusic.nomina`. Push sigue suspendido. Abre la app una vez con internet y espera en **Mi cuenta → Copia sin conexión** a que termine la descarga. Después puedes cerrarla y reabrirla sin señal: muestra la última copia de Quincena, Agenda, Itinerarios, pases privados, Alertas y las consultas de Gestión que se hayan descargado. Los PDF e imágenes de avisos y comprobantes se descargan automáticamente en primer plano, sin marcar recibido ni enviar notificaciones. Un adjunto que aún no terminó de descargarse necesita internet; el estado indica si quedan archivos pendientes.

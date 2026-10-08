@@ -73,11 +73,15 @@ struct TravelExpensesView: View {
     @State private var error:String?
     @State private var editor=false
     @State private var detail:TravelExpense?
+    @State private var hasDraft=false
+    @State private var deleteDraft=false
     var body:some View {
         List {
             if let error { InlineError(message:error) }
             Section { Text("Adjunta tus comprobantes. Un administrador revisará el gasto antes de incorporarlo como reintegro.").font(.footnote).foregroundStyle(.secondary)
-                Button("Registrar gasto") { editor=true }.disabled(store.isOffline).accessibilityIdentifier("expenses.create") }
+                Button(hasDraft ? "Continuar borrador" : "Registrar gasto") { editor=true }.accessibilityIdentifier("expenses.create")
+                if hasDraft { Button("Eliminar borrador",role:.destructive) { deleteDraft=true }.accessibilityIdentifier("expenses.deleteDraft") }
+                if store.isOffline { Text("Puedes escanear y guardar un borrador en este iPhone. El envío necesita conexión.").font(.footnote).foregroundStyle(.secondary) } }
             Section("Gastos de viaje") {
                 ForEach(records) { item in Button { detail=item } label: { VStack(alignment:.leading,spacing:8) {
                     Text(item.concept).font(.headline);Text(PayrollFormat.money(item.amount));Text(item.name+" · "+item.expenseDate).font(.caption).foregroundStyle(.secondary);Text(item.statusLabel).font(.caption)
@@ -88,10 +92,14 @@ struct TravelExpensesView: View {
         }.jacSurface().navigationTitle("Gastos de viaje").navigationBarTitleDisplayMode(.inline)
             .task { await load() }.refreshable { await load() }
             .onChange(of: store.cacheRevision) { _, _ in if let saved = store.client.cachedExpenses() { feed = saved; if store.isOffline || records.isEmpty { records = saved.expenses } } }
-            .sheet(isPresented:$editor) { ExpenseComposer { await load() } }
+            .sheet(isPresented:$editor,onDismiss:{ Task { await load() } }) { ExpenseComposer { await load() } }
             .sheet(item:$detail,onDismiss:{ Task { await load() } }) { item in ExpenseDetailView(item:item,feed:feed) }
+            .confirmationDialog("¿Eliminar el borrador de este iPhone?",isPresented:$deleteDraft,titleVisibility:.visible) {
+                Button("Eliminar borrador",role:.destructive) { do { if let scope=try store.client.offlineScope() { try store.client.removeExpenseDraft(scope:scope);hasDraft=false } } catch { self.error=error.localizedDescription } }
+            }
     }
     private func load(_ cursor:String = "") async {
+        hasDraft = store.client.expenseDraft() != nil
         if cursor.isEmpty, let saved = store.client.cachedExpenses() { feed = saved; if store.isOffline || records.isEmpty { records = saved.expenses } }
         do { let result=try await store.client.expenses(cursor:cursor);feed=result;if cursor.isEmpty { records=store.isOffline ? store.client.cachedExpenses()?.expenses ?? result.expenses : result.expenses } else { records += result.expenses.filter { item in !records.contains { $0.id == item.id } } };error=nil } catch { self.error=store.reportReadFailure(error) } }
 }
@@ -143,31 +151,82 @@ struct ExpenseComposer:View {
     @EnvironmentObject private var store:PayrollStore
     @Environment(\.dismiss) private var dismiss
     let onSaved:() async -> Void
-    @State private var id=UUID().uuidString.lowercased()
-    @State private var concept=""
-    @State private var amount=""
-    @State private var date=Date()
-    @State private var note=""
+    @State private var draft=ExpenseDraft()
     @State private var files:[NoticeUpload]=[]
-    @State private var attempted=false
+    @State private var scope:AgendaCacheScope?
+    @State private var loaded=false
+    @State private var finished=false
     @State private var busy=false
     @State private var importing=false
+    @State private var scanner=false
     @State private var error:String?
+    @State private var message:String?
+    private var snapshot:ExpenseDraft {
+        var value=draft;value.files=files.map { ExpenseDraft.File(filename:$0.filename,data:$0.data) };return value
+    }
+    private var selectedDate:Binding<Date> { Binding(get:{ ReceiptParser.civilDate(draft.date) ?? Date() },set:{ draft.date=BoardingClock.today($0) }) }
     var body:some View {
         NavigationStack {
             Form {
                 if let error { InlineError(message:error) }
-                Section("Gasto en pesos colombianos") { TextField("Concepto",text:$concept).accessibilityIdentifier("expenses.concept");TextField("Valor en COP",text:$amount).keyboardType(.numberPad).accessibilityIdentifier("expenses.amount");DatePicker("Fecha",selection:$date,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone);TextField("Nota opcional",text:$note,axis:.vertical).lineLimit(2...5) }.disabled(busy || attempted)
-                TravelAttachmentsPicker(files:$files,importing:$importing).disabled(busy || attempted)
-                if attempted && error != nil { Section { Text("Reintenta con los mismos datos. Para modificarlos, abre un formulario nuevo.").font(.footnote) } }
-                Section { Button(busy ? "Enviando…" : "Enviar a revisión") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("expenses.submit") }
-            }.jacSurface().navigationTitle("Registrar gasto").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
-        }.interactiveDismissDisabled(busy)
+                Section {
+                    Button { scanner=true } label: { Label("Escanear factura",systemImage:"text.viewfinder") }.accessibilityIdentifier("expenses.scan")
+                    Text("Lee una foto y sugiere tipo, concepto, valor y fecha. Revisa los datos antes de enviar.").font(.footnote).foregroundStyle(.secondary)
+                }.disabled(busy || importing || draft.attempted)
+                Section("Gasto en pesos colombianos") {
+                    Picker("Tipo de gasto",selection:$draft.kind) { Text("Sin clasificar").tag("");ForEach(ExpenseKind.allCases,id:\.rawValue) { Text($0.rawValue).tag($0.rawValue) } }.accessibilityIdentifier("expenses.kind")
+                    TextField("Concepto",text:$draft.concept).accessibilityIdentifier("expenses.concept")
+                    TextField("Valor en COP",text:$draft.amount).keyboardType(.numberPad).accessibilityIdentifier("expenses.amount")
+                    DatePicker("Fecha",selection:selectedDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("expenses.date")
+                    TextField("Nota opcional",text:$draft.note,axis:.vertical).lineLimit(2...5)
+                }.disabled(busy || draft.attempted)
+                TravelAttachmentsPicker(files:$files,importing:$importing).disabled(busy || draft.attempted)
+                if draft.attempted { Section { Text("Reintenta con los mismos datos para evitar duplicados. El borrador conserva la solicitud enviada.").font(.footnote) } }
+                Section {
+                    if let message { Text(message).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("expenses.draftStatus") }
+                    if store.isOffline { Text("Sin conexión: puedes guardar el borrador. Envíalo cuando recuperes internet.").font(.footnote).foregroundStyle(.secondary) }
+                    Button("Guardar borrador y cerrar") { if persist() { dismiss() } }.disabled(busy || importing || snapshot.isEmpty).accessibilityIdentifier("expenses.saveDraft")
+                    Button(busy ? "Enviando…" : "Enviar a revisión") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("expenses.submit")
+                }
+            }.jacSurface().navigationTitle("Registrar gasto").navigationBarTitleDisplayMode(.inline)
+                .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cerrar") { if persist() { dismiss() } }.disabled(busy || importing) } }
+                .onAppear {
+                    guard !loaded else { return };loaded=true
+                    do { scope=try store.client.offlineScope();if let saved=store.client.expenseDraft() { draft=saved;files=saved.files.map { NoticeUpload(filename:$0.filename,data:$0.data) } } }
+                    catch { self.error=error.localizedDescription }
+                }
+                .task(id:snapshot) {
+                    guard loaded,!finished,!busy else { return }
+                    do { try await Task.sleep(for:.milliseconds(650));try Task.checkCancellation();_ = persist() } catch {}
+                }
+                .sheet(isPresented:$scanner) { ReceiptScannerView { suggestion,file in
+                    guard let scope,scope.id == (try? store.client.offlineScope())?.id else { error=APIError.unauthorized.localizedDescription;return }
+                    guard files.count < 5,files.reduce(0,{ $0+$1.data.count })+file.data.count <= 10*1024*1024 else { error="Elige hasta 5 archivos que sumen como máximo 10 MB.";return }
+                    files.append(file)
+                    if let value=suggestion.kind { draft.kind=value.rawValue }
+                    if let value=suggestion.concept { draft.concept=value }
+                    if let value=suggestion.amount { draft.amount=String(value) }
+                    if let value=suggestion.date { draft.date=value }
+                    message="Datos sugeridos: revisa tipo, concepto, valor y fecha antes de enviar.";error=nil
+                } }
+        }.interactiveDismissDisabled(busy || !snapshot.isEmpty)
+    }
+    @discardableResult private func persist() -> Bool {
+        guard !finished,let scope else { error="No se pudo abrir el almacenamiento de la sesión.";return false }
+        do { if snapshot.isEmpty { try store.client.removeExpenseDraft(scope:scope);message=nil } else { try store.client.saveExpenseDraft(snapshot,scope:scope);message="Borrador guardado en este iPhone." };return true }
+        catch { self.error=error.localizedDescription;return false }
     }
     private func save() async {
-        guard !busy,let value=Double(amount),value > 0,value <= 1e9,value.rounded() == value,concept.trimmingCharacters(in:.whitespacesAndNewlines).count >= 2,concept.utf16.count <= 120,note.utf16.count <= 500,!files.isEmpty else { error="Revisa concepto, valor en pesos y comprobantes.";return }
-        busy=true;attempted=true;defer { busy=false }
-        do { try await store.client.submitExpense(id:id,concept:concept,amount:value,date:BoardingClock.today(date),note:note,files:files);dismiss();await onSaved() } catch { self.error=error.localizedDescription;store.report(error) }
+        let value=snapshot
+        guard !busy,!store.isOffline,let amount=Double(value.amount),amount > 0,amount <= 1e9,amount.rounded() == amount,
+              value.concept.trimmingCharacters(in:.whitespacesAndNewlines).count >= 2,value.concept.utf16.count <= 120,
+              value.submissionNote.utf16.count <= 500,!files.isEmpty else { error="Revisa concepto, valor en pesos, nota y comprobantes.";return }
+        busy=true;draft.attempted=true;defer { busy=false }
+        guard persist() else { return }
+        do {
+            try await store.client.submitExpense(id:draft.id,concept:draft.concept,amount:amount,date:draft.date,note:draft.submissionNote,files:files)
+            if let scope { try store.client.removeExpenseDraft(scope:scope) };finished=true;dismiss();await onSaved()
+        } catch { self.error=error.localizedDescription;store.report(error) }
     }
 }
 struct ItineraryUpdateView:View {
