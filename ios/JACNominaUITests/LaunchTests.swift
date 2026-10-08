@@ -333,6 +333,16 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "notificaciones-en-gestion")
     }
 
+    @MainActor func testAlertComposerIncludesPendingJhonAndAlexWithoutSending() {
+        let app=fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
+        for id in ["77777777-7777-4777-8777-777777777777","88888888-8888-4888-8888-888888888888"] {
+            let recipient=app.switches["notices.recipient."+id]
+            for _ in 0..<5 { if recipient.exists && recipient.isHittable { break }; app.swipeUp() }
+            XCTAssertTrue(recipient.exists); XCTAssertTrue(recipient.isHittable); XCTAssertTrue(recipient.label.contains("Pendiente de activación"))
+        }
+        attachScreen(app,name:"alertas-jhon-alex-pendientes")
+    }
+
     @MainActor func testManualItineraryWithAttachmentAndDeleteConfirmation() {
         let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
         app.segmentedControls["notices.editor.kind"].buttons["Itinerario"].tap()
@@ -366,10 +376,12 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["notices.detail.close"].exists); XCTAssertFalse(app.buttons["notices.delete"].exists); attachScreen(app,name:"pase-manana-pdf-directo")
     }
 
-    @MainActor func testItinerariesOnlyAccountCannotSeePayrollAgendaOrAdministration() {
+    @MainActor func testAccountWithoutPayrollCanReadAgendaAndAlertsButCannotAdminister() {
         let app=XCUIApplication(); app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-itineraries-only"]; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Itinerarios"].waitForExistence(timeout:15)); XCTAssertFalse(app.tabBars.buttons["Quincena"].exists); XCTAssertFalse(app.tabBars.buttons["Agenda"].exists)
-        app.tabBars.buttons["Gestión"].tap(); XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["management.archive"].exists); XCTAssertFalse(app.buttons["notices.alerts"].exists)
+        XCTAssertTrue(app.tabBars.buttons["Itinerarios"].waitForExistence(timeout:15)); XCTAssertFalse(app.tabBars.buttons["Quincena"].exists); XCTAssertTrue(app.tabBars.buttons["Agenda"].exists)
+        app.tabBars.buttons["Gestión"].tap(); XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["management.archive"].exists); XCTAssertTrue(app.buttons["notices.alerts"].exists)
+        tap(app,"notices.alerts"); XCTAssertTrue(app.navigationBars["Alertas"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["notices.create"].exists)
+        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["agenda.create"].exists); XCTAssertFalse(app.buttons["agenda.configure"].exists); attachScreen(app,name:"alex-agenda-sin-nomina")
     }
 
     @MainActor func testManualPrivateBoardingPassWithRecipientAndAttachment() {

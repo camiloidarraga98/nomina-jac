@@ -113,13 +113,14 @@ test('eliminación exclusiva del propietario limpia cierres y envíos; admite re
  const fresh=structuredClone(empty.data);fresh.periods.push(m.newPeriod(...removedDates));assert.equal((await call(m.payrollApi,{action:'save',data:fresh,version:empty.version},{cookie:ownerCookie})).status,200);
 });
 
-test('Solo itinerarios: cuenta limitada no obtiene nómina, correos, exportaciones ni Agenda por API',async()=>{
+test('Sin nómina: cuenta limitada conserva Agenda de consulta y bloquea APIs financieras',async()=>{
  const create=await call(m.usersApi,{action:'create',user:{name:'Alex ficticio',username:'alex-scope-fixture',email:'alex-scope@example.invalid',active:true,itinerariesOnly:true,permissions:['export','payroll']}},{cookie:ownerCookie});assert.equal(create.status,200);
  let row=sql.prepare("SELECT * FROM payroll_users WHERE username='alex-scope-fixture'").get();assert.equal(row.itineraries_only,1);assert.deepEqual(JSON.parse(row.permissions),[]);
  sql.prepare('UPDATE payroll_users SET password_hash=? WHERE id=?').run(m.hashPassword('fixture-password',globalThis.__authEnv.PAYROLL_AUTH_KEY),row.id);const cookie='__Host-jac_session='+await m.makeSession(row.id);
  globalThis.__authHeaders=new Headers({host:'payroll.example.invalid',cookie});const identity=await m.payrollUser();assert.equal(identity.itinerariesOnly,true);assert.equal(m.can(identity,'export'),false);
- for(const api of [m.payrollApi,m.mailApi,m.exportApi,m.calendarApi])assert.equal((await call(api,null,{cookie,get:true})).status,403);
+ for(const api of [m.payrollApi,m.mailApi,m.exportApi])assert.equal((await call(api,null,{cookie,get:true})).status,403);
  for(const api of [m.payrollApi,m.mailApi,m.mobileApi,m.calendarApi])assert.equal((await call(api,{action:'anything'},{cookie})).status,403);
+ const agenda=await call(m.calendarApi,null,{cookie,get:true});assert.equal(agenda.status,200);assert.equal(agenda.body.canEditEvents,false);
  const workspace=await call(m.mobileApi,null,{cookie,get:true,path:'/api/mobile/payroll?workspace=1'});assert.equal(workspace.status,200);assert.deepEqual(workspace.body.data.employees,[]);assert.deepEqual(workspace.body.data.periods,[]);assert.equal(workspace.body.user.itinerariesOnly,true);assert.deepEqual(workspace.body.employees,[]);
  assert.equal((await call(m.mobileApi,null,{cookie,get:true,path:'/api/mobile/payroll?period=known'})).status,403);
  let pub=(await call(m.usersApi,null,{cookie:ownerCookie,get:true})).body.users.find(u=>u.id===row.id);assert.equal(pub.itinerariesOnly,true);

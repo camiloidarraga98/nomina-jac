@@ -17,7 +17,7 @@ export async function GET(req:Request){
  // The native app requires a real account session. Never expose the development/legacy bootstrap.
  if(!user||user.legacy)return reply({error:'Inicia sesión con tu cuenta de nómina.'},401);
  const id=new URL(req.url).searchParams.get('period');
- if(user.itinerariesOnly){if(id!==null)return reply({error:'Tu cuenta solo puede consultar itinerarios.'},403);const data=itineraryWorkspace();return reply({...mobileOverview(data,0),user,...(new URL(req.url).searchParams.get('workspace')==='1'?{data}:{})});}
+ if(user.itinerariesOnly){if(id!==null)return reply({error:'Tu cuenta no tiene acceso a nómina.'},403);const data=itineraryWorkspace();return reply({...mobileOverview(data,0),user,...(new URL(req.url).searchParams.get('workspace')==='1'?{data}:{})});}
  if(id!==null&&(!id||id.length>80))return reply({error:'Selecciona una quincena válida.'},400);
  try{
   const {data,version}=await readPayroll();
@@ -36,7 +36,7 @@ export async function GET(req:Request){
 export async function POST(req:Request){
  const user=await payrollUser();
  if(!user||user.legacy)return reply({error:'Inicia sesión con tu cuenta de nómina.'},401);
- if(user.itinerariesOnly)return reply({error:'Tu cuenta solo puede consultar itinerarios.'},403);
+ if(user.itinerariesOnly)return reply({error:'Tu cuenta no tiene acceso a nómina.'},403);
  if(req.headers.get('origin')!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);
  try{
   if(Number(req.headers.get('content-length')||0)>8_000_000)return reply({error:'La solicitud es demasiado grande.'},413);

@@ -397,3 +397,24 @@ test('El destinatario se revalida dentro de la transacción de borrado del pase'
  await assert.rejects(()=>m.deleteBoardingPass(actor(owner),input.id,input.id,async()=>{sql.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=?').run(input.id);return true;}),e=>e.status===404);
  assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(input.id));assert.equal(sql.prepare('SELECT id FROM jac_deleted_itineraries WHERE id=?').get(input.id),undefined);assert.equal(sql.prepare('SELECT state FROM jac_notice_attachments WHERE notice_id=?').get(input.id).state,'ready');
 });
+
+
+test('Alertas: Jhon y Alex pendientes aparecen; recepción privada y push solo tras activar acceso',async()=>{
+ const jhon=crypto.randomUUID(),alex=crypto.randomUUID(),inactive=crypto.randomUUID();
+ for(const [id,name,limited,active] of [[jhon,'Jhon pendiente',0,1],[alex,'Alex pendiente',1,1],[inactive,'Inactivo',0,0]])sql.prepare('INSERT INTO payroll_users(id,username,email,name,itineraries_only,active,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?,?)').run(id,id,id+'@example.invalid',name,limited,active,'[]','fixture','fixture');
+ const feed=await api(ownerToken);for(const id of [jhon,alex])assert.deepEqual(feed.body.users.find(u=>u.id===id),{id,name:id===jhon?'Jhon pendiente':'Alex pendiente',ready:false});assert.ok(!feed.body.users.some(u=>u.id===inactive));assert.deepEqual((await api(luisaToken)).body.users,[]);
+ const legacy=alert([jhon]);assert.equal((await api(ownerToken,{action:'alert',alert:legacy})).status,200);
+ const manual={id:crypto.randomUUID(),kind:'alert',title:'Alerta pendiente privada',body:'Solo destinatarios',recipients:[jhon,alex],files:[{filename:'Adjunto.pdf',data:Buffer.from(pdfBytes).toString('base64')}]};
+ assert.equal(await m.publishManualNotice(actor(owner),manual,async()=>true),manual.id);assert.equal(sql.prepare('SELECT count(*) n FROM jac_push_deliveries WHERE notice_id=?').get(manual.id).n,0);
+ await assert.rejects(()=>m.publishManualNotice(actor(owner),{...manual,id:crypto.randomUUID(),recipients:[inactive]},async()=>true),e=>e.status===409);
+ for(const id of [jhon,alex])sql.prepare('UPDATE payroll_users SET password_hash=? WHERE id=?').run(m.hashPassword('fixture-password',globalThis.__noticesEnv.PAYROLL_AUTH_KEY),id);
+ const allNotices=async token=>{let cursor='',items=[];do{const list=await api(token,undefined,cursor?'?cursor='+encodeURIComponent(cursor):'');assert.equal(list.status,200);assert.deepEqual(list.body.users,[]);items.push(...list.body.notices);cursor=list.body.nextCursor;}while(cursor);return items;};
+ const jhonToken=await m.makeSession(jhon),alexToken=await m.makeSession(alex);for(const token of [jhonToken,alexToken])assert.ok((await allNotices(token)).some(n=>n.id===manual.id));
+ assert.ok((await allNotices(jhonToken)).some(n=>n.id===legacy.id));assert.equal((await api(alexToken,undefined,'?item='+legacy.id)).status,404);
+ const selected=await api(alexToken,undefined,'?item='+manual.id);assert.equal(selected.status,200);const file=selected.body.item.attachments[0];assert.ok(await m.noticeAttachment({...actor(alex),itinerariesOnly:true},manual.id,file.id));assert.equal((await api(paulaToken,undefined,'?item='+manual.id)).status,404);
+ assert.equal((await api(alexToken,{action:'alert',alert:alert([alex])})).status,403);
+ const device=crypto.randomUUID();assert.equal((await api(alexToken,{action:'register',id:device,platform:'ios',token:'ef'.repeat(32),environment:'sandbox'})).status,200);
+ calls=[];const current=alert([alex]);assert.equal((await api(ownerToken,{action:'alert',alert:current})).status,200);assert.equal(calls.filter(c=>c.url.hostname==='api.sandbox.push.apple.com').length,1);
+ sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(alex);assert.equal((await api(alexToken,undefined,'?item='+manual.id)).status,401);
+ sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(jhon);
+});

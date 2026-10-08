@@ -8,7 +8,7 @@ struct ManagementView: View {
             List {
                 OperationStatusSection()
                 Section("Avisos") {
-                    if user.itinerariesOnly != true { NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts") }
+                    NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts")
                     NavigationLink { NotificationSettingsView() } label: { Label("Notificaciones", systemImage: "bell.badge") }.accessibilityIdentifier("management.notifications")
                 }
                 if user.itinerariesOnly != true { Section("Administración") {

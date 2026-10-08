@@ -89,7 +89,6 @@ final class PayrollStore: ObservableObject {
     }
     @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
         guard result.version >= (workspace?.version ?? 0) else { return false }
-        if result.user.itinerariesOnly == true { forgetAgenda() }
         if let savedAgenda, savedAgenda.user.id != result.user.id { forgetAgenda() }
         workspace = result; overview = result.overview; return true
     }

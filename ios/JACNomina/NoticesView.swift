@@ -32,7 +32,7 @@ struct NoticeFeed: Decodable {
     var boardingUsers: [NoticeUser]? = nil; var today: String? = nil
 }
 struct NoticeSettings: Decodable { let version: Int; let slackConnected: Bool; let appleConfigured: Bool; let webPublicKey: String }
-struct NoticeUser: Decodable, Identifiable { let id: String; let name: String }
+struct NoticeUser: Decodable, Identifiable { let id: String; let name: String; var ready: Bool? = nil }
 
 struct NoticesView: View {
     @EnvironmentObject private var store: PayrollStore
@@ -238,7 +238,7 @@ struct NoticeComposer: View {
                         if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar PDF ficticio") { let data = UIGraphicsPDFRenderer(bounds: CGRect(x:0,y:0,width:200,height:200)).pdfData { context in context.beginPage(); ("PRUEBA JAC" as NSString).draw(at: CGPoint(x:20,y:20), withAttributes:nil) }; add([NoticeUpload(filename:"Prueba.pdf",data:data)]) }.accessibilityIdentifier("notices.editor.fixture") }
                         #endif
                     }
-                    if kind == "alert" { Section("Destinatarios") { ForEach(users) { user in Toggle(user.name, isOn: Binding(get: { recipients.contains(user.id) }, set: { value in if value { recipients.insert(user.id) } else { recipients.remove(user.id) } })).accessibilityIdentifier("notices.recipient.\(user.id)") } } }
+                    if kind == "alert" { Section("Destinatarios") { ForEach(users) { user in Toggle(user.name + (user.ready == false ? " · Pendiente de activación" : ""), isOn: Binding(get: { recipients.contains(user.id) }, set: { value in if value { recipients.insert(user.id) } else { recipients.remove(user.id) } })).accessibilityIdentifier("notices.recipient.\(user.id)") } } }
                     else if kind == "boarding_pass" { Section("Pase de abordar privado") { Picker("Persona",selection:$passOwner) { Text("Selecciona una persona").tag(""); ForEach(boardingUsers) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("boarding.recipient"); DatePicker("Fecha del pase",selection:$travelDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("boarding.date"); Text("Solo la persona elegida podrá abrirlo. Usa Camilo 16 de octubre Pereira-Bogota; puedes incluir el año. El pasajero debe corresponder a la persona elegida. Sin año se usa la fecha más cercana; revisa la fecha antes de publicar.").font(.footnote).foregroundStyle(.secondary) } }
                     else { Section { Text("Se publicará directamente en Itinerarios para todo el equipo activo y enviará el aviso de itinerario nuevo.") } }
                 }.disabled(busy || attempted || importing)

@@ -1,3 +1,5 @@
+Actualización 0.9.4 (14): Alex dispone de Agenda de consulta y Alertas, sin nómina. Crear alerta incluye cuentas activas pendientes de activación, con su estado visible. Trabajar sobre este mismo proyecto y actualizar con Run.
+
 ## Borrado con gestos — iPhone 0.9.3 (13)
 
 En las listas ya no aparece un botón grande de eliminación. Camilo puede deslizar un pase o itinerario hacia la izquierda y pulsar Eliminar, o mantenerlo pulsado y elegir Eliminar. Siempre se pide confirmación; Cancelar conserva el documento. Para un pase solo se pregunta «¿Estás seguro de que quieres eliminar este pase de abordar?». Se conservan los permisos y la apertura directa del PDF. Instala con Run desde este mismo proyecto.
@@ -172,3 +174,5 @@ Usa este mismo proyecto de Xcode. Itinerarios → Pases de abordar muestra los p
 Actualización del mismo proyecto: Pases de abordar muestra hoy y mañana; prioriza mañana si hoy está vacío. Cada adjunto abre directamente el PDF/imagen y muestra pasajero y ruta del nombre `Camilo 16 de octubre Pereira-Bogota.pdf`. Conserva sesión, privacidad y documentos temporales protegidos. Instala con Run en tu proyecto actual; el ZIP es respaldo opcional.
 
 Verificación 0.9.3 (13): simulador local ios-gestures37-native-style.xcresult TEST SUCCEEDED (gestos, confirmación breve, PDF/historial y lector); itinerario manual con adjunto también pasó. Release sin firma correcto. Web v37 publicada en el Site existente. Instalar con Run desde este mismo proyecto.
+
+0.9.4 (14) verificada en simulador: 37 unitarias y cinco pruebas de interfaz distintas pasadas; una comprobación física omitida explícitamente. Release sin firma correcto. Web v38 publicada; ver docs/PROJECT_CONTEXT.md.

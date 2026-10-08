@@ -292,3 +292,13 @@ test('Camilo, Luisa y Paula editan Agenda con sesión activa; configuración con
  }
  assert.equal((await api(readerToken)).body.canEditEvents,false);assert.deepEqual(gmailRow(),gmail);
 });
+
+
+test('Alex sin nómina consulta Agenda; no puede editar eventos ni configurar la conexión',async()=>{
+ const id=crypto.randomUUID(),stamp=new Date().toISOString();
+ sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,itineraries_only,permissions,created_at,updated_at) VALUES (?,?,?,?,?,1,?,?,?)').run(id,'alex-no-payroll','alexzuluagaazp@gmail.com','Alex ficticio',m.hashPassword('fixture',globalThis.__calendarEnv.PAYROLL_AUTH_KEY),'[]',stamp,stamp);
+ const token=await m.makeSession(id),before=writes,read=await api(token);assert.equal(read.status,200);assert.ok(read.body.events.length);assert.equal(read.body.canEditEvents,false);
+ for(const action of ['connect','select','disconnect','createEvent','updateEvent'])assert.equal((await api(token,{action,revision:read.body.connection.revision,event:draft,requestId:crypto.randomUUID()})).status,403);
+ assert.equal((await api(token,{query:'&action=calendars'})).status,403);assert.equal(writes,before);
+ sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(id);assert.equal((await api(token)).status,401);
+});

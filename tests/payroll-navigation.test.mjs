@@ -36,7 +36,7 @@ test('todas las rutas de nómina conservan cabeceras de privacidad del Worker',a
 });
 test('cuenta de solo itinerarios nunca renderiza ni consulta datos de nómina',async()=>{
  globalThis.__navUser={...owner,isOwner:false,itinerariesOnly:true};globalThis.__navReads=0;
- for(const view of ['quincena','personal','archivo','correos','reglas','usuarios','agenda'])await assert.rejects(()=>m.Page({route:{view,tab:'shows'}}),/REDIRECT:\/itinerarios/);
- for(const view of ['itinerarios','cuenta','notificaciones','configuracion']){const page=await m.Page({route:{view,tab:'shows'}});assert.deepEqual(page.props.initial.data.employees,[]);assert.deepEqual(page.props.initial.data.periods,[]);}
+ for(const view of ['quincena','personal','archivo','correos','reglas','usuarios'])await assert.rejects(()=>m.Page({route:{view,tab:'shows'}}),/REDIRECT:\/itinerarios/);
+ for(const view of ['itinerarios','agenda','alertas','cuenta','notificaciones','configuracion']){const page=await m.Page({route:{view,tab:'shows'}});assert.deepEqual(page.props.initial.data.employees,[]);assert.deepEqual(page.props.initial.data.periods,[]);}
  assert.equal(globalThis.__navReads,0);
 });
