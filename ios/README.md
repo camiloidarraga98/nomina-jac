@@ -1,3 +1,9 @@
+## Agenda más directa — iPhone 0.10.2 (18)
+
+Agenda comienza con el selector Mes/Próximos y el calendario. Se retiraron el bloque «Actualizando agenda… / Última descarga», las fechas de sincronización y el encabezado con el nombre del calendario. La copia sin conexión, la actualización automática/al regresar a la app, el gesto de actualizar, el botón de recarga y todos los permisos de consulta/edición se conservan. Los avisos de falta de conexión o de guardado aparecen debajo del contenido. Conexión continúa accesible desde su icono autorizado y cuando aún no se ha preparado.
+
+Actualiza este mismo proyecto con Run, conservando la firma personal, `co.jacmusic.nomina` y push suspendido. No se cambian API ni la web.
+
 ## Sesión opcional sin caducidad — iPhone 0.10.1 (17)
 
 En el acceso puedes marcar **Mantener la sesión iniciada**. Solo esa nueva sesión permanece sin vencimiento por tiempo, incluso después de cerrar/reabrir la app o reiniciar el iPhone; se conserva en el Llavero, sin guardar la contraseña. Sin marcarla, sigue el vencimiento habitual de 12 horas. Las sesiones ya abiertas conservan su modalidad: cierra sesión y entra una vez marcando la opción para activarla.

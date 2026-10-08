@@ -180,14 +180,17 @@ final class LaunchTests: XCTestCase {
     @MainActor func testAgendaSurvivesOfflineRelaunchAndDisplaysCacheDuringInternetRefresh() {
         let app = fixture(["--uitest-agenda-cache", "--uitest-reset-agenda"])
         app.tabBars.buttons["Agenda"].tap()
-        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["agenda.create"].waitForExistence(timeout: 10))
         app.terminate()
         app.launchArguments = ["--uitest-payroll", "--uitest-agenda-cache", "--uitest-offline"]
         app.launch()
         XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.descendants(matching: .any)["agenda.offline"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 5))
+        let offline = app.descendants(matching: .any)["agenda.offline"]
+        for _ in 0..<3 { if offline.exists { break }; app.swipeUp() }
+        XCTAssertTrue(offline.waitForExistence(timeout: 10))
+        for _ in 0..<3 { if app.buttons["Mes siguiente"].isHittable { break }; app.swipeDown() }
         XCTAssertFalse(app.buttons["agenda.create"].exists, "Sin conexión la copia es de consulta")
         tap(app, "Mes siguiente")
         XCTAssertTrue(app.staticTexts["Mes sin descargar"].waitForExistence(timeout: 10))
@@ -199,7 +202,7 @@ final class LaunchTests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--uitest-payroll", "--uitest-agenda-cache", "--uitest-slow-agenda"]
         app.launch()
-        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.descendants(matching: .any)["agenda.updating"].waitForExistence(timeout: 5), "La copia debe verse mientras la red sigue pendiente")
         attachScreen(app, name: "agenda-descargada-mientras-actualiza")
         for _ in 0..<3 { if app.staticTexts["Concierto actualizado"].exists { break }; app.swipeUp() }
@@ -233,13 +236,18 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Gestión"].tap(); tap(app, "management.employees"); XCTAssertFalse(app.buttons["employee.create"].exists)
         app.navigationBars.buttons.firstMatch.tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
-        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertTrue(app.buttons["agenda.create"].exists)
+        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertTrue(app.buttons["agenda.create"].exists)
         attachScreen(app, name: "permisos-solo-consulta")
     }
     @MainActor func testAgendaMonthUpcomingDetailsAndAccountRemainAccessible() {
         let app = fixture()
         app.tabBars.buttons["Agenda"].tap()
-        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["Mes siguiente"].isHittable, "El calendario aparece al abrir Agenda, sin bloques previos.")
+        XCTAssertFalse(app.staticTexts["Agenda simulada"].exists)
+        XCTAssertFalse(app.staticTexts["Actualizando agenda…"].exists)
+        XCTAssertFalse(app.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Última descarga:")).firstMatch.exists)
+        attachScreen(app, name: "agenda-calendario-primero")
         tap(app, "agenda.event.fixture-concert")
         XCTAssertTrue(app.staticTexts["Teatro simulado"].waitForExistence(timeout: 10))
         attachScreen(app, name: "agenda-detalle-concierto"); tap(app, "Listo")
@@ -253,7 +261,7 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testCreateAndEditAgendaEventKeepNativeFormsAndSharedFeed() {
         let app = fixture(); app.tabBars.buttons["Agenda"].tap()
-        XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15))
         tap(app, "agenda.create"); fill(app, "agenda.editor.title", "Evento móvil de prueba"); fill(app, "agenda.editor.location", "Lugar de prueba")
         attachScreen(app, name: "agenda-crear-evento"); tap(app, "agenda.editor.save")
         XCTAssertTrue(app.staticTexts["Evento creado en Google Calendar."].waitForExistence(timeout: 15))
@@ -413,7 +421,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.tabBars.buttons["Itinerarios"].waitForExistence(timeout:15)); XCTAssertFalse(app.tabBars.buttons["Quincena"].exists); XCTAssertTrue(app.tabBars.buttons["Agenda"].exists)
         app.tabBars.buttons["Gestión"].tap(); XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["management.archive"].exists); XCTAssertTrue(app.buttons["notices.alerts"].exists)
         tap(app,"notices.alerts"); XCTAssertTrue(app.navigationBars["Alertas"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["notices.create"].exists)
-        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.staticTexts["Agenda simulada"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["agenda.create"].exists); XCTAssertFalse(app.buttons["agenda.configure"].exists); attachScreen(app,name:"alex-agenda-sin-nomina")
+        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["agenda.create"].exists); XCTAssertFalse(app.buttons["agenda.configure"].exists); attachScreen(app,name:"alex-agenda-sin-nomina")
     }
 
     @MainActor func testManualPrivateBoardingPassWithRecipientAndAttachment() {

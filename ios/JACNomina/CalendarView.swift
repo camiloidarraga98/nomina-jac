@@ -32,15 +32,6 @@ struct CalendarView: View {
         let byDay = visible.map { CalendarClock.eventsByDay($0.events, days: $0.days) } ?? [:]
         return NavigationStack {
             List {
-                if visible != nil {
-                    Section {
-                        if loading { Label("Actualizando agenda…", systemImage: "arrow.triangle.2.circlepath").font(.footnote).accessibilityIdentifier("agenda.updating") }
-                        else if let offlineMessage { Label(offlineMessage, systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
-                        else if !live { Text("Mostrando la última agenda descargada.").font(.footnote).accessibilityIdentifier("agenda.cached") }
-                        if let saved = store.cachedAgenda(month: month, userID: user.id) { Text("Última descarga: " + CalendarClock.dayLabel(CalendarClock.day(saved.receivedAt)) + ", " + CalendarClock.time(saved.receivedAt)).font(.caption).foregroundStyle(.secondary) }
-                        if let warning = store.agendaStorageWarning { Text(warning).font(.footnote).foregroundStyle(.secondary) }
-                    }
-                }
                 if let notice { Section { Label(notice, systemImage: "checkmark.circle").foregroundStyle(JACTheme.action) } }
                 if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
                 if visible == nil, let offlineMessage {
@@ -49,18 +40,12 @@ struct CalendarView: View {
                         if store.savedAgenda != nil { Button("Volver a la agenda descargada") { month = store.preferredAgendaMonth; day = month == CalendarClock.month(Date()) ? CalendarClock.day(Date()) : month + "-01" } }
                     }
                 }
-                if let connection = visible?.connection {
+                if let connection = visible?.connection, !connection.connected || connection.selected == nil {
                     Section {
-                        VStack(alignment: .leading, spacing: 5) {
-                            Text(connection.selected?.name ?? "Agenda de Jhon Alex").font(.headline)
-                            Text(connection.connected ? "Google Calendar · Hora de Colombia" : "Conecta Google y selecciona el calendario de Jhon Alex.").font(.caption).foregroundStyle(.secondary)
-                        }
-                        if live && (!connection.connected || connection.selected == nil) {
+                        Text("Conecta Google y selecciona el calendario de Jhon Alex.").font(.footnote).foregroundStyle(.secondary)
+                        if live {
                             if user.isOwner { Button("Preparar conexión") { settings = true }.accessibilityIdentifier("agenda.configure") }
                             else { Text("Camilo prepara la agenda compartida para el equipo.").font(.footnote).foregroundStyle(.secondary) }
-                        }
-                        if live && user.isOwner && connection.connected && visible?.canEditEvents != true {
-                            Text(connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary)
                         }
                     }
                 }
@@ -102,7 +87,15 @@ struct CalendarView: View {
                             ForEach(visible.upcoming) { item in Button { event = item } label: { AgendaEventRow(event: item, showsDay: true) }.buttonStyle(.plain).accessibilityIdentifier("agenda.upcoming.\(item.id)") }
                         }
                     }
-                    Section { Text("Actualizado " + CalendarClock.time(CalendarClock.instant(visible.updatedAt) ?? Date())).font(.caption).foregroundStyle(.secondary) }
+                    if let offlineMessage {
+                        Section { Label(offlineMessage, systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
+                    }
+                    if let warning = store.agendaStorageWarning {
+                        Section { Text(warning).font(.footnote).foregroundStyle(.secondary) }
+                    }
+                    if live && user.isOwner && visible.canEditEvents != true {
+                        Section { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
+                    }
                 }
             }.jacSurface().navigationTitle("Agenda").refreshable { await refresh() }
                 .toolbar {
@@ -110,7 +103,7 @@ struct CalendarView: View {
                         if live, let visible, visible.canEditEvents == true {
                             Button { editor = AgendaEditorSession(event: nil, day: day, revision: visible.connection.revision) } label: { Image(systemName: "plus") }.accessibilityLabel("Crear evento").accessibilityIdentifier("agenda.create").disabled(loading)
                         }
-                        Button { Task { await refresh() } } label: { if loading { ProgressView() } else { Image(systemName: "arrow.clockwise") } }.accessibilityLabel("Actualizar agenda").disabled(loading)
+                        Button { Task { await refresh() } } label: { if loading { ProgressView() } else { Image(systemName: "arrow.clockwise") } }.accessibilityLabel("Actualizar agenda").accessibilityIdentifier(loading ? "agenda.updating" : "agenda.refresh").disabled(loading)
                         if user.isOwner { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) }
                     }
                 }
