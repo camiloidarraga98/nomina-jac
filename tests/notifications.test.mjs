@@ -357,3 +357,43 @@ test('Pases con ruta: pasajero debe corresponder al canal o destinatario, sin re
  fileMeta={...fileMeta,name:'Camilo 16 de octubre 2026 Pereira-Bogota.pdf',channels:['C0C8FAPHTCG']};await m.queueSlackFiles(['FBOARDROUTEBAD'],'C0C8FAPHTCG');const beforeSlack=writes;await m.importSlackFiles();assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get('FBOARDROUTEBAD').status,'failed');assert.equal(writes,beforeSlack);assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:FBOARDROUTEBAD'),undefined);
  fileMeta={...fileMeta,name:'Jhon Alex 16 de octubre 2026 Pereira-Bogota.pdf'};await m.queueSlackFiles(['FBOARDROUTEGOOD'],'C0C8FAPHTCG');await m.importSlackFiles();const saved=sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:FBOARDROUTEGOOD');assert.ok(saved);assert.deepEqual(sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(saved.id).map(r=>r.user_id),[boardJhon]);
 });
+
+test('Borrado de pases: propietario, destinatario privado, confirmación, origen y sesión vigentes',async()=>{
+ const input={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase ficticio para borrar',body:'',travelDate:'2026-10-16',recipients:[owner],files:[upload()]};
+ await m.publishManualNotice(actor(owner),input,async()=>true);const remove={action:'deleteBoardingPass',id:input.id,confirmation:input.id};
+ assert.equal((await api('',remove)).status,401);assert.equal((await api(luisaToken,remove)).status,403);assert.equal((await api(ownerToken,{...remove,confirmation:'bad'})).status,400);
+ await assert.rejects(()=>m.deleteBoardingPass(actor(owner),input.id,input.id,async()=>false),e=>e.status===403);
+ assert.equal((await api(ownerToken,{...remove,id:privatePass.id,confirmation:privatePass.id})).status,404);assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(privatePass.id));
+ assert.equal((await api(ownerToken,{action:'deleteItinerary',id:input.id,confirmation:input.id})).status,400);
+ globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+ownerToken});assert.equal((await m.api.POST(new Request(base+'/api/notices',{method:'POST',headers:{origin:'https://untrusted.example.invalid'},body:JSON.stringify(remove)}))).status,403);
+ assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(input.id));
+});
+test('Borrar pase manual retira todos sus archivos y entregas, conserva otros pases y bloquea recreación',async()=>{
+ const input={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase con dos adjuntos',body:'',travelDate:'2026-10-16',recipients:[owner],files:[upload('Uno.pdf'),upload('Dos.pdf')]};
+ await m.publishManualNotice(actor(owner),input,async()=>true);const item=await m.noticeItem(actor(owner),input.id);assert.equal(item.attachments.length,2);const keys=sql.prepare('SELECT file_key FROM jac_notice_attachments WHERE notice_id=?').all(input.id).map(r=>r.file_key);
+ const remove={action:'deleteBoardingPass',id:input.id,confirmation:input.id};calls=[];assert.equal((await api(ownerToken,remove)).status,200);assert.equal((await api(ownerToken,remove)).status,200);
+ for(const table of ['jac_notices','jac_notice_recipients','jac_push_deliveries'])assert.equal(sql.prepare('SELECT count(*) n FROM '+table+' WHERE '+(table==='jac_notices'?'id':'notice_id')+'=?').get(input.id).n,0);
+ for(const file of item.attachments)await assert.rejects(()=>m.noticeAttachment(actor(owner),item.id,file.id),e=>e.status===404);
+ assert.ok(keys.every(k=>!bucket.has(k)));assert.ok(!(await m.boardingFeed(actor(owner))).notices.some(n=>n.id===item.id));await assert.rejects(()=>m.publishManualNotice(actor(owner),input,async()=>true),e=>e.status===410);
+ assert.ok(await m.noticeItem(actor(boardJhon),privatePass.id));assert.equal(calls.length,0);
+});
+test('Borrado de pase revierte al fallar D1 y conserva limpieza pendiente si R2 falla',async()=>{
+ const input={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase para fallos simulados',body:'',travelDate:'2020-01-01',recipients:[owner],files:[upload()]};await m.publishManualNotice(actor(owner),input,async()=>true);const item=await m.noticeItem(actor(owner),input.id),key=sql.prepare('SELECT file_key FROM jac_notice_attachments WHERE notice_id=?').get(input.id).file_key;
+ sql.exec("CREATE TRIGGER fixture_board_delete_failure BEFORE DELETE ON jac_notice_recipients WHEN OLD.notice_id='"+input.id+"' BEGIN SELECT RAISE(ABORT,'simulated failure'); END;");
+ try{assert.equal((await api(ownerToken,{action:'deleteBoardingPass',id:input.id,confirmation:input.id})).status,502);assert.ok(await m.noticeAttachment(actor(owner),input.id,item.attachments[0].id));assert.equal(sql.prepare('SELECT id FROM jac_deleted_itineraries WHERE id=?').get(input.id),undefined);}finally{sql.exec('DROP TRIGGER fixture_board_delete_failure');}
+ beforeDelete=async k=>{if(k===key)throw Error('simulated R2 failure');};try{await m.deleteBoardingPass(actor(owner),input.id,input.id,async()=>true);assert.ok(bucket.has(key));await assert.rejects(()=>m.noticeAttachment(actor(owner),input.id,item.attachments[0].id),e=>e.status===404);assert.ok(!(await m.boardingFeed(actor(owner),true)).notices.some(n=>n.id===input.id));}finally{beforeDelete=undefined;}
+ await m.purgeNoticeAttachments();assert.equal(bucket.has(key),false);
+});
+test('Pase Slack eliminado no revive por replay ni importación concurrente; limpia copias tardías',async()=>{
+ const id='FBOARDDELETE36',channel='C0C7QKT2FJQ';fileMeta={...fileMeta,name:'Camilo 16 de octubre 2026 Pereira-Bogota.pdf',channels:[channel]};await m.queueSlackFiles([id],channel);await m.importSlackFiles();const item=sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:'+id);assert.ok(item);
+ sql.prepare("UPDATE jac_slack_files SET status='pending' WHERE id=?").run(id);
+ beforeFirst=async q=>{if(q.text.includes("WHERE source=? AND kind='boarding_pass'")&&q.args[0]==='slack:'+id){beforeFirst=undefined;await m.deleteBoardingPass(actor(owner),item.id,item.id,async()=>true);}};
+ try{await m.importSlackFiles();}finally{beforeFirst=undefined;}
+ assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:'+id),undefined);assert.equal(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='deleted' AND cleaned=0").get(),undefined);
+ const before=writes;calls=[];await m.queueSlackFiles([id],channel);sql.prepare("UPDATE jac_slack_files SET status='pending' WHERE id=?").run(id);await m.importSlackFiles();assert.equal(writes,before);assert.equal(calls.length,0);assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get(id).status,'deleted');
+});
+test('El destinatario se revalida dentro de la transacción de borrado del pase',async()=>{
+ const input={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase con destinatario revocado',body:'',travelDate:'2026-10-16',recipients:[owner],files:[upload()]};await m.publishManualNotice(actor(owner),input,async()=>true);
+ await assert.rejects(()=>m.deleteBoardingPass(actor(owner),input.id,input.id,async()=>{sql.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=?').run(input.id);return true;}),e=>e.status===404);
+ assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(input.id));assert.equal(sql.prepare('SELECT id FROM jac_deleted_itineraries WHERE id=?').get(input.id),undefined);assert.equal(sql.prepare('SELECT state FROM jac_notice_attachments WHERE notice_id=?').get(input.id).state,'ready');
+});

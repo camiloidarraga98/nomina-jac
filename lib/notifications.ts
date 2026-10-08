@@ -72,23 +72,26 @@ export async function purgeDeletedItineraries(id?:string){
  const db=database(),rows=(await db.prepare('SELECT id,file_key,cleanup_version FROM jac_deleted_itineraries WHERE file_deleted=0'+(id?' AND id=?':'')+' LIMIT 20').bind(...(id?[id]:[])).all<{id:string;file_key:string;cleanup_version:number}>()).results;
  for(const row of rows){try{if(row.file_key)await env.BUCKET.delete(row.file_key);await db.prepare('UPDATE jac_deleted_itineraries SET file_deleted=1 WHERE id=? AND cleanup_version=?').bind(row.id,row.cleanup_version).run();}catch{/* Retry only the private PDF cleanup on the next refresh. */}}
 }
-export async function deleteItinerary(u:AccessUser,id:unknown,confirmation:unknown,authorize:()=>Promise<boolean>){
- if(!noticeOwner(u))throw new NoticeFailure('Solo Camilo puede eliminar itinerarios.',403);
- if(!uuid.safeParse(id).success||confirmation!==id)throw new NoticeFailure('Confirma el itinerario que deseas eliminar.');
+async function deleteTravelNotice(u:AccessUser,id:unknown,confirmation:unknown,authorize:()=>Promise<boolean>,kind:"itinerary"|"boarding_pass"){
+ if(!noticeOwner(u))throw new NoticeFailure('Solo Camilo puede eliminar itinerarios y sus pases.',403);
+ if(!uuid.safeParse(id).success||confirmation!==id)throw new NoticeFailure('Confirma el documento que deseas eliminar.');
  const target=id as string,db=database(),item=await db.prepare('SELECT kind FROM jac_notices WHERE id=?').bind(target).first<{kind:string}>();
- if(item&&item.kind!=='itinerary')throw new NoticeFailure('Selecciona un itinerario para eliminar.');
+ if(item&&item.kind!==kind)throw new NoticeFailure(kind==='boarding_pass'?'Selecciona un pase de abordar para eliminar.':'Selecciona un itinerario para eliminar.');
+ if(item&&kind==='boarding_pass')await allowedNotice(u,target);
  if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
  await db.batch([
-  db.prepare("INSERT OR IGNORE INTO jac_deleted_itineraries (id,source,file_key,deleted_at) SELECT id,source,file_key,? FROM jac_notices WHERE id=? AND kind='itinerary'").bind(now(),target),
+  db.prepare("INSERT OR IGNORE INTO jac_deleted_itineraries (id,source,file_key,deleted_at) SELECT id,source,file_key,? FROM jac_notices WHERE id=? AND kind=? AND (?='itinerary' OR EXISTS(SELECT 1 FROM jac_notice_recipients WHERE notice_id=? AND user_id=?))").bind(now(),target,kind,kind,target,u.id),
   db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)").bind(target,target),
   db.prepare('DELETE FROM jac_push_deliveries WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)').bind(target,target),
   db.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)').bind(target,target),
-  db.prepare("DELETE FROM jac_notices WHERE id=? AND kind='itinerary' AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)").bind(target,target),
+  db.prepare("DELETE FROM jac_notices WHERE id=? AND kind=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)").bind(target,kind,target),
   db.prepare("UPDATE jac_slack_files SET status='deleted',error='' WHERE 'slack:'||id=(SELECT source FROM jac_deleted_itineraries WHERE id=?)").bind(target),
  ]);
  if(!await db.prepare('SELECT id FROM jac_deleted_itineraries WHERE id=?').bind(target).first())throw new NoticeFailure('El itinerario no está disponible.',404);
  await purgeDeletedItineraries(target);await purgeNoticeAttachments();
 }
+export async function deleteItinerary(u:AccessUser,id:unknown,confirmation:unknown,authorize:()=>Promise<boolean>){return deleteTravelNotice(u,id,confirmation,authorize,'itinerary');}
+export async function deleteBoardingPass(u:AccessUser,id:unknown,confirmation:unknown,authorize:()=>Promise<boolean>){return deleteTravelNotice(u,id,confirmation,authorize,'boarding_pass');}
 export async function configureNotices(kind:string,input:Record<string,unknown>,authorize:()=>Promise<boolean>){
  const c=await noticeConfig();if(input.version!==c.version)throw new NoticeFailure('La configuración cambió. Actualiza antes de guardar.',409);const keys=await pushCredentials(c);
  if(kind==='web')keys.web??=await createWebKeys();
@@ -176,8 +179,8 @@ export async function importSlackFiles(){
  await Promise.all(rows.map(async ({id,channel_id,recipient_id,mapping_version,created_at})=>{
   const claimed=await database().prepare("UPDATE jac_slack_files SET status='processing',started_at=? WHERE id=? AND (status='pending' OR (status='processing' AND started_at<?))").bind(now(),id,new Date(Date.now()-60000).toISOString()).run();if(claimed.meta.changes!==1)return;
   try{
-   if(channel_id!==ITINERARY_CHANNEL){await importBoardingSlackFile({id,channel_id,recipient_id,mapping_version,created_at},slack.token);return;}
    if(await database().prepare('SELECT id FROM jac_deleted_itineraries WHERE source=?').bind('slack:'+id).first()){await database().prepare("UPDATE jac_slack_files SET status='deleted',error='' WHERE id=?").bind(id).run();return;}
+   if(channel_id!==ITINERARY_CHANNEL){await importBoardingSlackFile({id,channel_id,recipient_id,mapping_version,created_at},slack.token);return;}
    const exists=await database().prepare('SELECT id FROM jac_notices WHERE source=?').bind('slack:'+id).first<{id:string}>();
    if(exists){await queuePush(exists.id);await database().prepare("UPDATE jac_slack_files SET status='ready',error='' WHERE id=? AND status<>'deleted'").bind(id).run();return;}
    const info=await slackGet('files.info',slack.token,{file:id}),f=info.file as {id:string;mimetype:string;size:number;name:string;url_private_download:string;channels?:string[];shares?:{public?:Record<string,unknown>}};
@@ -261,7 +264,7 @@ async function importBoardingSlackFile(row:{id:string;channel_id:string;recipien
  const bindings=[channel_id,recipient_id,mapping_version];
  if(!await db.prepare('SELECT 1 WHERE '+gate).bind(...bindings).first())throw new NoticeFailure('La asignación del canal cambió. No se importó el pase.');
  const existing=await db.prepare('SELECT id FROM jac_notices WHERE source=? AND kind=\'boarding_pass\'').bind('slack:'+id).first<{id:string}>();
- if(existing){await queuePush(existing.id);await db.prepare("UPDATE jac_slack_files SET status='ready',error='' WHERE id=?").bind(id).run();return;}
+ if(existing){await queuePush(existing.id);await db.prepare("UPDATE jac_slack_files SET status='ready',error='' WHERE id=? AND status<>'deleted'").bind(id).run();return;}
  const info=await slackGet('files.info',token,{file:id}),file=info.file as {id:string;name:string;mimetype:string;size:number;url_private_download:string;channels?:string[];shares?:{public?:Record<string,unknown>}};
  if(!file||file.id!==id||!['application/pdf','image/png','image/jpeg'].includes(file.mimetype)||!((file.channels??[]).includes(channel_id)||file.shares?.public?.[channel_id]))throw new NoticeFailure('El pase debe ser un PDF, JPG o PNG compartido en su canal asignado.');
  const travelDate=boardingFilenameDate(file.name,new Date(row.created_at));if(!travelDate)throw new NoticeFailure('El pase no tiene una fecha válida en el nombre. Usa Nombre 10 de octubre 2026.pdf y vuelve a subirlo.');
@@ -275,11 +278,11 @@ async function importBoardingSlackFile(row:{id:string;channel_id:string;recipien
  try{
   await db.prepare('INSERT INTO jac_notice_attachments(id,file_key,filename,mime_type,size,expires_at) VALUES (?,?,?,?,?,?)').bind(attachment,key,filename,file.mimetype,size,new Date(Date.now()+3600000).toISOString()).run();await env.BUCKET.put(key,bytes,{httpMetadata:{contentType:file.mimetype}});
   const result=await db.batch([
-   db.prepare(`INSERT OR IGNORE INTO jac_notices(id,kind,title,source,created_at,travel_date) SELECT ?,'boarding_pass',?,?,?,? WHERE ${gate} AND EXISTS(SELECT 1 FROM jac_notice_attachments WHERE id=? AND state='staged')`).bind(nid,'Pase de abordar · '+travelDate,'slack:'+id,stamp,travelDate,...bindings,attachment),
+   db.prepare(`INSERT OR IGNORE INTO jac_notices(id,kind,title,source,created_at,travel_date) SELECT ?,'boarding_pass',?,?,?,? WHERE ${gate} AND EXISTS(SELECT 1 FROM jac_notice_attachments WHERE id=? AND state='staged') AND NOT EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE source=?)`).bind(nid,'Pase de abordar · '+travelDate,'slack:'+id,stamp,travelDate,...bindings,attachment,'slack:'+id),
    db.prepare("UPDATE jac_notice_attachments SET notice_id=?,state='ready' WHERE id=? AND state='staged' AND EXISTS(SELECT 1 FROM jac_notices WHERE id=?)").bind(nid,attachment,nid),
    db.prepare('INSERT OR IGNORE INTO jac_notice_recipients(id,notice_id,user_id) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=?)').bind(nid+'|'+recipient_id,nid,recipient_id,nid)
   ]);committed=result[0].meta.changes===1;
   const saved=await db.prepare("SELECT id FROM jac_notices WHERE source=? AND kind='boarding_pass'").bind('slack:'+id).first<{id:string}>();if(!saved)throw new NoticeFailure('La cuenta o asignación cambió. No se importó el pase.');
-  await queuePush(saved.id);await db.prepare("UPDATE jac_slack_files SET status='ready',error='' WHERE id=?").bind(id).run();
+  await queuePush(saved.id);await db.prepare("UPDATE jac_slack_files SET status='ready',error='' WHERE id=? AND status<>'deleted'").bind(id).run();
  }finally{if(!committed){await db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE id=? AND state<>'ready'").bind(attachment).run();await purgeNoticeAttachments();}}
 }

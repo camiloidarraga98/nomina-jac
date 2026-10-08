@@ -380,4 +380,21 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<8 { if item.exists && item.isHittable { break }; app.swipeUp() }; XCTAssertTrue(item.waitForExistence(timeout:15)); XCTAssertTrue(item.isHittable); item.tap(); XCTAssertFalse(app.buttons["notices.delete"].exists); XCTAssertFalse(app.buttons["notices.detail.close"].exists); XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); attachScreen(app,name:"pase-manual-pdf-privado")
     }
 
+    @MainActor func testDeletePrivatePassFromListConfirmsAndRefreshDoesNotRestoreIt() {
+        let app=fixture(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
+        let item=app.buttons["notices.item.boarding-fixture-0"]
+        XCTAssertTrue(item.waitForExistence(timeout:15)); tap(app,"notices.list.delete.boarding-fixture-0")
+        tap(app,"notices.list.delete.cancel"); XCTAssertTrue(item.exists)
+        tap(app,"notices.list.delete.boarding-fixture-0"); tap(app,"notices.list.delete.confirm")
+        XCTAssertTrue(app.staticTexts["Pase de abordar eliminado."].waitForExistence(timeout:15)); XCTAssertFalse(item.exists)
+        XCTAssertTrue(app.buttons["notices.item.boarding-fixture-1"].exists)
+        app.swipeDown(); XCTAssertFalse(item.exists); tap(app,"notices.item.boarding-fixture-1")
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); tap(app,"notices.pdf.close")
+        app.navigationBars.buttons.firstMatch.tap(); tap(app,"notices.list.delete.33333333-3333-4333-8333-333333333333")
+        tap(app,"notices.list.delete.cancel"); XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].exists)
+        tap(app,"notices.list.delete.33333333-3333-4333-8333-333333333333"); tap(app,"notices.list.delete.confirm")
+        XCTAssertTrue(app.staticTexts["Itinerario eliminado para todo el equipo."].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].exists)
+        attachScreen(app,name:"borrado-manual-pase-itinerario")
+    }
+
 }

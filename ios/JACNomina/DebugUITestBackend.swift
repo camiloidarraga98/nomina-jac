@@ -101,9 +101,10 @@ private final class FixtureProtocol: URLProtocol {
             if request.httpMethod == "POST" {
                 let command = try body(request)
                 if command["action"].text == "read", readsToCancel.remove("/api/notices?read") != nil { throw URLError(.cancelled) }
-                if ["deleteAlert","deleteItinerary"].contains(command["action"].text) {
+                if ["deleteAlert","deleteItinerary","deleteBoardingPass"].contains(command["action"].text) {
                     guard !reader else { return (403,.object(["error":.string("Solo Camilo puede eliminar.")])) }
                     guard command["confirmation"] == command["id"] else { return (400,.object(["error":.string("Confirma el aviso.")])) }
+                    if command["action"].text == "deleteBoardingPass",let item=boardingFixtures.first(where:{$0["id"] == command["id"]}),!item["recipients"].elements.contains(.string(viewer)) { return (404,.object(["error":.string("Pase no disponible.")])) }
                     deletedNotices.insert(command["id"].text)
                 }
                 if command["action"].text == "alert" {

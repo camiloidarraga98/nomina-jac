@@ -59,6 +59,10 @@ struct NoticesView: View {
     @State private var previousBoardingDocument: ExportedDocument?
     @State private var openingFile: String?
     @State private var documentGeneration = 0
+    @State private var confirmingListDelete = false
+    @State private var pendingDelete: JACNotice?
+    @State private var deleting = false
+    @State private var deletedIDs = Set<String>()
     private var effectiveKind: String { incomingKind ?? kind }
     var body: some View {
         List {
@@ -78,7 +82,7 @@ struct NoticesView: View {
             } else { Section(effectiveKind == "itinerary" ? "Itinerarios del equipo" : "Avisos del equipo") {
                 let items = records.filter { $0.kind == effectiveKind }
                 if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
-                ForEach(items) { item in Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
+                ForEach(items) { item in VStack(alignment:.leading,spacing:14) { Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)"); if user.isOwner && item.kind == "itinerary" { deleteButton(item) } } }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             } }
 
@@ -90,22 +94,38 @@ struct NoticesView: View {
             .sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
                 NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Pase de abordar PDF" : "Pase de abordar").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Listo") { boardingDocument=nil }.accessibilityIdentifier("notices.pdf.close") }; ToolbarItem(placement:.confirmationAction) { ShareLink(item:file.url) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("Compartir archivo") } } }
             }
+            .alert("Eliminar " + (pendingDelete?.kind == "boarding_pass" ? "pase de abordar" : "itinerario"),isPresented:$confirmingListDelete) {
+                Button("Cancelar",role:.cancel) { pendingDelete=nil }.accessibilityIdentifier("notices.list.delete.cancel")
+                Button("Eliminar",role:.destructive) { if let item=pendingDelete { Task { await remove(item) } } }.accessibilityIdentifier("notices.list.delete.confirm")
+            } message: { Text("¿Eliminar “\(pendingDelete?.title ?? "")”? " + (pendingDelete?.kind == "boarding_pass" ? "Se retirará de tus pases y se eliminarán todos los adjuntos de esta publicación en JAC. " : "Se retirará para todo el equipo junto con sus adjuntos de JAC. ") + "El original de Slack se conserva. Se cancelan las entregas pendientes; los avisos ya recibidos no se pueden retirar. Esta acción no se puede deshacer.") }
             .onDisappear { documentGeneration += 1; if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }
             .sheet(item: $detail, onDismiss: { Task { await refresh() } }) { item in NoticeDetail(item: item, owner: user.isOwner) }
             .sheet(isPresented: $editor) { if let feed { NoticeComposer(users: feed.users, boardingUsers: feed.boardingUsers ?? feed.users) { savedKind in incomingKind = savedKind; notice = savedKind == "boarding_pass" ? "Pase publicado únicamente para la persona elegida." : savedKind == "itinerary" ? "Itinerario publicado para todo el equipo." : "Alerta guardada para los destinatarios elegidos."; await refresh() } } }
     }
+    @ViewBuilder private func deleteButton(_ item:JACNotice) -> some View {
+        Button(role:.destructive) { pendingDelete=item; confirmingListDelete=true } label: { Label(item.kind == "boarding_pass" ? "Eliminar pase de abordar" : "Eliminar itinerario",systemImage:"trash").font(.subheadline) }
+            .buttonStyle(.borderless).disabled(deleting || openingFile != nil).accessibilityIdentifier("notices.list.delete.\(item.id)")
+    }
+    private func remove(_ item:JACNotice) async {
+        guard !deleting else { return }; deleting=true; defer { deleting=false }
+        do { try await store.client.deleteNotice(item); deletedIDs.insert(item.id); records.removeAll { $0.id == item.id }; historyRecords.removeAll { $0.id == item.id }; pendingDelete=nil; notice=item.kind == "boarding_pass" ? "Pase de abordar eliminado." : "Itinerario eliminado para todo el equipo." }
+        catch { self.error=error.localizedDescription; store.report(error) }
+    }
     @ViewBuilder private func boardingRows(_ items:[JACNotice]) -> some View {
-        ForEach(items) { item in ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
-            Button { Task { await openBoarding(item,file:file) } } label: {
-                VStack(alignment:.leading,spacing:7) {
-                    let info=BoardingClock.filenameDetails(file.filename)
-                    Label(info.map { $0.origin + " → " + $0.destination } ?? item.title,systemImage:"airplane").font(.headline)
-                    if let info { Text(info.passenger).font(.subheadline) }
-                    Text(file.filename).font(.caption).foregroundStyle(.secondary)
-                    HStack { Text(BoardingClock.label(item.travelDate ?? "")).font(.caption).foregroundStyle(.secondary); Spacer(); if openingFile == file.id { ProgressView() }; Text(file.mimeType == "application/pdf" ? "Abrir PDF" : "Abrir imagen").font(.subheadline.bold()) }
-                }
-            }.buttonStyle(.plain).disabled(openingFile != nil).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
-        } }
+        ForEach(items) { item in VStack(alignment:.leading,spacing:16) {
+            ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
+                Button { Task { await openBoarding(item,file:file) } } label: {
+                    VStack(alignment:.leading,spacing:7) {
+                        let info=BoardingClock.filenameDetails(file.filename)
+                        Label(info.map { $0.origin + " → " + $0.destination } ?? item.title,systemImage:"airplane").font(.headline)
+                        if let info { Text(info.passenger).font(.subheadline) }
+                        Text(file.filename).font(.caption).foregroundStyle(.secondary)
+                        HStack { Text(BoardingClock.label(item.travelDate ?? "")).font(.caption).foregroundStyle(.secondary); Spacer(); if openingFile == file.id { ProgressView() }; Text(file.mimeType == "application/pdf" ? "Abrir PDF" : "Abrir imagen").font(.subheadline.bold()) }
+                    }
+                }.buttonStyle(.plain).disabled(openingFile != nil || deleting).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
+            }
+            if user.isOwner { Divider(); deleteButton(item) }
+        }.padding(.vertical,6) }
     }
     private func openBoarding(_ item:JACNotice,file:NoticeAttachment) async {
         guard openingFile == nil else { return }; openingFile=file.id; let generation=documentGeneration; defer { openingFile=nil }
@@ -116,10 +136,10 @@ struct NoticesView: View {
             do { try await store.client.noticeCommand(.object(["action":.string("read"),"id":.string(item.id)])) } catch { self.error=store.reportReadFailure(error) }
         } catch { self.error=store.reportReadFailure(error) }
     }
-    private func loadHistory(_ cursor:String = "") async { do { let result=try await store.client.notices(cursor:cursor,boarding:"history"); history=result; if cursor.isEmpty { historyRecords=result.notices } else { historyRecords += result.notices.filter { item in !historyRecords.contains { $0.id == item.id } } } } catch { self.error=store.reportReadFailure(error) } }
+    private func loadHistory(_ cursor:String = "") async { do { let result=try await store.client.notices(cursor:cursor,boarding:"history"); history=result; let items=result.notices.filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { historyRecords=items } else { historyRecords += items.filter { item in !historyRecords.contains { $0.id == item.id } } } } catch { self.error=store.reportReadFailure(error) } }
     private func refresh(_ cursor: String = "") async {
         guard !loading else { return }; loading = true; defer { loading = false }
-        do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil); feed = result; if cursor.isEmpty { records = result.notices } else { records += result.notices.filter { item in !records.contains { $0.id == item.id } } }; error = nil
+        do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil); feed = result; let items=result.notices.filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { records = items } else { records += items.filter { item in !records.contains { $0.id == item.id } } }; error = nil
             if effectiveKind == "itinerary" { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
             if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
         } catch { self.error = store.reportReadFailure(error) }

@@ -1,7 +1,7 @@
 import {waitUntil} from 'cloudflare:workers';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {sessionToken} from '@/lib/payroll-auth-crypto';
-import {boardingFeed,configureBoardingChannels,noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
+import {boardingFeed,configureBoardingChannels,noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,deleteBoardingPass,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
 import {NoticeFailure} from '@/lib/notifications-core';
 export const dynamic='force-dynamic';
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:payrollHeaders});
@@ -21,6 +21,7 @@ export async function POST(req:Request){
   const authorize=async()=>{const actor=await payrollUser();return !!actor&&actor.id===u.id&&noticeOwner(actor);};
   if(b.action==='boardingChannels'){await configureBoardingChannels(b.input,authorize);return reply({ok:true});}
   if(b.action==='deleteAlert'){await deleteManualNotice(u,b.id,b.confirmation,authorize);return reply({ok:true,notice:'Alerta eliminada.'});}
+  if(b.action==='deleteBoardingPass'){await deleteBoardingPass(u,b.id,b.confirmation,authorize);return reply({ok:true,notice:'Pase de abordar eliminado.'});}
   if(b.action==='deleteItinerary'){await deleteItinerary(u,b.id,b.confirmation,authorize);return reply({ok:true,notice:'Itinerario eliminado.'});}
   if(b.action==='alert'){const id=await saveManualNotice(u,b.alert,authorize);waitUntil(dispatchPush().catch(()=>{}));return reply({id,notice:'Alerta guardada para los destinatarios elegidos.'});}
   if(b.action==='configure'&&typeof b.kind==='string')return reply({settings:await configureNotices(b.kind,b,authorize),notice:'Configuración guardada.'});

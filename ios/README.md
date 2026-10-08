@@ -1,3 +1,9 @@
+## Borrado manual — iPhone 0.9.2 (12)
+
+Camilo dispone de Eliminar pase de abordar en cada publicación de sus pases, también en el historial, y Eliminar itinerario en la lista compartida. Antes de borrar se confirma el alcance. Los pases privados de otras personas no son accesibles para Camilo. Se eliminan todos los adjuntos de la publicación en JAC y las entregas pendientes; el original de Slack se conserva. Cancelar mantiene el contenido. La apertura directa del PDF sigue disponible.
+
+Verificado en simulador nuevo con fixtures .invalid y Release sin firma. Actualiza con Run desde este mismo proyecto, sin descargar ni sustituir otra carpeta. La publicación web no instala el binario en tu iPhone.
+
 # Nómina JAC para iPhone
 
 El nombre visible en el iPhone es **JAC**. El proyecto y el esquema de Xcode siguen siendo `JACNomina`.

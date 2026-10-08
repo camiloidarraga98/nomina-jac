@@ -163,7 +163,7 @@ final class PayrollClient {
         return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Adjunto" : name)
     }
     func deleteNotice(_ item: JACNotice) async throws {
-        try await noticeCommand(.object(["action": .string(item.kind == "itinerary" ? "deleteItinerary" : "deleteAlert"), "id": .string(item.id), "confirmation": .string(item.id)]))
+        try await noticeCommand(.object(["action": .string(item.kind == "boarding_pass" ? "deleteBoardingPass" : item.kind == "itinerary" ? "deleteItinerary" : "deleteAlert"), "id": .string(item.id), "confirmation": .string(item.id)]))
     }
     func payroll(_ command: JSONValue) async throws -> PayrollEnvelope {
         let (data, _) = try await request(path: "api/mobile/payroll", body: command)

@@ -20,3 +20,5 @@
 
 .notices-panel .boarding-day{padding:20px;border:1px solid #dce5de;border-radius:16px;background:#fff}
 @media(max-width:480px){.notices-panel .boarding-today,.notices-panel .boarding-day{padding:16px}}
+
+.notices-panel .notice-row{display:grid;gap:0;border:1px solid #dce5de;border-radius:12px;overflow:hidden;background:#f8faf8}.notices-panel .notice-row>.notice-card{border:0;border-radius:0}.notice-row-footer{display:flex;justify-content:flex-end;padding:12px 16px;border-top:1px solid #e2e8e3}.boarding-files:has(.notice-row-footer){padding-bottom:4px}.boarding-files .notice-row-footer{padding:12px 0 0;margin-top:4px}.notice-delete{min-height:40px;gap:8px;white-space:normal;text-align:left}

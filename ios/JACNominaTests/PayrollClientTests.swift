@@ -603,4 +603,11 @@ final class PayrollClientTests: XCTestCase {
         try await sending.publishNotice(id:UUID().uuidString.lowercased(),kind:"boarding_pass",title:"Pase ficticio",body:"",recipients:["recipient-fixture"],files:[NoticeUpload(filename:"10 de octubre.pdf",data:Data("%PDF-1.4 ficticio".utf8))],travelDate:"2026-10-10")
     }
 
+    @MainActor func testBoardingDeletionUsesSeparateConfirmedCommandAndRevokesPrivateFile() async throws {
+        let client=UITestBackend.client(); let feed=try await client.notices(boarding:"current"); let item=try XCTUnwrap(feed.notices.first)
+        let file=try XCTUnwrap(item.files.first); try await client.deleteNotice(item); try await client.deleteNotice(item)
+        let refreshed=try await client.notices(boarding:"current"); XCTAssertFalse(refreshed.notices.contains {$0.id == item.id})
+        do { _ = try await client.noticeFile(item,file:file); XCTFail("Un pase eliminado no debe descargarse") } catch {}
+    }
+
 }
