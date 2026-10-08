@@ -162,6 +162,32 @@ final class PayrollClient {
         let name = (file.filename as NSString).lastPathComponent
         return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Adjunto" : name)
     }
+    func confirmNotice(_ item: JACNotice) async throws {
+        try await noticeCommand(.object(["action":.string("confirm"),"id":.string(item.id),"revision":.number(Double(item.revision ?? 1))]))
+    }
+    func updateItinerary(_ item: JACNotice, requestID: String, title: String, body: String, summary: String, files: [NoticeUpload]) async throws {
+        _ = try await request(path:"api/notices/publish",query:[URLQueryItem(name:"update",value:"1")],body:.object(["id":.string(item.id),"requestId":.string(requestID),"revision":.number(Double(item.revision ?? 1)),"title":.string(title),"body":.string(body),"summary":.string(summary),"files":try travelUploads(files)]))
+    }
+    private func travelUploads(_ files:[NoticeUpload]) throws -> JSONValue {
+        guard !files.isEmpty,files.count <= 5,files.reduce(0, { $0+$1.data.count }) <= 10*1024*1024 else { throw APIError.message("Adjunta de 1 a 5 archivos que sumen como máximo 10 MB.") }
+        for f in files { _ = try NoticeUpload.mime(f.data) }
+        return .array(files.map { .object(["filename":.string($0.filename),"data":.string($0.data.base64EncodedString())]) })
+    }
+    func expenses(cursor:String = "") async throws -> TravelExpenseFeed {
+        let (data,_) = try await request(path:"api/expenses",query:cursor.isEmpty ? [] : [URLQueryItem(name:"cursor",value:cursor)])
+        return try decoder.decode(TravelExpenseFeed.self,from:data)
+    }
+    func submitExpense(id:String,concept:String,amount:Double,date:String,note:String,files:[NoticeUpload]) async throws {
+        _ = try await request(path:"api/expenses",body:.object(["id":.string(id),"concept":.string(concept),"amount":.number(amount),"expenseDate":.string(date),"note":.string(note),"files":try travelUploads(files)]))
+    }
+    func reviewExpense(_ expense:TravelExpense,approve:Bool,reason:String,employeeID:String,periodID:String) async throws {
+        _ = try await request(path:"api/expenses",query:[URLQueryItem(name:"review",value:"1")],body:.object(["id":.string(expense.id),"version":.number(Double(expense.version)),"decision":.string(approve ? "approve" : "reject"),"reason":.string(reason),"employeeId":.string(employeeID),"periodId":.string(periodID)]))
+    }
+    func expenseFile(_ expense:TravelExpense,file:NoticeAttachment) async throws -> ExportedDocument {
+        let (data,response) = try await request(path:"api/expenses/file",query:[URLQueryItem(name:"id",value:expense.id),URLQueryItem(name:"file",value:file.id)],document:true)
+        guard data.count <= 10*1024*1024,response.mimeType == file.mimeType,(try NoticeUpload.mime(data)) == file.mimeType else { throw APIError.message("No se recibió un comprobante válido.") }
+        return try TemporaryDocuments.save(data,filename:(file.filename as NSString).lastPathComponent)
+    }
     func deleteNotice(_ item: JACNotice) async throws {
         try await noticeCommand(.object(["action": .string(item.kind == "boarding_pass" ? "deleteBoardingPass" : item.kind == "itinerary" ? "deleteItinerary" : "deleteAlert"), "id": .string(item.id), "confirmation": .string(item.id)]))
     }

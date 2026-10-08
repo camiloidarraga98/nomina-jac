@@ -1,5 +1,7 @@
 # Correspondencia del webapp y la app de iPhone
 
+En 0.10.0/build 16 el push nativo sigue suspendido temporalmente mientras se aprueba la membresía Apple. Las nuevas funciones usan las API compartidas; ver `docs/TRAVEL_WORKFLOWS.md`.
+
 Desde 0.8.0/build 9, Itinerarios y Alertas no incluyen controles de conexión/push. Gestión → Notificaciones permite desactivar o volver a permitir los avisos. El permiso nativo se solicita tras una sesión validada; rechazos y desactivación persistente se respetan.
 
 La versión 0.7.0 (build 8) conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
@@ -9,6 +11,9 @@ Las cinco pestañas son Quincena, Agenda, Itinerarios, Mi cuenta y Gestión. Arc
 Agenda conserva hasta seis meses consultados en archivos cifrados con AES-GCM (límite total de 4 MB), vinculados a la sesión del Llavero y excluidos del respaldo. Muestra la descarga antes de esperar internet, incluidos detalles y próximos eventos; puede restaurarla tras cerrar la app sin señal. Actualiza al entrar, volver a primer plano, recuperar conexión y cada 30 segundos en primer plano. Indica fecha/hora, actualización y falta de señal; un mes no descargado necesita conexión. Salir, sesión vencida, denegación o cambio/desconexión de calendario retira la copia anterior. Las acciones de edición requieren validación actual del servidor; no se guardan quincenas ni ediciones sin conexión. Sin señal, una revocación remota solo puede comprobarse cuando se recupere internet.
 
 | Función existente | Acceso nativo | Integración compartida |
+| Confirmación explícita por versión | Alertas / Itinerarios → Confirmar recibido; administradores ven pendientes | Revisión esperada, sesión propia y reintentos idempotentes |
+| Actualizar itinerario y destacar cambios | Detalle → Actualizar itinerario, solo administrador | Sustitución privada de adjuntos y notificaciones por revisión |
+| Gastos de viaje con comprobante | Gestión → Gastos de viaje; Archivos, Fotos y Cámara | Registro privado; administrador elige persona/quincena; reintegro y aprobación atómicos |
 | --- | --- | --- |
 | Crear quincena por mes y mitad; búsqueda y consulta | Quincenas → +; búsqueda | Helpers originales de períodos y guardado CAS |
 | Shows, fecha, ventas, participantes y honorarios manuales | Quincena → Actividad → Shows y honorarios | `updateShow`, `removeShow` y políticas originales |

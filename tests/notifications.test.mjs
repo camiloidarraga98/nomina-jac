@@ -18,7 +18,7 @@ class Query {
 const bucket=new Map();let writes=0,waiting=[],beforeFirst,beforePut,beforeDelete;
 globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(beforePut)await beforePut(k);if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},delete:async k=>{const after=await beforeDelete?.(k);bucket.delete(k);if(after)await after();},get:async k=>bucket.has(k)?{body:new Response(bucket.get(k)).body}:null},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
 globalThis.__noticesHeaders=new Headers();globalThis.__noticesWait=p=>waiting.push(p);
-const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as publish from './app/api/notices/publish/route';export * as attachment from './app/api/notices/file/route';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
+const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as publish from './app/api/notices/publish/route';export * as attachment from './app/api/notices/file/route';export * as expensesApi from './app/api/expenses/route';export * as expenseFilesApi from './app/api/expenses/file/route';export * from './lib/travel-expenses';export * from './lib/payroll-store';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/notices-tests-')),file=dir+'/bundle.mjs';await writeFile(file,bundle.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const owner=await m.bootstrapOwner('notice-owner','1'),ownerToken=await m.makeSession(owner),luisa=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('info@jacmusic.co').id,paula=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('contabilidad@jacmusic.co').id;
 for(const id of [luisa,paula])sql.prepare('UPDATE payroll_users SET password_hash=?,permissions=? WHERE id=?').run(m.hashPassword('1',globalThis.__noticesEnv.PAYROLL_AUTH_KEY),'[]',id);
@@ -435,4 +435,61 @@ test('administrador delegado gestiona alertas sin acceso a pases privados ajenos
  assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(pass.id));
  sql.prepare('UPDATE payroll_users SET permissions=? WHERE id=?').run('[]',id);
  assert.equal((await api(token,{action:'alert',alert:alert([owner])})).status,403);assert.equal((await api(token,{action:'configure',kind:'web',version:(await m.noticeConfig()).version})).status,403);
+});
+
+test('confirmación explícita es privada, idempotente y solo corresponde a la versión leída',async()=>{
+ const admin=await m.authenticatedSession(ownerToken),reader=await m.authenticatedSession(luisaToken),other=await m.authenticatedSession(paulaToken),id=crypto.randomUUID();
+ await m.saveManualNotice(admin,{id,title:'Recibido ficticio',body:'Confirmación explícita',recipients:[luisa]},async()=>true);
+ await m.markNoticeRead(reader,id);assert.equal((await m.noticeItem(reader,id)).confirmed,false,'Abrir no confirma');
+ await m.confirmNotice(reader,id,1,async()=>true);const first=sql.prepare('SELECT confirmed_at FROM jac_notice_recipients WHERE notice_id=? AND user_id=?').get(id,luisa).confirmed_at;
+ await m.confirmNotice(reader,id,1,async()=>true);assert.equal(sql.prepare('SELECT confirmed_at FROM jac_notice_recipients WHERE notice_id=? AND user_id=?').get(id,luisa).confirmed_at,first);
+ assert.equal((await m.noticeItem(reader,id)).confirmed,true);assert.equal((await m.noticeItem(reader,id)).receipts,undefined);assert.equal((await m.noticeItem(admin,id)).receipts.find(r=>r.userId===luisa).confirmed,true);
+ await assert.rejects(()=>m.confirmNotice(other,id,1,async()=>true),e=>e.status===404);
+ await assert.rejects(()=>m.confirmNotice(reader,id,2,async()=>true),e=>e.status===409);
+ await assert.rejects(()=>m.confirmNotice(reader,id,1,async()=>false),e=>e.status===403);
+});
+test('actualizar itinerario conserva destinatarios, exige revisión, revoca adjuntos y confirma cada versión',async()=>{
+ const admin=await m.authenticatedSession(ownerToken),reader=await m.authenticatedSession(luisaToken),id=crypto.randomUUID(),payload={id,kind:'itinerary',title:'Viaje ficticio',body:'Versión inicial',recipients:[],files:[{filename:'Inicial.pdf',data:Buffer.from(pdfBytes).toString('base64')}]};
+ await m.publishManualNotice(admin,payload,async()=>true);await m.confirmNotice(reader,id,1,async()=>true);const old=(await m.noticeItem(reader,id)).attachments[0],recipients=sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=? ORDER BY user_id').all(id);
+ const update={id,requestId:crypto.randomUUID(),revision:1,title:'Viaje ficticio corregido',body:'Información completa',summary:'Cambio de hora: salida a las 07:30',files:[{filename:'Actualizado.pdf',data:Buffer.from(pdfBytes).toString('base64')}]};
+ await assert.rejects(()=>m.updateItinerary(reader,update,async()=>true),e=>e.status===403);
+ await m.updateItinerary(admin,update,async()=>true);await m.updateItinerary(admin,update,async()=>true);
+ const item=await m.noticeItem(reader,id);assert.equal(item.revision,2);assert.equal(item.confirmed,false);assert.equal(item.changeSummary,update.summary);assert.deepEqual(sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=? ORDER BY user_id').all(id),recipients);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jac_itinerary_updates WHERE notice_id=?').get(id).n,1);await assert.rejects(()=>m.noticeAttachment(reader,id,old.id),e=>e.status===404);
+ await assert.rejects(()=>m.confirmNotice(reader,id,1,async()=>true),e=>e.status===409);await m.confirmNotice(reader,id,2,async()=>true);assert.equal((await m.noticeItem(reader,id)).confirmed,true);
+ await assert.rejects(()=>m.updateItinerary(admin,{...update,requestId:crypto.randomUUID()},async()=>true),e=>e.status===409);
+ await assert.rejects(()=>m.updateItinerary(admin,{...update,summary:'Otro contenido'},async()=>true),e=>e.status===409);
+ assert.deepEqual(m.noticePushContent(item),{title:'JAC · Itinerario actualizado',body:update.summary});
+ const aborted={...update,requestId:crypto.randomUUID(),revision:2};let checks=0;await assert.rejects(()=>m.updateItinerary(admin,aborted,async()=>++checks===1),e=>e.status===403);assert.equal((await m.noticeItem(reader,id)).revision,2);
+});
+test('gastos con comprobantes son privados, reintentos estables y rechazos no cambian nómina',async()=>{
+ const admin=await m.authenticatedSession(ownerToken),reader=await m.authenticatedSession(luisaToken),other=await m.authenticatedSession(paulaToken),id=crypto.randomUUID(),input={id,concept:'Taxi ficticio',amount:35000,expenseDate:'2026-10-08',note:'Prueba sin viaje real',files:[{filename:'Recibo.pdf',data:Buffer.from(pdfBytes).toString('base64')}]};
+ await m.submitExpense(reader,input,async()=>true);await m.submitExpense(reader,input,async()=>true);assert.equal(sql.prepare('SELECT count(*) n FROM jac_travel_expenses WHERE id=?').get(id).n,1);
+ assert.equal((await m.expenseFeed(other)).expenses.some(e=>e.id===id),false);assert.deepEqual((await m.expenseFeed(reader)).employees,[]);assert.deepEqual((await m.expenseFeed(reader)).periods,[]);
+ const expense=(await m.expenseFeed(reader)).expenses.find(e=>e.id===id);await assert.rejects(()=>m.expenseAttachment(other,id,expense.attachments[0].id),e=>e.status===404);assert.ok((await m.expenseAttachment(reader,id,expense.attachments[0].id)).object);
+ await assert.rejects(()=>m.noticeAttachment(admin,id,expense.attachments[0].id),e=>e.status===404);
+ await assert.rejects(()=>m.submitExpense(reader,{...input,amount:40000},async()=>true),e=>e.status===409);
+ await assert.rejects(()=>m.submitExpense(reader,{...input,id:crypto.randomUUID(),files:[]},async()=>true),e=>e.status===400);
+ const review={id,version:1,decision:'reject',reason:'Comprobante incompleto',employeeId:'',periodId:''};await assert.rejects(()=>m.reviewExpense(reader,review,async()=>true),e=>e.status===403);
+ const before=await m.readPayroll();await m.reviewExpense(admin,review,async()=>true);await m.reviewExpense(admin,review,async()=>true);assert.deepEqual(await m.readPayroll(),before);assert.equal((await m.allowedExpense(reader,id)).status,'rejected');
+});
+test('aprobar gasto incorpora un solo reintegro con CAS; no admite cierres ni carreras de revisión',async()=>{
+ const admin=await m.authenticatedSession(ownerToken),reader=await m.authenticatedSession(luisaToken),current=await m.readPayroll(),employee=current.data.employees.find(e=>e.active&&!e.deleted),period={id:'travel-fixture-period',start:'2026-10-01',end:'2026-10-15',status:'abierta',shows:[],movements:[],routes:[],hours:[],excludedEmployees:[]};
+ current.data.periods=[];current.data.periods.push(period);await m.writePayroll(current.data,current.version,owner);
+ const create=async()=>{const id=crypto.randomUUID();await m.submitExpense(reader,{id,concept:'Hotel ficticio',amount:120000,expenseDate:'2026-10-08',note:'Solo prueba',files:[{filename:'Recibo.pdf',data:Buffer.from(pdfBytes).toString('base64')}]},async()=>true);return id;};
+ const id=await create(),review={id,version:1,decision:'approve',reason:'Validado ficticio',employeeId:employee.id,periodId:period.id};
+ await m.reviewExpense(admin,review,async()=>true);await m.reviewExpense(admin,review,async()=>true);const saved=await m.readPayroll(),movements=saved.data.periods[0].movements;assert.equal(movements.length,1);assert.equal(movements[0].id,id);assert.equal(movements[0].kind,'reintegro');assert.equal(movements[0].amount,120000);assert.equal((await m.allowedExpense(reader,id)).status,'approved');
+ const id2=await create();saved.data.periods[0].status='cerrada';await m.writePayroll(saved.data,saved.version,owner);await assert.rejects(()=>m.reviewExpense(admin,{...review,id:id2},async()=>true),e=>e.status===400);
+ const reopened=await m.readPayroll();reopened.data.periods[0].status='abierta';await m.writePayroll(reopened.data,reopened.version,owner);
+ const before=await m.readPayroll();let checks=0;await assert.rejects(()=>m.reviewExpense(admin,{...review,id:id2},async()=>{if(++checks===2)sql.prepare("UPDATE jac_travel_expenses SET status='rejected',version=version+1 WHERE id=?").run(id2);return true;}),e=>e.status===409);assert.deepEqual(await m.readPayroll(),before,'Rechazo concurrente bloquea el reintegro completo');
+});
+
+test('API gastos exige sesión y origen, limita la revisión y entrega archivos privados sin caché',async()=>{
+ const call=async(token,body,origin=base)=>{const cookie=token?'__Host-jac_session='+token:'';globalThis.__noticesHeaders=new Headers({cookie,host:'notices.example.invalid'});const r=await m.expensesApi[body?'POST':'GET'](new Request(base+'/api/expenses',body?{method:'POST',headers:{cookie,origin},body:JSON.stringify(body)}:{}));return {status:r.status,body:await r.json(),headers:r.headers};};
+ assert.equal((await call('')).status,401);const id=crypto.randomUUID(),input={id,concept:'Comprobante API ficticio',amount:1,expenseDate:'2026-10-08',note:'',files:[{filename:'Ficticio.pdf',data:Buffer.from(pdfBytes).toString('base64')}]};
+ assert.equal((await call(luisaToken,input,'https://untrusted.example.invalid')).status,403);assert.equal((await call(luisaToken,input)).status,200);
+ const feed=await call(luisaToken);assert.match(feed.headers.get('cache-control'),/private, no-store/);assert.deepEqual(feed.body.employees,[]);
+ const item=feed.body.expenses.find(x=>x.id===id);globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+paulaToken,host:'notices.example.invalid'});const file=await m.expenseFilesApi.GET(new Request(base+'/api/expenses/file?id='+id+'&file='+item.attachments[0].id));assert.equal(file.status,404);
+ globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+luisaToken,host:'notices.example.invalid'});const review=await m.expensesApi.POST(new Request(base+'/api/expenses?review=1',{method:'POST',headers:{origin:base},body:JSON.stringify({id,version:1,decision:'approve',reason:'',employeeId:'fake',periodId:'fake'})}));assert.equal(review.status,403);
+ const allowed=await m.expenseFilesApi.GET(new Request(base+'/api/expenses/file?id='+id+'&file='+item.attachments[0].id));assert.equal(allowed.status,200);assert.match(allowed.headers.get('cache-control'),/private, no-store/);
 });

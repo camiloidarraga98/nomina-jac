@@ -1,3 +1,4 @@
+import {contentHash,stageTravelFiles,discardTravelFiles,uploadedGate,uploadedBindings} from './travel-files';
 import {env} from 'cloudflare:workers';
 import {boardingToday,boardingFilenameDate,boardingFilenameDetails,boardingPassengerKey,validBoardingDate,BOARDING_CHANNELS} from './boarding-passes';
 import {manualNoticeSchema,decodeNoticeFiles,fileMime} from './notice-files';
@@ -12,12 +13,12 @@ import {NoticeFailure,ITINERARY_CHANNEL,ITINERARY_TEAM,MAX_PDF_BYTES,createWebKe
 const uuid=z.string().uuid();
 const now=()=>new Date().toISOString();
 type Config={credentials:string;version:number};
-type Row={id:string;kind:Notice['kind'];travel_date:string;title:string;body:string;filename:string;size:number;created_at:string;file_key:string;read_at:string};
+type Row={revision:number;updated_at:string;change_summary:string;sort_at:string;confirmed_revision:number;confirmed_at:string;id:string;kind:Notice['kind'];travel_date:string;title:string;body:string;filename:string;size:number;created_at:string;file_key:string;read_at:string};
 export const noticeOwner=(u:AccessUser)=>!u.legacy&&!u.itinerariesOnly&&u.isOwner;
 export async function noticeConfig(){return await database().prepare('SELECT credentials,version FROM jac_notice_settings WHERE id=?').bind('jac').first<Config>()??{credentials:'',version:0};}
 export async function pushCredentials(c?:Config):Promise<PushCredentials>{const config=c??await noticeConfig();return config.credentials?decryptMail(config.credentials,mailKey()):{};}
 async function settings(){const c=await noticeConfig(),keys=await pushCredentials(c);return {version:c.version,slackConnected:!!keys.slack,appleConfigured:!!keys.apns,webPublicKey:keys.web?.publicKey??'',channel:'#itinerarios-finales',webhook:'https://jhonalexcastano.com/api/notices/slack'};}
-function view(row:Row):Notice{return {id:row.id,kind:row.kind,title:row.title,body:row.body,filename:row.filename,size:row.size,createdAt:row.created_at,read:!!row.read_at,...(row.kind==='boarding_pass'?{travelDate:row.travel_date}:{})};}
+function view(row:Row):Notice{return {revision:row.revision,updatedAt:row.updated_at,changeSummary:row.change_summary,confirmed:row.confirmed_revision===row.revision,id:row.id,kind:row.kind,title:row.title,body:row.body,filename:row.filename,size:row.size,createdAt:row.created_at,read:!!row.read_at,...(row.kind==='boarding_pass'?{travelDate:row.travel_date}:{})};}
 const accessSql="(n.kind='itinerary' OR EXISTS(SELECT 1 FROM jac_notice_recipients a WHERE a.notice_id=n.id AND a.user_id=?) OR (n.kind<>'boarding_pass' AND ?=1))";
 async function noticeViews(rows:Row[]){
  if(!rows.length)return [];const attachments=(await database().prepare(`SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments WHERE state='ready' AND notice_id IN (${rows.map(()=>'?').join(',')}) ORDER BY id`).bind(...rows.map(r=>r.id)).all<{id:string;notice_id:string;filename:string;mime_type:string;size:number}>()).results;
@@ -26,16 +27,20 @@ async function noticeViews(rows:Row[]){
 export async function noticeFeed(u:AccessUser,cursor=''){
  if(cursor&&!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\|[a-f0-9-]{36}$/.test(cursor))throw new NoticeFailure('Actualiza el listado.');
  const [time,id]=cursor.split('|');
- const rows=await database().prepare(`SELECT n.*,r.read_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.kind<>'boarding_pass' AND ${accessSql} ${cursor?'AND (n.created_at<? OR (n.created_at=? AND n.id<?))':''} ORDER BY n.created_at DESC,n.id DESC LIMIT 41`).bind(u.id,u.id,noticeOwner(u)?1:0,...(cursor?[time,time,id]:[])).all<Row>();
+ const rows=await database().prepare(`SELECT n.*,CASE WHEN n.updated_at='' THEN n.created_at ELSE n.updated_at END AS sort_at,r.read_at,r.confirmed_revision,r.confirmed_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.kind<>'boarding_pass' AND ${accessSql} ${cursor?"AND ((CASE WHEN n.updated_at='' THEN n.created_at ELSE n.updated_at END)<? OR ((CASE WHEN n.updated_at='' THEN n.created_at ELSE n.updated_at END)=? AND n.id<?))":''} ORDER BY sort_at DESC,n.id DESC LIMIT 41`).bind(u.id,u.id,noticeOwner(u)?1:0,...(cursor?[time,time,id]:[])).all<Row>();
  const all=rows.results,list=all.slice(0,40),last=list.at(-1);
  const users=noticeOwner(u)?(await database().prepare("SELECT id,name,(password_hash<>'') AS ready FROM payroll_users WHERE active=1 ORDER BY name").all<{id:string;name:string;ready:number}>()).results.map(person=>({...person,ready:person.ready===1})):[];
  const failures=noticeOwner(u)?(await database().prepare("SELECT id,error FROM jac_slack_files WHERE status='failed' ORDER BY created_at DESC LIMIT 20").all<{id:string;error:string}>()).results:[];
  const boardingUsers=noticeOwner(u)?(await database().prepare('SELECT id,name FROM payroll_users WHERE active=1 ORDER BY name').all<{id:string;name:string}>()).results:[];
  const boardingChannels=noticeOwner(u)?(await database().prepare('SELECT id,user_id AS userId,version,enabled FROM jac_boarding_channels').all()).results:[];
- return {boardingUsers,boardingChannels,notices:await noticeViews(list),nextCursor:all.length>40&&last?last.created_at+'|'+last.id:'',settings:await settings(),users,failures};
+ return {boardingUsers,boardingChannels,notices:await noticeViews(list),nextCursor:all.length>40&&last?last.sort_at+'|'+last.id:'',settings:await settings(),users,failures};
 }
-export async function allowedNotice(u:AccessUser,id:string){if(!uuid.safeParse(id).success)throw new NoticeFailure('El aviso no existe.',404);const row=await database().prepare(`SELECT n.*,r.read_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.id=? AND ${accessSql}`).bind(u.id,id,u.id,noticeOwner(u)?1:0).first<Row>();if(!row)throw new NoticeFailure('El aviso no está disponible para esta cuenta.',404);return row;}
-export async function noticeItem(u:AccessUser,id:string){return (await noticeViews([await allowedNotice(u,id)]))[0];}
+export async function allowedNotice(u:AccessUser,id:string){if(!uuid.safeParse(id).success)throw new NoticeFailure('El aviso no existe.',404);const row=await database().prepare(`SELECT n.*,r.read_at,r.confirmed_revision,r.confirmed_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.id=? AND ${accessSql}`).bind(u.id,id,u.id,noticeOwner(u)?1:0).first<Row>();if(!row)throw new NoticeFailure('El aviso no está disponible para esta cuenta.',404);return row;}
+export async function noticeItem(u:AccessUser,id:string){
+ const row=await allowedNotice(u,id),item=(await noticeViews([row]))[0];
+ if(noticeOwner(u)&&row.kind!=='boarding_pass')item.receipts=(await database().prepare('SELECT u.id AS userId,u.name,r.confirmed_at AS confirmedAt,(r.confirmed_revision=?) AS confirmed FROM jac_notice_recipients r JOIN payroll_users u ON u.id=r.user_id WHERE r.notice_id=? AND u.active=1 ORDER BY u.name').bind(row.revision,id).all<{userId:string;name:string;confirmedAt:string;confirmed:number}>()).results.map(r=>({...r,confirmed:r.confirmed===1}));
+ return item;
+}
 export async function markNoticeRead(u:AccessUser,id:string){await allowedNotice(u,id);await database().prepare('INSERT INTO jac_notice_recipients (id,notice_id,user_id,read_at,push_target) SELECT ?,?,?,?,0 WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=?) ON CONFLICT(id) DO UPDATE SET read_at=excluded.read_at').bind(id+'|'+u.id,id,u.id,now(),id).run();}
 export async function saveManualNotice(u:AccessUser,body:unknown,authorize:()=>Promise<boolean>){
  const parsed=z.object({id:uuid,title:z.string().trim().min(1).max(120),body:z.string().trim().min(1).max(2000),recipients:z.array(uuid).min(1).max(100)}).strict().safeParse(body);
@@ -84,6 +89,7 @@ async function deleteTravelNotice(u:AccessUser,id:unknown,confirmation:unknown,a
   db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)").bind(target,target),
   db.prepare('DELETE FROM jac_push_deliveries WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)').bind(target,target),
   db.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)').bind(target,target),
+  db.prepare('DELETE FROM jac_itinerary_updates WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)').bind(target,target),
   db.prepare("DELETE FROM jac_notices WHERE id=? AND kind=? AND EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE id=?)").bind(target,kind,target),
   db.prepare("UPDATE jac_slack_files SET status='deleted',error='' WHERE 'slack:'||id=(SELECT source FROM jac_deleted_itineraries WHERE id=?)").bind(target),
  ]);
@@ -119,7 +125,7 @@ export async function registerDevice(u:AccessUser,body:Record<string,unknown>,se
  const result=await database().prepare("INSERT INTO jac_push_devices (id,user_id,user_version,platform,data,session_id,updated_at) SELECT ?,id,version,?,?,?,? FROM payroll_users WHERE id=? AND active=1 AND password_hash<>'' ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id,user_version=excluded.user_version,platform=excluded.platform,data=excluded.data,session_id=excluded.session_id,enabled=1,updated_at=excluded.updated_at").bind(body.id,body.platform,cipher,tokenHash(sessionId),now(),u.id).run();if(result.meta.changes!==1)throw new NoticeFailure('Tu acceso cambió. Inicia sesión de nuevo.',403);
 }
 export async function unregisterDevice(u:AccessUser,id:unknown){if(!uuid.safeParse(id).success)throw new NoticeFailure('Selecciona un dispositivo válido.');await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND user_id=?').bind(id,u.id).run();}
-async function queuePush(id:string){await database().prepare("INSERT OR IGNORE INTO jac_push_deliveries (id,notice_id,device_id,updated_at) SELECT ?||'|'||d.id,?,d.id,? FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? JOIN jac_notices n ON n.id=r.notice_id WHERE r.push_target=1 AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(id,id,now(),id).run();}
+export async function queuePush(id:string){await database().prepare("INSERT OR IGNORE INTO jac_push_deliveries (id,notice_id,device_id,updated_at,notice_revision) SELECT ?||'|'||d.id||CASE WHEN n.revision=1 THEN '' ELSE '|v'||n.revision END,?,d.id,?,n.revision FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? JOIN jac_notices n ON n.id=r.notice_id WHERE r.push_target=1 AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(id,id,now(),id).run();}
 export async function dispatchPush(){
  const keys=await pushCredentials();
  const rows=(await database().prepare("SELECT p.id,p.notice_id,p.device_id,d.user_id,d.platform,d.data FROM jac_push_deliveries p JOIN jac_push_devices d ON d.id=p.device_id JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.notice_id=p.notice_id AND r.user_id=u.id WHERE p.status='pending' AND d.enabled=1 AND u.active=1 AND u.password_hash<>'' ORDER BY p.updated_at LIMIT 24").all<{id:string;notice_id:string;device_id:string;user_id:string;platform:string;data:string}>()).results;
@@ -128,7 +134,7 @@ export async function dispatchPush(){
   let state='uncertain';
   try{
    // A permission/account change after listing must prevent the provider call.
-   const activeDelivery=()=>database().prepare("SELECT d.id,n.kind,n.title,n.body FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? AND r.push_target=1 JOIN jac_notices n ON n.id=r.notice_id JOIN jac_push_deliveries p ON p.device_id=d.id AND p.notice_id=n.id WHERE p.id=? AND p.status='sending' AND d.id=? AND d.data=? AND d.user_id=? AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(row.notice_id,row.id,row.device_id,row.data,row.user_id).first<{id:string;kind:Notice['kind'];title:string;body:string}>();
+   const activeDelivery=()=>database().prepare("SELECT d.id,n.kind,n.title,n.body,n.revision,n.change_summary AS changeSummary FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? AND r.push_target=1 JOIN jac_notices n ON n.id=r.notice_id JOIN jac_push_deliveries p ON p.device_id=d.id AND p.notice_id=n.id WHERE p.notice_revision=n.revision AND p.id=? AND p.status='sending' AND d.id=? AND d.data=? AND d.user_id=? AND d.enabled=1 AND u.active=1 AND u.password_hash<>''").bind(row.notice_id,row.id,row.device_id,row.data,row.user_id).first<{id:string;kind:Notice['kind'];title:string;body:string;revision:number;changeSummary:string}>();
    const active=await activeDelivery();
    if(!active)state='disabled';else if(row.platform==='ios'?!keys.apns:!keys.web)state='unconfigured';
    else{
@@ -153,7 +159,7 @@ export async function queueSlackFiles(ids:string[],channel=ITINERARY_CHANNEL){
 export async function boardingFeed(u:AccessUser,history=false,cursor=''){
  if(cursor&&!/^20\d{2}-\d{2}-\d{2}\|[a-f0-9-]{36}$/.test(cursor))throw new NoticeFailure('Actualiza el listado.');
  const [date,id]=cursor.split('|'),today=boardingToday(),direction=history?'DESC':'ASC',op=history?'<':'>';
- const rows=(await database().prepare(`SELECT n.*,r.read_at FROM jac_notices n JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.kind='boarding_pass' AND n.travel_date${history?'<':'>='}? ${cursor?`AND (n.travel_date${op}? OR (n.travel_date=? AND n.id${op}?))`:''} ORDER BY n.travel_date ${direction},n.id ${direction} LIMIT 41`).bind(u.id,today,...(cursor?[date,date,id]:[])).all<Row>()).results;
+ const rows=(await database().prepare(`SELECT n.*,r.read_at,r.confirmed_revision,r.confirmed_at FROM jac_notices n JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.kind='boarding_pass' AND n.travel_date${history?'<':'>='}? ${cursor?`AND (n.travel_date${op}? OR (n.travel_date=? AND n.id${op}?))`:''} ORDER BY n.travel_date ${direction},n.id ${direction} LIMIT 41`).bind(u.id,today,...(cursor?[date,date,id]:[])).all<Row>()).results;
  const list=rows.slice(0,40),last=list.at(-1);return {settings:await settings(),users:[],notices:await noticeViews(list),today,nextCursor:rows.length>40&&last?last.travel_date+'|'+last.id:''};
 }
 export async function configureBoardingChannels(input:unknown,authorize:()=>Promise<boolean>){
@@ -204,7 +210,7 @@ export async function importSlackFiles(){
  await dispatchPush();
 }
 export async function retryImports(){await database().prepare("UPDATE jac_slack_files SET status='pending',error='' WHERE status='failed'").run();}
-export async function itineraryPdf(u:AccessUser,id:string){const item=await allowedNotice(u,id);if(item.kind!=='itinerary'||!item.file_key)throw new NoticeFailure('Este aviso no tiene un PDF.',404);const object=await env.BUCKET.get(item.file_key);if(!object)throw new NoticeFailure('El PDF todavía no está disponible.',404);await allowedNotice(u,id);return {item,object};}
+export async function itineraryPdf(u:AccessUser,id:string){const item=await allowedNotice(u,id);if(item.kind!=='itinerary'||!item.file_key)throw new NoticeFailure('Este aviso no tiene un PDF.',404);const object=await env.BUCKET.get(item.file_key);if(!object)throw new NoticeFailure('El PDF todavía no está disponible.',404);if((await allowedNotice(u,id)).file_key!==item.file_key)throw new NoticeFailure('El itinerario cambió. Abre la versión actual.',409);return {item,object};}
 
 // Staged uploads are tracked before R2 writes. Cleanup leases cannot discard a late upload.
 export async function purgeNoticeAttachments(){
@@ -251,7 +257,7 @@ export async function publishManualNotice(u:AccessUser,input:unknown,authorize:(
  }finally{if(!committed){for(const file of uploads)await db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE id=? AND state<>'ready'").bind(file.id).run();await purgeNoticeAttachments();}}
 }
 export async function noticeAttachment(u:AccessUser,id:string,file:string){
- const item=await allowedNotice(u,id);if(file===id&&item.file_key){const object=await env.BUCKET.get(item.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);await allowedNotice(u,id);return {filename:item.filename,mimeType:'application/pdf',object};}
+ const item=await allowedNotice(u,id);if(file===id&&item.file_key){const object=await env.BUCKET.get(item.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);if((await allowedNotice(u,id)).file_key!==item.file_key)throw new NoticeFailure('El itinerario cambió. Abre la versión actual.',409);return {filename:item.filename,mimeType:'application/pdf',object};}
  if(!uuid.safeParse(file).success)throw new NoticeFailure('El archivo no está disponible.',404);
  const get=()=>database().prepare("SELECT file_key,filename,mime_type FROM jac_notice_attachments WHERE id=? AND notice_id=? AND state='ready'").bind(file,id).first<{file_key:string;filename:string;mime_type:string}>();
  const row=await get();if(!row)throw new NoticeFailure('El archivo no está disponible.',404);const object=await env.BUCKET.get(row.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);await allowedNotice(u,id);if(!await get())throw new NoticeFailure('El archivo fue eliminado.',404);return {filename:row.filename,mimeType:row.mime_type,object};
@@ -285,4 +291,41 @@ async function importBoardingSlackFile(row:{id:string;channel_id:string;recipien
   const saved=await db.prepare("SELECT id FROM jac_notices WHERE source=? AND kind='boarding_pass'").bind('slack:'+id).first<{id:string}>();if(!saved)throw new NoticeFailure('La cuenta o asignación cambió. No se importó el pase.');
   await queuePush(saved.id);await db.prepare("UPDATE jac_slack_files SET status='ready',error='' WHERE id=? AND status<>'deleted'").bind(id).run();
  }finally{if(!committed){await db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE id=? AND state<>'ready'").bind(attachment).run();await purgeNoticeAttachments();}}
+}
+
+export async function confirmNotice(u:AccessUser,id:unknown,revision:unknown,authorize:()=>Promise<boolean>){
+ if(typeof id!=='string'||!Number.isSafeInteger(revision))throw new NoticeFailure('Actualiza el aviso antes de confirmar.');
+ const item=await allowedNotice(u,id);if(item.kind==='boarding_pass')throw new NoticeFailure('La confirmación corresponde a alertas e itinerarios.');
+ if(item.revision!==revision)throw new NoticeFailure('El aviso cambió. Lee la versión actual antes de confirmar.',409);
+ if(!await authorize())throw new NoticeFailure('Tu sesión cambió.',403);
+ const result=await database().prepare(`INSERT INTO jac_notice_recipients(id,notice_id,user_id,confirmed_revision,confirmed_at,push_target) SELECT ?,?,?,?,?,0 WHERE EXISTS(SELECT 1 FROM jac_notices n WHERE n.id=? AND n.revision=? AND ${accessSql}) ON CONFLICT(id) DO UPDATE SET confirmed_revision=excluded.confirmed_revision,confirmed_at=CASE WHEN jac_notice_recipients.confirmed_revision=excluded.confirmed_revision THEN jac_notice_recipients.confirmed_at ELSE excluded.confirmed_at END`).bind(id+'|'+u.id,id,u.id,revision,now(),id,revision,u.id,noticeOwner(u)?1:0).run();
+ if(result.meta.changes!==1)throw new NoticeFailure('El aviso cambió o fue eliminado. Actualiza el listado.',409);
+ return noticeItem(u,id);
+}
+const itineraryUpdateSchema=z.object({id:uuid,requestId:uuid,revision:z.number().int().positive(),title:z.string().trim().min(1).max(120),body:z.string().trim().max(2000),summary:z.string().trim().min(3).max(500),files:manualNoticeSchema.shape.files.min(1)}).strict();
+export async function updateItinerary(u:AccessUser,input:unknown,authorize:()=>Promise<boolean>){
+ if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede actualizar itinerarios.',403);
+ const parsed=itineraryUpdateSchema.safeParse(input);if(!parsed.success)throw new NoticeFailure('Indica qué cambió y adjunta la versión completa del itinerario.');const p=parsed.data,db=database(),files=decodeNoticeFiles(p.files),hash=await contentHash(p);
+ const item=await allowedNotice(u,p.id);if(item.kind!=='itinerary')throw new NoticeFailure('Selecciona un itinerario.');
+ const prior=await db.prepare('SELECT hash FROM jac_itinerary_updates WHERE id=?').bind(p.requestId).first<{hash:string}>();
+ if(!await authorize())throw new NoticeFailure('Tu sesión cambió.',403);
+ if(prior){if(prior.hash!==hash)throw new NoticeFailure('Este reintento tiene otro contenido.',409);await queuePush(p.id);return p.id;}
+ if(item.revision!==p.revision)throw new NoticeFailure('El itinerario cambió. Actualízalo antes de editar.',409);
+ const uploads=await stageTravelFiles(files);let committed=false;
+ try{
+  if(!await authorize())throw new NoticeFailure('Tu sesión cambió.',403);
+  const token=crypto.randomUUID(),stamp=now(),gate='EXISTS(SELECT 1 FROM jac_notices WHERE id=? AND upload_token=?)';
+  const result=await db.batch([
+   db.prepare(`UPDATE jac_notices SET title=?,body=?,change_summary=?,updated_at=?,revision=revision+1,upload_token=?,file_key='',filename='',size=0 WHERE id=? AND kind='itinerary' AND revision=? AND NOT EXISTS(SELECT 1 FROM jac_itinerary_updates WHERE id=?)${uploadedGate(uploads)}`).bind(p.title,p.body,p.summary,stamp,token,p.id,p.revision,p.requestId,...uploadedBindings(uploads)),
+   db.prepare(`UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE notice_id=? AND state='ready' AND ${gate}`).bind(p.id,p.id,token),
+   ...uploads.map(f=>db.prepare(`UPDATE jac_notice_attachments SET state='ready',notice_id=? WHERE id=? AND state='staged' AND ${gate}`).bind(p.id,f.id,p.id,token)),
+   db.prepare(`UPDATE jac_notice_recipients SET read_at='' WHERE notice_id=? AND ${gate}`).bind(p.id,p.id,token),
+   db.prepare(`UPDATE jac_push_deliveries SET status='disabled' WHERE notice_id=? AND status IN ('pending','sending') AND ${gate}`).bind(p.id,p.id,token),
+   db.prepare(`INSERT INTO jac_itinerary_updates(id,notice_id,revision,hash,summary,actor_id,created_at) SELECT ?,?,?,?,?,?,? WHERE ${gate}`).bind(p.requestId,p.id,p.revision+1,hash,p.summary,u.id,stamp,p.id,token),
+   // Move the legacy Slack PDF into the existing durable cleanup queue.
+   ...(item.file_key?[db.prepare(`INSERT INTO jac_notice_attachments(id,notice_id,file_key,filename,mime_type,size,state,expires_at) SELECT ?,?,?,?,'application/pdf',?,'deleted',? WHERE ${gate}`).bind(crypto.randomUUID(),p.id,item.file_key,item.filename,item.size,stamp,p.id,token)]:[])
+  ]);committed=result[0].meta.changes===1;
+  if(!committed){const saved=await db.prepare('SELECT hash FROM jac_itinerary_updates WHERE id=?').bind(p.requestId).first<{hash:string}>();if(saved?.hash!==hash)throw new NoticeFailure('El itinerario cambió. Actualiza el listado.',409);}
+  await queuePush(p.id);return p.id;
+ }finally{if(!committed)await discardTravelFiles(uploads);await purgeNoticeAttachments();}
 }

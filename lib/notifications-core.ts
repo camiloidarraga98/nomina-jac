@@ -4,10 +4,11 @@ export const APP_TOPIC='co.jacmusic.nomina';
 export const MAX_PDF_BYTES=10*1024*1024;
 export class NoticeFailure extends Error {constructor(message:string,public status=400){super(message);}}
 export type NoticeAttachment={id:string;filename:string;mimeType:string;size:number};
-export type Notice={id:string;kind:'itinerary'|'alert'|'boarding_pass';travelDate?:string;title:string;body:string;filename:string;size:number;createdAt:string;read:boolean;attachments?:NoticeAttachment[]};
+export type Notice={revision?:number;updatedAt?:string;changeSummary?:string;confirmed?:boolean;receipts?:{userId:string;name:string;confirmed:boolean;confirmedAt:string}[];id:string;kind:'itinerary'|'alert'|'boarding_pass';travelDate?:string;title:string;body:string;filename:string;size:number;createdAt:string;read:boolean;attachments?:NoticeAttachment[]};
 export type PushContent={title:string;body:string};
-export function noticePushContent(notice:Pick<Notice,'kind'|'title'|'body'>):PushContent{
+export function noticePushContent(notice:Pick<Notice,'kind'|'title'|'body'|'revision'|'changeSummary'>):PushContent{
  if(notice.kind==='boarding_pass')return {title:'JAC · Pase de abordar',body:'Ya está disponible tu pase de abordar. Abre JAC para consultarlo.'};
+ if(notice.kind==='itinerary'&&(notice.revision??1)>1)return {title:'JAC · Itinerario actualizado',body:notice.changeSummary||'Consulta la nueva versión de tu itinerario.'};
  if(notice.kind==='itinerary')return {title:'JAC',body:'Ya llegó tu itinerario para el día de hoy'};
  const content={title:notice.title,body:notice.body};
  // Leave room for the ID and transport metadata within Web Push/APNs limits.

@@ -1,3 +1,11 @@
+## Viajes — iPhone 0.10.0 (16)
+
+Actualiza este mismo proyecto con **Run**. Alertas e Itinerarios incluyen **Confirmar recibido**, independiente de abrir el aviso; administradores ven las confirmaciones por versión. Un administrador puede actualizar un itinerario con la versión completa y un resumen de cambios: aparece **Actualizado** y se solicita confirmar otra vez.
+
+**Gestión → Gastos de viaje** permite enviar concepto, valor COP, fecha y comprobantes desde Archivos, Fotos o Cámara. Solo el autor y administradores consultan sus archivos. Los administradores aprueban e incorporan a una persona/quincena abierta o rechazan con motivo. La incorporación y revisión son atómicas, sin reintegros duplicados ni envíos de correo. Alex conserva su bloqueo de nómina y puede registrar sus propios gastos. Ver `docs/TRAVEL_WORKFLOWS.md`.
+
+El push continúa suspendido mientras Apple revisa la membresía. Mantén tu firma personal local y `co.jacmusic.nomina`. No necesitas descargar otro proyecto ni borrar la app instalada.
+
 ## Push suspendido temporalmente — iPhone 0.9.5 (15)
 
 Mientras Apple revisa la membresía, este mismo proyecto compila sin la capacidad Push Notifications ni `aps-environment`. `JAC_PUSH_ENABLED=NO` en Debug y Release impide pedir autorización, registrar APNs o enviar comandos de registro; Gestión → Notificaciones explica la suspensión. Se conserva la preferencia del usuario para una futura reactivación. Agenda, itinerarios, pases privados, alertas dentro de la app, adjuntos y privacidad siguen funcionando. Las notificaciones de la web no cambian.

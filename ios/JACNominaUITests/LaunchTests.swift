@@ -425,4 +425,25 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"borrado-manual-pase-itinerario")
     }
 
+    @MainActor func testExplicitReceiptAndUpdatedItineraryRequireNewConfirmation() {
+        let app=fixture();app.tabBars.buttons["Itinerarios"].tap();tap(app,"notices.item.33333333-3333-4333-8333-333333333333");tap(app,"notices.confirm")
+        XCTAssertTrue(app.buttons["notices.confirm"].waitForExistence(timeout:10));XCTAssertEqual(app.buttons["notices.confirm"].label,"✓ Recibido")
+        tap(app,"notices.update")
+        let summary=app.descendants(matching:.any).matching(identifier:"itinerary.update.summary").firstMatch
+        XCTAssertTrue(summary.waitForExistence(timeout:10));summary.tap();summary.typeText("Salida a las 07:30")
+        tap(app,"travel.fixture");tap(app,"itinerary.update.save")
+        XCTAssertTrue(app.staticTexts["Salida a las 07:30"].waitForExistence(timeout:15));XCTAssertEqual(app.buttons["notices.confirm"].label,"Confirmar recibido")
+        attachScreen(app,name:"itinerario-actualizado-confirmacion-pendiente")
+        XCUIDevice.shared.press(.home);app.activate();XCTAssertTrue(app.buttons["notices.confirm"].waitForExistence(timeout:10));tap(app,"notices.confirm")
+        XCTAssertEqual(app.buttons["notices.confirm"].label,"✓ Recibido")
+    }
+    @MainActor func testTravelExpenseWithReceiptCanBeSubmittedAndReviewed() {
+        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.expenses");tap(app,"expenses.create")
+        fill(app,"expenses.concept","Taxi ficticio");fill(app,"expenses.amount","35000");tap(app,"travel.fixture");tap(app,"expenses.submit")
+        XCTAssertTrue(app.staticTexts["Taxi ficticio"].waitForExistence(timeout:15));let created=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","expense.")).firstMatch;XCTAssertTrue(created.waitForExistence(timeout:10));created.tap()
+        XCTAssertTrue(app.staticTexts["Pendiente de revisión"].waitForExistence(timeout:10))
+        tap(app,"expenses.employee");tap(app,"Música simulada");tap(app,"expenses.period");tap(app,"Quincena simulada");tap(app,"expenses.approve")
+        XCTAssertTrue(app.staticTexts["Aprobado e incorporado a nómina"].waitForExistence(timeout:15));attachScreen(app,name:"gasto-con-comprobante-aprobado")
+    }
+
 }

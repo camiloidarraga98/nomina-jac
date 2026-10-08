@@ -24,3 +24,16 @@
 .notice-row-footer{display:flex;justify-content:flex-end;padding:4px 0}.notice-row .notice-row-footer{flex:none;padding:0}.boarding-files .notice-row-footer{margin-top:-4px}.notice-delete{width:40px;height:40px;min-height:40px;flex:none;padding:0!important;border:0!important;background:transparent!important;box-shadow:none!important;color:#728078!important}.notice-delete:hover{background:#fff0ec!important;color:#a54733!important}.notice-delete:focus-visible{outline:2px solid #35643d;outline-offset:2px}
 
 @media(max-width:480px){.boarding-history{padding:16px}.boarding-history summary{gap:10px}}
+
+.notice-change {padding:18px 20px;border:1px solid #c9dfd6;background:#f0f8f4;border-radius:14px;line-height:1.6;margin:12px 0;}
+.notice-change p {margin:8px 0;white-space:pre-wrap;}
+.notice-updated {color:#12664c!important;font-weight:700;}
+.notice-receipt {display:flex;align-items:flex-start;flex-direction:column;gap:12px;padding:16px 0;}
+.notice-receipt>small {color:#60706a;}
+.receipt-list {width:100%;border-top:1px solid #dce5df;padding:16px 0;}
+.receipt-list summary {cursor:pointer;font-weight:600;}
+.receipt-list p {display:flex;justify-content:space-between;gap:18px;font-size:14px;line-height:1.6;margin:14px 0;}
+.travel-fields {border:0;padding:0;margin:0;min-width:0;display:grid;gap:16px;}
+.travel-fields textarea {width:100%;min-height:100px;border:1px solid #cbd7d0;border-radius:10px;background:white;padding:12px;font:inherit;}
+.travel-expenses-panel .notice-list {padding:0 24px 24px;}
+@media(max-width:640px) {.travel-expenses-panel .notice-list {padding:0 16px 16px;}.receipt-list p {flex-direction:column;gap:4px;}}

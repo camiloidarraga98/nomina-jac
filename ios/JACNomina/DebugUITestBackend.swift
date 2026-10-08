@@ -26,13 +26,15 @@ private final class FixtureProtocol: URLProtocol {
     static var reader = false
     static var conflict = false
     static var agendaChanges: [String: JSONValue] = [:]
+    static var overrides:[String:JSONValue]=[:]
+    static var expenses:[JSONValue]=[]
     static var alerts: [JSONValue] = []
     static var deletedNotices = Set<String>()
     static var attachments: [String: Data] = [:]
     static var readsToCancel = Set<String>()
     static var offline = false
     static var slowAgenda = false
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; agendaChanges = [:]; alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func cancelRead(_ request: URLRequest) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard request.httpMethod == "GET", let url = request.url else { return false }
@@ -47,6 +49,9 @@ private final class FixtureProtocol: URLProtocol {
             if Self.offline { throw URLError(.notConnectedToInternet) }
             if Self.slowAgenda, request.url?.path == "/api/calendar", request.httpMethod == "GET" { Thread.sleep(forTimeInterval: 3) }
             if Self.cancelRead(request) { throw URLError(.cancelled) }
+            if request.url?.path == "/api/expenses/file" {
+                Self.lock.lock();defer { Self.lock.unlock() };let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? [],id=q.first { $0.name == "file" }?.value ?? "";guard let bytes=Self.attachments[id] else { throw URLError(.fileDoesNotExist) };let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":try NoticeUpload.mime(bytes)])!;client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:bytes);client?.urlProtocolDidFinishLoading(self);return
+            }
             if request.url?.path == "/api/notices/file" {
                 Self.lock.lock(); defer { Self.lock.unlock() }; let q = URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? []; let notice = q.first { $0.name == "id" }?.value ?? "", id = q.first { $0.name == "file" }?.value ?? ""
                 let viewer=Self.reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
@@ -82,12 +87,33 @@ private final class FixtureProtocol: URLProtocol {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         let viewer = reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
-        let visible = ([itinerary] + boardingFixtures + alerts).filter { !(ProcessInfo.processInfo.arguments.contains("--uitest-boarding-tomorrow") && ["boarding-fixture-0","boarding-fixture-1"].contains($0["id"].text)) && !deletedNotices.contains($0["id"].text) && ($0["kind"].text != "boarding_pass" || $0["recipients"].elements.contains(.string(viewer))) }
+        let visible = ([itinerary] + boardingFixtures + alerts).map { overrides[$0["id"].text] ?? $0 }.filter { !(ProcessInfo.processInfo.arguments.contains("--uitest-boarding-tomorrow") && ["boarding-fixture-0","boarding-fixture-1"].contains($0["id"].text)) && !deletedNotices.contains($0["id"].text) && ($0["kind"].text != "boarding_pass" || $0["recipients"].elements.contains(.string(viewer))) }
+        if parts.path == "/api/expenses" {
+            if request.httpMethod == "POST" {
+                var input=try body(request)
+                if parts.queryItems?.contains(where: { $0.name == "review" }) == true {
+                    guard !reader,let index=expenses.firstIndex(where: { $0["id"] == input["id"] }) else { return (403,.object(["error":.string("No autorizado")])) }
+                    if expenses[index]["status"].text == "pending" { expenses[index]["status"] = .string(input["decision"].text == "approve" ? "approved" : "rejected");expenses[index]["reviewNote"]=input["reason"];expenses[index]["employeeId"]=input["employeeId"];expenses[index]["periodId"]=input["periodId"] }
+                    return (200,.object(["ok":.bool(true)]))
+                }
+                let id=input["id"].text
+                if !expenses.contains(where: { $0["id"].text == id }) {
+                    let files=try input["files"].elements.map { file -> JSONValue in guard let data=Data(base64Encoded:file["data"].text) else { throw APIError.message("Archivo inválido") };let fid=UUID().uuidString.lowercased();attachments[fid]=data;return .object(["id":.string(fid),"filename":file["filename"],"mimeType":.string(try NoticeUpload.mime(data)),"size":.number(Double(data.count))]) }
+                    input["attachments"] = .array(files);input["userId"] = .string(viewer);input["name"] = .string("Cuenta simulada");input["status"] = .string("pending");input["version"] = .number(1);input["reviewNote"] = .string("");input["periodId"] = .string("");input["employeeId"] = .string("");expenses.append(input)
+                }
+                return (200,.object(["id":.string(id)]))
+            }
+            return (200,.object(["expenses":.array(expenses),"nextCursor":.string(""),"reviewer":.bool(!reader),"employees":.array([.object(["id":.string("music"),"name":.string("Música simulada")])]),"periods":.array([.object(["id":.string("fixture-period"),"name":.string("Quincena simulada")])])]))
+        }
         if parts.path == "/api/notices/publish" {
             guard !reader else { return (403,.object(["error":.string("Solo Camilo puede publicar.")])) }
             guard request.value(forHTTPHeaderField:"Origin") == UITestBackend.base.absoluteString, request.value(forHTTPHeaderField:"Cookie")?.hasPrefix("__Host-jac_session=") == true else { return (403,.object(["error":.string("Sesión requerida.")])) }
             var item = try body(request); let id = item["id"].text
             if deletedNotices.contains(id) { return (410,.object(["error":.string("Aviso eliminado.")])) }
+            if parts.queryItems?.contains(where: { $0.name == "update" }) == true, var existing=visible.first(where: { $0["id"].text == id }) {
+                existing["title"]=item["title"];existing["body"]=item["body"];existing["revision"] = .number(existing["revision"].number+1);existing["changeSummary"]=item["summary"];existing["confirmed"] = .bool(false);existing["filename"] = .string("")
+                existing["attachments"] = .array(try item["files"].elements.map { file in let bytes=Data(base64Encoded:file["data"].text)!;let fid=UUID().uuidString.lowercased();attachments[fid]=bytes;return .object(["id":.string(fid),"filename":file["filename"],"mimeType":.string(try NoticeUpload.mime(bytes)),"size":.number(Double(bytes.count))]) });overrides[id]=existing;return (200,.object(["id":.string(id)]))
+            }
             if !alerts.contains(where: { $0["id"].text == id }) {
                 let files = try item["files"].elements.map { file -> JSONValue in
                     guard let data = Data(base64Encoded:file["data"].text) else { throw APIError.message("Adjunto inválido") }; let fid = UUID().uuidString.lowercased(); attachments[fid] = data
@@ -100,6 +126,7 @@ private final class FixtureProtocol: URLProtocol {
         if parts.path == "/api/notices" {
             if request.httpMethod == "POST" {
                 let command = try body(request)
+                if command["action"].text == "confirm",var item=visible.first(where: { $0["id"] == command["id"] }) { item["confirmed"] = .bool(true);item["receipts"] = .array([.object(["userId":.string(viewer),"name":.string("Cuenta simulada"),"confirmed":.bool(true),"confirmedAt":.string("2026-10-08T12:00:00Z")])]);overrides[item["id"].text]=item;return (200,.object(["ok":.bool(true)])) }
                 if command["action"].text == "read", readsToCancel.remove("/api/notices?read") != nil { throw URLError(.cancelled) }
                 if ["deleteAlert","deleteItinerary","deleteBoardingPass"].contains(command["action"].text) {
                     guard !reader else { return (403,.object(["error":.string("Solo Camilo puede eliminar.")])) }
@@ -219,7 +246,7 @@ private final class FixtureProtocol: URLProtocol {
     static var boardingFixtures: [JSONValue] { let dates=[BoardingClock.today(),BoardingClock.today(),BoardingClock.nextDay(BoardingClock.today()),"2020-10-10","2090-10-10"]
         return dates.enumerated().map { index,date in .object(["id":.string("boarding-fixture-\(index)"),"kind":.string("boarding_pass"),"title":.string(index==3 ? "Pase anterior ficticio" : index==2 ? "Pase de mañana ficticio" : index==4 ? "Pase futuro ficticio" : "Pase de hoy ficticio \(index+1)"),"body":.string("Documento ficticio, sin viaje real"),"filename":.string(""),"size":.number(100),"createdAt":.string("2026-10-07T12:00:00Z"),"travelDate":.string(date),"read":.bool(false),"recipients":.array([.string("11111111-1111-4111-8111-111111111111")]),"attachments":.array([.object(["id":.string("boarding-fixture-\(index)-pdf"),"filename":.string("Camilo 16 de octubre Pereira-Bogota.pdf"),"mimeType":.string("application/pdf"),"size":.number(100)])])]) }
     }
-    static var itinerary: JSONValue { .object(["id": .string("33333333-3333-4333-8333-333333333333"), "kind": .string("itinerary"), "title": .string("Itinerario simulado"), "body": .string(""), "filename": .string("Itinerario_simulado.pdf"), "size": .number(900), "createdAt": .string("2026-10-07T12:00:00Z"), "read": .bool(false)]) }
+    static var itinerary: JSONValue { .object(["revision":.number(1),"confirmed":.bool(false),"id": .string("33333333-3333-4333-8333-333333333333"), "kind": .string("itinerary"), "title": .string("Itinerario simulado"), "body": .string(""), "filename": .string("Itinerario_simulado.pdf"), "size": .number(900), "createdAt": .string("2026-10-07T12:00:00Z"), "read": .bool(false)]) }
     static var agendaCalendar: JSONValue { .object(["id": .string("fixture-calendar"), "name": .string("Agenda simulada"), "timeZone": .string("America/Bogota"), "primary": .bool(true)]) }
     static func agenda(_ month: String) -> JSONValue {
         let today = CalendarClock.day(Date()), first = CalendarClock.date(month + "-01")!

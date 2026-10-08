@@ -633,4 +633,27 @@ final class PayrollClientTests: XCTestCase {
         do { _ = try await client.noticeFile(item,file:file); XCTFail("Un pase eliminado no debe descargarse") } catch {}
     }
 
+    @MainActor func testTravelContractsPreserveRevisionAndExpenseReviewIdentity() async throws {
+        let vault=MemorySession();vault.token=token;let client=makeClient(vault)
+        let item=try JSONDecoder().decode(JACNotice.self,from:Data("{\"id\":\"33333333-3333-4333-8333-333333333333\",\"kind\":\"itinerary\",\"title\":\"Ficticio\",\"body\":\"\",\"filename\":\"\",\"size\":0,\"createdAt\":\"2026-10-08T12:00:00Z\",\"read\":true,\"revision\":3,\"confirmed\":false}".utf8))
+        var commands:[JSONValue]=[]
+        MockProtocol.handler={ request in
+            XCTAssertEqual(request.url?.host,"payroll.example.invalid");XCTAssertEqual(request.value(forHTTPHeaderField:"Origin"),self.base.absoluteString)
+            let body=try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(request));commands.append(body)
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!,Data("{}".utf8))
+        }
+        try await client.confirmNotice(item);XCTAssertEqual(commands.last?["revision"].number,3);XCTAssertEqual(commands.last?["action"].text,"confirm")
+        let requestID=UUID().uuidString.lowercased(),files=[NoticeUpload(filename:"Ficticio.pdf",data:Data("%PDF-1.4 fixture".utf8))]
+        try await client.updateItinerary(item,requestID:requestID,title:item.title,body:"",summary:"Cambio de hora",files:files)
+        XCTAssertEqual(commands.last?["requestId"].text,requestID);XCTAssertEqual(commands.last?["revision"].number,3)
+        let expenseID=UUID().uuidString.lowercased();try await client.submitExpense(id:expenseID,concept:"Taxi ficticio",amount:25000,date:"2026-10-08",note:"",files:files)
+        XCTAssertEqual(commands.last?["id"].text,expenseID);XCTAssertEqual(commands.last?["amount"].number,25000);XCTAssertEqual(commands.last?["files"].elements.count,1)
+        let expense=try JSONDecoder().decode(TravelExpense.self,from:Data("{\"id\":\"\(expenseID)\",\"userId\":\"fixture\",\"name\":\"Ficticio\",\"concept\":\"Taxi\",\"amount\":25000,\"expenseDate\":\"2026-10-08\",\"note\":\"\",\"status\":\"pending\",\"version\":1,\"reviewNote\":\"\",\"periodId\":\"\",\"employeeId\":\"\",\"attachments\":[]}".utf8))
+        try await client.reviewExpense(expense,approve:true,reason:"Validado",employeeID:"employee-fixture",periodID:"period-fixture")
+        XCTAssertEqual(commands.last?["decision"].text,"approve");XCTAssertEqual(commands.last?["employeeId"].text,"employee-fixture");XCTAssertEqual(commands.last?["version"].number,1)
+        let count=commands.count
+        do { try await client.submitExpense(id:expenseID,concept:"Taxi",amount:1,date:"2026-10-08",note:"",files:[NoticeUpload(filename:"No.pdf",data:Data("invalid".utf8))]);XCTFail("Archivo inválido") } catch {}
+        XCTAssertEqual(commands.count,count,"Un archivo inválido no se envía")
+    }
+
 }

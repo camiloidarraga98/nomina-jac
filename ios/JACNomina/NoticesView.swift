@@ -5,6 +5,7 @@ import UIKit
 
 struct JACNotice: Decodable, Identifiable {
     let id: String; let kind: String; let title: String; let body: String; let filename: String; let size: Int; let createdAt: String; let read: Bool
+    var revision: Int? = nil; var updatedAt: String? = nil; var changeSummary: String? = nil; var confirmed: Bool? = nil; var receipts: [NoticeReceipt]? = nil
     var travelDate: String? = nil
     var attachments: [NoticeAttachment]? = nil
     var files: [NoticeAttachment] { attachments ?? (filename.isEmpty ? [] : [NoticeAttachment(id: id, filename: filename, mimeType: "application/pdf", size: size)]) }
@@ -15,6 +16,7 @@ struct JACNotice: Decodable, Identifiable {
         return formatter.string(from: date)
     }
 }
+struct NoticeReceipt: Decodable, Identifiable { let userId: String; let name: String; let confirmed: Bool; let confirmedAt: String; var id: String { userId } }
 struct NoticeAttachment: Decodable, Identifiable {
     let id: String; let filename: String; let mimeType: String; let size: Int
 }
@@ -82,7 +84,7 @@ struct NoticesView: View {
             } else { Section(effectiveKind == "itinerary" ? "Itinerarios del equipo" : "Avisos del equipo") {
                 let items = records.filter { $0.kind == effectiveKind }
                 if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
-                ForEach(items) { item in VStack(alignment:.leading,spacing:14) { Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
+                ForEach(items) { item in VStack(alignment:.leading,spacing:14) { Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); if (item.revision ?? 1) > 1 { Text("Actualizado · Versión \(item.revision ?? 1)").font(.caption.bold()).foregroundStyle(Color.accentColor) }; if item.confirmed == true { Text("✓ Recibido").font(.caption) }; Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
                     .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner && item.kind == "itinerary" { deleteButton(item,destructive:false).tint(.red) } }
                     .contextMenu { if user.isOwner && item.kind == "itinerary" { deleteButton(item) } }
                 }
@@ -162,28 +164,40 @@ struct NoticeDetail: View {
     @State private var error: String?
     @State private var confirmingDelete = false
     @State private var deleting = false
+    @State private var current: JACNotice?
+    @State private var confirmingReceipt = false
+    @State private var updating = false
+    private var shown: JACNotice { current ?? item }
     var body: some View {
         NavigationStack {
             List {
-                Section { Text(item.title).font(.title2.bold()); Text(item.createdLabel).foregroundStyle(.secondary) }
+                Section { Text(shown.title).font(.title2.bold()); Text(shown.createdLabel).foregroundStyle(.secondary) }
                 if let error { Section { InlineError(message: error) } }
-                if !item.body.isEmpty { Section { Text(item.body).textSelection(.enabled) } }
-                if !item.files.isEmpty { Section("Adjuntos") { ForEach(item.files) { file in
+                if !shown.body.isEmpty { Section { Text(shown.body).textSelection(.enabled) } }
+                if !shown.files.isEmpty { Section("Adjuntos") { ForEach(shown.files) { file in
                     VStack(alignment: .leading, spacing: 12) {
                         Text(file.filename).font(.headline); Text("\(max(1,file.size/1024)) KB").font(.caption).foregroundStyle(.secondary)
                         Button { Task { await open(file) } } label: { HStack { Label(file.mimeType == "application/pdf" ? "Abrir PDF" : "Abrir imagen", systemImage: file.mimeType == "application/pdf" ? "doc.text" : "photo"); if downloading { ProgressView() } } }.buttonStyle(JACPrimaryButtonStyle()).disabled(downloading || deleting).accessibilityIdentifier(file.mimeType == "application/pdf" ? "notices.pdf" : "notices.image")
                     }.padding(.vertical, 8)
                 } } }
-                if owner && item.kind != "boarding_pass" { Section { Button("Eliminar " + (item.kind == "itinerary" ? "itinerario" : "alerta"), role: .destructive) { confirmingDelete = true }.disabled(deleting || downloading).accessibilityIdentifier("notices.delete") } }
-            }.jacSurface().navigationTitle(item.kind == "boarding_pass" ? "Pase de abordar" : item.kind == "itinerary" ? "Itinerario" : "Alerta").navigationBarTitleDisplayMode(.inline)
+                if (shown.revision ?? 1) > 1 { Section("Actualizado · Versión \(shown.revision ?? 1)") { Text(shown.changeSummary ?? "Consulta la nueva versión.").foregroundStyle(Color.accentColor) } }
+                if shown.kind != "boarding_pass" { Section("Confirmación de recepción") {
+                    Button(shown.confirmed == true ? "✓ Recibido" : "Confirmar recibido") { Task { await confirm() } }.disabled(confirmingReceipt || shown.confirmed == true).accessibilityIdentifier("notices.confirm")
+                    Text("Confirma que leíste esta versión.").font(.footnote).foregroundStyle(.secondary)
+                    if owner,let receipts=shown.receipts { DisclosureGroup("Confirmaciones · \(receipts.filter(\.confirmed).count)/\(receipts.count)") { ForEach(receipts) { receipt in LabeledContent(receipt.name,value:receipt.confirmed ? "Recibido" : "Pendiente") } }.accessibilityIdentifier("notices.receipts") }
+                } }
+                if owner && shown.kind == "itinerary" { Section { Button("Actualizar itinerario") { updating=true }.accessibilityIdentifier("notices.update") } }
+                if owner && shown.kind != "boarding_pass" { Section { Button("Eliminar " + (shown.kind == "itinerary" ? "itinerario" : "alerta"), role: .destructive) { confirmingDelete = true }.disabled(deleting || downloading).accessibilityIdentifier("notices.delete") } }
+            }.jacSurface().navigationTitle(shown.kind == "boarding_pass" ? "Pase de abordar" : shown.kind == "itinerary" ? "Itinerario" : "Alerta").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() }.disabled(deleting).accessibilityIdentifier("notices.detail.close") } }
                 // Closing the detail also cancels its best-effort read receipt.
                 // Do not leave that cancellation in unrelated menus.
-                .task { do { try await store.client.noticeCommand(.object(["action": .string("read"), "id": .string(item.id)])) } catch { store.reportReadFailure(error) } }
-                .alert("Eliminar " + (item.kind == "itinerary" ? "itinerario" : "alerta"), isPresented: $confirmingDelete) {
+                .task { do { current = try await store.client.notice(id:shown.id); try await store.client.noticeCommand(.object(["action": .string("read"), "id": .string(shown.id)])) } catch { store.reportReadFailure(error) } }
+                .alert("Eliminar " + (shown.kind == "itinerary" ? "itinerario" : "alerta"), isPresented: $confirmingDelete) {
                     Button("Cancelar", role: .cancel) {}.accessibilityIdentifier("notices.delete.cancel")
                     Button("Eliminar", role: .destructive) { Task { await remove() } }.accessibilityIdentifier("notices.delete.confirm")
-                } message: { Text("¿Eliminar “\(item.title)”? Se retirará para todos sus destinatarios, junto con sus archivos de JAC y entregas pendientes. El original de Slack se conserva. Los avisos ya recibidos no se pueden retirar. Esta acción no se puede deshacer.") }
+                } message: { Text("¿Eliminar “\(shown.title)”? Se retirará para todos sus destinatarios, junto con sus archivos de JAC y entregas pendientes. El original de Slack se conserva. Los avisos ya recibidos no se pueden retirar. Esta acción no se puede deshacer.") }
+                .sheet(isPresented:$updating) { ItineraryUpdateView(item:shown) { do { current=try await store.client.notice(id:shown.id) } catch { self.error=store.reportReadFailure(error) } } }
                 .sheet(item: $document, onDismiss: { if let previousDocument { TemporaryDocuments.remove(previousDocument); self.previousDocument = nil } }) { file in
                     NavigationStack { DocumentPreview(url: file.url).privacySensitive().ignoresSafeArea(edges: .bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Itinerario PDF" : "Imagen adjunta").navigationBarTitleDisplayMode(.inline)
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { document = nil }.accessibilityIdentifier("notices.pdf.close") }; ToolbarItem(placement: .confirmationAction) { ShareLink(item: file.url) { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("Compartir archivo") } }
@@ -191,14 +205,18 @@ struct NoticeDetail: View {
                 }
         }.interactiveDismissDisabled(deleting)
     }
+    private func confirm() async {
+        confirmingReceipt=true;defer { confirmingReceipt=false }
+        do { try await store.client.confirmNotice(shown);current=try await store.client.notice(id:shown.id);error=nil } catch { self.error=error.localizedDescription;store.report(error) }
+    }
     private func open(_ file: NoticeAttachment) async {
         downloading = true; defer { downloading = false }
-        do { let result = item.attachments == nil && item.kind == "itinerary" ? try await store.client.itinerary(item) : try await store.client.noticeFile(item, file: file); previousDocument = result; document = result }
+        do { let result = shown.attachments == nil && shown.kind == "itinerary" ? try await store.client.itinerary(shown) : try await store.client.noticeFile(shown, file: file); previousDocument = result; document = result }
         catch { self.error = error.localizedDescription; store.report(error) }
     }
     private func remove() async {
         guard !deleting else { return }; deleting = true; defer { deleting = false }
-        do { try await store.client.deleteNotice(item); dismiss() } catch { self.error = error.localizedDescription; store.report(error) }
+        do { try await store.client.deleteNotice(shown); dismiss() } catch { self.error = error.localizedDescription; store.report(error) }
     }
 }
 struct NoticeComposer: View {

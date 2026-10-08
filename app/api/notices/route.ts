@@ -1,7 +1,7 @@
 import {waitUntil} from 'cloudflare:workers';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {sessionToken} from '@/lib/payroll-auth-crypto';
-import {boardingFeed,configureBoardingChannels,noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,deleteBoardingPass,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
+import {confirmNotice,boardingFeed,configureBoardingChannels,noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,deleteBoardingPass,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
 import {NoticeFailure} from '@/lib/notifications-core';
 export const dynamic='force-dynamic';
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:payrollHeaders});
@@ -16,6 +16,7 @@ export async function POST(req:Request){
   const ownSession=async()=>{const actor=await payrollUser();return !!actor&&!actor.legacy&&actor.id===u.id;};
   if(b.action==='register'){await registerDevice(u,b,sessionToken(req.headers.get('cookie')??'',!/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname)),ownSession);return reply({ok:true});}
   if(b.action==='unregister'){await unregisterDevice(u,b.id);return reply({ok:true});}
+  if(b.action==='confirm')return reply({item:await confirmNotice(u,b.id,b.revision,ownSession)});
   if(b.action==='read'&&typeof b.id==='string'){await markNoticeRead(u,b.id);return reply({ok:true});}
   if(!noticeOwner(u))return reply({error:'Solo un administrador puede gestionar alertas, eliminar itinerarios y configurar la integración.'},403);
   const authorize=async()=>{const actor=await payrollUser();return !!actor&&actor.id===u.id&&noticeOwner(actor);};

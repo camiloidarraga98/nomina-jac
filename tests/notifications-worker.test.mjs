@@ -149,3 +149,36 @@ test('Workerd/D1/R2: pases por destinatario, historial y permisos privados, sin 
  assert.equal((await (await run({action:'feed',reader:true})).json()).notices.length,1);assert.equal((await (await run({action:'feed'})).json()).notices.length,0);assert.equal((await (await run({action:'feed',reader:true,history:true})).json()).notices.length,0);assert.equal(outbound,0);
  }finally{await mf.dispose();}
 });
+
+test('Workerd/D1/R2 confirma revisiones y revisa gastos atómicamente sin servicios externos',async()=>{
+ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
+  import {submitExpense,reviewExpense,expenseFeed} from './lib/travel-expenses';
+  import {publishManualNotice,updateItinerary,confirmNotice,noticeItem} from './lib/notifications';
+  const owner={id:'11111111-1111-4111-8111-111111111111',email:'fixture@example.invalid',username:'fixture',displayName:'Fixture',fullName:null,isOwner:true,permissions:[]};
+  export default {async fetch(req:Request){const b=await req.json();try{
+   if(b.action==='expense')return Response.json({id:await submitExpense(owner,b.input,async()=>true)});
+   if(b.action==='review'){await reviewExpense(owner,b.input,async()=>true);return Response.json(await expenseFeed(owner));}
+   if(b.action==='publish')return Response.json({id:await publishManualNotice(owner,b.input,async()=>true)});
+   if(b.action==='update')return Response.json({id:await updateItinerary(owner,b.input,async()=>true)});
+   if(b.action==='confirm')return Response.json(await confirmNotice(owner,b.id,b.revision,async()=>true));
+   return Response.json(await noticeItem(owner,b.id));
+  }catch(e){return Response.json({error:e.message},{status:e.status||502});}}};
+ `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*']});
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-travel-workflows'},r2Buckets:['BUCKET'],outboundService:async()=>{throw new Error('All external requests blocked');}});
+ const {readFile,readdir}=await import('node:fs/promises');
+ try{
+  const db=await mf.getD1Database('DB');for(const f of (await readdir('drizzle')).filter(x=>x.endsWith('.sql')).sort())for(const statement of (await readFile('drizzle/'+f,'utf8')).split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(statement).run();
+  const user='11111111-1111-4111-8111-111111111111';await db.prepare("INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,'fixture','fixture@example.invalid','Fixture','fixture','[]','fixture','fixture')").bind(user).run();
+  const employee={id:'fixture-employee',name:'Persona ficticia',document:'',role:'',category:'musicos',active:true,showRate:0,kmRate:0,fixedService:0,withholding:0,ica:0,salary:0,transport:0,pension:false,health:false,cycle:'quincenal',monthlyHalf:1,nonSalary:0,contributionBase:0,incomeTax:0,solidarity:0},state={employees:[employee],concepts:[],settings:{company:'Fixture',nit:'',hourDivisor:210,hourFactors:[0,0,0,0,0,0,0]},periods:[]};
+  await db.prepare("INSERT INTO payroll_state(id,data,version,updated_at,updated_by) VALUES ('jac',?,1,'fixture','fixture')").bind(JSON.stringify(state)).run();
+  const period={id:'fixture-period',start:'2026-10-01',end:'2026-10-15',status:'abierta',shows:[],movements:[],routes:[],hours:[],excludedEmployees:[]};await db.prepare('INSERT INTO payroll_periods(id,data,start) VALUES (?,?,?)').bind(period.id,JSON.stringify(period),period.start).run();
+  const run=body=>mf.dispatchFetch('https://fixture.example.invalid/travel',{method:'POST',body:JSON.stringify(body)}),files=[{filename:'Ficticio.pdf',data:Buffer.from('%PDF-1.4 fixture').toString('base64')}],id=crypto.randomUUID();
+  assert.equal((await run({action:'expense',input:{id,concept:'Gasto ficticio',amount:50000,expenseDate:'2026-10-08',note:'',files}})).status,200);
+  const review={id,version:1,decision:'approve',reason:'',employeeId:employee.id,periodId:period.id};
+  await db.prepare("CREATE TRIGGER expense_abort BEFORE UPDATE ON jac_travel_expenses BEGIN SELECT RAISE(ABORT,'fixture rollback'); END").run();assert.equal((await run({action:'review',input:review})).status,502);
+  assert.equal((await db.prepare("SELECT version FROM payroll_state WHERE id='jac'").first()).version,1);assert.deepEqual(JSON.parse((await db.prepare('SELECT data FROM payroll_periods WHERE id=?').bind(period.id).first()).data).movements,[]);await db.prepare('DROP TRIGGER expense_abort').run();
+  const responses=await Promise.all([run({action:'review',input:review}),run({action:'review',input:review})]);assert.ok(responses.some(r=>r.status===200));assert.equal((await run({action:'review',input:review})).status,200);assert.equal(JSON.parse((await db.prepare('SELECT data FROM payroll_periods WHERE id=?').bind(period.id).first()).data).movements.length,1);
+  const notice=crypto.randomUUID();assert.equal((await run({action:'publish',input:{id:notice,kind:'itinerary',title:'Itinerario ficticio',body:'',recipients:[],files}})).status,200);assert.equal((await run({action:'confirm',id:notice,revision:1})).status,200);
+  const update={id:notice,requestId:crypto.randomUUID(),revision:1,title:'Itinerario actualizado',body:'',summary:'Cambió la hora de salida',files};assert.equal((await run({action:'update',input:update})).status,200);assert.equal((await run({action:'update',input:update})).status,200);assert.equal((await run({action:'confirm',id:notice,revision:1})).status,409);const current=await (await run({id:notice})).json();assert.equal(current.revision,2);assert.equal(current.confirmed,false);assert.equal(current.attachments.length,1);
+ }finally{await mf.dispose();}
+});
