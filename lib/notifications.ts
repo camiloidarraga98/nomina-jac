@@ -1,5 +1,5 @@
 import {env} from 'cloudflare:workers';
-import {boardingToday,boardingFilenameDate,validBoardingDate,BOARDING_CHANNELS} from './boarding-passes';
+import {boardingToday,boardingFilenameDate,boardingFilenameDetails,boardingPassengerKey,validBoardingDate,BOARDING_CHANNELS} from './boarding-passes';
 import {manualNoticeSchema,decodeNoticeFiles,fileMime} from './notice-files';
 import {z} from 'zod';
 import {database} from '@/db/raw';
@@ -216,6 +216,8 @@ export async function publishManualNotice(u:AccessUser,input:unknown,authorize:(
  const files=decodeNoticeFiles(p.files),db=database();let travelDate='';
  if(p.kind==='boarding_pass'){
   if(p.recipients.length!==1||!files.length)throw new NoticeFailure('Elige una sola persona y adjunta al menos un pase.');
+  const person=await db.prepare('SELECT email FROM payroll_users WHERE id=? AND active=1').bind(p.recipients[0]).first<{email:string}>();
+  for(const file of files){const info=boardingFilenameDetails(file.filename);if(info){const identity=boardingPassengerKey(info.passenger),email=identity?boardingIdentityEmails[identity]:null;if(!email||email!==person?.email)throw new NoticeFailure('El pasajero del archivo no corresponde a la persona elegida. Revisa el nombre y el destinatario.');}}
   const dates=files.map(f=>boardingFilenameDate(f.filename));
   travelDate=p.travelDate??dates[0]??'';
   if(!validBoardingDate(travelDate)||dates.some(d=>d&&d!==travelDate))throw new NoticeFailure('Revisa la fecha. Publica por separado los pases de días diferentes. Usa nombres como Camilo 10 de octubre 2026.pdf.');
@@ -252,6 +254,7 @@ export async function noticeAttachment(u:AccessUser,id:string,file:string){
  const row=await get();if(!row)throw new NoticeFailure('El archivo no está disponible.',404);const object=await env.BUCKET.get(row.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);await allowedNotice(u,id);if(!await get())throw new NoticeFailure('El archivo fue eliminado.',404);return {filename:row.filename,mimeType:row.mime_type,object};
 }
 
+const boardingIdentityEmails:Record<string,string>={camilo:'camilo@mac2you.co','jhon-alex':'jhonalexcastano@gmail.com','alex-zuluaga':'alexzuluagaazp@gmail.com'};
 async function importBoardingSlackFile(row:{id:string;channel_id:string;recipient_id:string;mapping_version:number;created_at:string},token:string){
  const db=database(),{id,channel_id,recipient_id,mapping_version}=row;
  const gate="EXISTS(SELECT 1 FROM jac_boarding_channels c JOIN payroll_users u ON u.id=c.user_id WHERE c.id=? AND c.user_id=? AND c.version=? AND c.enabled=1 AND u.active=1)";
@@ -262,6 +265,7 @@ async function importBoardingSlackFile(row:{id:string;channel_id:string;recipien
  const info=await slackGet('files.info',token,{file:id}),file=info.file as {id:string;name:string;mimetype:string;size:number;url_private_download:string;channels?:string[];shares?:{public?:Record<string,unknown>}};
  if(!file||file.id!==id||!['application/pdf','image/png','image/jpeg'].includes(file.mimetype)||!((file.channels??[]).includes(channel_id)||file.shares?.public?.[channel_id]))throw new NoticeFailure('El pase debe ser un PDF, JPG o PNG compartido en su canal asignado.');
  const travelDate=boardingFilenameDate(file.name,new Date(row.created_at));if(!travelDate)throw new NoticeFailure('El pase no tiene una fecha válida en el nombre. Usa Nombre 10 de octubre 2026.pdf y vuelve a subirlo.');
+ const metadata=boardingFilenameDetails(file.name);if(metadata){const identity=boardingPassengerKey(metadata.passenger),person=await db.prepare('SELECT email FROM payroll_users WHERE id=? AND active=1').bind(recipient_id).first<{email:string}>();if(!identity||boardingIdentityEmails[identity]!==person?.email)throw new NoticeFailure('El pasajero del archivo no corresponde al canal. Corrige el nombre o súbelo al canal de su destinatario.');}
  if(file.size>MAX_PDF_BYTES)throw new NoticeFailure('El pase supera los 10 MB.');
  const url=new URL(file.url_private_download);if(url.protocol!=='https:'||url.hostname!=='files.slack.com'||url.port||url.username||url.password)throw new NoticeFailure('Dirección de archivo no admitida.');
  const response=await fetch(url,{headers:{Authorization:'Bearer '+token},redirect:'manual',signal:AbortSignal.timeout(8000)});if(!response.ok||!response.body)throw new NoticeFailure('Slack no permitió descargar el pase.');

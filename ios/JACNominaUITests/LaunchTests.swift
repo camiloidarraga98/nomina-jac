@@ -353,9 +353,17 @@ final class LaunchTests: XCTestCase {
         let app=fixture(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
         XCTAssertTrue(app.staticTexts["Pases de abordar para hoy · 2"].waitForExistence(timeout:10))
         XCTAssertTrue(app.buttons["notices.item.boarding-fixture-0"].exists); XCTAssertFalse(app.buttons["notices.item.boarding-fixture-3"].exists)
-        tap(app,"notices.item.boarding-fixture-0"); XCTAssertFalse(app.buttons["notices.delete"].exists); tap(app,"notices.pdf")
-        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout:15)); tap(app,"notices.pdf.close"); tap(app,"notices.detail.close")
+        tap(app,"notices.item.boarding-fixture-0"); XCTAssertFalse(app.buttons["notices.delete"].exists); XCTAssertFalse(app.buttons["notices.detail.close"].exists)
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); tap(app,"notices.pdf.close")
         app.swipeUp(); tap(app,"boarding.history"); XCTAssertTrue(app.buttons["notices.item.boarding-fixture-3"].waitForExistence(timeout:10)); attachScreen(app,name:"pases-historial-privado")
+    }
+
+    @MainActor func testTomorrowPassesHavePriorityWithoutTodayAndOpenPDFDirectly() {
+        let app=XCUIApplication(); app.launchArguments=["--uitest-payroll","--uitest-boarding-tomorrow"]; app.launch(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
+        let tomorrow=app.staticTexts["Pases de abordar para mañana · 1"],today=app.staticTexts["Pases de abordar para hoy · 0"]
+        XCTAssertTrue(tomorrow.waitForExistence(timeout:15)); XCTAssertTrue(today.exists); XCTAssertLessThan(tomorrow.frame.minY,today.frame.minY)
+        XCTAssertTrue(app.staticTexts["Pereira → Bogota"].exists); tap(app,"notices.item.boarding-fixture-2")
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["notices.detail.close"].exists); XCTAssertFalse(app.buttons["notices.delete"].exists); attachScreen(app,name:"pase-manana-pdf-directo")
     }
 
     @MainActor func testItinerariesOnlyAccountCannotSeePayrollAgendaOrAdministration() {
@@ -366,10 +374,10 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testManualPrivateBoardingPassWithRecipientAndAttachment() {
         let app=fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
-        app.segmentedControls["notices.editor.kind"].buttons["Pase"].tap(); fill(app,"notices.editor.title","Pase privado manual ficticio"); tap(app,"notices.editor.fixture")
+        app.segmentedControls["notices.editor.kind"].buttons["Pase"].tap(); fill(app,"notices.editor.title","Pase privado manual ficticio"); app.textFields["notices.editor.title"].typeText("\n"); tap(app,"notices.editor.fixture"); XCTAssertTrue(app.staticTexts["Prueba.pdf"].waitForExistence(timeout:10),"El PDF ficticio debe quedar adjunto antes de guardar")
         app.swipeUp(); tap(app,"boarding.recipient"); app.buttons["Camilo simulado"].tap(); tap(app,"notices.editor.save")
         let item=app.buttons.matching(NSPredicate(format:"label CONTAINS %@","Pase privado manual ficticio")).firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout:15)); item.tap(); XCTAssertFalse(app.buttons["notices.delete"].exists); tap(app,"notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout:15)); attachScreen(app,name:"pase-manual-pdf-privado")
+        for _ in 0..<8 { if item.exists && item.isHittable { break }; app.swipeUp() }; XCTAssertTrue(item.waitForExistence(timeout:15)); XCTAssertTrue(item.isHittable); item.tap(); XCTAssertFalse(app.buttons["notices.delete"].exists); XCTAssertFalse(app.buttons["notices.detail.close"].exists); XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); attachScreen(app,name:"pase-manual-pdf-privado")
     }
 
 }

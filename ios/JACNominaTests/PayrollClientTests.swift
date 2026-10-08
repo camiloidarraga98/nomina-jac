@@ -584,12 +584,18 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(BoardingClock.today(try XCTUnwrap(CalendarClock.instant("2026-10-08T05:00:00Z"))),"2026-10-08")
         let at=try XCTUnwrap(CalendarClock.instant("2026-12-31T15:00:00Z"))
         XCTAssertEqual(BoardingClock.today(try XCTUnwrap(BoardingClock.filenameDate("Camilo 2 de enero.pdf",at:at))),"2027-01-02")
+        XCTAssertEqual(BoardingClock.nextDay("2026-12-31"),"2027-01-01")
+        XCTAssertEqual(BoardingClock.priorityDays("2026-10-07",hasToday:false),["2026-10-08","2026-10-07"])
+        XCTAssertEqual(BoardingClock.priorityDays("2026-10-07",hasToday:true),["2026-10-07","2026-10-08"])
+        XCTAssertEqual(BoardingClock.filenameDetails("Jhon Alex 16 de octubre 2026 Pereira-Bogotá.pdf"),BoardingFilenameDetails(passenger:"Jhon Alex",origin:"Pereira",destination:"Bogotá"))
+        XCTAssertEqual(BoardingClock.filenameDetails("Camilo 16 de octubre Pereira-Bogota.PDF")?.passenger,"Camilo")
+        XCTAssertNil(BoardingClock.filenameDetails("Camilo 16 de octubre Pereira-Bogota-Medellin.pdf"))
         XCTAssertNil(BoardingClock.filenameDate("Camilo 31 de abril 2026.pdf")); XCTAssertNil(BoardingClock.filenameDate("1 de octubre y 2 de octubre.pdf"))
     }
     @MainActor func testPrivateBoardingFeedHistoryAndManualContract() async throws {
         let client=UITestBackend.client(); let feed=try await client.notices(boarding:"current")
         XCTAssertEqual(feed.notices.filter { $0.travelDate == BoardingClock.today() }.count,2)
-        XCTAssertEqual(feed.notices.count,3); let history=try await client.notices(boarding:"history"); XCTAssertEqual(history.notices.count,1)
+        XCTAssertEqual(feed.notices.count,4); let history=try await client.notices(boarding:"history"); XCTAssertEqual(history.notices.count,1)
         let reader=UITestBackend.client(reader:true); let otherFeed=try await reader.notices(boarding:"current"); XCTAssertTrue(otherFeed.notices.isEmpty)
         do { _ = try await reader.notice(id:"boarding-fixture-0"); XCTFail("Otro usuario no puede abrir un pase") } catch {}
         let vault=MemorySession(); vault.token=token; let sending=makeClient(vault)

@@ -339,3 +339,21 @@ test('Pases: revocar destinatario durante subida impide guardar y limpia archivo
  const id=crypto.randomUUID();beforePut=async()=>{sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(boardAlex);};
  try{await assert.rejects(()=>m.publishManualNotice(actor(owner),{id,kind:'boarding_pass',title:'Privado',body:'',travelDate:'2026-10-10',recipients:[boardAlex],files:[{filename:'Foto.png',data:Buffer.from([137,80,78,71,13,10,26,10,0]).toString('base64')}]},async()=>true));assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(id),undefined);assert.equal(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='ready' AND notice_id=?").get(id),undefined);}finally{beforePut=null;sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(boardAlex);}
 });
+
+test('Pases: mañana tiene prioridad sin hoy, y el nombre distingue pasajero, origen y destino',async()=>{
+ const out=await build({stdin:{contents:"export * from './lib/boarding-passes'",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});const b=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+ assert.equal(b.boardingNextDay('2026-12-31'),'2027-01-01');assert.equal(b.boardingNextDay('2028-02-28'),'2028-02-29');
+ assert.deepEqual(b.boardingPriorityDays('2026-10-07',false),['2026-10-08','2026-10-07']);assert.deepEqual(b.boardingPriorityDays('2026-10-07',true),['2026-10-07','2026-10-08']);
+ assert.deepEqual(b.boardingFilenameDetails('Camilo 16 de octubre Pereira-Bogota.pdf'),{passenger:'Camilo',origin:'Pereira',destination:'Bogota'});
+ assert.deepEqual(b.boardingFilenameDetails('Jhon Alex 16 de octubre de 2026 San Andrés – Bogotá.JPG'),{passenger:'Jhon Alex',origin:'San Andrés',destination:'Bogotá'});
+ for(const name of ['Camilo 31 de abril Pereira-Bogota.pdf','Pase.pdf','Camilo 16 de octubre Pereira-Bogota-Medellin.pdf','Camilo 16 de octubre <script>-Bogota.pdf'])assert.equal(b.boardingFilenameDetails(name),null);
+ assert.equal(b.boardingPassengerKey('Jhon Álex Castaño'),'jhon-alex');assert.equal(b.boardingPassengerKey('Alex Zuluaga'),'alex-zuluaga');assert.equal(b.boardingPassengerKey('Otra persona'),null);
+});
+test('Pases con ruta: pasajero debe corresponder al canal o destinatario, sin redirigir ni subir copias equivocadas',async()=>{
+ const encode=filename=>({filename,data:Buffer.from(pdfBytes).toString('base64')}),input={id:crypto.randomUUID(),kind:'boarding_pass',title:'Ruta privada',body:'',recipients:[boardJhon],files:[encode('Camilo 16 de octubre 2026 Pereira-Bogota.pdf')]};
+ const before=writes;await assert.rejects(()=>m.publishManualNotice(actor(owner),input,async()=>true),/pasajero/);assert.equal(writes,before);assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(input.id),undefined);
+ await m.publishManualNotice(actor(owner),{...input,files:[encode('Jhon Alex 16 de octubre 2026 Pereira-Bogota.pdf')]},async()=>true);
+ const item=await m.noticeItem(actor(boardJhon),input.id);assert.equal(item.travelDate,'2026-10-16');assert.ok(await m.noticeAttachment(actor(boardJhon),input.id,item.attachments[0].id));await assert.rejects(()=>m.noticeAttachment(actor(owner),input.id,item.attachments[0].id),e=>e.status===404);
+ fileMeta={...fileMeta,name:'Camilo 16 de octubre 2026 Pereira-Bogota.pdf',channels:['C0C8FAPHTCG']};await m.queueSlackFiles(['FBOARDROUTEBAD'],'C0C8FAPHTCG');const beforeSlack=writes;await m.importSlackFiles();assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get('FBOARDROUTEBAD').status,'failed');assert.equal(writes,beforeSlack);assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:FBOARDROUTEBAD'),undefined);
+ fileMeta={...fileMeta,name:'Jhon Alex 16 de octubre 2026 Pereira-Bogota.pdf'};await m.queueSlackFiles(['FBOARDROUTEGOOD'],'C0C8FAPHTCG');await m.importSlackFiles();const saved=sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:FBOARDROUTEGOOD');assert.ok(saved);assert.deepEqual(sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(saved.id).map(r=>r.user_id),[boardJhon]);
+});

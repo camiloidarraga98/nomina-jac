@@ -54,16 +54,23 @@ struct NoticesView: View {
     @State private var historyRecords: [JACNotice] = []
     @State private var day = BoardingClock.today()
     @State private var boardingCount = 0
+    @State private var tomorrowCount = 0
+    @State private var boardingDocument: ExportedDocument?
+    @State private var previousBoardingDocument: ExportedDocument?
+    @State private var openingFile: String?
+    @State private var documentGeneration = 0
     private var effectiveKind: String { incomingKind ?? kind }
     var body: some View {
         List {
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
             if let notice { Section { Text(notice).foregroundStyle(JACTheme.action) } }
             if loading && feed == nil { ProgressView("Consultando…") }
-            if effectiveKind == "itinerary" { Section { NavigationLink { NoticesView(user:user,kind:"boarding_pass") } label: { VStack(alignment:.leading,spacing:6) { Label("Pases de abordar",systemImage:"airplane").font(.headline); Text("Para hoy: \(boardingCount) · Próximos días e historial").font(.caption).foregroundStyle(.secondary) } }.accessibilityIdentifier("boarding.open") } }
+            if effectiveKind == "itinerary" { Section { NavigationLink { NoticesView(user:user,kind:"boarding_pass") } label: { VStack(alignment:.leading,spacing:6) { Label("Pases de abordar",systemImage:"airplane").font(.headline); Text(boardingCount > 0 ? "Para hoy: \(boardingCount) · Mañana: \(tomorrowCount)" : "Para mañana: \(tomorrowCount) · Próximos días e historial").font(.caption).foregroundStyle(.secondary) } }.accessibilityIdentifier("boarding.open") } }
             if effectiveKind == "boarding_pass" {
-                Section("Pases de abordar para hoy · \(records.filter { $0.travelDate == day }.count)") { let items = records.filter { $0.travelDate == day }; if items.isEmpty { Text("No tienes pases para hoy.").foregroundStyle(.secondary) }; boardingRows(items) }
-                ForEach(Array(Set(records.compactMap(\.travelDate))).filter { $0 > day }.sorted(),id:\.self) { date in Section(BoardingClock.label(date)) { boardingRows(records.filter { $0.travelDate == date }) } }
+                ForEach(BoardingClock.priorityDays(day,hasToday:records.contains { $0.travelDate == day }),id:\.self) { date in
+                    Section("Pases de abordar para " + (date == day ? "hoy" : "mañana") + " · \(records.filter { $0.travelDate == date }.count)") { let items=records.filter { $0.travelDate == date }; if items.isEmpty { Text(date == day ? "No tienes pases para hoy." : "No tienes pases para mañana.").foregroundStyle(.secondary) }; boardingRows(items) }
+                }
+                ForEach(Array(Set(records.compactMap(\.travelDate))).filter { $0 > BoardingClock.nextDay(day) }.sorted(),id:\.self) { date in Section(BoardingClock.label(date)) { boardingRows(records.filter { $0.travelDate == date }) } }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Section { Button("Ver más próximos pases") { Task { await refresh(cursor) } }.disabled(loading) } }
                 Section { Button { historyOpen.toggle() } label: { Label(historyOpen ? "Ocultar historial de pases anteriores" : "Historial de pases anteriores",systemImage:historyOpen ? "chevron.up" : "chevron.down") }.accessibilityIdentifier("boarding.history") }
                 if historyOpen { Section("Pases anteriores") { boardingRows(historyRecords.filter { ($0.travelDate ?? "") < day }); if historyRecords.isEmpty { Text("No tienes pases anteriores.").foregroundStyle(.secondary) }; if let cursor=history?.nextCursor,!cursor.isEmpty { Button("Ver más del historial") { Task { await loadHistory(cursor) } } } } }
@@ -80,16 +87,41 @@ struct NoticesView: View {
             .task { await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
             .onChange(of:historyOpen) { _,open in if open { Task { await loadHistory() } } }
             .onChange(of: scenePhase) { _, value in if value == .active { Task { await refresh() } } }
+            .sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
+                NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Pase de abordar PDF" : "Pase de abordar").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Listo") { boardingDocument=nil }.accessibilityIdentifier("notices.pdf.close") }; ToolbarItem(placement:.confirmationAction) { ShareLink(item:file.url) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("Compartir archivo") } } }
+            }
+            .onDisappear { documentGeneration += 1; if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }
             .sheet(item: $detail, onDismiss: { Task { await refresh() } }) { item in NoticeDetail(item: item, owner: user.isOwner) }
             .sheet(isPresented: $editor) { if let feed { NoticeComposer(users: feed.users, boardingUsers: feed.boardingUsers ?? feed.users) { savedKind in incomingKind = savedKind; notice = savedKind == "boarding_pass" ? "Pase publicado únicamente para la persona elegida." : savedKind == "itinerary" ? "Itinerario publicado para todo el equipo." : "Alerta guardada para los destinatarios elegidos."; await refresh() } } }
     }
-    @ViewBuilder private func boardingRows(_ items:[JACNotice]) -> some View { ForEach(items) { item in Button { detail = item } label: { VStack(alignment:.leading,spacing:7) { Label(item.title,systemImage:"airplane").font(.headline); Text("\(item.files.count) archivo(s) · " + BoardingClock.label(item.travelDate ?? "")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") } }
+    @ViewBuilder private func boardingRows(_ items:[JACNotice]) -> some View {
+        ForEach(items) { item in ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
+            Button { Task { await openBoarding(item,file:file) } } label: {
+                VStack(alignment:.leading,spacing:7) {
+                    let info=BoardingClock.filenameDetails(file.filename)
+                    Label(info.map { $0.origin + " → " + $0.destination } ?? item.title,systemImage:"airplane").font(.headline)
+                    if let info { Text(info.passenger).font(.subheadline) }
+                    Text(file.filename).font(.caption).foregroundStyle(.secondary)
+                    HStack { Text(BoardingClock.label(item.travelDate ?? "")).font(.caption).foregroundStyle(.secondary); Spacer(); if openingFile == file.id { ProgressView() }; Text(file.mimeType == "application/pdf" ? "Abrir PDF" : "Abrir imagen").font(.subheadline.bold()) }
+                }
+            }.buttonStyle(.plain).disabled(openingFile != nil).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
+        } }
+    }
+    private func openBoarding(_ item:JACNotice,file:NoticeAttachment) async {
+        guard openingFile == nil else { return }; openingFile=file.id; let generation=documentGeneration; defer { openingFile=nil }
+        do {
+            let result=try await store.client.noticeFile(item,file:file)
+            guard generation == documentGeneration else { TemporaryDocuments.remove(result); return }
+            previousBoardingDocument=result; boardingDocument=result
+            do { try await store.client.noticeCommand(.object(["action":.string("read"),"id":.string(item.id)])) } catch { self.error=store.reportReadFailure(error) }
+        } catch { self.error=store.reportReadFailure(error) }
+    }
     private func loadHistory(_ cursor:String = "") async { do { let result=try await store.client.notices(cursor:cursor,boarding:"history"); history=result; if cursor.isEmpty { historyRecords=result.notices } else { historyRecords += result.notices.filter { item in !historyRecords.contains { $0.id == item.id } } } } catch { self.error=store.reportReadFailure(error) } }
     private func refresh(_ cursor: String = "") async {
         guard !loading else { return }; loading = true; defer { loading = false }
         do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil); feed = result; if cursor.isEmpty { records = result.notices } else { records += result.notices.filter { item in !records.contains { $0.id == item.id } } }; error = nil
-            if effectiveKind == "itinerary" { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count }; if historyOpen { await loadHistory() }
-            if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; detail = item }
+            if effectiveKind == "itinerary" { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
+            if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
         } catch { self.error = store.reportReadFailure(error) }
     }
 }
@@ -182,7 +214,7 @@ struct NoticeComposer: View {
                         #endif
                     }
                     if kind == "alert" { Section("Destinatarios") { ForEach(users) { user in Toggle(user.name, isOn: Binding(get: { recipients.contains(user.id) }, set: { value in if value { recipients.insert(user.id) } else { recipients.remove(user.id) } })).accessibilityIdentifier("notices.recipient.\(user.id)") } } }
-                    else if kind == "boarding_pass" { Section("Pase de abordar privado") { Picker("Persona",selection:$passOwner) { Text("Selecciona una persona").tag(""); ForEach(boardingUsers) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("boarding.recipient"); DatePicker("Fecha del pase",selection:$travelDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("boarding.date"); Text("Solo la persona elegida podrá abrirlo. El nombre puede incluir 10 de octubre 2026. Sin año se usa la fecha más cercana; revisa la fecha antes de publicar.").font(.footnote).foregroundStyle(.secondary) } }
+                    else if kind == "boarding_pass" { Section("Pase de abordar privado") { Picker("Persona",selection:$passOwner) { Text("Selecciona una persona").tag(""); ForEach(boardingUsers) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("boarding.recipient"); DatePicker("Fecha del pase",selection:$travelDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("boarding.date"); Text("Solo la persona elegida podrá abrirlo. Usa Camilo 16 de octubre Pereira-Bogota; puedes incluir el año. El pasajero debe corresponder a la persona elegida. Sin año se usa la fecha más cercana; revisa la fecha antes de publicar.").font(.footnote).foregroundStyle(.secondary) } }
                     else { Section { Text("Se publicará directamente en Itinerarios para todo el equipo activo y enviará el aviso de itinerario nuevo.") } }
                 }.disabled(busy || attempted || importing)
                 if attempted && !busy && error != nil { Section { Text("Reintenta con estos mismos datos. Para cambiar el contenido, cierra y abre un formulario nuevo.").font(.footnote) } }
@@ -211,7 +243,19 @@ struct NoticeComposer: View {
 }
 
 
+struct BoardingFilenameDetails: Equatable { let passenger:String; let origin:String; let destination:String }
 enum BoardingClock {
+    static func nextDay(_ day:String) -> String { guard let date=parse(day),let next=CalendarClock.calendar.date(byAdding:.day,value:1,to:date) else { return day }; return today(next) }
+    static func priorityDays(_ day:String,hasToday:Bool) -> [String] { hasToday ? [day,nextDay(day)] : [nextDay(day),day] }
+    static func filenameDetails(_ name:String) -> BoardingFilenameDetails? {
+        let stem=name.replacingOccurrences(of:#"\.(pdf|png|jpe?g)$"#,with:"",options:[.regularExpression,.caseInsensitive]).trimmingCharacters(in:.whitespacesAndNewlines)
+        let pattern=#"^(.+?)\s+\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:\s+(?:de\s+)?20\d{2})?\s+(.+?)\s*[-–—]\s*(.+)$"#
+        guard filenameDate(name) != nil,let re=try? NSRegularExpression(pattern:pattern,options:.caseInsensitive),let m=re.firstMatch(in:stem,range:NSRange(stem.startIndex...,in:stem)) else { return nil }
+        let fields=(1...3).compactMap { i -> String? in guard let r=Range(m.range(at:i),in:stem) else { return nil }; return String(stem[r]).trimmingCharacters(in:.whitespacesAndNewlines) }
+        guard fields.count == 3,fields.allSatisfy({ $0.count <= 80 && $0.range(of:#"^[\p{L}][\p{L}\p{M} .’']*$"#,options:.regularExpression) != nil }) else { return nil }
+        return BoardingFilenameDetails(passenger:fields[0],origin:fields[1],destination:fields[2])
+    }
+
     static func today(_ date:Date = Date()) -> String { let f=DateFormatter(); f.calendar=Calendar(identifier:.gregorian); f.timeZone=TimeZone(identifier:"America/Bogota"); f.locale=Locale(identifier:"en_US_POSIX"); f.dateFormat="yyyy-MM-dd"; return f.string(from:date) }
     static func label(_ text:String) -> String { guard let date=parse(text) else { return "Fecha no disponible" }; let f=DateFormatter(); f.locale=Locale(identifier:"es_CO"); f.timeZone=TimeZone(identifier:"America/Bogota"); f.dateStyle = .full; return f.string(from:date) }
     static func parse(_ text:String) -> Date? { let f=DateFormatter(); f.calendar=Calendar(identifier:.gregorian); f.timeZone=TimeZone(identifier:"America/Bogota"); f.locale=Locale(identifier:"en_US_POSIX"); f.dateFormat="yyyy-MM-dd"; f.isLenient=false; guard let d=f.date(from:text),today(d)==text else { return nil }; return d }

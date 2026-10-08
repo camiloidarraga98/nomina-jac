@@ -15,3 +15,15 @@ export function boardingFilenameDate(filename:string,at=new Date()):string|null{
  return [y-1,y,y+1].map(build).filter(validBoardingDate).sort((a,b)=>Math.abs(Date.parse(a)-reference)-Math.abs(Date.parse(b)-reference)||b.localeCompare(a))[0]??null;
 }
 export function boardingDateLabel(s:string){return new Intl.DateTimeFormat('es-CO',{dateStyle:'full',timeZone:'America/Bogota'}).format(new Date(s+'T12:00:00Z'));}
+
+export function boardingNextDay(day:string){return new Date(Date.parse(day+'T12:00:00Z')+86400000).toISOString().slice(0,10);}
+export function boardingPriorityDays(today:string,hasToday:boolean){const tomorrow=boardingNextDay(today);return hasToday?[today,tomorrow]:[tomorrow,today];}
+// Metadata is presentation only. The authenticated recipient/channel remains authoritative.
+export function boardingFilenameDetails(filename:string){
+ const stem=filename.replace(/\.(pdf|png|jpe?g)$/i,'').trim();
+ const match=stem.match(/^(.+?)\s+\d{1,2}\s+de\s+(?:enero|febrero|marzo|abril|mayo|junio|julio|agosto|septiembre|setiembre|octubre|noviembre|diciembre)(?:\s+(?:de\s+)?20\d{2})?\s+(.+?)\s*[-–—]\s*(.+)$/i);
+ if(!match||!boardingFilenameDate(filename))return null;
+ const [,passenger,origin,destination]=match.map(x=>x.trim()),valid=(x:string)=>x.length<=80&&/^[\p{L}][\p{L}\p{M} .’']*$/u.test(x);
+ return valid(passenger)&&valid(origin)&&valid(destination)?{passenger,origin,destination}:null;
+}
+export function boardingPassengerKey(name:string){const n=name.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase().trim().replace(/\s+/g,' ');return ['camilo','camilo idarraga'].includes(n)?'camilo':['jhon alex','jhon alex castano'].includes(n)?'jhon-alex':['alex','alex zuluaga'].includes(n)?'alex-zuluaga':null;}

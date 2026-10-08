@@ -156,3 +156,7 @@ Las pruebas nativas usan un PDF ficticio y URLProtocol `.invalid`; no registran 
 ## Actualización 0.9.0 (10): pases de abordar
 
 Usa este mismo proyecto de Xcode. Itinerarios → Pases de abordar muestra los pases privados de hoy, próximos días e historial plegado según Colombia. Desde Gestión → Alertas, Camilo puede elegir Pase, adjuntar PDF/imágenes, elegir una persona y revisar la fecha. Las cuentas de Solo itinerarios no muestran Nómina, Agenda ni Administración. Ver docs/BOARDING_PASSES.md para reglas de fechas, privacidad y pruebas. La instalación física sigue usando Run y tu firma Apple; la preparación de APNs requiere la membresía aprobada y sus claves, gestionadas fuera del proyecto.
+
+### 0.9.1 (11) — mañana y PDF directo
+
+Actualización del mismo proyecto: Pases de abordar muestra hoy y mañana; prioriza mañana si hoy está vacío. Cada adjunto abre directamente el PDF/imagen y muestra pasajero y ruta del nombre `Camilo 16 de octubre Pereira-Bogota.pdf`. Conserva sesión, privacidad y documentos temporales protegidos. Instala con Run en tu proyecto actual; el ZIP es respaldo opcional.
