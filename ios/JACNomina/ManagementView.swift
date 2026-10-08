@@ -178,6 +178,7 @@ struct ExpenseComposer:View {
                     TextField("Concepto",text:$draft.concept).accessibilityIdentifier("expenses.concept")
                     TextField("Valor en COP",text:$draft.amount).keyboardType(.numberPad).accessibilityIdentifier("expenses.amount")
                     DatePicker("Fecha",selection:selectedDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("expenses.date")
+                    TextField("Hora de factura (opcional)",text:Binding(get:{ draft.receiptTime ?? "" },set:{ draft.receiptTime=$0.isEmpty ? nil : $0 })).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("expenses.time")
                     TextField("Nota opcional",text:$draft.note,axis:.vertical).lineLimit(2...5)
                 }.disabled(busy || draft.attempted)
                 TravelAttachmentsPicker(files:$files,importing:$importing).disabled(busy || draft.attempted)
@@ -206,7 +207,7 @@ struct ExpenseComposer:View {
                     if let value=suggestion.kind { draft.kind=value.rawValue }
                     if let value=suggestion.concept { draft.concept=value }
                     if let value=suggestion.amount { draft.amount=String(value) }
-                    if let value=suggestion.date { draft.date=value }
+                    if let value=suggestion.date { draft.date=value };draft.receiptTime=suggestion.time
                     message="Datos sugeridos: revisa tipo, concepto, valor y fecha antes de enviar.";error=nil
                 } }
         }.interactiveDismissDisabled(busy || !snapshot.isEmpty)
@@ -218,6 +219,7 @@ struct ExpenseComposer:View {
     }
     private func save() async {
         let value=snapshot
+        guard value.receiptTime.map(ReceiptParser.validTime) ?? true else { error="Revisa la hora de factura: usa HH:mm o HH:mm:ss, por ejemplo 13:45.";return }
         guard !busy,!store.isOffline,let amount=Double(value.amount),amount > 0,amount <= 1e9,amount.rounded() == amount,
               value.concept.trimmingCharacters(in:.whitespacesAndNewlines).count >= 2,value.concept.utf16.count <= 120,
               value.submissionNote.utf16.count <= 500,!files.isEmpty else { error="Revisa concepto, valor en pesos, nota y comprobantes.";return }

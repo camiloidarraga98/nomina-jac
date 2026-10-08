@@ -16,15 +16,19 @@ struct ExpenseDraft: Codable, Hashable {
     var amount = ""
     var date = BoardingClock.today()
     var note = ""
+    var receiptTime: String?
     var files: [File] = []
     // An uncertain submission must retry the identical UUID and payload.
     var attempted = false
-    var submissionNote: String { (kind.isEmpty ? "" : "Tipo de gasto: \(kind)" + (note.isEmpty ? "" : "\n")) + note }
-    var isEmpty: Bool { concept.isEmpty && amount.isEmpty && note.isEmpty && kind.isEmpty && files.isEmpty }
+    var submissionNote: String {
+        ([kind.isEmpty ? nil : "Tipo de gasto: \(kind)", receiptTime.map { "Hora de factura: \($0)" }, note.isEmpty ? nil : note].compactMap { $0 }).joined(separator: "\n")
+    }
+    var isEmpty: Bool { concept.isEmpty && amount.isEmpty && note.isEmpty && kind.isEmpty && receiptTime == nil && files.isEmpty }
     func validateStorage() throws {
         guard UUID(uuidString: id) != nil, files.count <= 5, files.reduce(0, { $0 + $1.data.count }) <= 10 * 1024 * 1024,
               concept.utf16.count <= 120, amount.count <= 30, note.utf16.count <= 500,
-              kind.isEmpty || ExpenseKind(rawValue: kind) != nil, ReceiptParser.civilDate(date) != nil else {
+              kind.isEmpty || ExpenseKind(rawValue: kind) != nil, ReceiptParser.civilDate(date) != nil,
+              receiptTime.map(ReceiptParser.validTime) ?? true else {
             throw APIError.invalid("Revisa el tamaño de los campos y comprobantes del borrador.")
         }
         for file in files { _ = try NoticeUpload.mime(file.data) }
@@ -55,6 +59,7 @@ struct ReceiptSuggestion: Equatable {
     var concept: String?
     var amount: Int?
     var date: String?
+    var time: String?
     var warnings: [String] = []
 }
 
@@ -117,28 +122,9 @@ enum ReceiptParser {
         }
         if result.amount == nil { result.warnings.append(foreign ? "La factura indica otra moneda. Introduce el valor en COP; no se convierte automáticamente." : "No hay un total inequívoco en pesos enteros. Revisa el valor en COP.") }
 
-        var dates: [(Int, String)] = []
-        let months = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"]
-        for row in rows where row.range(of: "VENC|LIMITE|RESOLUCION|AUTORIZACION|HABILITACION", options: .regularExpression) == nil {
-            let priority = row.contains("FECHA") || row.contains("EMISION") ? 2 : 1
-            for value in matches("\\b[0-9]{4}-[0-9]{2}-[0-9]{2}\\b", row) { if civilDate(value) != nil { dates.append((priority, value)) } }
-            for value in matches("\\b[0-9]{1,2}[/.-][0-9]{1,2}[/.-][0-9]{4}\\b", row) {
-                let parts = value.components(separatedBy: CharacterSet(charactersIn: "/.-"))
-                if let date = iso(parts[0], parts[1], parts[2]) { dates.append((priority, date)) }
-            }
-            for value in matches("\\b[0-9]{1,2}\\s+(?:DE\\s+)?(?:" + months.joined(separator: "|") + ")\\s+(?:DE\\s+)?[0-9]{4}\\b", row) {
-                let parts = value.components(separatedBy: " ").filter { !$0.isEmpty && $0 != "DE" }
-                if let month = months.firstIndex(of: parts[1]), let date = iso(parts[0], String(month + 1), parts[2]) { dates.append((priority, date)) }
-            }
-        }
-        if let priority = dates.map({ $0.0 }).max() { let values = Set(dates.filter { $0.0 == priority }.map { $0.1 }); if values.count == 1 { result.date = values.first } }
-        if result.date == nil { result.warnings.append("No se pudo identificar una fecha única. Revisa la fecha del gasto.") }
-
-        let rules: [(ExpenseKind, String)] = [(.fuel, "\\b(GASOLINA|DIESEL|COMBUSTIBLE|ESTACION DE SERVICIO|TERPEL|BIOMAX)\\b"),
-            (.lodging, "\\b(HOTEL|HOSTAL|HOSPEDAJE|ALOJAMIENTO)\\b"), (.transport, "\\b(TAXI|UBER|DIDI|TRANSPORTE|PEAJE|PARQUEADERO|TIQUETE|PASAJES)\\b"),
-            (.food, "\\b(RESTAURANTE|CAFETERIA|ALMUERZO|DESAYUNO|CENA|ALIMENTACION|COMIDAS)\\b")]
-        let kinds = rules.filter { text.range(of: $0.1, options: .regularExpression) != nil }.map { $0.0 }
-        if kinds.count == 1 { result.kind = kinds[0] }
+        if let first = firstDateAndTime(rows) { result.date = first.date; result.time = first.time }
+        if result.date == nil { result.warnings.append("No se pudo leer una fecha válida. Revisa la fecha del gasto.") }
+        result.kind = suggestedKind(rows)
         if result.kind == nil { result.warnings.append("Selecciona el tipo de gasto; no se pudo clasificar con certeza.") }
         for (index, row) in rows.prefix(8).enumerated() where row.range(of: "FACTURA|ELECTRONIC|DOCUMENTO|NIT|CUFE|DIAN|FECHA|TOTAL|RECIBO|TELEFONO|DIRECCION|RESOLUCION|^[0-9$]", options: .regularExpression) == nil {
             if row.filter({ $0.isLetter }).count >= 3, row.count <= 120 { result.concept = original[index]; break }
@@ -146,6 +132,75 @@ enum ReceiptParser {
         if result.concept == nil { result.warnings.append("Completa el concepto del gasto.") }
         return result
     }
+    private static let monthNames = ["ENE": 1, "ENERO": 1, "FEB": 2, "FEBRERO": 2, "MAR": 3, "MARZO": 3,
+        "ABR": 4, "ABRIL": 4, "MAY": 5, "MAYO": 5, "JUN": 6, "JUNIO": 6, "JUL": 7, "JULIO": 7,
+        "AGO": 8, "AGOSTO": 8, "SEP": 9, "SEPT": 9, "SEPTIEMBRE": 9, "SETIEMBRE": 9,
+        "OCT": 10, "OCTUBRE": 10, "NOV": 11, "NOVIEMBRE": 11, "DIC": 12, "DICIEMBRE": 12]
+    private static func dates(_ row: String) -> [(range: NSRange, date: String)] {
+        let patterns = [
+            "(?<![0-9])([0-9]{4})\\s*[-/.]\\s*([0-9]{1,2})\\s*[-/.]\\s*([0-9]{1,2})(?![0-9])",
+            "(?<![0-9])([0-9]{1,2})\\s*[-/.]\\s*([0-9]{1,2})\\s*[-/.]\\s*([0-9]{4}|[0-9]{2})(?![0-9])",
+            "(?<![0-9])([0-9]{1,2})[ /-]+(?:DE\\s+)?([A-Z]+)\\.?[ /-]+(?:DE\\s+)?([0-9]{4}|[0-9]{2})(?![0-9])"]
+        var found: [(range: NSRange, date: String)] = []
+        for (index, pattern) in patterns.enumerated() {
+            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in regex.matches(in: row, range: NSRange(row.startIndex..., in: row)) {
+                let parts = (1...3).map { (row as NSString).substring(with: match.range(at: $0)) }
+                let day = index == 0 ? parts[2] : parts[0]
+                let month = index == 2 ? monthNames[parts[1]].map(String.init) ?? "" : parts[1]
+                var year = index == 0 ? parts[0] : parts[2]
+                if year.count == 2 { year = "20" + year }
+                if let date = iso(day, month, year) { found.append((match.range, date)) }
+            }
+        }
+        return found.sorted { $0.range.location < $1.range.location }
+    }
+    private static func times(_ row: String) -> [(range: NSRange, time: String)] {
+        let pattern = "(?<![0-9:])([0-9]{1,2}):([0-9]{2})(?::([0-9]{2}))?\\s*([AP]\\s*\\.?\\s*M\\.?)?(?![A-Z0-9:])"
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        return regex.matches(in: row, range: NSRange(row.startIndex..., in: row)).compactMap { match in
+            func part(_ index: Int) -> String? { let range = match.range(at: index);return range.location == NSNotFound ? nil : (row as NSString).substring(with: range) }
+            guard var hour = Int(part(1) ?? ""), let minute = Int(part(2) ?? ""), minute < 60 else { return nil }
+            let seconds = part(3).flatMap(Int.init)
+            if let seconds, seconds >= 60 { return nil }
+            if let marker = part(4) { guard (1...12).contains(hour) else { return nil }; hour = hour % 12 + (marker.hasPrefix("P") ? 12 : 0) }
+            guard (0...23).contains(hour) else { return nil }
+            return (match.range, String(format: "%02d:%02d", hour, minute) + (seconds.map { String(format: ":%02d", $0) } ?? ""))
+        }
+    }
+    static func validTime(_ time: String) -> Bool { times(time).contains { $0.time == time && $0.range.location == 0 && NSMaxRange($0.range) == time.utf16.count } }
+    private static func firstDateAndTime(_ rows: [String]) -> (date: String, time: String?)? {
+        for (index, row) in rows.enumerated() {
+            let candidates = dates(row)
+            guard let first = candidates.first else { continue }
+            // Never borrow the time belonging to another date farther along the receipt.
+            let end = candidates.dropFirst().first?.range.location ?? row.utf16.count
+            let sameLine = times(row).filter { $0.range.location >= NSMaxRange(first.range) && NSMaxRange($0.range) <= end }.first
+                ?? times(row).last(where: { NSMaxRange($0.range) <= first.range.location })
+            var time = sameLine?.time
+            if time == nil, candidates.count == 1, index + 1 < rows.count {
+                let next = rows[index + 1]
+                if dates(next).isEmpty, let adjacent = times(next).first,
+                   next.contains("HORA") || next.trimmingCharacters(in: .whitespaces).hasPrefix((next as NSString).substring(with: adjacent.range).trimmingCharacters(in: .whitespaces)) { time = adjacent.time }
+            }
+            return (first.date, time)
+        }
+        return nil
+    }
+    private static func suggestedKind(_ rows: [String]) -> ExpenseKind? {
+        let content = rows.filter { $0.range(of: "\\b(NIT|CUFE|CIIU|DIAN|DIRECCION|RESOLUCION)\\b|ACTIVIDAD ECONOMICA|RESPONSABILIDAD FISCAL", options: .regularExpression) == nil }.joined(separator: "\n")
+        let rules: [(ExpenseKind, [(String, Int)])] = [
+            (.fuel, [("GASOLINA|DIESEL|ACPM|COMBUSTIBLE|TERPEL|BIOMAX|ESTACION DE SERVICIO|GNV", 6), ("GALONES|GALON|SURTIDOR", 3)]),
+            (.lodging, [("HOTEL|HOSTAL|HOSPEDAJE|ALOJAMIENTO", 3), ("HABITACION|PERNOCTA|NOCHES|TARIFA POR NOCHE", 5)]),
+            (.transport, [("TAXI|UBER|DIDI|PEAJE|PEAJES|PARQUEADERO|AVIANCA|LATAM|WINGO|COPETRAN", 6), ("TRANSPORTE|TIQUETE|TIQUETES|PASAJE|PASAJES|TARIFA DE VIAJE|ESTACIONAMIENTO", 4)]),
+            (.food, [("RESTAURANTE|CAFETERIA|PANADERIA|ALIMENTACION|COMIDAS", 3), ("ALMUERZO|DESAYUNO|CENA|POLLO|ARROZ|CARNE|CERDO|FRIJOLES|PESCADO|PASTA|HAMBURGUESA|PIZZA|ENSALADA|SANDWICH|EMPANADA|SOPA|AREPA|CAFE|TINTO|JUGO|GASEOSA", 3)])]
+        let scores = rules.map { kind, terms -> (ExpenseKind, Int) in
+            (kind, terms.reduce(0) { score, rule in score + Set(matches("\\b(?:" + rule.0 + ")\\b", content)).count * rule.1 })
+        }.sorted { $0.1 > $1.1 }
+        guard let best = scores.first, best.1 > 0, best.1 > scores[1].1 else { return nil }
+        return best.0
+    }
+
 }
 
 enum ReceiptOCR {
@@ -190,7 +245,7 @@ enum ReceiptOCR {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         return UIGraphicsImageRenderer(size: CGSize(width: 1100, height: 1350), format: format).image { context in
             UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1100, height: 1350))
-            let lines = ["RESTAURANTE FICTICIO JAC", "FACTURA DE PRUEBA", "FECHA: 08/10/2026", "Almuerzo de prueba", "SUBTOTAL 40.000", "IVA 7.600", "TOTAL A PAGAR COP 47.600", "EFECTIVO 50.000", "CAMBIO 2.400"]
+            let lines = ["RESTAURANTE FICTICIO JAC", "FACTURA DE PRUEBA", "FECHA: 08/10/2026 13:45:20", "Almuerzo de prueba", "SUBTOTAL 40.000", "IVA 7.600", "TOTAL A PAGAR COP 47.600", "EFECTIVO 50.000", "CAMBIO 2.400", "VENCIMIENTO: 10/10/2026 09:00"]
             for (index, line) in lines.enumerated() { (line as NSString).draw(at: CGPoint(x: 60, y: 60 + index * 125), withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 44, weight: .medium), .foregroundColor: UIColor.black]) }
         }
     }
@@ -226,7 +281,9 @@ struct ReceiptScannerView: View {
                         LabeledContent("Tipo", value: suggestion.kind?.rawValue ?? "Por revisar")
                         LabeledContent("Concepto", value: suggestion.concept ?? "Por completar").accessibilityElement(children: .combine).accessibilityIdentifier("receipt.concept")
                         LabeledContent("Valor COP", value: suggestion.amount.map { PayrollFormat.money(Double($0)) } ?? "Por completar")
-                        LabeledContent("Fecha", value: suggestion.date ?? "Por revisar")
+                        LabeledContent("Fecha", value: suggestion.date ?? "Por revisar").accessibilityIdentifier("receipt.date")
+                        if let time = suggestion.time { LabeledContent("Hora", value: time).accessibilityIdentifier("receipt.time") }
+                        Text("Se toma la primera fecha válida de arriba hacia abajo. Revisa que corresponda al gasto.").font(.footnote).foregroundStyle(.secondary)
                         ForEach(suggestion.warnings, id: \.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
                         Text("Podrás corregir todos los campos en el formulario. La foto se adjuntará al gasto.").font(.footnote)
                         Button("Usar foto y datos sugeridos") {

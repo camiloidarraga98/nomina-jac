@@ -1,8 +1,10 @@
-## Escanear facturas — iPhone 0.12.0 (20)
+## Escanear facturas — iPhone 0.12.1 (21)
 
 En **Gestión → Gastos de viaje → Registrar gasto → Escanear factura** puedes tomar una foto o elegir una de Fotos. El OCR nativo de Apple se ejecuta en el iPhone, sin subir la imagen a un servicio de reconocimiento. Sugiere tipo de gasto, concepto, total en COP y fecha; muestra una vista previa y permite corregir todo antes de **Enviar a revisión**. El tipo elegido se conserva en la nota como `Tipo de gasto: …`, visible también desde la web. La foto queda como comprobante privado y se mantiene el proceso de revisión/incorporación existente.
 
-Los totales ambiguos, fechas incompatibles, otra moneda o centavos distintos de cero se dejan para revisión manual. No hay conversión de moneda, clasificación garantizada ni aprobación automática. Si una foto no contiene texto legible puedes repetirla o usar el formulario/adjuntos de siempre. El escaneo admite una foto a la vez; el gasto conserva hasta cinco comprobantes y 10 MB en conjunto.
+La fecha sugerida es la primera fecha válida de arriba hacia abajo; si hay varias en una línea se toma la primera de izquierda a derecha. Se incluye su hora cuando aparece junto a ella o en la línea de Hora inmediatamente siguiente. Fecha y hora se pueden corregir; la hora queda en la nota como `Hora de factura: …`. Se admiten fechas numéricas, ISO y meses completos o abreviados en español. La categoría se sugiere según productos y servicios, además del comercio: comida, transporte, hospedaje o combustible; una clasificación sin coincidencia clara queda por elegir.
+
+Los totales ambiguos, fechas ilegibles o inválidas, otra moneda o centavos distintos de cero se dejan para revisión manual. No hay conversión de moneda, clasificación garantizada ni aprobación automática. Si una foto no contiene texto legible puedes repetirla o usar el formulario/adjuntos de siempre. El escaneo admite una foto a la vez; el gasto conserva hasta cinco comprobantes y 10 MB en conjunto.
 
 El formulario guarda automáticamente un único borrador cifrado por sesión en este iPhone, incluyendo sus fotos. También ofrece **Guardar borrador y cerrar**, **Continuar borrador** y eliminación confirmada del borrador. Funciona sin red; enviar y aprobar siguen necesitando conexión. Cerrar sesión o una revocación comprobada elimina el borrador junto con la copia local. Un envío incierto conserva UUID y datos bloqueados para reintentar sin duplicados; no se encola ningún envío automático. Los borradores no se sincronizan con otros dispositivos.
 

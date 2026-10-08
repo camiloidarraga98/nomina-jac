@@ -65,7 +65,8 @@ final class PayrollClientTests: XCTestCase {
         for rows in [["SUBTOTAL 10.000", "IVA 1.900", "EFECTIVO 20.000"], ["TOTAL 10.000", "TOTAL 20.000"], ["TOTAL USD 15.00"], ["TOTAL US$ 15.00"], ["TOTAL EUR 15"], ["TOTAL COP 10.000,50"], ["TOTAL -10.000"], ["TOTAL 1.000.000.001"], ["FACTURA 20261008"]] {
             let value = ReceiptParser.parse(rows); XCTAssertNil(value.amount, rows.description); XCTAssertFalse(value.warnings.isEmpty)
         }
-        for rows in [["FECHA: 31/02/2026"], ["FECHA: 08/10/2026", "FECHA: 09/10/2026"], ["RESOLUCION 2026-10-08"], ["VENCIMIENTO 08/10/2026"]] { XCTAssertNil(ReceiptParser.parse(rows).date, rows.description) }
+        XCTAssertNil(ReceiptParser.parse(["FECHA: 31/02/2026"]).date)
+        for rows in [["FECHA: 08/10/2026", "FECHA: 09/10/2026"], ["RESOLUCION 2026-10-08"], ["VENCIMIENTO 08/10/2026"]] { XCTAssertEqual(ReceiptParser.parse(rows).date,"2026-10-08", "La regla solicitada toma la primera fecha válida, sin filtrar etiquetas: " + rows.description) }
         XCTAssertNil(ReceiptParser.parse(["HOTEL Y RESTAURANTE"]).kind)
         XCTAssertEqual(ReceiptParser.parse(["TOTAL 10.000", "VALOR TOTAL 11.900"]).amount, 11900)
         XCTAssertEqual(ReceiptParser.parse(["TAXI FICTICIO", "FECHA 2026-10-08", "TOTAL 25000"]).kind, .transport)
@@ -79,7 +80,7 @@ final class PayrollClientTests: XCTestCase {
         let lines = try await ReceiptOCR.recognize(bytes)
         let value = ReceiptParser.parse(lines)
         XCTAssertEqual(value.amount, 47600, lines.description); XCTAssertEqual(value.date, "2026-10-08", lines.description)
-        XCTAssertEqual(value.kind, .food); XCTAssertEqual(value.concept, "RESTAURANTE FICTICIO JAC")
+        XCTAssertEqual(value.kind, .food); XCTAssertEqual(value.concept, "RESTAURANTE FICTICIO JAC"); XCTAssertEqual(value.time,"13:45:20")
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let blank = UIGraphicsImageRenderer(size: CGSize(width: 1000, height: 1000), format: format).image { context in UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1000, height: 1000)) }
         let emptyLines = try await ReceiptOCR.recognize(ReceiptOCR.photograph(blank))
@@ -92,14 +93,14 @@ final class PayrollClientTests: XCTestCase {
         let client = PayrollClient(baseURL: base, vault: vault, configuration: config, offlineCache: cache)
         let scope = try XCTUnwrap(client.offlineScope())
         var draft = ExpenseDraft(); draft.concept = "Factura privada ficticia"; draft.kind = ExpenseKind.food.rawValue
-        draft.amount = "47600"; draft.note = "Solo prueba"; draft.attempted = true
+        draft.amount = "47600"; draft.note = "Solo prueba"; draft.receiptTime = "13:45:20"; draft.attempted = true
         draft.files = [.init(filename: "Ficticio.jpg", data: try ReceiptOCR.photograph(ReceiptOCR.fixture()))]
         client.beginOfflineRestore(); try client.saveExpenseDraft(draft, scope: scope)
         let sealed = try Data(contentsOf: cache.file(scope, key: "local-expense-draft-v1"))
         XCTAssertNil(sealed.range(of: Data(draft.concept.utf8))); XCTAssertNil(sealed.range(of: draft.files[0].data))
         let relaunched = PayrollClient(baseURL: base, vault: vault, configuration: config, offlineCache: cache)
         XCTAssertEqual(relaunched.expenseDraft(), draft)
-        XCTAssertEqual(draft.submissionNote, "Tipo de gasto: Alimentación\nSolo prueba")
+        XCTAssertEqual(draft.submissionNote, "Tipo de gasto: Alimentación\nHora de factura: 13:45:20\nSolo prueba")
         let other = MemorySession(); other.token = String(repeating: "z", count: 43)
         let otherClient = PayrollClient(baseURL: URL(string: "https://other.invalid")!, vault: other, configuration: config, offlineCache: OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
         XCTAssertNil(otherClient.expenseDraft())
@@ -114,6 +115,43 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertThrowsError(try client.saveExpenseDraft(draft, scope: scope)); XCTAssertNil(client.expenseDraft())
         draft.files = []; draft.concept = "Borrador ficticio"; try client.saveExpenseDraft(draft, scope: scope)
         XCTAssertNotNil(client.expenseDraft()); try client.removeExpenseDraft(scope: scope); XCTAssertNil(client.expenseDraft())
+    }
+    func testReceiptFirstDateWinsInVerticalThenHorizontalOrderWithItsOwnTime() {
+        let rows=ReceiptOCR.orderedLines([
+            ("FECHA 09/10/2026 08:10",CGRect(x:0.1,y:0.4,width:0.8,height:0.04)),
+            ("FECHA 08/10/2026 13:45:20",CGRect(x:0.1,y:0.8,width:0.8,height:0.04))])
+        let first=ReceiptParser.parse(rows)
+        XCTAssertEqual(first.date,"2026-10-08");XCTAssertEqual(first.time,"13:45:20")
+        let horizontal=ReceiptParser.parse(["08/10/2026 09:10   07/10/2026 18:30"])
+        XCTAssertEqual(horizontal.date,"2026-10-08");XCTAssertEqual(horizontal.time,"09:10")
+        XCTAssertEqual(ReceiptParser.parse(["08/10/2026  07/10/2026 18:30"]).time,nil,"No tomar la hora de la segunda fecha")
+        XCTAssertEqual(ReceiptParser.parse(["31/02/2026", "8 OCT. 2026", "Hora: 1:05:09 p. m."]).time,"13:05:09")
+        XCTAssertEqual(ReceiptParser.parse(["08/10/26", "FECHA 09/10/2026 18:30"]).date,"2026-10-08")
+        XCTAssertNil(ReceiptParser.parse(["08/10/2026", "FECHA 09/10/2026 18:30"]).time)
+        XCTAssertNil(ReceiptParser.parse(["08/10/2026 25:75:00"]).time)
+        XCTAssertEqual(ReceiptParser.parse(["2026/10/08 00:15", "08/10/2026 16:00"]).time,"00:15")
+        XCTAssertEqual(ReceiptParser.parse(["8 de octubre de 2026 12:00 a. m."]).time,"00:00")
+        XCTAssertEqual(ReceiptParser.parse(["8-SEP-26 12:00 PM"]).date,"2026-09-08")
+        XCTAssertEqual(ReceiptParser.parse(["8-SEP-26 12:00 PM"]).time,"12:00")
+        XCTAssertFalse(first.warnings.contains { $0.contains("fecha") })
+    }
+    func testReceiptCategoryUsesPurchasedItemsAndServiceInsteadOfOnlyMerchantName() {
+        XCTAssertEqual(ReceiptParser.parse(["COMERCIO FICTICIO", "1 ALMUERZO", "1 POLLO CON ARROZ", "1 JUGO"]).kind,.food)
+        XCTAssertEqual(ReceiptParser.parse(["HOTEL FICTICIO", "ALMUERZO", "POLLO", "ARROZ"]).kind,.food)
+        XCTAssertEqual(ReceiptParser.parse(["HOTEL RESTAURANTE FICTICIO", "HABITACION", "2 NOCHES"]).kind,.lodging)
+        XCTAssertEqual(ReceiptParser.parse(["ESTACION DE SERVICIO FICTICIA", "GASOLINA", "CAFE"]).kind,.fuel)
+        XCTAssertEqual(ReceiptParser.parse(["COMERCIO FICTICIO", "TRANSPORTE", "PASAJE", "NIT 1234567"]).kind,.transport)
+        XCTAssertNil(ReceiptParser.parse(["COMERCIO FICTICIO", "CIIU RESTAURANTE", "NIT 1234567"]).kind)
+        XCTAssertNil(ReceiptParser.parse(["ARTICULO SIN DESCRIPCION"]).kind)
+    }
+    func testReceiptTimeIsOptionalForOldDraftsAndIncludedInReviewedNote() throws {
+        let bytes=try JSONEncoder().encode(ExpenseDraft())
+        let old=try JSONDecoder().decode(ExpenseDraft.self,from:bytes)
+        XCTAssertNil(old.receiptTime);XCTAssertEqual(old.submissionNote,"")
+        var draft=old;draft.kind=ExpenseKind.food.rawValue;draft.receiptTime="13:45:20";draft.note="Revisado"
+        XCTAssertEqual(draft.submissionNote,"Tipo de gasto: Alimentación\nHora de factura: 13:45:20\nRevisado")
+        XCTAssertNoThrow(try draft.validateStorage())
+        draft.receiptTime="25:75";XCTAssertThrowsError(try draft.validateStorage())
     }
     private let base = URL(string: "https://payroll.example.invalid")!
     private let token = String(repeating: "a", count: 43)
