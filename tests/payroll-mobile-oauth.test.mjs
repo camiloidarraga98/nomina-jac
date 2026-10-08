@@ -88,3 +88,13 @@ test('expiración, revocación y cancelación impiden conectar Gmail desde una a
  assert.equal(new URL((await m.finishNativeMailOauth(request(revokedCallback))).url).searchParams.get('result'),'error');assert.equal(calls.length,0,'Revocar la sesión impide canjear el código');
  assert.equal((await m.mailConnection()).connected,false);
 });
+
+
+test('administrador delegado conecta Gmail nativo; revocar el rol bloquea un callback pendiente',async()=>{
+ const id=crypto.randomUUID(),now=new Date().toISOString();
+ sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,'delegate-native','delegate-native@example.invalid','Administrador ficticio',m.hashPassword('fixture',globalThis.__nativeOauthEnv.PAYROLL_AUTH_KEY),JSON.stringify([m.ADMINISTRATOR_ROLE]),now,now);
+ const token=await m.makeSession(id);calls=[];const context=await handoff(token);
+ assert.equal(calls.length,0);const callback=await m.callback.GET(request(context));assert.equal(new URL(callback.headers.get('location')).searchParams.get('result'),'connected');assert.equal(calls.length,2);
+ const revoked=await handoff(token);calls=[];sql.prepare('UPDATE payroll_users SET permissions=? WHERE id=?').run('[]',id);
+ assert.equal(new URL((await m.finishNativeMailOauth(request(revoked))).url).searchParams.get('result'),'error');assert.equal(calls.length,0);assert.equal((await start(token)).status,403);
+});

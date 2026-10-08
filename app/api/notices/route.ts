@@ -17,7 +17,7 @@ export async function POST(req:Request){
   if(b.action==='register'){await registerDevice(u,b,sessionToken(req.headers.get('cookie')??'',!/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname)),ownSession);return reply({ok:true});}
   if(b.action==='unregister'){await unregisterDevice(u,b.id);return reply({ok:true});}
   if(b.action==='read'&&typeof b.id==='string'){await markNoticeRead(u,b.id);return reply({ok:true});}
-  if(!noticeOwner(u))return reply({error:'Solo Camilo puede gestionar alertas, eliminar itinerarios y configurar la integración.'},403);
+  if(!noticeOwner(u))return reply({error:'Solo un administrador puede gestionar alertas, eliminar itinerarios y configurar la integración.'},403);
   const authorize=async()=>{const actor=await payrollUser();return !!actor&&actor.id===u.id&&noticeOwner(actor);};
   if(b.action==='boardingChannels'){await configureBoardingChannels(b.input,authorize);return reply({ok:true});}
   if(b.action==='deleteAlert'){await deleteManualNotice(u,b.id,b.confirmation,authorize);return reply({ok:true,notice:'Alerta eliminada.'});}

@@ -126,3 +126,43 @@ test('Sin nómina: cuenta limitada conserva Agenda de consulta y bloquea APIs fi
  let pub=(await call(m.usersApi,null,{cookie:ownerCookie,get:true})).body.users.find(u=>u.id===row.id);assert.equal(pub.itinerariesOnly,true);
  const oldClient={...pub};delete oldClient.itinerariesOnly;assert.equal((await call(m.usersApi,{action:'update',id:row.id,version:pub.version,user:oldClient},{cookie:ownerCookie})).status,200);assert.equal(sql.prepare('SELECT itineraries_only FROM payroll_users WHERE id=?').get(row.id).itineraries_only,1,'Un cliente antiguo no puede quitar la restricción al guardar');assert.equal((await call(m.payrollApi,null,{cookie,get:true})).status,401,'El cambio de permisos revoca la sesión anterior');
 });
+
+
+test('administración delegada: concesión explícita, sesiones revocadas, clientes antiguos y propietario protegido',async()=>{
+ const ownerId=sql.prepare('SELECT id FROM payroll_users WHERE owner=1').get().id;ownerCookie='__Host-jac_session='+await m.makeSession(ownerId);
+ const fixture={username:'jac-admin-fixture',email:'jac-admin@example.invalid',name:'Jhon ficticio',active:true,itinerariesOnly:true,permissions:[]};
+ assert.equal((await call(m.usersApi,{action:'create',user:fixture},{cookie:ownerCookie})).status,200);
+ let row=sql.prepare('SELECT * FROM payroll_users WHERE username=?').get(fixture.username);
+ assert.equal(m.publicUser(row).administrator,false);assert.equal(m.publicUser(row).ready,false);
+ sql.prepare('UPDATE payroll_users SET password_hash=? WHERE id=?').run(m.hashPassword('fixture',globalThis.__authEnv.PAYROLL_AUTH_KEY),row.id);
+ const old='__Host-jac_session='+await m.makeSession(row.id);
+ const update=(user,version=row.version,cookie=ownerCookie)=>call(m.usersApi,{action:'update',id:row.id,version,user},{cookie});
+ const grant={...m.publicUser(row),administrator:true,itinerariesOnly:false,permissions:[]};
+ assert.equal((await update(grant,row.version,old)).status,403,'Un lector no se puede promover');
+ assert.equal((await update({...grant,itinerariesOnly:true})).status,400);
+ assert.equal((await update({...grant,permissions:['administrator']})).status,400,'El rol no es un permiso ordinario inyectable');
+ assert.equal((await update(grant)).status,200);assert.equal((await call(m.usersApi,null,{cookie:old,get:true})).status,403);
+ row=sql.prepare('SELECT * FROM payroll_users WHERE id=?').get(row.id);assert.equal(row.owner,0);assert.equal(row.itineraries_only,0);assert.ok(JSON.parse(row.permissions).includes(m.ADMINISTRATOR_ROLE));
+ assert.equal((await update(grant,row.version-1)).status,409);
+ let token=await m.makeSession(row.id),cookie='__Host-jac_session='+token;
+ const identity=await m.authenticatedSession(token);assert.equal(identity.isOwner,true);assert.ok(m.permissionKeys.every(p=>m.can(identity,p)));assert.ok(!identity.permissions.includes(m.ADMINISTRATOR_ROLE));
+ assert.equal((await call(m.usersApi,null,{cookie,get:true})).status,200);
+ const workspace=await call(m.mobileApi,null,{cookie,get:true,path:'/api/mobile/payroll?workspace=1'});assert.equal(workspace.status,200);assert.equal(workspace.body.user.isOwner,true);
+ assert.equal((await call(m.mailApi,{action:'configure',clientId:'fixture.apps.googleusercontent.com',clientSecret:'fixture-only-secret'},{cookie})).status,200);
+ assert.equal((await call(m.gmailApi,{}, {cookie})).status,200);
+ assert.equal((await call(m.calendarApi,{action:'connect'},{cookie})).status,200);
+ const founder=sql.prepare('SELECT * FROM payroll_users WHERE owner=1').get();
+ assert.equal((await call(m.usersApi,{action:'update',id:founder.id,version:founder.version,user:{...m.publicUser(founder),active:false}},{cookie})).status,403);
+ const oldClient={...m.publicUser(row)};delete oldClient.administrator;delete oldClient.itinerariesOnly;
+ assert.equal((await update(oldClient)).status,200);assert.equal(await m.authenticatedSession(token),null);
+ row=sql.prepare('SELECT * FROM payroll_users WHERE id=?').get(row.id);assert.equal(m.publicUser(row).administrator,true);
+ token=await m.makeSession(row.id);cookie='__Host-jac_session='+token;
+ assert.equal((await update({...m.publicUser(row),administrator:false,permissions:[]})).status,200);assert.equal(await m.authenticatedSession(token),null);
+ row=sql.prepare('SELECT * FROM payroll_users WHERE id=?').get(row.id);const reader='__Host-jac_session='+await m.makeSession(row.id);
+ assert.equal(m.publicUser(row).administrator,false);assert.equal((await call(m.usersApi,null,{cookie:reader,get:true})).status,403);assert.equal((await call(m.gmailApi,{}, {cookie:reader})).status,403);
+ assert.equal((await call(m.calendarApi,{action:'connect'},{cookie:reader})).status,403);
+ const pending={...fixture,username:'admin-pending-fixture',email:'admin-pending@example.invalid',administrator:true,itinerariesOnly:false};
+ assert.equal((await call(m.usersApi,{action:'create',user:pending},{cookie:ownerCookie})).status,200);
+ const pendingRow=sql.prepare('SELECT * FROM payroll_users WHERE username=?').get(pending.username);assert.equal(m.publicUser(pendingRow).administrator,true);assert.equal(m.publicUser(pendingRow).ready,false);
+ await assert.rejects(()=>m.makeSession(pendingRow.id),/iniciar sesión/);
+});

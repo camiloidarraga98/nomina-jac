@@ -418,3 +418,21 @@ test('Alertas: Jhon y Alex pendientes aparecen; recepción privada y push solo t
  sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(alex);assert.equal((await api(alexToken,undefined,'?item='+manual.id)).status,401);
  sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(jhon);
 });
+
+
+test('administrador delegado gestiona alertas sin acceso a pases privados ajenos',async()=>{
+ const id=crypto.randomUUID(),now=new Date().toISOString();
+ sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,'delegate-notices','delegate-notices@example.invalid','Administrador ficticio',m.hashPassword('fixture',globalThis.__noticesEnv.PAYROLL_AUTH_KEY),JSON.stringify([m.ADMINISTRATOR_ROLE]),now,now);
+ const token=await m.makeSession(id),delegate=await m.authenticatedSession(token);assert.equal(m.noticeOwner(delegate),true);
+ const alertInput=alert([owner]);assert.equal((await api(token,{action:'alert',alert:alertInput})).status,200);
+ assert.deepEqual(sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(alertInput.id).map(r=>r.user_id),[owner]);
+ assert.equal((await api(token,{action:'deleteAlert',id:alertInput.id,confirmation:alertInput.id})).status,200);
+ const pass={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase privado ficticio',body:'',travelDate:'2026-10-16',recipients:[owner],files:[upload()]};await m.publishManualNotice(actor(owner),pass,async()=>true);
+ assert.equal((await api(token,undefined,'?item='+pass.id)).status,404);
+ const file=sql.prepare('SELECT id FROM jac_notice_attachments WHERE notice_id=?').get(pass.id);
+ await assert.rejects(()=>m.noticeAttachment(delegate,pass.id,file.id),e=>e.status===404);
+ assert.equal((await api(token,{action:'deleteBoardingPass',id:pass.id,confirmation:pass.id})).status,404);
+ assert.ok(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(pass.id));
+ sql.prepare('UPDATE payroll_users SET permissions=? WHERE id=?').run('[]',id);
+ assert.equal((await api(token,{action:'alert',alert:alert([owner])})).status,403);assert.equal((await api(token,{action:'configure',kind:'web',version:(await m.noticeConfig()).version})).status,403);
+});

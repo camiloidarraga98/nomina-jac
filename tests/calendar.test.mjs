@@ -302,3 +302,19 @@ test('Alex sin nómina consulta Agenda; no puede editar eventos ni configurar la
  assert.equal((await api(token,{query:'&action=calendars'})).status,403);assert.equal(writes,before);
  sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(id);assert.equal((await api(token)).status,401);
 });
+
+
+test('administrador delegado configura y edita Agenda; el callback revalida el rol',async()=>{
+ const id=crypto.randomUUID(),now=new Date().toISOString(),previous=ownerToken;
+ sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,'delegate-calendar','delegate-calendar@example.invalid','Administrador ficticio',m.hashPassword('fixture',globalThis.__calendarEnv.PAYROLL_AUTH_KEY),JSON.stringify([m.ADMINISTRATOR_ROLE]),now,now);
+ ownerToken=await m.makeSession(id);
+ try{
+  await connect();assert.equal((await api(ownerToken,{query:'&action=calendars'})).status,200);
+  let revision=(await m.agendaConnection()).revision;assert.equal((await api(ownerToken,{action:'select',revision,calendarId:available.id})).status,200);
+  revision=(await m.agendaConnection()).revision;assert.equal((await api(ownerToken)).body.canEditEvents,true);
+  assert.equal((await api(ownerToken,{action:'createEvent',revision,event:draft,requestId:crypto.randomUUID()})).status,200);
+  const pending=await start();calls=[];sql.prepare('UPDATE payroll_users SET permissions=? WHERE id=?').run('[]',id);
+  const callback=await m.finishCalendarCallback(callbackRequest(pending));assert.equal(new URL(callback.url).searchParams.get('reason'),'session_revoked');assert.equal(calls.length,0);
+  assert.equal((await api(ownerToken,{action:'connect'})).status,403);assert.equal((await api(ownerToken)).body.canEditEvents,false);
+ }finally{ownerToken=previous;}
+});

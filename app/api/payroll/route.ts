@@ -18,7 +18,7 @@ export async function POST(req:Request){
   const text=await req.text();if(text.length>8_000_000)return reply({error:'La solicitud es demasiado grande.'},413);const body=JSON.parse(text);
   const current=await readPayroll();if(!Number.isInteger(body.version)||body.version!==current.version)return reply({error:'Otra persona actualizó la nómina. Tus cambios se conservan en pantalla. Recarga antes de volver a guardar.'},409);
   if(body.action==='deletePeriod'){
-   if(!user.isOwner)return reply({error:'Solo Camilo puede eliminar una quincena.'},403);
+   if(!user.isOwner)return reply({error:'Solo un administrador puede eliminar una quincena.'},403);
    if(body.confirmation!==body.periodId||typeof body.periodId!=='string')return reply({error:'Confirma la eliminación de la quincena seleccionada.'},400);
    if(!current.data.periods.some(p=>p.id===body.periodId))return reply({error:'La quincena no existe.'},404);
    return reply(await deletePayrollPeriod(current.data,body.version,body.periodId,user.email));

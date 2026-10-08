@@ -3,7 +3,7 @@ import {calendarClientCredentials,ensureCalendarConfig,calendarConfig,calendarGo
 import {mailKey} from './payroll-mail';
 import {GMAIL_CALLBACK,base64Url,encryptMail,decryptMail} from './payroll-mail-core';
 import {tokenHash,sessionToken} from './payroll-auth-crypto';
-import {isOwnerEmail} from './payroll-policy';
+import {accountAdministrator,type UserRow} from './payroll-auth-store';
 import {CALENDAR_SCOPE,CALENDAR_LIST_SCOPE,CALENDAR_ACCOUNT} from './calendar-core';
 import type {AccessUser} from './payroll-permissions';
 import type {CalendarOAuthReason} from './calendar-oauth-errors';
@@ -14,11 +14,11 @@ const valid=(v:string|null|undefined):v is string=>!!v&&/^[A-Za-z0-9_-]{43}$/.te
 const cookieName='__Host-jac_calendar_oauth';
 export const calendarCookie=(value:string,age=600)=>`${cookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
 async function activeOwner(c:Context){
- const row=await database().prepare('SELECT u.id,u.email,u.owner FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND s.expires_at>? AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(c.sessionId,new Date().toISOString(),'',c.userId).first<{id:string;email:string;owner:number}>();
- return !!row&&row.owner===1&&isOwnerEmail(row.email)&&row.email===c.actor;
+ const row=await database().prepare('SELECT u.* FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND s.expires_at>? AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(c.sessionId,new Date().toISOString(),'',c.userId).first<UserRow>();
+ return !!row&&accountAdministrator(row)&&row.email===c.actor;
 }
 export async function startCalendarOauth(user:AccessUser,cookies:string,native=false){
- if(!user.isOwner||user.legacy||!isOwnerEmail(user.email))throw new CalendarFailure('Solo Camilo puede conectar Agenda.',403);
+ if(!user.isOwner||user.legacy||user.itinerariesOnly)throw new CalendarFailure('Solo un administrador puede conectar Agenda.',403);
  const session=sessionToken(cookies,true);if(!valid(session))throw new CalendarFailure('Inicia sesión de nuevo.',401);
  const credentials=await calendarClientCredentials(),config=await ensureCalendarConfig(),state=random(),verifier=random(),guard=random(),nonce=random();
  const challenge=base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))));

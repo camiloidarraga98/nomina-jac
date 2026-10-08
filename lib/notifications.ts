@@ -13,7 +13,7 @@ const uuid=z.string().uuid();
 const now=()=>new Date().toISOString();
 type Config={credentials:string;version:number};
 type Row={id:string;kind:Notice['kind'];travel_date:string;title:string;body:string;filename:string;size:number;created_at:string;file_key:string;read_at:string};
-export const noticeOwner=(u:AccessUser)=>!u.legacy&&u.isOwner&&u.email==='camilo@mac2you.co';
+export const noticeOwner=(u:AccessUser)=>!u.legacy&&!u.itinerariesOnly&&u.isOwner;
 export async function noticeConfig(){return await database().prepare('SELECT credentials,version FROM jac_notice_settings WHERE id=?').bind('jac').first<Config>()??{credentials:'',version:0};}
 export async function pushCredentials(c?:Config):Promise<PushCredentials>{const config=c??await noticeConfig();return config.credentials?decryptMail(config.credentials,mailKey()):{};}
 async function settings(){const c=await noticeConfig(),keys=await pushCredentials(c);return {version:c.version,slackConnected:!!keys.slack,appleConfigured:!!keys.apns,webPublicKey:keys.web?.publicKey??'',channel:'#itinerarios-finales',webhook:'https://jhonalexcastano.com/api/notices/slack'};}
@@ -51,7 +51,7 @@ export async function saveManualNotice(u:AccessUser,body:unknown,authorize:()=>P
 }
 // Keep only the deleted UUID so delayed creation retries cannot restore content or pushes.
 export async function deleteManualNotice(u:AccessUser,id:unknown,confirmation:unknown,authorize:()=>Promise<boolean>){
- if(!noticeOwner(u))throw new NoticeFailure('Solo Camilo puede eliminar alertas.',403);
+ if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede eliminar alertas.',403);
  if(!uuid.safeParse(id).success||confirmation!==id)throw new NoticeFailure('Confirma la alerta que deseas eliminar.');
  const target=id as string,db=database();
  const item=await db.prepare('SELECT kind FROM jac_notices WHERE id=?').bind(target).first<{kind:string}>();
@@ -73,7 +73,7 @@ export async function purgeDeletedItineraries(id?:string){
  for(const row of rows){try{if(row.file_key)await env.BUCKET.delete(row.file_key);await db.prepare('UPDATE jac_deleted_itineraries SET file_deleted=1 WHERE id=? AND cleanup_version=?').bind(row.id,row.cleanup_version).run();}catch{/* Retry only the private PDF cleanup on the next refresh. */}}
 }
 async function deleteTravelNotice(u:AccessUser,id:unknown,confirmation:unknown,authorize:()=>Promise<boolean>,kind:"itinerary"|"boarding_pass"){
- if(!noticeOwner(u))throw new NoticeFailure('Solo Camilo puede eliminar itinerarios y sus pases.',403);
+ if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede eliminar itinerarios y sus pases.',403);
  if(!uuid.safeParse(id).success||confirmation!==id)throw new NoticeFailure('Confirma el documento que deseas eliminar.');
  const target=id as string,db=database(),item=await db.prepare('SELECT kind FROM jac_notices WHERE id=?').bind(target).first<{kind:string}>();
  if(item&&item.kind!==kind)throw new NoticeFailure(kind==='boarding_pass'?'Selecciona un pase de abordar para eliminar.':'Selecciona un itinerario para eliminar.');
@@ -213,7 +213,7 @@ export async function purgeNoticeAttachments(){
  for(const row of rows){try{await env.BUCKET.delete(row.file_key);await db.prepare("UPDATE jac_notice_attachments SET cleaned=1,filename='',notice_id='' WHERE id=? AND state='deleted' AND cleanup_version=?").bind(row.id,row.cleanup_version).run();}catch{/* Access stays revoked; refresh retries private-file cleanup. */}}
 }
 export async function publishManualNotice(u:AccessUser,input:unknown,authorize:()=>Promise<boolean>){
- if(!noticeOwner(u))throw new NoticeFailure('Solo Camilo puede crear alertas e itinerarios.',403);
+ if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede crear alertas e itinerarios.',403);
  const parsed=manualNoticeSchema.safeParse(input);if(!parsed.success)throw new NoticeFailure('Revisa título, mensaje, destinatarios y adjuntos.');const p=parsed.data;
  if(p.kind==='alert'&&(!p.body||!p.recipients.length))throw new NoticeFailure('Ingresa un mensaje y elige al menos un destinatario.');
  const files=decodeNoticeFiles(p.files),db=database();let travelDate='';
