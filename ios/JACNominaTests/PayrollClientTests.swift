@@ -52,6 +52,139 @@ final class PayrollClientTests: XCTestCase {
     }
     override func tearDown() { MockProtocol.handler = nil; TemporaryDocuments.clear(); super.tearDown() }
 
+    @MainActor private func waitForOfflineCopy(_ client: PayrollClient) async throws {
+        for _ in 0..<200 {
+            if client.offlineSyncMessage == "La última información y sus adjuntos están guardados en este iPhone." { return }
+            try await Task.sleep(for: .milliseconds(50))
+        }
+        XCTFail(client.offlineSyncMessage ?? "No terminó la descarga ficticia")
+    }
+    @MainActor private func cachedFixture(_ cache: OfflineResponseCache) async throws -> PayrollClient {
+        let client = UITestBackend.client(contentCache: cache, downloadOffline: true)
+        let workspace = try await client.workspace()
+        client.synchronizeOfflineContent(workspace)
+        try await waitForOfflineCopy(client)
+        return client
+    }
+    @MainActor private func relaunchFixture(_ cache: OfflineResponseCache, token: String = String(repeating: "f", count: 43)) -> (PayrollClient, MemorySession) {
+        let vault = MemorySession(); vault.token = token
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        return (PayrollClient(baseURL: UITestBackend.base, vault: vault, configuration: configuration, agendaCache: AgendaOfflineCache(root: cache.root.appendingPathComponent("agenda-test")), offlineCache: cache, automaticallyDownloadOffline: false), vault)
+    }
+
+    @MainActor func testFullCopyRestoresBeforeNetworkAndOpensPayrollAgendaItineraryAndPrivatePassOffline() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let initial = try await cachedFixture(cache), workspace = try XCTUnwrap(initial.cachedWorkspace())
+        let itinerary = try XCTUnwrap(initial.cachedNotices()?.notices.first { $0.kind == "itinerary" })
+        let pass = try XCTUnwrap(initial.cachedNotices(boarding: "current")?.notices.first)
+        let (client, vault) = relaunchFixture(cache); var requests = 0
+        MockProtocol.handler = { _ in requests += 1; throw URLError(.notConnectedToInternet) }
+        let store = PayrollStore(client: client)
+        XCTAssertEqual(store.workspace?.version, workspace.version); XCTAssertFalse(store.restoring)
+        XCTAssertTrue(store.hasSavedSession); XCTAssertTrue(store.isOffline); XCTAssertFalse(store.canWrite)
+        XCTAssertEqual(requests, 0, "La pantalla no debe esperar ninguna petición para mostrar lo descargado")
+        await store.restore()
+        XCTAssertNil(store.error); XCTAssertEqual(store.overview?.user.id, workspace.user.id)
+        let detail = try await client.detail(periodID: workspace.periods[0].id)
+        XCTAssertEqual(detail.version, workspace.version)
+        let agenda = try await client.agenda(month: CalendarClock.month(Date()))
+        XCTAssertFalse(agenda.events.isEmpty)
+        let pdf = try await client.itinerary(itinerary), privatePDF = try await client.noticeFile(pass, file: pass.files[0])
+        XCTAssertTrue(try Data(contentsOf: pdf.url).starts(with: Data("%PDF-".utf8)))
+        XCTAssertTrue(try Data(contentsOf: privatePDF.url).starts(with: Data("%PDF-".utf8)))
+        _ = try await client.users(); _ = try await client.mail(periodID: nil); _ = try await client.expenses()
+        do { try await client.confirmNotice(itinerary); XCTFail("No deben enviarse cambios desde la copia") } catch APIError.invalid { }
+        XCTAssertEqual(requests, 1, "Solo se intentó revalidar la sesión; el contenido se abrió desde disco")
+        XCTAssertEqual(vault.token, String(repeating: "f", count: 43))
+        await store.signOut()
+        XCTAssertNil(vault.token); XCTAssertNil(store.workspace); XCTAssertFalse(store.hasSavedSession)
+        XCTAssertNil(client.cachedWorkspace()); XCTAssertFalse(FileManager.default.fileExists(atPath: privatePDF.url.path))
+    }
+
+    @MainActor func testAlertImageAndExpenseReceiptDownloadAutomaticallyAndRemainReadableOffline() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let client = UITestBackend.client(contentCache: cache, downloadOffline: true)
+        let image = try XCTUnwrap(Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII="))
+        let id = UUID().uuidString.lowercased()
+        try await client.publishNotice(id: id, kind: "alert", title: "Imagen ficticia", body: "Solo prueba local", recipients: ["11111111-1111-4111-8111-111111111111"], files: [NoticeUpload(filename: "Imagen.png", data: image)])
+        try await client.submitExpense(id: UUID().uuidString.lowercased(), concept: "Comprobante simulado", amount: 1000, date: BoardingClock.today(), note: "Sin datos reales", files: [NoticeUpload(filename: "Comprobante.png", data: image)])
+        client.synchronizeOfflineContent(try await client.workspace()); try await waitForOfflineCopy(client)
+        let (offline, _) = relaunchFixture(cache); let store = PayrollStore(client: offline)
+        MockProtocol.handler = { _ in XCTFail("Los adjuntos descargados no deben esperar internet"); throw URLError(.notConnectedToInternet) }
+        let alert = try await offline.notice(id: id), expense = try XCTUnwrap(offline.cachedExpenses()?.expenses.first)
+        let alertFile = try await offline.noticeFile(alert, file: alert.files[0]), receipt = try await offline.expenseFile(expense, file: expense.attachments[0])
+        XCTAssertEqual(try Data(contentsOf: alertFile.url), image); XCTAssertEqual(try Data(contentsOf: receipt.url), image)
+        XCTAssertTrue(store.isOffline); XCTAssertTrue(store.hasSavedSession)
+    }
+
+    @MainActor func testFullCopyRevalidatesAndRestoresAuthorizedActionsAfterInternetReturns() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let initial = try await cachedFixture(cache), workspace = try XCTUnwrap(initial.cachedWorkspace())
+        let (client, vault) = relaunchFixture(cache)
+        let store = PayrollStore(client: client)
+        MockProtocol.handler = { _ in throw URLError(.timedOut) }
+        await store.restore(); XCTAssertTrue(store.isOffline); XCTAssertFalse(store.canWrite)
+        let bytes = try JSONEncoder().encode(workspace)
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, bytes) }
+        try await store.refreshAutomatically()
+        XCTAssertFalse(store.isOffline); XCTAssertFalse(store.offlineMode); XCTAssertTrue(store.canWrite)
+        XCTAssertTrue(store.hasSavedSession); XCTAssertEqual(vault.token, String(repeating: "f", count: 43)); XCTAssertNotNil(client.cachedWorkspace())
+    }
+
+    @MainActor func testSavedSessionWithoutDownloadedDataDoesNotBecomeLogoutWhenOffline() async throws {
+        let vault = MemorySession(); vault.token = token
+        let store = PayrollStore(client: makeClient(vault))
+        MockProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        await store.restore()
+        XCTAssertTrue(store.hasSavedSession); XCTAssertNil(store.overview); XCTAssertFalse(store.restoring)
+        XCTAssertEqual(vault.token, token); XCTAssertNil(store.error)
+    }
+
+    @MainActor func testFullOfflineCopyIsEncryptedSessionBoundAndRejectsTampering() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let client = try await cachedFixture(cache), scope = try XCTUnwrap(client.offlineScope())
+        let entry = try XCTUnwrap(cache.entries(scope).first { $0.url.contains("workspace=1") })
+        let disk = try Data(contentsOf: cache.file(scope, key: entry.key))
+        XCTAssertNil(disk.range(of: Data("Prueba".utf8))); XCTAssertNil(disk.range(of: Data(String(repeating: "f", count: 43).utf8)))
+        XCTAssertNil(cache.load(OfflineResponseCache.scope(origin: UITestBackend.base.absoluteString, token: token), key: entry.key))
+        XCTAssertNil(cache.load(OfflineResponseCache.scope(origin: "https://other.example.invalid", token: String(repeating: "f", count: 43)), key: entry.key))
+        XCTAssertEqual(try cache.root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+        var corrupt = disk; corrupt[0] ^= 1; try corrupt.write(to: cache.file(scope, key: entry.key))
+        XCTAssertNil(cache.load(scope, key: entry.key))
+        XCTAssertThrowsError(try cache.save(OfflineResponse(key: "huge", url: UITestBackend.base.absoluteString, headers: [:], data: Data(count: OfflineResponseCache.maximumEntryBytes + 1), receivedAt: Date(), revision: 1), scope: scope))
+    }
+
+    @MainActor func testRevalidationRevocationPurgesFullCacheRatherThanUsingFallback() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        _ = try await cachedFixture(cache)
+        let (client, vault) = relaunchFixture(cache)
+        let scope = try XCTUnwrap(client.offlineScope()), store = PayrollStore(client: client)
+        XCTAssertNotNil(store.workspace)
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 401, httpVersion: nil, headerFields: nil)!, Data("{}".utf8)) }
+        await store.restore()
+        XCTAssertNil(store.workspace); XCTAssertNil(store.overview); XCTAssertFalse(store.hasSavedSession)
+        XCTAssertNil(client.cachedWorkspace()); XCTAssertTrue(cache.entries(scope).isEmpty)
+        XCTAssertNil(vault.token)
+    }
+
+    @MainActor func testForbiddenPrivateAttachmentPurgesNoticeAndNeverReturnsCachedPDFOnline() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let initial = try await cachedFixture(cache), pass = try XCTUnwrap(initial.cachedNotices(boarding: "current")?.notices.first)
+        let (client, _) = relaunchFixture(cache)
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: nil)!, Data("{\"error\":\"Sin permiso\"}".utf8)) }
+        do { _ = try await client.noticeFile(pass, file: pass.files[0]); XCTFail("No debe abrir una copia denegada por el servidor") } catch APIError.forbidden { }
+        XCTAssertNil(client.cachedNotice(pass.id)); XCTAssertFalse(client.usingOfflineCopy)
+        client.beginOfflineRestore()
+        XCTAssertFalse(client.cachedNotices(boarding: "current")?.notices.contains { $0.id == pass.id } ?? true)
+        XCTAssertFalse(cache.entries(try XCTUnwrap(client.offlineScope())).contains { $0.url.contains("id=" + pass.id) })
+    }
+
     @MainActor func testNotificationPermissionIsRequestedAfterSessionAndDenialIsRespected() async throws {
         let suite = "push-test-" + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
@@ -624,6 +757,11 @@ final class PayrollClientTests: XCTestCase {
         defer { TemporaryDocuments.remove(document) }
         let protected = try FileManager.default.attributesOfItem(atPath:document.url.path)
         XCTAssertEqual(protected[.protectionKey] as? FileProtectionType,.complete)
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let scope = OfflineResponseCache.scope(origin: base.absoluteString, token: token)
+        try cache.save(OfflineResponse(key: "test", url: base.absoluteString, headers: [:], data: Data("fixture".utf8), receivedAt: Date(), revision: 1), scope: scope)
+        XCTAssertEqual(try FileManager.default.attributesOfItem(atPath: cache.file(scope, key: "test").path)[.protectionKey] as? FileProtectionType, .complete)
         #endif
     }
 

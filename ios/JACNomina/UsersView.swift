@@ -27,8 +27,8 @@ struct UsersView: View {
                     if user.owner { Label("Administrador · permisos completos", systemImage: "person.badge.key") }
                     else {
                         Text(user.permissions.compactMap { PayrollFormat.permissionNames[$0] }.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
-                        Button("Editar cuenta y permisos") { editor = UserEditorSession(user: user) }.disabled(busy)
-                        if user.active { Button(user.ready ? "Restablecer contraseña" : "Generar invitación") { selectedInvite = user }.disabled(busy) }
+                        Button("Editar cuenta y permisos") { editor = UserEditorSession(user: user) }.disabled(busy || store.isOffline)
+                        if user.active { Button(user.ready ? "Restablecer contraseña" : "Generar invitación") { selectedInvite = user }.disabled(busy || store.isOffline) }
                     }
                 }
             }
@@ -39,7 +39,7 @@ struct UsersView: View {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
                         editor = UserEditorSession(user: ManagedUser(id: "", username: "", email: "", name: "", owner: false, active: true, permissions: ["export"], version: 1, ready: false))
-                    } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Crear usuario").disabled(busy)
+                    } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Crear usuario").disabled(busy || store.isOffline)
                 }
             }.sheet(item: $editor) { session in UserEditorView(user: session.user) { Task { invitation = nil; await load() } } }
             .confirmationDialog("¿Generar un enlace para \(selectedInvite?.name ?? "esta cuenta")?", isPresented: Binding(get: { selectedInvite != nil }, set: { if !$0 { selectedInvite = nil } }), titleVisibility: .visible) {
@@ -48,7 +48,7 @@ struct UsersView: View {
     }
     private func load() async {
         guard !busy else { return }; busy = true; defer { busy = false }
-        do { users = try await store.client.users().users } catch { store.reportReadFailure(error) }
+        if users.isEmpty, let saved = store.client.cached(UserDirectory.self, path: "api/users") { users = saved.users }; do { users = try await store.client.users().users } catch { store.reportReadFailure(error) }
     }
     private func invite(_ user: ManagedUser) async {
         guard !busy else { return }; busy = true; invitation = nil; defer { busy = false }
@@ -100,7 +100,7 @@ struct UserEditorView: View {
                                 do { _ = try await store.client.updateUser(user); onSaved(); dismiss() }
                                 catch { self.error = error.localizedDescription; store.report(error) }
                             }
-                        }.disabled(busy || user.owner || user.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || user.username.isEmpty || user.email.isEmpty)
+                        }.disabled(busy || store.isOffline || user.owner || user.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || user.username.isEmpty || user.email.isEmpty)
                     }
                 }.interactiveDismissDisabled(busy).scrollDismissesKeyboard(.interactively)
         }

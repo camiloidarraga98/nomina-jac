@@ -10,6 +10,7 @@ final class PeriodWorkspace: ObservableObject {
     func load(_ id: String, store: PayrollStore) async {
         guard !store.hasPending else { return }
         if loading { reloadRequested = true; return }
+        if detail == nil { detail = store.client.cached(PeriodDetail.self, path: "api/mobile/payroll", query: [URLQueryItem(name: "period", value: id)]) }
         loading = true; error = nil
         defer { loading = false }
         repeat {

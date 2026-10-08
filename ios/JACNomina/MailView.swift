@@ -17,7 +17,7 @@ struct MailView: View {
     @State private var status = ""
     @State private var authorizer = GmailAuthorizer()
     private var selected: PeriodSummary? { store.overview?.periods.first { $0.id == selectedPeriod } }
-    private var canSend: Bool { user.can("send") && selected?.isClosed == true && (selected?.ownerOnly != true || user.can("modifyClosed")) && mail?.connection.connected == true }
+    private var canSend: Bool { !store.isOffline && user.can("send") && selected?.isClosed == true && (selected?.ownerOnly != true || user.can("modifyClosed")) && mail?.connection.connected == true }
     var body: some View {
         List {
             OperationStatusSection()
@@ -29,9 +29,9 @@ struct MailView: View {
                     LabeledContent("Estado", value: mail.connection.connected ? "Conectado" : mail.connection.configured ? "Pendiente de autorización" : "Sin configurar")
                     if !mail.connection.error.isEmpty { InlineError(message: mail.connection.error) }
                     if user.isOwner {
-                        Button("Configurar credenciales de Google") { configure = true }.disabled(busy)
-                        if mail.connection.configured { Button(mail.connection.connected ? "Volver a autorizar Gmail" : "Conectar Gmail") { Task { await connect() } }.disabled(busy) }
-                        if mail.connection.connected { Button("Desconectar Gmail", role: .destructive) { disconnect = true }.disabled(busy) }
+                        Button("Configurar credenciales de Google") { configure = true }.disabled(busy || store.isOffline)
+                        if mail.connection.configured { Button(mail.connection.connected ? "Volver a autorizar Gmail" : "Conectar Gmail") { Task { await connect() } }.disabled(busy || store.isOffline) }
+                        if mail.connection.connected { Button("Desconectar Gmail", role: .destructive) { disconnect = true }.disabled(busy || store.isOffline) }
                         LabeledContent("URI de redirección", value: mail.connection.callback).textSelection(.enabled).font(.footnote)
                     }
                 }
@@ -42,7 +42,7 @@ struct MailView: View {
                     }.onChange(of: selectedPeriod) { _, _ in Task { await load() } }
                     if selected?.isClosed == false { Text("Cierra la quincena para enviar los desprendibles.").font(.footnote).foregroundStyle(.secondary) }
                     if selected?.ownerOnly == true && !user.can("modifyClosed") { Text("Este cierre corregido requiere permiso para modificar cierres.").font(.footnote).foregroundStyle(.secondary) }
-                    if canSend { Button("Enviar pendientes y errores de esta quincena") { sending = MailSendSelection(employeeID: nil, name: "toda la quincena") }.disabled(busy) }
+                    if canSend { Button("Enviar pendientes y errores de esta quincena") { sending = MailSendSelection(employeeID: nil, name: "toda la quincena") }.disabled(busy || store.isOffline) }
                 }
                 if !selectedPeriod.isEmpty {
                     Section("Estado de envíos") {
@@ -65,7 +65,7 @@ struct MailView: View {
                                     Button("Editar correo de esta persona") { editor = PayrollEditorSession(kind: .employee, workspace: w, detail: nil, record: record) }.disabled(busy || !store.canWrite)
                                 }
                                 if canSend && ["pending", "missing", "error"].contains(job.status) {
-                                    Button("Enviar a esta persona") { sending = MailSendSelection(employeeID: job.employeeId, name: job.name) }.disabled(busy)
+                                    Button("Enviar a esta persona") { sending = MailSendSelection(employeeID: job.employeeId, name: job.name) }.disabled(busy || store.isOffline)
                                 }
                             }.padding(.vertical, 4)
                         }
@@ -74,7 +74,7 @@ struct MailView: View {
                 }
             }
             if busy { Section { ProgressView("Consultando correo…") } }
-            Button("Actualizar estados") { Task { await load() } }.disabled(busy)
+            Button("Actualizar estados") { Task { await load() } }.disabled(busy || store.isOffline)
         }.jacSurface().navigationTitle("Correos y Gmail").navigationBarTitleDisplayMode(.inline)
             .task { selectedPeriod = initialPeriodID ?? store.overview?.periods.sorted { $0.start > $1.start }.first?.id ?? ""; await load() }
             .refreshable { await load() }
@@ -96,6 +96,7 @@ struct MailView: View {
     }
     private func load() async {
         guard !busy else { return }; busy = true; defer { busy = false }
+        if mail == nil { mail = store.client.cached(PayrollMail.self, path: "api/payroll/email", query: selectedPeriod.isEmpty ? [] : [URLQueryItem(name: "period", value: selectedPeriod)]) }
         do { mail = try await store.client.mail(periodID: selectedPeriod.isEmpty ? nil : selectedPeriod); error = nil }
         catch { self.error = store.reportReadFailure(error) }
     }
@@ -149,7 +150,7 @@ struct GmailConfigurationView: View {
                                 do { _ = try await store.client.mailOperation(.object(["action": .string("configure"), "clientId": .string(clientID), "clientSecret": .string(secret)])); secret = ""; clientID = ""; onSaved(); dismiss() }
                                 catch { self.error = error.localizedDescription; store.report(error) }
                             }
-                        }.disabled(busy || clientID.isEmpty || secret.isEmpty)
+                        }.disabled(busy || clientID.isEmpty || secret.isEmpty || store.isOffline)
                     }
                 }.interactiveDismissDisabled(busy).onDisappear { secret = ""; clientID = "" }.scrollDismissesKeyboard(.interactively)
         }

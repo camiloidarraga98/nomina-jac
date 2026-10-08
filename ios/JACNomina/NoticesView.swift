@@ -68,6 +68,7 @@ struct NoticesView: View {
     private var effectiveKind: String { incomingKind ?? kind }
     var body: some View {
         List {
+            if store.isOffline { Section { Label("Sin conexión · Copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("offline.copy") } }
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
             if let notice { Section { Text(notice).foregroundStyle(JACTheme.action) } }
             if loading && feed == nil { ProgressView("Consultando…") }
@@ -92,8 +93,10 @@ struct NoticesView: View {
             } }
 
         }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").refreshable { await refresh() }
-            .toolbar { if user.isOwner && effectiveKind == "alert" { ToolbarItem(placement: .topBarTrailing) { Button { editor = true } label: { Image(systemName: "plus") }.accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil) } } }
-            .task { await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
+            .toolbar { if user.isOwner && effectiveKind == "alert" { ToolbarItem(placement: .topBarTrailing) { Button { editor = true } label: { Image(systemName: "plus") }.accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil || store.isOffline) } } }
+            .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
+            .onChange(of: store.cacheRevision) { _, _ in restoreCached() }
+            .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }
             .onChange(of:historyOpen) { _,open in if open { Task { await loadHistory() } } }
             .onChange(of: scenePhase) { _, value in if value == .active { Task { await refresh() } } }
             .sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
@@ -109,7 +112,7 @@ struct NoticesView: View {
     }
     @ViewBuilder private func deleteButton(_ item:JACNotice,destructive:Bool = true) -> some View {
         Button(role:destructive ? .destructive : nil) { pendingDelete=item; confirmingListDelete=true } label: { Label(item.kind == "boarding_pass" ? "Eliminar pase de abordar" : "Eliminar itinerario",systemImage:"trash").font(.subheadline) }
-            .disabled(deleting || openingFile != nil).accessibilityIdentifier("notices.list.delete.\(item.id)")
+            .disabled(deleting || openingFile != nil || store.isOffline).accessibilityIdentifier("notices.list.delete.\(item.id)")
     }
     private func remove(_ item:JACNotice) async {
         guard !deleting else { return }; deleting=true; defer { deleting=false }
@@ -140,13 +143,25 @@ struct NoticesView: View {
             let result=try await store.client.noticeFile(item,file:file)
             guard generation == documentGeneration else { TemporaryDocuments.remove(result); return }
             previousBoardingDocument=result; boardingDocument=result
-            do { try await store.client.noticeCommand(.object(["action":.string("read"),"id":.string(item.id)])) } catch { self.error=store.reportReadFailure(error) }
+            do { if !store.isOffline { try await store.client.noticeCommand(.object(["action":.string("read"),"id":.string(item.id)])) } } catch { self.error=store.reportReadFailure(error) }
         } catch { self.error=store.reportReadFailure(error) }
     }
-    private func loadHistory(_ cursor:String = "") async { do { let result=try await store.client.notices(cursor:cursor,boarding:"history"); history=result; let items=result.notices.filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { historyRecords=items } else { historyRecords += items.filter { item in !historyRecords.contains { $0.id == item.id } } } } catch { self.error=store.reportReadFailure(error) } }
+    private func restoreCached() {
+        let boarding: String? = effectiveKind == "boarding_pass" ? "current" : nil
+        if let saved = store.client.cachedNotices(boarding: boarding) {
+            feed = saved; records = store.isOffline || records.isEmpty ? saved.notices.filter { !deletedIDs.contains($0.id) } : records.compactMap { deletedIDs.contains($0.id) ? nil : store.client.cachedNotice($0.id) ?? $0 }
+        }
+        day = BoardingClock.today()
+        if let passes = store.client.cachedNotices(boarding: "current") {
+            boardingCount = passes.notices.filter { $0.travelDate == day }.count
+            tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count
+        }
+        if historyOpen, let saved = store.client.cachedNotices(boarding: "history") { history = saved; historyRecords = store.isOffline || historyRecords.isEmpty ? saved.notices.filter { !deletedIDs.contains($0.id) } : historyRecords.compactMap { deletedIDs.contains($0.id) ? nil : store.client.cachedNotice($0.id) ?? $0 } }
+    }
+    private func loadHistory(_ cursor:String = "") async { restoreCached(); do { let result=try await store.client.notices(cursor:cursor,boarding:"history"); history=result; let items=(store.isOffline ? store.client.cachedNotices(boarding:"history")?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { historyRecords=items } else { historyRecords += items.filter { item in !historyRecords.contains { $0.id == item.id } } } } catch { self.error=store.reportReadFailure(error) } }
     private func refresh(_ cursor: String = "") async {
         guard !loading else { return }; loading = true; defer { loading = false }
-        do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil); feed = result; let items=result.notices.filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { records = items } else { records += items.filter { item in !records.contains { $0.id == item.id } } }; error = nil
+        do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil); feed = result; let items=(store.isOffline ? store.client.cachedNotices(cursor: cursor, boarding: effectiveKind == "boarding_pass" ? "current" : nil)?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { records = items } else { records += items.filter { item in !records.contains { $0.id == item.id } } }; error = nil
             if effectiveKind == "itinerary" { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
             if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
         } catch { self.error = store.reportReadFailure(error) }
@@ -182,17 +197,18 @@ struct NoticeDetail: View {
                 } } }
                 if (shown.revision ?? 1) > 1 { Section("Actualizado · Versión \(shown.revision ?? 1)") { Text(shown.changeSummary ?? "Consulta la nueva versión.").foregroundStyle(Color.accentColor) } }
                 if shown.kind != "boarding_pass" { Section("Confirmación de recepción") {
-                    Button(shown.confirmed == true ? "✓ Recibido" : "Confirmar recibido") { Task { await confirm() } }.disabled(confirmingReceipt || shown.confirmed == true).accessibilityIdentifier("notices.confirm")
+                    Button(shown.confirmed == true ? "✓ Recibido" : "Confirmar recibido") { Task { await confirm() } }.disabled(confirmingReceipt || shown.confirmed == true || store.isOffline).accessibilityIdentifier("notices.confirm")
                     Text("Confirma que leíste esta versión.").font(.footnote).foregroundStyle(.secondary)
                     if owner,let receipts=shown.receipts { DisclosureGroup("Confirmaciones · \(receipts.filter(\.confirmed).count)/\(receipts.count)") { ForEach(receipts) { receipt in LabeledContent(receipt.name,value:receipt.confirmed ? "Recibido" : "Pendiente") } }.accessibilityIdentifier("notices.receipts") }
                 } }
-                if owner && shown.kind == "itinerary" { Section { Button("Actualizar itinerario") { updating=true }.accessibilityIdentifier("notices.update") } }
-                if owner && shown.kind != "boarding_pass" { Section { Button("Eliminar " + (shown.kind == "itinerary" ? "itinerario" : "alerta"), role: .destructive) { confirmingDelete = true }.disabled(deleting || downloading).accessibilityIdentifier("notices.delete") } }
+                if owner && shown.kind == "itinerary" { Section { Button("Actualizar itinerario") { updating=true }.disabled(store.isOffline).accessibilityIdentifier("notices.update") } }
+                if owner && shown.kind != "boarding_pass" { Section { Button("Eliminar " + (shown.kind == "itinerary" ? "itinerario" : "alerta"), role: .destructive) { confirmingDelete = true }.disabled(deleting || downloading || store.isOffline).accessibilityIdentifier("notices.delete") } }
             }.jacSurface().navigationTitle(shown.kind == "boarding_pass" ? "Pase de abordar" : shown.kind == "itinerary" ? "Itinerario" : "Alerta").navigationBarTitleDisplayMode(.inline)
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() }.disabled(deleting).accessibilityIdentifier("notices.detail.close") } }
                 // Closing the detail also cancels its best-effort read receipt.
                 // Do not leave that cancellation in unrelated menus.
-                .task { do { current = try await store.client.notice(id:shown.id); try await store.client.noticeCommand(.object(["action": .string("read"), "id": .string(shown.id)])) } catch { store.reportReadFailure(error) } }
+                .task { current = store.client.cachedNotice(item.id); do { current = try await store.client.notice(id:shown.id); if !store.isOffline { try await store.client.noticeCommand(.object(["action": .string("read"), "id": .string(shown.id)])) } } catch { store.reportReadFailure(error) } }
+                .onChange(of: store.cacheRevision) { _, _ in if let saved = store.client.cachedNotice(item.id) { current = saved } }
                 .alert("Eliminar " + (shown.kind == "itinerary" ? "itinerario" : "alerta"), isPresented: $confirmingDelete) {
                     Button("Cancelar", role: .cancel) {}.accessibilityIdentifier("notices.delete.cancel")
                     Button("Eliminar", role: .destructive) { Task { await remove() } }.accessibilityIdentifier("notices.delete.confirm")
@@ -261,7 +277,7 @@ struct NoticeComposer: View {
                     else { Section { Text("Se publicará directamente en Itinerarios para todo el equipo activo y enviará el aviso de itinerario nuevo.") } }
                 }.disabled(busy || attempted || importing)
                 if attempted && !busy && error != nil { Section { Text("Reintenta con estos mismos datos. Para cambiar el contenido, cierra y abre un formulario nuevo.").font(.footnote) } }
-                Section { Button(busy ? "Guardando…" : kind == "boarding_pass" ? "Publicar pase y notificar" : kind == "itinerary" ? "Publicar itinerario y notificar" : "Crear alerta y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing).accessibilityIdentifier("notices.editor.save") }
+                Section { Button(busy ? "Guardando…" : kind == "boarding_pass" ? "Publicar pase y notificar" : kind == "itinerary" ? "Publicar itinerario y notificar" : "Crear alerta y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("notices.editor.save") }
             }.jacSurface().navigationTitle("Crear alerta o itinerario").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
                 .fileImporter(isPresented: $picking, allowedContentTypes: [.pdf,.jpeg,.png], allowsMultipleSelection: true) { result in
                     do { let urls = try result.get(); var incoming: [NoticeUpload] = []

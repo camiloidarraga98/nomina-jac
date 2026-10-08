@@ -13,15 +13,34 @@ final class PayrollStore: ObservableObject {
     @Published private(set) var savedAgenda: AgendaOfflineRecord?
     @Published private(set) var agendaStorageWarning: String?
     private var savedAgendaScope: String?
+    @Published private(set) var hasSavedSession = false
+    private var clientChanges: AnyCancellable?
+    private var offlineChanges: AnyCancellable?
+    @Published private(set) var offlineMode = false
+    private var automaticallyRefreshing = false
+    var isOffline: Bool { offlineMode || isAgendaOnly }
+    var cacheRevision: Int { client.cacheRevision }
     let client: PayrollClient
 
     init(client: PayrollClient? = nil) {
         let client = client ?? PayrollClient(); self.client = client
-        if let record = client.cachedAgenda() {
+        hasSavedSession = (try? client.hasSession()) == true
+        if hasSavedSession { restoring = false }
+        if let cached = client.cachedWorkspace() {
+            workspace = cached; overview = cached.overview
+            client.beginOfflineRestore(); restoring = false
+        }
+        client.onSessionInvalidated = { [weak self] in
+            guard let self else { return }
+            self.forgetAgenda(); self.overview = nil; self.workspace = nil; self.pending = nil; self.notice = nil; self.hasSavedSession = false
+        }
+        offlineChanges = client.$usingOfflineCopy.removeDuplicates().sink { [weak self] value in self?.offlineMode = value }
+        clientChanges = client.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        if let record = client.cachedAgenda(), overview == nil || overview?.user.id == record.user.id {
             savedAgenda = record; savedAgendaScope = (try? client.agendaScope())?.id
-            // Offline startup exposes only the saved calendar, never payroll
-            // data or editing permissions until the server validates access.
-            overview = PayrollOverview(version: 0, company: "JAC", user: record.user, periods: [], employees: [])
+            // Older installations may have only the calendar cache. Keep that
+            // fallback while the new complete copy downloads for the first time.
+            if overview == nil { overview = PayrollOverview(version: 0, company: "JAC", user: record.user, periods: [], employees: []) }
             restoring = false
         }
     }
@@ -61,8 +80,8 @@ final class PayrollStore: ObservableObject {
     func restore() async {
         defer { restoring = false }
         TemporaryDocuments.clear()
-        do { if try client.hasSession() { try await refresh() } }
-        catch { if !(isAgendaOnly && AgendaOfflineCache.isUnavailable(error)) { reportReadFailure(error) } }
+        do { if try client.hasSession() { try await refreshAutomatically() } }
+        catch { if !AgendaOfflineCache.isUnavailable(error) { reportReadFailure(error) } }
     }
     func signIn(username: String, password: String, keepSignedIn: Bool = false) async {
         guard !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !password.isEmpty else {
@@ -71,26 +90,31 @@ final class PayrollStore: ObservableObject {
         }
         busy = true; error = nil
         defer { busy = false }
-        do { try await client.login(username: username, password: password, keepSignedIn: keepSignedIn); try await refresh() }
+        do { try await client.login(username: username, password: password, keepSignedIn: keepSignedIn); hasSavedSession = true; try await refresh() }
         catch { report(error) }
+    }
+    func refreshAutomatically() async throws {
+        guard !automaticallyRefreshing else { return }
+        automaticallyRefreshing = true; defer { automaticallyRefreshing = false }
+        try await refresh()
     }
     func refresh() async throws {
         guard pending == nil else { throw APIError.message("Conserva o descarta tus cambios pendientes antes de actualizar.") }
         do {
-            let result = try await client.workspace()
+            let result = try await client.workspace(forceNetwork: true)
             // A refresh already in flight can finish after a save or conflict.
             guard pending == nil else { return }
-            if install(result) { error = nil }
+            if install(result) { error = nil; client.synchronizeOfflineContent(result) }
         }
         catch {
-            if !(isAgendaOnly && AgendaOfflineCache.isUnavailable(error)) { reportReadFailure(error) }
+            if !AgendaOfflineCache.isUnavailable(error) { reportReadFailure(error) }
             throw error
         }
     }
     @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
         guard result.version >= (workspace?.version ?? 0) else { return false }
         if let savedAgenda, savedAgenda.user.id != result.user.id { forgetAgenda() }
-        workspace = result; overview = result.overview; return true
+        workspace = result; overview = result.overview; hasSavedSession = true; client.rememberWorkspace(result); return true
     }
     func signOut() async {
         JACNotifications.shared.stop()
@@ -100,7 +124,7 @@ final class PayrollStore: ObservableObject {
         do { try await client.logout() }
         catch { report(error) }
         overview = nil
-        workspace = nil; pending = nil; notice = nil
+        workspace = nil; pending = nil; notice = nil; hasSavedSession = false
     }
     func report(_ failure: Error) {
         if failure is CancellationError { return }
@@ -122,9 +146,9 @@ final class PayrollStore: ObservableObject {
     }
 
     var hasPending: Bool { pending != nil }
-    var canWrite: Bool { workspace != nil && !busy && !hasPending }
+    var canWrite: Bool { workspace != nil && !isOffline && !busy && !hasPending }
     func submit(_ command: JSONValue, label: String, editorID: UUID? = nil) async -> Bool {
-        guard !busy, let workspace else { return false }
+        guard !busy, !isOffline, let workspace else { return false }
         if let pending, pending.command != command && (editorID == nil || pending.editorID != editorID) {
             error = "Resuelve primero los cambios pendientes de \(pending.label)."; return false
         }
@@ -172,7 +196,7 @@ final class PayrollStore: ObservableObject {
     func activate(token: String, password: String) async -> Bool {
         guard !busy else { return false }; busy = true; error = nil
         defer { busy = false }
-        do { try await client.activate(token: token, password: password); try await refresh(); return true }
+        do { try await client.activate(token: token, password: password); hasSavedSession = true; try await refresh(); return true }
         catch { report(error); return false }
     }
 }

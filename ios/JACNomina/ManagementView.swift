@@ -77,7 +77,7 @@ struct TravelExpensesView: View {
         List {
             if let error { InlineError(message:error) }
             Section { Text("Adjunta tus comprobantes. Un administrador revisará el gasto antes de incorporarlo como reintegro.").font(.footnote).foregroundStyle(.secondary)
-                Button("Registrar gasto") { editor=true }.accessibilityIdentifier("expenses.create") }
+                Button("Registrar gasto") { editor=true }.disabled(store.isOffline).accessibilityIdentifier("expenses.create") }
             Section("Gastos de viaje") {
                 ForEach(records) { item in Button { detail=item } label: { VStack(alignment:.leading,spacing:8) {
                     Text(item.concept).font(.headline);Text(PayrollFormat.money(item.amount));Text(item.name+" · "+item.expenseDate).font(.caption).foregroundStyle(.secondary);Text(item.statusLabel).font(.caption)
@@ -87,10 +87,13 @@ struct TravelExpensesView: View {
             }
         }.jacSurface().navigationTitle("Gastos de viaje").navigationBarTitleDisplayMode(.inline)
             .task { await load() }.refreshable { await load() }
+            .onChange(of: store.cacheRevision) { _, _ in if let saved = store.client.cachedExpenses() { feed = saved; if store.isOffline || records.isEmpty { records = saved.expenses } } }
             .sheet(isPresented:$editor) { ExpenseComposer { await load() } }
             .sheet(item:$detail,onDismiss:{ Task { await load() } }) { item in ExpenseDetailView(item:item,feed:feed) }
     }
-    private func load(_ cursor:String = "") async { do { let result=try await store.client.expenses(cursor:cursor);feed=result;if cursor.isEmpty { records=result.expenses } else { records += result.expenses.filter { item in !records.contains { $0.id == item.id } } };error=nil } catch { self.error=store.reportReadFailure(error) } }
+    private func load(_ cursor:String = "") async {
+        if cursor.isEmpty, let saved = store.client.cachedExpenses() { feed = saved; if store.isOffline || records.isEmpty { records = saved.expenses } }
+        do { let result=try await store.client.expenses(cursor:cursor);feed=result;if cursor.isEmpty { records=store.isOffline ? store.client.cachedExpenses()?.expenses ?? result.expenses : result.expenses } else { records += result.expenses.filter { item in !records.contains { $0.id == item.id } } };error=nil } catch { self.error=store.reportReadFailure(error) } }
 }
 struct ExpenseDetailView:View {
     @EnvironmentObject private var store:PayrollStore
@@ -118,7 +121,7 @@ struct ExpenseDetailView:View {
                         TextField("Comentario de revisión",text:$reason,axis:.vertical).lineLimit(3...6).accessibilityIdentifier("expenses.reason")
                         if store.hasPending { Text("Resuelve primero los cambios pendientes de nómina.").font(.footnote).foregroundStyle(.secondary) }
                         Button("Aprobar e incorporar") { Task { await review(true) } }.disabled(busy || !store.canWrite || employeeID.isEmpty || periodID.isEmpty).accessibilityIdentifier("expenses.approve")
-                        Button("Rechazar con motivo",role:.destructive) { Task { await review(false) } }.disabled(busy || reason.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty).accessibilityIdentifier("expenses.reject")
+                        Button("Rechazar con motivo",role:.destructive) { Task { await review(false) } }.disabled(busy || reason.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || store.isOffline).accessibilityIdentifier("expenses.reject")
                     }.disabled(busy)
                 }
             }.jacSurface().navigationTitle("Gasto de viaje").navigationBarTitleDisplayMode(.inline)
@@ -157,7 +160,7 @@ struct ExpenseComposer:View {
                 Section("Gasto en pesos colombianos") { TextField("Concepto",text:$concept).accessibilityIdentifier("expenses.concept");TextField("Valor en COP",text:$amount).keyboardType(.numberPad).accessibilityIdentifier("expenses.amount");DatePicker("Fecha",selection:$date,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone);TextField("Nota opcional",text:$note,axis:.vertical).lineLimit(2...5) }.disabled(busy || attempted)
                 TravelAttachmentsPicker(files:$files,importing:$importing).disabled(busy || attempted)
                 if attempted && error != nil { Section { Text("Reintenta con los mismos datos. Para modificarlos, abre un formulario nuevo.").font(.footnote) } }
-                Section { Button(busy ? "Enviando…" : "Enviar a revisión") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing).accessibilityIdentifier("expenses.submit") }
+                Section { Button(busy ? "Enviando…" : "Enviar a revisión") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("expenses.submit") }
             }.jacSurface().navigationTitle("Registrar gasto").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
         }.interactiveDismissDisabled(busy)
     }
@@ -187,7 +190,7 @@ struct ItineraryUpdateView:View {
                 Section("Nueva versión") { TextField("Título",text:$title);TextField("Mensaje",text:$message,axis:.vertical);TextField("Qué cambió",text:$summary,axis:.vertical).lineLimit(3...6).accessibilityIdentifier("itinerary.update.summary");Text("Adjunta la versión completa. Sustituirá los archivos anteriores y requerirá una nueva confirmación de recepción.").font(.footnote).foregroundStyle(.secondary) }.disabled(busy || attempted)
                 TravelAttachmentsPicker(files:$files,importing:$importing).disabled(busy || attempted)
                 if attempted && error != nil { Text("Reintenta con los mismos datos. Si el itinerario cambió, vuelve a abrir su versión actual.").font(.footnote) }
-                Section { Button(busy ? "Guardando…" : "Actualizar y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing).accessibilityIdentifier("itinerary.update.save") }
+                Section { Button(busy ? "Guardando…" : "Actualizar y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("itinerary.update.save") }
             }.jacSurface().navigationTitle("Actualizar itinerario").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
                 .onAppear { if !attempted { title=item.title;message=item.body } }
         }.interactiveDismissDisabled(busy)

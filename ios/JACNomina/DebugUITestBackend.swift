@@ -5,12 +5,18 @@ import Foundation
 // excluded from Release and never read or write the real payroll or Keychain.
 enum UITestBackend {
     static let base = URL(string: "https://ui-fixture.example.invalid")!
-    @MainActor static func client(reader: Bool = false, conflict: Bool = false, cancelledReads: Bool = false, offline: Bool = false, slowAgenda: Bool = false, persistentAgenda: Bool = false, resetAgenda: Bool = false) -> PayrollClient {
+    @MainActor static func client(reader: Bool = false, conflict: Bool = false, cancelledReads: Bool = false, offline: Bool = false, slowAgenda: Bool = false, persistentAgenda: Bool = false, resetAgenda: Bool = false, contentCache: OfflineResponseCache? = nil, downloadOffline: Bool? = nil) -> PayrollClient {
         FixtureProtocol.reset(reader: reader, conflict: conflict, cancelledReads: cancelledReads, offline: offline, slowAgenda: slowAgenda)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [FixtureProtocol.self]
         let cache = AgendaOfflineCache(root: persistentAgenda ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACAgendaUITest") : FileManager.default.temporaryDirectory.appendingPathComponent("agenda-fixture-" + UUID().uuidString))
         if resetAgenda { try? FileManager.default.removeItem(at: cache.root) }
-        return PayrollClient(baseURL: base, vault: FixtureSession(), configuration: configuration, agendaCache: cache)
+        let arguments = ProcessInfo.processInfo.arguments
+        let persistent = arguments.contains("--uitest-offline-content")
+        if persistent { FixtureProtocol.seedOfflineContent() }
+        let content = OfflineResponseCache(root: persistent ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACContentUITest") : FileManager.default.temporaryDirectory.appendingPathComponent("content-fixture-" + UUID().uuidString))
+        if arguments.contains("--uitest-reset-content") { try? FileManager.default.removeItem(at: content.root) }
+        let vault = FixtureSession(); if reader { vault.token = String(repeating: "r", count: 43) }
+        return PayrollClient(baseURL: base, vault: vault, configuration: configuration, agendaCache: cache, offlineCache: contentCache ?? content, automaticallyDownloadOffline: downloadOffline ?? persistent)
     }
 }
 private final class FixtureSession: SessionStoring {
@@ -34,7 +40,15 @@ private final class FixtureProtocol: URLProtocol {
     static var readsToCancel = Set<String>()
     static var offline = false
     static var slowAgenda = false
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static var slowedWorkspace = false
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static func seedOfflineContent() {
+        lock.lock(); defer { lock.unlock() }
+        var alert = itinerary
+        alert["id"] = .string("55555555-5555-4555-8555-555555555555"); alert["kind"] = .string("alert")
+        alert["title"] = .string("Alerta guardada de prueba"); alert["body"] = .string("Contenido ficticio disponible sin conexión.")
+        alert["attachments"] = .array([]); alerts = [alert]
+    }
     static func cancelRead(_ request: URLRequest) -> Bool {
         lock.lock(); defer { lock.unlock() }
         guard request.httpMethod == "GET", let url = request.url else { return false }
@@ -47,6 +61,10 @@ private final class FixtureProtocol: URLProtocol {
         do {
             guard request.url?.host == "ui-fixture.example.invalid" else { throw URLError(.unsupportedURL) }
             if Self.offline { throw URLError(.notConnectedToInternet) }
+            if ProcessInfo.processInfo.arguments.contains("--uitest-slow-content"), request.url?.path == "/api/mobile/payroll", request.url?.query?.contains("workspace=1") == true {
+                Self.lock.lock(); let delay = !Self.slowedWorkspace; Self.slowedWorkspace = true; Self.lock.unlock()
+                if delay { Thread.sleep(forTimeInterval: 8) }
+            }
             if Self.slowAgenda, request.url?.path == "/api/calendar", request.httpMethod == "GET" { Thread.sleep(forTimeInterval: 3) }
             if Self.cancelRead(request) { throw URLError(.cancelled) }
             if request.url?.path == "/api/expenses/file" {

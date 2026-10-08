@@ -26,8 +26,8 @@ struct CalendarView: View {
         _month = State(initialValue: month)
         _day = State(initialValue: month == CalendarClock.month(Date()) ? CalendarClock.day(Date()) : month + "-01")
     }
-    private var visible: AgendaData? { (feed?.month == month ? feed : nil) ?? store.cachedAgenda(month: month, userID: user.id)?.data }
-    private var live: Bool { liveMonth == month && !store.isAgendaOnly && connectivity.connected != false }
+    private var visible: AgendaData? { (feed?.month == month ? feed : nil) ?? store.cachedAgenda(month: month, userID: user.id)?.data ?? store.client.cached(AgendaData.self, path: "api/calendar", query: [URLQueryItem(name: "month", value: month)]) }
+    private var live: Bool { liveMonth == month && !store.isAgendaOnly && connectivity.connected != false && !store.isOffline }
     var body: some View {
         let byDay = visible.map { CalendarClock.eventsByDay($0.events, days: $0.days) } ?? [:]
         return NavigationStack {
@@ -87,8 +87,8 @@ struct CalendarView: View {
                             ForEach(visible.upcoming) { item in Button { event = item } label: { AgendaEventRow(event: item, showsDay: true) }.buttonStyle(.plain).accessibilityIdentifier("agenda.upcoming.\(item.id)") }
                         }
                     }
-                    if let offlineMessage {
-                        Section { Label(offlineMessage, systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
+                    if offlineMessage != nil || store.isOffline {
+                        Section { Label(offlineMessage ?? "Sin conexión · Copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
                     }
                     if let warning = store.agendaStorageWarning {
                         Section { Text(warning).font(.footnote).foregroundStyle(.secondary) }
@@ -131,7 +131,7 @@ struct CalendarView: View {
         loading = true; error = nil; offlineMessage = nil
         defer { if requestID == id { loading = false } }
         do {
-            if store.isAgendaOnly { try await store.refresh() }
+            if store.isAgendaOnly { try await store.refreshAutomatically() }
             guard let scope = try store.client.agendaScope() else { throw APIError.unauthorized }
             let result = try await store.client.agenda(month: currentMonth)
             guard requestID == id, month == currentMonth else { return }
@@ -146,7 +146,7 @@ struct CalendarView: View {
                 default: break
                 }
             }
-            if AgendaOfflineCache.isUnavailable(error) { offlineMessage = visible != nil ? "Sin conexión. Puedes consultar la última agenda descargada." : "Necesitas conexión para descargar este mes. Los meses guardados siguen disponibles." }
+            if AgendaOfflineCache.isUnavailable(error) || store.isOffline { offlineMessage = visible != nil ? "Sin conexión. Puedes consultar la última agenda descargada." : "Necesitas conexión para descargar este mes. Los meses guardados siguen disponibles." }
             else { self.error = store.reportReadFailure(error) }
         }
     }

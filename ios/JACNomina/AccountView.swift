@@ -14,7 +14,7 @@ struct AccountView: View {
                     LabeledContent("Perfil", value: user.isOwner ? "Administrador" : "Equipo administrativo")
                 }
                 Section("Acceso") {
-                    if !store.isAgendaOnly { NavigationLink("Cambiar contraseña") { ChangePasswordView() } }
+                    if !store.isAgendaOnly { NavigationLink("Cambiar contraseña") { ChangePasswordView() }.disabled(store.isOffline) }
                     Button("Cerrar sesión", role: .destructive) { confirmLogout = true }.disabled(store.busy)
                 }
                 if !store.isAgendaOnly { Section("Permisos de tu cuenta") {
@@ -26,7 +26,13 @@ struct AccountView: View {
                         }
                     }
                 } }
-                if store.isAgendaOnly { Section { Text("Modo sin conexión: puedes consultar la agenda descargada. Tu acceso se comprobará al volver a conectar.").font(.footnote) } }
+                Section("Copia sin conexión") {
+                    if store.isOffline { Label("Consultando la última copia guardada", systemImage: "wifi.slash").font(.footnote) }
+                    if store.client.syncingOffline { ProgressView("Guardando información y adjuntos…") }
+                    if let message = store.client.offlineSyncMessage { Text(message).font(.footnote).accessibilityIdentifier("offline.sync.status") }
+                    Button("Actualizar copia") { Task { try? await store.refresh() } }.disabled(store.client.syncingOffline).accessibilityIdentifier("offline.sync")
+                    Text("La copia se cifra y se elimina al cerrar sesión. Para modificar datos se necesita conexión.").font(.footnote).foregroundStyle(.secondary)
+                }
                 Section {
                     Text("La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
                 }
@@ -67,6 +73,6 @@ struct ChangePasswordView: View {
                     }
                 } label: { HStack { Text("Guardar contraseña"); Spacer(); if busy { ProgressView() } } }
             }
-        }.jacSurface().navigationTitle("Contraseña").disabled(busy)
+        }.jacSurface().navigationTitle("Contraseña").disabled(busy || store.isOffline)
     }
 }

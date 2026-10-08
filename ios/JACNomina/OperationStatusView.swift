@@ -6,6 +6,7 @@ struct OperationStatusSection: View {
     @State private var backup: ExportedDocument?
     @State private var heldBackup: ExportedDocument?
     var body: some View {
+        if store.isOffline { Section { Label("Sin conexión · Consulta de la copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("offline.copy") } }
         if let error = store.error { Section { InlineError(message: error) } }
         if let notice = store.notice { Section { Label(notice, systemImage: "checkmark.circle").foregroundStyle(.green) } }
         if let pending = store.pending {

@@ -42,7 +42,7 @@ struct PayrollEnvelope: Decodable {
     let mailNotice: String?
 }
 
-struct PayrollWorkspace: Decodable {
+struct PayrollWorkspace: Codable {
     let data: JSONValue
     let version: Int
     let user: PayrollUser

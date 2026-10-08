@@ -6,6 +6,7 @@ import UIKit
 struct JACNominaApp: App {
     @UIApplicationDelegateAdaptor(JACPushDelegate.self) private var pushDelegate
     @StateObject private var store = JACNominaApp.makeStore()
+    @StateObject private var connectivity = AgendaConnectivity()
     @Environment(\.scenePhase) private var scenePhase
     init() { JACTheme.configure() }
 
@@ -16,6 +17,7 @@ struct JACNominaApp: App {
                     if Self.isUnitTestHost { Color(uiColor: .systemBackground) }
                     else if store.restoring { ProgressView("Conectando…") }
                     else if let overview = store.overview { PayrollHomeView(overview: overview, agendaOnly: store.isAgendaOnly) }
+                    else if store.hasSavedSession { OfflineStartView() }
                     else { LoginView() }
                 }
                 .environmentObject(store)
@@ -26,7 +28,22 @@ struct JACNominaApp: App {
                 }
             }
             .background(WindowPrivacyShield())
-            .task { if !Self.isUnitTestHost { await store.restore() } }
+            .task {
+                guard !Self.isUnitTestHost else { return }
+                await store.restore()
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    // Read the current scene state; a long-lived task must not
+                    // keep the inactive value captured during cold startup.
+                    if UIApplication.shared.applicationState == .active && store.hasSavedSession { try? await store.refreshAutomatically() }
+                }
+            }
+            .onChange(of: scenePhase) { _, value in if value == .active && store.hasSavedSession && !Self.isUnitTestHost { Task { try? await store.refreshAutomatically() } } }
+            .onChange(of: connectivity.connected) { old, new in
+                guard store.hasSavedSession && !Self.isUnitTestHost else { return }
+                if new == false { store.client.beginOfflineRestore() }
+                if old == false && new == true { Task { try? await store.refreshAutomatically() } }
+            }
         }
     }
     private static var isUnitTestHost: Bool {
@@ -115,6 +132,21 @@ private final class PrivacyShieldAnchor: UIView {
     }
 
     private func reveal() { cover?.removeFromSuperview(); cover = nil }
+}
+
+struct OfflineStartView: View {
+    @EnvironmentObject private var store: PayrollStore
+    @State private var loading = false
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 24) {
+                BrandView().frame(width: 180)
+                ContentUnavailableView("Tu sesión sigue iniciada", systemImage: "wifi.slash", description: Text("Todavía no hay una copia descargada en este iPhone. Conéctate una vez para guardar tu información."))
+                Button("Reintentar conexión") { Task { loading = true; defer { loading = false }; await store.restore() } }.disabled(loading).accessibilityIdentifier("offline.retry")
+                Button("Cerrar sesión", role: .destructive) { Task { await store.signOut() } }
+            }.padding().jacSurface().navigationTitle("JAC")
+        }
+    }
 }
 
 struct BrandView: View {

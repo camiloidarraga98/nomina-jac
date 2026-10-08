@@ -177,6 +177,76 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "cinco-pestanas-y-gestion")
     }
 
+    @MainActor func testEntireDownloadedAppSurvivesOfflineRelaunchIncludingPrivatePDFs() {
+        let app = fixture(["--uitest-offline-content", "--uitest-reset-content"])
+        app.tabBars.buttons["Mi cuenta"].tap()
+        let status = app.staticTexts["offline.sync.status"]
+        for _ in 0..<5 { if status.exists { break }; app.swipeUp() }
+        XCTAssertTrue(status.waitForExistence(timeout: 10))
+        let complete = NSPredicate(format: "label == %@", "La última información y sus adjuntos están guardados en este iPhone.")
+        expectation(for: complete, evaluatedWith: status); waitForExpectations(timeout: 30)
+        app.terminate()
+        app.launchArguments = ["--uitest-payroll", "--uitest-offline-content", "--uitest-offline"]
+        app.launch()
+        XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["login.username"].exists)
+        XCTAssertFalse(app.buttons["period.create"].isEnabled)
+        tap(app, "period.fixture-period")
+        XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 5))
+        for _ in 0..<8 { if app.buttons["period.close"].exists { break }; app.swipeUp() }
+        XCTAssertTrue(app.buttons["period.close"].exists); XCTAssertFalse(app.buttons["period.close"].isEnabled)
+        attachScreen(app, name: "nomina-descargada-sin-internet")
+        app.tabBars.buttons["Agenda"].tap()
+        XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["agenda.create"].exists)
+        tap(app, "agenda.event.fixture-concert")
+        XCTAssertTrue(app.staticTexts["Teatro simulado"].waitForExistence(timeout: 5))
+        tap(app, "Listo")
+        app.tabBars.buttons["Itinerarios"].tap()
+        tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
+        tap(app, "notices.pdf")
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "itinerario-pdf-sin-internet")
+        tap(app, "notices.pdf.close")
+        for _ in 0..<4 { if app.buttons["notices.confirm"].exists { break }; app.swipeUp() }
+        XCTAssertTrue(app.buttons["notices.confirm"].exists); XCTAssertFalse(app.buttons["notices.confirm"].isEnabled)
+        tap(app, "notices.detail.close")
+        tap(app, "boarding.open"); tap(app, "notices.item.boarding-fixture-0")
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout: 5))
+        attachScreen(app, name: "pase-de-abordar-pdf-sin-internet")
+        tap(app, "notices.pdf.close")
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts")
+        XCTAssertTrue(app.staticTexts["Alerta guardada de prueba"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["notices.create"].isEnabled)
+        attachScreen(app, name: "alertas-descargadas-sin-internet")
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(app.staticTexts["Alerta guardada de prueba"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.textFields["login.username"].exists)
+    }
+
+    @MainActor func testFullCopyAppearsImmediatelyWhileStartupInternetIsSlow() {
+        let app = fixture(["--uitest-offline-content", "--uitest-reset-content"])
+        app.tabBars.buttons["Mi cuenta"].tap()
+        let status = app.staticTexts["offline.sync.status"]
+        for _ in 0..<5 { if status.exists { break }; app.swipeUp() }
+        let complete = NSPredicate(format: "label == %@", "La última información y sus adjuntos están guardados en este iPhone.")
+        expectation(for: complete, evaluatedWith: status); waitForExpectations(timeout: 30)
+        app.terminate()
+        app.launchArguments = ["--uitest-payroll", "--uitest-offline-content", "--uitest-slow-content"]
+        app.launch()
+        XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 3), "El arranque debe mostrar la copia antes de que termine la red lenta")
+        XCTAssertFalse(app.textFields["login.username"].exists)
+        XCTAssertFalse(app.buttons["period.create"].isEnabled)
+        attachScreen(app, name: "copia-completa-mientras-revalida-sesion")
+        let writable = NSPredicate { _, _ in app.buttons["period.create"].exists && app.buttons["period.create"].isEnabled }
+        let resumed = XCTNSPredicateExpectation(predicate: writable, object: app)
+        let result = XCTWaiter.wait(for: [resumed], timeout: 45)
+        attachScreen(app, name: "estado-despues-de-recuperar-conexion")
+        let hierarchy = XCTAttachment(string: app.debugDescription); hierarchy.name = "estado-de-controles-tras-revalidacion"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        XCTAssertEqual(result, .completed, "Al reconectar se recuperan las acciones autorizadas")
+        XCTAssertTrue(app.buttons["period.create"].isEnabled)
+    }
+
     @MainActor func testAgendaSurvivesOfflineRelaunchAndDisplaysCacheDuringInternetRefresh() {
         let app = fixture(["--uitest-agenda-cache", "--uitest-reset-agenda"])
         app.tabBars.buttons["Agenda"].tap()

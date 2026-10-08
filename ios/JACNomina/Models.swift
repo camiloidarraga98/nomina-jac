@@ -12,7 +12,7 @@ struct PayrollUser: Codable, Equatable {
     func can(_ permission: String) -> Bool { itinerariesOnly != true && (isOwner || permissions.contains(permission)) }
 }
 
-struct PayrollOverview: Decodable {
+struct PayrollOverview: Codable {
     let version: Int
     let company: String
     let user: PayrollUser
@@ -20,7 +20,7 @@ struct PayrollOverview: Decodable {
     let employees: [Employee]
 }
 
-struct PeriodSummary: Decodable, Identifiable {
+struct PeriodSummary: Codable, Identifiable {
     let id: String
     let start: String
     let end: String
@@ -58,7 +58,7 @@ struct PeriodDetail: Decodable {
     }
 }
 
-struct Employee: Decodable, Identifiable {
+struct Employee: Codable, Identifiable {
     let id: String
     let name: String
     let document: String

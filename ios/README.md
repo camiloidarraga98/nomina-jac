@@ -1,3 +1,13 @@
+## Contenido sin conexión — iPhone 0.11.0 (19)
+
+Actualiza **este mismo proyecto con Run**, conservando tu firma personal y `co.jacmusic.nomina`. Push sigue suspendido. Abre la app una vez con internet y espera en **Mi cuenta → Copia sin conexión** a que termine la descarga. Después puedes cerrarla y reabrirla sin señal: muestra la última copia de Quincena, Agenda, Itinerarios, pases privados, Alertas y las consultas de Gestión que se hayan descargado. Los PDF e imágenes de avisos y comprobantes se descargan automáticamente en primer plano, sin marcar recibido ni enviar notificaciones. Un adjunto que aún no terminó de descargarse necesita internet; el estado indica si quedan archivos pendientes.
+
+La copia aparece antes de esperar la red. Al recuperar conexión, regresar a primer plano y cada 30 segundos con la app activa se revalida la sesión y se actualiza el contenido. Sin red se permite consultar, abrir y compartir los archivos guardados; crear, editar, borrar, confirmar recepción, aprobar gastos y enviar correos requieren conexión. No se encolan escrituras. Si todavía no hay copia, la app conserva la sesión y pide conectarse para descargar; no vuelve al formulario de acceso por una falla de red.
+
+La información y su índice se guardan con AES-GCM, clave derivada de la sesión del Llavero, separación por origen/cuenta, protección completa de archivos y exclusión de copias de seguridad. No se guardan contraseñas ni tokens en esos archivos. Límite de 512 MB de contenido, 16 MB por respuesta; los adjuntos mantienen su máximo de 10 MB. Se informa cuando no se puede completar la copia. Cerrar sesión elimina la copia y los temporales, incluso sin conexión. Una revocación real al reconectar (401/redirección o denegación del workspace) elimina el acceso; 403/404/410 de documentos no sirven una copia como alternativa. La falta de internet por sí sola nunca revoca la sesión. La autorización remota solo puede comprobarse cuando vuelve la conexión.
+
+Las pruebas nuevas usan exclusivamente URLProtocol y archivos ficticios `.invalid`, incluidos relanzamiento sin red y red lenta. La protección física de archivos conserva su comprobación en iPhone: CoreSimulator no reproduce el cifrado del dispositivo.
+
 ## Agenda más directa — iPhone 0.10.2 (18)
 
 Agenda comienza con el selector Mes/Próximos y el calendario. Se retiraron el bloque «Actualizando agenda… / Última descarga», las fechas de sincronización y el encabezado con el nombre del calendario. La copia sin conexión, la actualización automática/al regresar a la app, el gesto de actualizar, el botón de recarga y todos los permisos de consulta/edición se conservan. Los avisos de falta de conexión o de guardado aparecen debajo del contenido. Conexión continúa accesible desde su icono autorizado y cuando aún no se ha preparado.
@@ -154,7 +164,7 @@ La firma y los perfiles se gestionan desde tu Mac/cuenta Apple. No se han solici
 
 ## Integración y privacidad local
 
-La app autentica mediante `/api/auth` y conserva únicamente la sesión en el Llavero, accesible cuando el dispositivo está desbloqueado y sin sincronización a otros dispositivos. No guarda contraseñas ni una base de nómina en disco. Solo crea una copia JSON temporal si el usuario solicita respaldar un cambio pendiente. Usa una URLSession efímera, desactiva cookies/cachés globales y rechaza redirecciones para evitar reenviar credenciales.
+La app autentica mediante `/api/auth` y conserva únicamente la sesión en el Llavero, accesible cuando el dispositivo está desbloqueado y sin sincronización a otros dispositivos. No guarda contraseñas. Desde 0.11.0 conserva respuestas autorizadas cifradas para consulta sin conexión; los cálculos y escrituras siguen en el servidor. También puede crear una copia JSON temporal si el usuario solicita respaldar un cambio pendiente. Usa una URLSession efímera, desactiva cookies/cachés globales y rechaza redirecciones para evitar reenviar credenciales.
 
 `GET /api/mobile/payroll?workspace=1` devuelve una revisión consistente del estado, usuario y permisos; con `?period=ID`, devuelve el detalle y las mismas liquidaciones de `lib/payroll.ts`. Los snapshots y las versiones históricas permanecen en el servidor.
 
@@ -166,7 +176,7 @@ Las descargas usan `/api/payroll/export`. Los documentos se guardan temporalment
 
 ## Validación
 
-El workflow `.github/workflows/ios.yml` compila y prueba en un runner macOS. Las pruebas de red nativas interceptan todas las peticiones con URLProtocol y usan dominios `.invalid`: nunca acceden a producción. Las suites `tests/payroll-mobile.test.mjs` y `tests/payroll-mobile-oauth.test.mjs` prueban D1 en memoria, ediciones, cierres, historial, CAS, permisos, eliminación y OAuth simulado. Las pruebas de interfaz optan por un backend `.invalid` con argumentos `--uitest-payroll` y `--uitest-reader`, compilado exclusivamente en DEBUG. La aplicación normal usa producción; Release excluye esas fixtures. Las pruebas unitarias ejecutan sus clientes sin montar la navegación de la app; las pruebas de interfaz verifican la navegación real por separado.
+Las compilaciones y pruebas actuales se ejecutan localmente en el Mac; el workflow histórico de GitHub no se utiliza. Las pruebas de red nativas interceptan todas las peticiones con URLProtocol y usan dominios `.invalid`: nunca acceden a producción. Las suites `tests/payroll-mobile.test.mjs` y `tests/payroll-mobile-oauth.test.mjs` prueban D1 en memoria, ediciones, cierres, historial, CAS, permisos, eliminación y OAuth simulado. Las pruebas de interfaz optan por un backend `.invalid` con argumentos `--uitest-payroll` y `--uitest-reader`, compilado exclusivamente en DEBUG. La aplicación normal usa producción; Release excluye esas fixtures. Las pruebas unitarias ejecutan sus clientes sin montar la navegación de la app; las pruebas de interfaz verifican la navegación real por separado.
 
 ```sh
 xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
