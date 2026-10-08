@@ -4,6 +4,7 @@ struct LoginView: View {
     @EnvironmentObject private var store: PayrollStore
     @State private var username = ""
     @State private var password = ""
+    @State private var keepSignedIn = false
     @FocusState private var focus: Field?
     private enum Field { case username, password }
 
@@ -14,7 +15,7 @@ struct LoginView: View {
                     BrandView().frame(maxWidth: 230).frame(maxWidth: .infinity).padding(.vertical, 16)
                     Text("La nómina de tu equipo, contigo.").font(.title2.weight(.semibold)).foregroundStyle(.white)
                 }.listRowBackground(JACTheme.forest)
-                Section("Tu cuenta de nómina") {
+                Section {
                     TextField("Usuario o correo", text: $username)
                         .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
                         .focused($focus, equals: .username).submitLabel(.next)
@@ -23,6 +24,12 @@ struct LoginView: View {
                     SecureField("Contraseña", text: $password).textContentType(.password)
                         .focused($focus, equals: .password).submitLabel(.go)
                         .onSubmit { signIn() }.accessibilityIdentifier("login.password")
+                    Toggle("Mantener la sesión iniciada", isOn: $keepSignedIn)
+                        .accessibilityIdentifier("login.keepSignedIn")
+                } header: {
+                    Text("Tu cuenta de nómina")
+                } footer: {
+                    Text("Si la marcas, permanecerás conectado en este iPhone hasta que cierres sesión.")
                 }
                 if let error = store.error { Section { InlineError(message: error) } }
                 Section {
@@ -42,7 +49,7 @@ struct LoginView: View {
     private func signIn() {
         guard !store.busy else { return }
         focus = nil
-        Task { await store.signIn(username: username, password: password); password = "" }
+        Task { await store.signIn(username: username, password: password, keepSignedIn: keepSignedIn); password = "" }
     }
 }
 

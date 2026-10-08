@@ -14,7 +14,7 @@ const valid=(v:string|null|undefined):v is string=>!!v&&/^[A-Za-z0-9_-]{43}$/.te
 const cookieName='__Host-jac_calendar_oauth';
 export const calendarCookie=(value:string,age=600)=>`${cookieName}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${age}`;
 async function activeOwner(c:Context){
- const row=await database().prepare('SELECT u.* FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND s.expires_at>? AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(c.sessionId,new Date().toISOString(),'',c.userId).first<UserRow>();
+ const row=await database().prepare('SELECT u.* FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND (s.persistent=1 OR s.expires_at>?) AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(c.sessionId,new Date().toISOString(),'',c.userId).first<UserRow>();
  return !!row&&accountAdministrator(row)&&row.email===c.actor;
 }
 export async function startCalendarOauth(user:AccessUser,cookies:string,native=false){

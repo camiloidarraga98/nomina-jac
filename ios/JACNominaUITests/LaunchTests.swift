@@ -40,6 +40,22 @@ final class LaunchTests: XCTestCase {
         }
     }
 
+    @MainActor func testKeepSignedInChoiceIsOptionalAndSurvivesBackground() {
+        let app = XCUIApplication(); app.launch()
+        let toggle = app.switches["login.keepSignedIn"]
+        XCTAssertTrue(toggle.waitForExistence(timeout: 20))
+        XCTAssertEqual(toggle.value as? String, "0")
+        // SwiftUI exposes the label row as the switch; tap its trailing control.
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(toggle.value as? String, "1")
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(toggle.waitForExistence(timeout: 10)); XCTAssertTrue(toggle.isHittable)
+        XCTAssertEqual(toggle.value as? String, "1")
+        attachScreen(app, name: "mantener-sesion-iniciada")
+        toggle.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        XCTAssertEqual(toggle.value as? String, "0")
+    }
+
     @MainActor func testActivationNavigationAndFocusedPasswordSurviveBackground() {
         let app = XCUIApplication(); app.launch()
         XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout: 20))

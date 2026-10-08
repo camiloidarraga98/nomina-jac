@@ -110,8 +110,8 @@ final class PayrollClient {
         return (data, response)
     }
 
-    func login(username: String, password: String) async throws {
-        _ = try await request(path: "api/auth", body: .object(["action": .string("login"), "username": .string(username.trimmingCharacters(in: .whitespacesAndNewlines)), "password": .string(password)]))
+    func login(username: String, password: String, keepSignedIn: Bool = false) async throws {
+        _ = try await request(path: "api/auth", body: .object(["action": .string("login"), "username": .string(username.trimmingCharacters(in: .whitespacesAndNewlines)), "password": .string(password), "keepSignedIn": .bool(keepSignedIn)]))
         guard try hasSession() else { throw APIError.message("No se pudo guardar la sesión. Intenta de nuevo.") }
     }
     func overview() async throws -> PayrollOverview {

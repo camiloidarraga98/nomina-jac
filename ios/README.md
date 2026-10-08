@@ -1,3 +1,11 @@
+## Sesión opcional sin caducidad — iPhone 0.10.1 (17)
+
+En el acceso puedes marcar **Mantener la sesión iniciada**. Solo esa nueva sesión permanece sin vencimiento por tiempo, incluso después de cerrar/reabrir la app o reiniciar el iPhone; se conserva en el Llavero, sin guardar la contraseña. Sin marcarla, sigue el vencimiento habitual de 12 horas. Las sesiones ya abiertas conservan su modalidad: cierra sesión y entra una vez marcando la opción para activarla.
+
+**Mi cuenta → Cerrar sesión** elimina el acceso local y revoca la sesión en el servidor cuando hay conexión. Desactivar la cuenta, cambiar permisos o restablecer su contraseña continúa revocando el acceso por seguridad. Si cambias tu propia contraseña desde la app, el nuevo acceso conserva la modalidad elegida y las otras sesiones se revocan. La cubierta de privacidad y la protección de Agenda sin conexión siguen activas.
+
+Actualiza **este mismo proyecto** con Run; conserva tu equipo de firma y `co.jacmusic.nomina`. Push continúa suspendido. El servidor requiere la migración aditiva `0016_persistent_mobile_sessions.sql`; no modifica cuentas ni convierte sesiones antiguas.
+
 ## Viajes — iPhone 0.10.0 (16)
 
 Actualiza este mismo proyecto con **Run**. Alertas e Itinerarios incluyen **Confirmar recibido**, independiente de abrir el aviso; administradores ven las confirmaciones por versión. Un administrador puede actualizar un itinerario con la versión completa y un resumen de cambios: aparece **Actualizado** y se solicita confirmar otra vez.

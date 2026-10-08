@@ -64,14 +64,14 @@ final class PayrollStore: ObservableObject {
         do { if try client.hasSession() { try await refresh() } }
         catch { if !(isAgendaOnly && AgendaOfflineCache.isUnavailable(error)) { reportReadFailure(error) } }
     }
-    func signIn(username: String, password: String) async {
+    func signIn(username: String, password: String, keepSignedIn: Bool = false) async {
         guard !username.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !password.isEmpty else {
             error = "Ingresa tu usuario o correo y tu contraseña."
             return
         }
         busy = true; error = nil
         defer { busy = false }
-        do { try await client.login(username: username, password: password); try await refresh() }
+        do { try await client.login(username: username, password: password, keepSignedIn: keepSignedIn); try await refresh() }
         catch { report(error) }
     }
     func refresh() async throws {

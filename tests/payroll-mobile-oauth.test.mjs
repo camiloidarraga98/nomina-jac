@@ -98,3 +98,12 @@ test('administrador delegado conecta Gmail nativo; revocar el rol bloquea un cal
  const revoked=await handoff(token);calls=[];sql.prepare('UPDATE payroll_users SET permissions=? WHERE id=?').run('[]',id);
  assert.equal(new URL((await m.finishNativeMailOauth(request(revoked))).url).searchParams.get('result'),'error');assert.equal(calls.length,0);assert.equal((await start(token)).status,403);
 });
+
+
+test('Gmail nativo acepta sesión persistente antigua sin prolongar tickets OAuth',async()=>{
+ const id=sql.prepare('SELECT id FROM payroll_users WHERE owner=1').get().id,token=await m.makeSession(id,true);
+ sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE id=?').run('2000-01-01T00:00:00Z',m.tokenHash(token));
+ const context=await handoff(token);calls=[];
+ const result=await m.finishNativeMailOauth(request(context));assert.equal(new URL(result.url).searchParams.get('result'),'connected');assert.equal(calls.length,2);
+ await m.revokeSession(token);assert.equal((await start(token)).status,401);
+});

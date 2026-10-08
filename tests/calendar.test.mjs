@@ -318,3 +318,14 @@ test('administrador delegado configura y edita Agenda; el callback revalida el r
   assert.equal((await api(ownerToken,{action:'connect'})).status,403);assert.equal((await api(ownerToken)).body.canEditEvents,false);
  }finally{ownerToken=previous;}
 });
+
+
+test('Agenda OAuth acepta sesión persistente antigua y sigue comprobando su revocación',async()=>{
+ const previous=ownerToken;ownerToken=await m.makeSession(owner,true);
+ try {
+  sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE id=?').run('2000-01-01T00:00:00Z',m.tokenHash(ownerToken));
+  await connect(true);
+  const c=await start(true);await m.revokeSession(ownerToken);
+  const result=await m.callback.GET(callbackRequest(c));assert.equal(new URL(result.headers.get('location')).searchParams.get('result'),'error');
+ } finally {ownerToken=previous;}
+});

@@ -12,7 +12,7 @@ const browserCookie='__Host-jac_native_gmail';
 export const nativeGmailCookie=(value:string,maxAge=600)=>`${browserCookie}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 
 async function activeOwner(context:NativeContext){
- const row=await database().prepare('SELECT u.* FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND s.expires_at>? AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(context.sessionId,new Date().toISOString(),'',context.userId).first<UserRow>();
+ const row=await database().prepare('SELECT u.* FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND (s.persistent=1 OR s.expires_at>?) AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(context.sessionId,new Date().toISOString(),'',context.userId).first<UserRow>();
  return !!row&&accountAdministrator(row)&&row.email===context.actor;
 }
 

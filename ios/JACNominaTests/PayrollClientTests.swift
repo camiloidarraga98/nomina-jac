@@ -112,11 +112,13 @@ final class PayrollClientTests: XCTestCase {
     }
 
     func testDeviceKeychainCanStoreReplaceAndRemoveSession() throws {
-        let vault = KeychainSessionStore(account: "test-\(UUID().uuidString).invalid")
+        let account = "test-\(UUID().uuidString).invalid"
+        let vault = KeychainSessionStore(account: account)
         defer { try? vault.clear() }
         XCTAssertNil(try vault.load())
         try vault.save(String(repeating: "a", count: 43))
         XCTAssertEqual(try vault.load(), String(repeating: "a", count: 43))
+        XCTAssertEqual(try KeychainSessionStore(account: account).load(), String(repeating: "a", count: 43), "Una nueva instancia recupera la sesión del Llavero.")
         try vault.save(String(repeating: "b", count: 43))
         XCTAssertEqual(try vault.load(), String(repeating: "b", count: 43))
         try vault.clear()
@@ -132,10 +134,33 @@ final class PayrollClientTests: XCTestCase {
             XCTAssertEqual(request.value(forHTTPHeaderField: "Origin"), self.base.absoluteString)
             XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
             XCTAssertFalse(request.httpShouldHandleCookies)
+            let input = try JSONSerialization.jsonObject(with: MockProtocol.requestBody(request)) as! [String: Any]
+            XCTAssertEqual(input["keepSignedIn"] as? Bool, false)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Set-Cookie": "__Host-jac_session=\(self.token); Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=43200"])!, Data("{\"ok\":true}".utf8))
         }
         try await client.login(username: "camilo", password: "1")
         XCTAssertEqual(vault.token, token)
+    }
+
+    @MainActor func testPersistentLoginRestoresInNewClientAndManualLogoutClearsIt() async throws {
+        let vault = MemorySession(), client = makeClient(vault)
+        MockProtocol.handler = { request in
+            let body = try JSONSerialization.jsonObject(with: MockProtocol.requestBody(request)) as! [String: Any]
+            XCTAssertEqual(body["keepSignedIn"] as? Bool, true)
+            XCTAssertEqual(body["username"] as? String, "fixture")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Set-Cookie": "__Host-jac_session=\(self.token); Path=/; HttpOnly; Secure; SameSite=Lax"])!, Data("{\"ok\":true}".utf8))
+        }
+        try await client.login(username: " fixture ", password: "local-only", keepSignedIn: true)
+        XCTAssertEqual(vault.token, token)
+        let reopened = makeClient(vault)
+        XCTAssertTrue(try reopened.hasSession())
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "__Host-jac_session=\(self.token)")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{\"ok\":true}".utf8))
+        }
+        try await reopened.noticeCommand(.object(["action": .string("read"), "id": .string("fixture")]))
+        try await reopened.logout()
+        XCTAssertFalse(try client.hasSession()); XCTAssertFalse(try reopened.hasSession())
     }
 
     @MainActor func testExpiredSessionIsRemoved() async throws {

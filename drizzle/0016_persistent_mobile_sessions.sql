@@ -1,0 +1,1 @@
+ALTER TABLE `payroll_sessions` ADD `persistent` integer DEFAULT 0 NOT NULL;

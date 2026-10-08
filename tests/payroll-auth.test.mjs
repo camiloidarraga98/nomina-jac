@@ -166,3 +166,40 @@ test('administración delegada: concesión explícita, sesiones revocadas, clien
  const pendingRow=sql.prepare('SELECT * FROM payroll_users WHERE username=?').get(pending.username);assert.equal(m.publicUser(pendingRow).administrator,true);assert.equal(m.publicUser(pendingRow).ready,false);
  await assert.rejects(()=>m.makeSession(pendingRow.id),/iniciar sesión/);
 });
+
+
+test('sesión persistente optativa: sin caducidad temporal, limpieza compatible, contraseña y cierre manual',async()=>{
+ const id=crypto.randomUUID(),stamp=new Date().toISOString(),username='remember-fixture',password='local-only';
+ sql.prepare('INSERT INTO payroll_users (id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,username,'remember@example.invalid','Sesión ficticia',m.hashPassword(password,globalThis.__authEnv.PAYROLL_AUTH_KEY),'[]',stamp,stamp);
+ const login=keepSignedIn=>call(m.authApi,{action:'login',username,password,...(keepSignedIn===undefined?{}:{keepSignedIn})},{ip:'198.51.100.40'});
+ const regular=await login(),off=await login(false),persistent=await login(true);
+ for(const result of [regular,off,persistent])assert.equal(result.status,200);
+ for(const result of [regular,off])assert.match(result.r.headers.get('set-cookie'),/Max-Age=43200/);
+ assert.doesNotMatch(persistent.r.headers.get('set-cookie'),/Max-Age|Expires/i);
+ assert.match(persistent.r.headers.get('set-cookie'),/HttpOnly; Secure; SameSite=Lax/);
+ const token=persistent.cookie.split('=')[1];assert.equal(await m.sessionIsPersistent(token),true);
+ assert.equal(sql.prepare('SELECT expires_at FROM payroll_sessions WHERE id=?').get(m.tokenHash(token)).expires_at,'');
+ // Model years of elapsed time, then exercise the cleanup run at another login.
+ sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE user_id=?').run('2000-01-01T00:00:00Z',id);
+ assert.equal(await m.authenticatedSession(regular.cookie.split('=')[1]),null);
+ assert.equal((await m.authenticatedSession(token)).id,id);
+ await m.makeSession(id);
+ assert.equal((await m.authenticatedSession(token)).id,id,'La limpieza no elimina una sesión persistente');
+ const changed=await call(m.authApi,{action:'password',currentPassword:password,password:'changed-local-only'},{cookie:persistent.cookie,ip:'198.51.100.41'});
+ assert.equal(changed.status,200);assert.equal(await m.authenticatedSession(token),null);
+ const renewed=changed.cookie.split('=')[1];assert.equal(await m.sessionIsPersistent(renewed),true);
+ assert.doesNotMatch(changed.r.headers.get('set-cookie'),/Max-Age|Expires/i);
+ assert.equal((await call(m.authApi,{action:'logout'},{cookie:changed.cookie})).status,200);
+ assert.equal(await m.authenticatedSession(renewed),null);
+});
+
+test('sesiones persistentes respetan revocación de acceso, desactivación y restablecimiento',async()=>{
+ const id=crypto.randomUUID(),stamp=new Date().toISOString();
+ sql.prepare('INSERT INTO payroll_users (id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,'revoke-remember','revoke-remember@example.invalid','Revocación ficticia',m.hashPassword('local-only',globalThis.__authEnv.PAYROLL_AUTH_KEY),'[]',stamp,stamp);
+ let token=await m.makeSession(id,true);sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(id);
+ assert.equal(await m.authenticatedSession(token),null);assert.equal(await m.sessionIsPersistent(token),false);
+ token=await m.makeSession(id,true);sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(id);assert.equal(await m.authenticatedSession(token),null);
+ sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(id);token=await m.makeSession(id,true);
+ await m.inviteUser(id);assert.equal(await m.authenticatedSession(token),null);
+ await assert.rejects(()=>m.makeSession(id,true),/iniciar sesión/);
+});
