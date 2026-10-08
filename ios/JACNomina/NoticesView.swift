@@ -82,7 +82,10 @@ struct NoticesView: View {
             } else { Section(effectiveKind == "itinerary" ? "Itinerarios del equipo" : "Avisos del equipo") {
                 let items = records.filter { $0.kind == effectiveKind }
                 if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
-                ForEach(items) { item in VStack(alignment:.leading,spacing:14) { Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)"); if user.isOwner && item.kind == "itinerary" { deleteButton(item) } } }
+                ForEach(items) { item in VStack(alignment:.leading,spacing:14) { Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
+                    .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner && item.kind == "itinerary" { deleteButton(item,destructive:false).tint(.red) } }
+                    .contextMenu { if user.isOwner && item.kind == "itinerary" { deleteButton(item) } }
+                }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             } }
 
@@ -97,14 +100,14 @@ struct NoticesView: View {
             .alert("Eliminar " + (pendingDelete?.kind == "boarding_pass" ? "pase de abordar" : "itinerario"),isPresented:$confirmingListDelete) {
                 Button("Cancelar",role:.cancel) { pendingDelete=nil }.accessibilityIdentifier("notices.list.delete.cancel")
                 Button("Eliminar",role:.destructive) { if let item=pendingDelete { Task { await remove(item) } } }.accessibilityIdentifier("notices.list.delete.confirm")
-            } message: { Text("¿Eliminar “\(pendingDelete?.title ?? "")”? " + (pendingDelete?.kind == "boarding_pass" ? "Se retirará de tus pases y se eliminarán todos los adjuntos de esta publicación en JAC. " : "Se retirará para todo el equipo junto con sus adjuntos de JAC. ") + "El original de Slack se conserva. Se cancelan las entregas pendientes; los avisos ya recibidos no se pueden retirar. Esta acción no se puede deshacer.") }
+            } message: { Text(pendingDelete?.kind == "boarding_pass" ? "¿Estás seguro de que quieres eliminar este pase de abordar?" : "¿Estás seguro de que quieres eliminar este itinerario para todo el equipo?") }
             .onDisappear { documentGeneration += 1; if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }
             .sheet(item: $detail, onDismiss: { Task { await refresh() } }) { item in NoticeDetail(item: item, owner: user.isOwner) }
             .sheet(isPresented: $editor) { if let feed { NoticeComposer(users: feed.users, boardingUsers: feed.boardingUsers ?? feed.users) { savedKind in incomingKind = savedKind; notice = savedKind == "boarding_pass" ? "Pase publicado únicamente para la persona elegida." : savedKind == "itinerary" ? "Itinerario publicado para todo el equipo." : "Alerta guardada para los destinatarios elegidos."; await refresh() } } }
     }
-    @ViewBuilder private func deleteButton(_ item:JACNotice) -> some View {
-        Button(role:.destructive) { pendingDelete=item; confirmingListDelete=true } label: { Label(item.kind == "boarding_pass" ? "Eliminar pase de abordar" : "Eliminar itinerario",systemImage:"trash").font(.subheadline) }
-            .buttonStyle(.borderless).disabled(deleting || openingFile != nil).accessibilityIdentifier("notices.list.delete.\(item.id)")
+    @ViewBuilder private func deleteButton(_ item:JACNotice,destructive:Bool = true) -> some View {
+        Button(role:destructive ? .destructive : nil) { pendingDelete=item; confirmingListDelete=true } label: { Label(item.kind == "boarding_pass" ? "Eliminar pase de abordar" : "Eliminar itinerario",systemImage:"trash").font(.subheadline) }
+            .disabled(deleting || openingFile != nil).accessibilityIdentifier("notices.list.delete.\(item.id)")
     }
     private func remove(_ item:JACNotice) async {
         guard !deleting else { return }; deleting=true; defer { deleting=false }
@@ -124,8 +127,10 @@ struct NoticesView: View {
                     }
                 }.buttonStyle(.plain).disabled(openingFile != nil || deleting).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
             }
-            if user.isOwner { Divider(); deleteButton(item) }
-        }.padding(.vertical,6) }
+        }.padding(.vertical,6)
+            .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner { deleteButton(item,destructive:false).tint(.red) } }
+            .contextMenu { if user.isOwner { deleteButton(item) } }
+        }
     }
     private func openBoarding(_ item:JACNotice,file:NoticeAttachment) async {
         guard openingFile == nil else { return }; openingFile=file.id; let generation=documentGeneration; defer { openingFile=nil }

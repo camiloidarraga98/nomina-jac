@@ -311,7 +311,7 @@ final class LaunchTests: XCTestCase {
     @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
         let app = fixture(["--uitest-reader"]); app.tabBars.buttons["Itinerarios"].tap()
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
-        tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
+        app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].swipeLeft(); XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
         app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.create"].exists)
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.notifications")
@@ -336,8 +336,8 @@ final class LaunchTests: XCTestCase {
     @MainActor func testManualItineraryWithAttachmentAndDeleteConfirmation() {
         let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
         app.segmentedControls["notices.editor.kind"].buttons["Itinerario"].tap()
-        fill(app,"notices.editor.title","Itinerario manual ficticio")
-        tap(app,"notices.editor.fixture"); app.swipeUp(); tap(app,"notices.editor.save")
+        fill(app,"notices.editor.title","Itinerario manual ficticio"); app.textFields["notices.editor.title"].typeText("\n")
+        tap(app,"notices.editor.fixture"); XCTAssertTrue(app.staticTexts["Prueba.pdf"].waitForExistence(timeout:10)); app.swipeUp(); tap(app,"notices.editor.save")
         XCTAssertTrue(app.staticTexts["Itinerario publicado para todo el equipo."].waitForExistence(timeout:15))
         let item = app.buttons.matching(NSPredicate(format:"label CONTAINS %@", "Itinerario manual ficticio")).firstMatch
         XCTAssertTrue(item.waitForExistence(timeout:15)); item.tap(); tap(app,"notices.pdf")
@@ -383,16 +383,16 @@ final class LaunchTests: XCTestCase {
     @MainActor func testDeletePrivatePassFromListConfirmsAndRefreshDoesNotRestoreIt() {
         let app=fixture(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
         let item=app.buttons["notices.item.boarding-fixture-0"]
-        XCTAssertTrue(item.waitForExistence(timeout:15)); tap(app,"notices.list.delete.boarding-fixture-0")
-        tap(app,"notices.list.delete.cancel"); XCTAssertTrue(item.exists)
-        tap(app,"notices.list.delete.boarding-fixture-0"); tap(app,"notices.list.delete.confirm")
+        XCTAssertTrue(item.waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["notices.list.delete.boarding-fixture-0"].exists); XCTAssertFalse(app.buttons["Eliminar pase de abordar"].exists); item.swipeLeft(); attachScreen(app,name:"pase-accion-deslizar"); tap(app,"Eliminar pase de abordar")
+        XCTAssertTrue(app.staticTexts["¿Estás seguro de que quieres eliminar este pase de abordar?"].exists); tap(app,"notices.list.delete.cancel"); XCTAssertTrue(item.exists)
+        item.press(forDuration:1.2); attachScreen(app,name:"pase-menu-mantener-pulsado"); tap(app,"Eliminar pase de abordar"); tap(app,"notices.list.delete.confirm")
         XCTAssertTrue(app.staticTexts["Pase de abordar eliminado."].waitForExistence(timeout:15)); XCTAssertFalse(item.exists)
         XCTAssertTrue(app.buttons["notices.item.boarding-fixture-1"].exists)
         app.swipeDown(); XCTAssertFalse(item.exists); tap(app,"notices.item.boarding-fixture-1")
         XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); tap(app,"notices.pdf.close")
-        app.navigationBars.buttons.firstMatch.tap(); tap(app,"notices.list.delete.33333333-3333-4333-8333-333333333333")
+        app.navigationBars.buttons.firstMatch.tap(); let itinerary=app.buttons["notices.item.33333333-3333-4333-8333-333333333333"]; XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists); XCTAssertFalse(app.buttons["Eliminar itinerario"].exists); itinerary.swipeLeft(); tap(app,"Eliminar itinerario")
         tap(app,"notices.list.delete.cancel"); XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].exists)
-        tap(app,"notices.list.delete.33333333-3333-4333-8333-333333333333"); tap(app,"notices.list.delete.confirm")
+        itinerary.press(forDuration:1.2); tap(app,"Eliminar itinerario"); tap(app,"notices.list.delete.confirm")
         XCTAssertTrue(app.staticTexts["Itinerario eliminado para todo el equipo."].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].exists)
         attachScreen(app,name:"borrado-manual-pase-itinerario")
     }
