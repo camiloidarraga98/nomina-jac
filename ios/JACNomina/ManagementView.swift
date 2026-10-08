@@ -9,6 +9,7 @@ struct ManagementView: View {
                 OperationStatusSection()
                 Section("Avisos") {
                     NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts")
+                    NavigationLink { NotificationSettingsView() } label: { Label("Notificaciones", systemImage: "bell.badge") }.accessibilityIdentifier("management.notifications")
                 }
                 Section("Administración") {
                     if let overview = store.overview {

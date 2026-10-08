@@ -1,6 +1,15 @@
 import XCTest
+import UserNotifications
 @testable import JACNomina
 
+@MainActor
+private final class FakeNotificationPermission: NotificationPermissionProviding {
+    var value: UNAuthorizationStatus = .notDetermined
+    var granted = true
+    var requests = 0
+    func status() async -> UNAuthorizationStatus { value }
+    func request() async throws -> Bool { requests += 1; value = granted ? .authorized : .denied; return granted }
+}
 private final class MemorySession: SessionStoring {
     var token: String?
     func load() throws -> String? { token }
@@ -42,6 +51,42 @@ final class PayrollClientTests: XCTestCase {
         return PayrollClient(baseURL: base, vault: vault, configuration: configuration, agendaCache: cache ?? AgendaOfflineCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)))
     }
     override func tearDown() { MockProtocol.handler = nil; TemporaryDocuments.clear(); super.tearDown() }
+
+    @MainActor func testNotificationPermissionIsRequestedAfterSessionAndDenialIsRespected() async throws {
+        let suite = "push-test-" + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = MemorySession(), client = makeClient(vault), permission = FakeNotificationPermission()
+        var remoteRequests = 0
+        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
+        await hub.bind(client); XCTAssertEqual(permission.requests, 0, "Sin sesión no se debe solicitar autorización.")
+        vault.token = token; permission.granted = false
+        await hub.bind(client); await hub.bind(client)
+        XCTAssertEqual(permission.requests, 1); XCTAssertEqual(remoteRequests, 0); XCTAssertNotNil(hub.message)
+        permission.value = .authorized
+        await hub.bind(client); XCTAssertEqual(remoteRequests, 1); XCTAssertEqual(permission.requests, 1)
+        hub.stop()
+    }
+
+    @MainActor func testNotificationsDisablePersistsAndLateTokenCannotRegisterUntilExplicitEnable() async throws {
+        let suite = "push-test-" + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let vault = MemorySession(); vault.token = token
+        let client = makeClient(vault), permission = FakeNotificationPermission()
+        var commands: [String] = [], remoteRequests = 0
+        MockProtocol.handler = { request in
+            let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request)); commands.append(body["action"].text)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{\"ok\":true}".utf8))
+        }
+        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
+        await hub.bind(client); XCTAssertEqual(permission.requests, 1); XCTAssertEqual(remoteRequests, 1)
+        await hub.register(String(repeating: "ab", count: 32)); await hub.disable(client)
+        await hub.register(String(repeating: "cd", count: 32)); await hub.bind(client)
+        XCTAssertFalse(hub.enabled); XCTAssertEqual(commands, ["register", "unregister"]); XCTAssertEqual(remoteRequests, 1)
+        let reopened = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
+        await reopened.bind(client); XCTAssertEqual(remoteRequests, 1); XCTAssertFalse(reopened.enabled)
+        await reopened.enable(client); XCTAssertTrue(reopened.enabled); XCTAssertEqual(remoteRequests, 2); XCTAssertEqual(permission.requests, 1)
+        reopened.stop(); hub.stop()
+    }
 
     func testDeviceKeychainCanStoreReplaceAndRemoveSession() throws {
         let vault = KeychainSessionStore(account: "test-\(UUID().uuidString).invalid")

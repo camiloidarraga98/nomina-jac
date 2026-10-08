@@ -35,7 +35,6 @@ struct NoticeUser: Decodable, Identifiable { let id: String; let name: String }
 struct NoticesView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var scenePhase
-    @ObservedObject private var push = JACNotifications.shared
     let user: PayrollUser
     var kind = "itinerary"
     var initialNotice: String? = nil
@@ -53,12 +52,6 @@ struct NoticesView: View {
         List {
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
             if let notice { Section { Text(notice).foregroundStyle(JACTheme.action) } }
-            Section("Notificaciones") {
-                if let message = push.message { Text(message).font(.footnote) }
-                Button("Activar en este iPhone") { Task { await push.enable(store.client) } }.accessibilityIdentifier("notices.enable")
-                Button("Desactivar en este iPhone") { Task { await push.disable(store.client) } }
-                if feed?.settings.appleConfigured == false { Text(user.isOwner ? "Prepara Apple desde Itinerarios → Conexión en el webapp para habilitar los avisos push." : "Camilo está preparando los avisos push del iPhone.").font(.footnote).foregroundStyle(.secondary) }
-            }
             if loading && feed == nil { ProgressView("Consultando…") }
             Section(effectiveKind == "itinerary" ? "Itinerarios del equipo" : "Avisos del equipo") {
                 let items = records.filter { $0.kind == effectiveKind }
@@ -66,7 +59,7 @@ struct NoticesView: View {
                 ForEach(items) { item in Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             }
-            if effectiveKind == "itinerary", feed?.settings.slackConnected == false { Section { Text(user.isOwner ? "Puedes publicar desde Alertas o conectar Slack en el webapp para recibir los PDF de #itinerarios-finales." : "Camilo está preparando la conexión de itinerarios.").font(.footnote).foregroundStyle(.secondary) } }
+
         }.jacSurface().navigationTitle(effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").refreshable { await refresh() }
             .toolbar { if user.isOwner && effectiveKind == "alert" { ToolbarItem(placement: .topBarTrailing) { Button { editor = true } label: { Image(systemName: "plus") }.accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil) } } }
             .task { await refresh() }

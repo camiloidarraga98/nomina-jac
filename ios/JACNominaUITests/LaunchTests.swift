@@ -310,9 +310,27 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
         let app = fixture(["--uitest-reader"]); app.tabBars.buttons["Itinerarios"].tap()
+        XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
         app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts")
-        XCTAssertTrue(app.buttons["notices.enable"].waitForExistence(timeout: 10)); XCTAssertFalse(app.buttons["notices.create"].exists)
+        XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.create"].exists)
+        app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.notifications")
+        XCTAssertTrue(app.buttons["notices.enable"].waitForExistence(timeout: 10)); XCTAssertTrue(app.buttons["notices.disable"].exists)
+    }
+
+    @MainActor func testNotificationPermissionAppearsAfterAuthenticatedStartupWithoutOpeningItineraries() {
+        let app = fixture(["--uitest-push-permission"])
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let alert = springboard.alerts.firstMatch
+        XCTAssertTrue(alert.waitForExistence(timeout: 15), "El permiso debe solicitarse tras restaurar la sesión ficticia, sin abrir Itinerarios.")
+        attachScreen(springboard, name: "permiso-ios-al-entrar")
+        let deny = alert.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "No permitir"])).firstMatch
+        XCTAssertTrue(deny.exists, springboard.debugDescription); deny.tap()
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.notifications")
+        XCTAssertTrue(app.staticTexts["notifications.status"].waitForExistence(timeout: 10))
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertFalse(springboard.alerts.firstMatch.exists, "No se debe repetir un permiso rechazado al volver a primer plano.")
+        attachScreen(app, name: "notificaciones-en-gestion")
     }
 
     @MainActor func testManualItineraryWithAttachmentAndDeleteConfirmation() {

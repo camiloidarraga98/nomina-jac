@@ -4,6 +4,14 @@ El nombre visible en el iPhone es **JAC**. El proyecto y el esquema de Xcode sig
 
 Aplicación nativa en SwiftUI para iOS 17 o posterior. Usa las mismas cuentas y la misma base D1 que https://jhonalexcastano.com a través de HTTPS. No contiene WebViews ni otra base de nómina.
 
+## Notificaciones al entrar — iPhone 0.8.0, build 9
+
+Itinerarios contiene únicamente sus publicaciones, consulta y borrado autorizado. Alertas conserva creación y destinatarios. Los controles de avisos están en **Gestión → Notificaciones** para todas las cuentas activas.
+
+Tras iniciar sesión o restaurar una sesión validada, JAC solicita automáticamente el permiso nativo de iOS si todavía no se decidió. Un rechazo no se vuelve a preguntar al regresar a primer plano; se ofrece abrir Ajustes del iPhone. Desactivar desde Gestión se conserva en ese dispositivo y no se revierte al iniciar sesión de nuevo. Un token tardío no puede reactivar la opción, y desactivar espera cualquier registro en curso antes de revocarlo. La preferencia de la app no sustituye el permiso del sistema.
+
+Verificado en simulador nuevo: diálogo real de iOS al entrar con sesión ficticia, rechazo y regreso sin repetirlo, controles fuera de Itinerarios/Alertas, permisos de lector, publicación manual/adjuntos/borrado y privacidad. Solo fixtures `.invalid`; el diálogo de prueba no registra APNs. El push remoto físico sigue necesitando la membresía aprobada, firma y APNs. Continúa con **Run en este mismo proyecto**; el ZIP es un respaldo opcional.
+
 ## Distribución y Agenda sin conexión — iPhone 0.7.0, build 8
 
 La barra inferior tiene **Quincena, Agenda, Itinerarios, Mi cuenta y Gestión**, en ese orden. **Gestión** reúne Alertas, Archivo de quincenas, Equipo, Conceptos y reglas, Correos y Gmail, y Usuarios y permisos (solo propietario). Las funciones anteriores siguen disponibles con sus mismos permisos. Archivo y Equipo utilizan la navegación de Gestión, sin anidar otra barra de navegación.
@@ -22,7 +30,7 @@ En **Itinerarios** y **Gestión → Alertas** consultas el mismo contenido de la
 
 Desde **Alertas → +**, elige **Alerta** o **Itinerario**. Una alerta exige mensaje y destinatarios seleccionados; un itinerario se publica directamente en Itinerarios para todo el equipo activo, sin Slack. Admite hasta cinco PDF, JPG o PNG que sumen 10 MB. En iPhone se eligen desde Archivos o Fotos (las fotos se convierten a JPG); se pueden quitar antes de guardar. Puedes abrir y compartir cada adjunto con la vista previa nativa. Los borradores y archivos elegidos permanecen en memoria; las descargas usan temporales protegidos y se limpian al cerrar o salir de la cuenta.
 
-Los avisos de itinerarios dicen **Ya llegó tu itinerario para el día de hoy**. Las alertas muestran su título y descripción (los textos muy largos se abrevian solo en push). Se conserva `co.jacmusic.nomina`, la sesión en Llavero, la cubierta de privacidad y el procesamiento en el servidor. El push del iPhone requiere membresía/equipo de Apple habilitado, firma con Push Notifications y configuración APNs en Conexión; no basta con instalar el binario. No se han generado ni copiado certificados o claves.
+Los avisos de itinerarios dicen **Ya llegó tu itinerario para el día de hoy**. Las alertas muestran su título y descripción (los textos muy largos se abrevian solo en push). Se conserva `co.jacmusic.nomina`, la sesión en Llavero, la cubierta de privacidad y el procesamiento en el servidor. El push del iPhone requiere membresía/equipo de Apple habilitado, firma con Push Notifications y configuración APNs en Configuración general → Servicios conectados de la web; no basta con instalar el binario. No se han generado ni copiado certificados o claves.
 
 Para actualizar el iPhone abre `ios/JACNomina.xcodeproj`, esquema JACNomina, selecciona tu equipo y tu iPhone y pulsa **Run** sobre la app existente, sin borrarla. La web y las API se actualizan con Sites; instalar el binario requiere Xcode o distribución ad hoc.
 

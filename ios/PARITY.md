@@ -1,5 +1,7 @@
 # Correspondencia del webapp y la app de iPhone
 
+Desde 0.8.0/build 9, Itinerarios y Alertas no incluyen controles de conexión/push. Gestión → Notificaciones permite desactivar o volver a permitir los avisos. El permiso nativo se solicita tras una sesión validada; rechazos y desactivación persistente se respetan.
+
 La versión 0.7.0 (build 8) conserva las cuentas, los permisos y la base D1 del webapp. Toda liquidación procede de `lib/payroll.ts` en el servidor. SwiftUI muestra los resultados y envía comandos de edición; no implementa otro motor de nómina.
 
 Las cinco pestañas son Quincena, Agenda, Itinerarios, Mi cuenta y Gestión. Archivo y Equipo se consultan dentro de Gestión junto con Alertas, Conceptos y reglas, Correos y Usuarios. Se conservan las funciones y comprobaciones de acceso existentes.
