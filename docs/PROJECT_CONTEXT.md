@@ -307,3 +307,17 @@ Pruebas locales con Node 24 y servicios simulados: 113 pasadas y una prueba inte
 
 
 Publicación confirmada v41: fuente 763b00a39b3da0ab86491d7cb006b4f77a838a23; versión appgprj_6aa0260b82a88191a47960614238350a~appgver_d73dcfb6292c8191b7a8d37f4c5103eb; despliegue appgdep_6ac7c69c932c8191918e8b4bb496933e succeeded, revisión de entorno 2. Build y TypeScript correctos; mismo Site, DB/BUCKET y conexiones. La concesión real a jac está pendiente: al abrir la versión publicada, Chrome tenía una sesión de Alex Zuluaga. Se solicitó iniciar sesión como Camilo para guardar el cambio por la administración autenticada; no se han cambiado los permisos de producción todavía.
+
+
+## Instalación física y certificado pendiente de confianza — 8 de octubre de 2026
+
+Camilo mostró Xcode copiando símbolos del sistema al 24 %. La observación directa en este Mac comprobó avance al 62 %, 84 % y extracción posterior; no era un error de compilación. Tras terminar, Xcode informó que no podía lanzar la app porque el certificado Developer App todavía no era de confianza en el iPhone. Consulta acotada con devicectl confirmó JAC 0.9.5 (15), bundle co.jacmusic.nomina, ya instalada en el dispositivo físico seleccionado JAC (2); no había un proceso JACNomina en ejecución. La firma automática sigue en Camilo Idarraga (Personal Team), sin incidencias en Signing & Capabilities. JAC_PUSH_ENABLED=NO y entitlements vacíos conservados.
+
+Pendiente de intervención de Camilo: Ajustes del iPhone → General → VPN y gestión de dispositivos → App del desarrollador → su cuenta camiloidarragavlogs@gmail.com → Confiar. Después se debe volver a Run y comprobar el arranque. No se declara abierta/verificada la ejecución física aún. No se cambió código, firma, esquema, capacidades, datos o servicios de producción. La consulta devicectl requirió acceso al servicio CoreDevice fuera del sandbox; el intento dentro agotó su timeout sin representar un fallo del iPhone.
+
+
+## Administración total aplicada a Jhon Alex (jac) — 8 de octubre de 2026
+
+Camilo reiteró que Jhon Alex debe poder borrar sus pases e itinerarios y tener permisos de nómina; confirmó guardar Administración · control total, incluyendo usuarios y conexiones, como había pedido anteriormente. Se guardó desde Usuarios en producción con la sesión autenticada de Camilo. La interfaz confirmó «Usuario actualizado. Sus sesiones anteriores quedaron cerradas» y Jhon Alex figura Activo / Administrador · control total.
+
+Consulta de solo lectura posterior confirmó la misma cuenta jac/jhonalexcastano@gmail.com, active=1, owner=0, itineraries_only=0, versión 6 y permisos payroll, staff, rules, close, modifyClosed, send, export y administrator. La contraseña establecida se conserva y no se genera ninguna invitación. Debe iniciar sesión otra vez en web/iPhone; el cambio se aplica en servidor sin recompilar la app ni publicar una versión adicional. Alex conserva su cuenta limitada sin nómina ni administración. Los pases siguen siendo privados del único destinatario: Jhon Alex puede borrar sus propios pases; la administración no permite abrir o borrar los de otra persona. No se borraron pases, itinerarios, quincenas ni otros datos como prueba; no se enviaron avisos/correos ni se cambiaron conexiones. Evidencia local: outputs/jac-admin-confirmado.png. Se reutilizan las comprobaciones de permisos/API móvil/notificaciones de v41 porque el código no cambió.
