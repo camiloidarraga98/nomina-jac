@@ -1,3 +1,13 @@
+## Push suspendido temporalmente — iPhone 0.9.5 (15)
+
+Mientras Apple revisa la membresía, este mismo proyecto compila sin la capacidad Push Notifications ni `aps-environment`. `JAC_PUSH_ENABLED=NO` en Debug y Release impide pedir autorización, registrar APNs o enviar comandos de registro; Gestión → Notificaciones explica la suspensión. Se conserva la preferencia del usuario para una futura reactivación. Agenda, itinerarios, pases privados, alertas dentro de la app, adjuntos y privacidad siguen funcionando. Las notificaciones de la web no cambian.
+
+Abre **este mismo** `ios/JACNomina.xcodeproj`, esquema **JACNomina**. En **Signing & Capabilities** elige tu **Personal Team** y firma automática, selecciona tu iPhone y pulsa **Run**. Mantén `co.jacmusic.nomina`; no hace falta descargar ni sustituir el proyecto. Si Xcode conserva el diagnóstico anterior, detén Run, usa **Product → Clean Build Folder** y vuelve a compilar. La firma puede requerir que completes acceso/confianza/Modo de desarrollador en Xcode o el teléfono.
+
+Cuando Apple apruebe la membresía, reactivar de forma coordinada: seleccionar el equipo de pago, agregar **Push Notifications**, cambiar `CODE_SIGN_ENTITLEMENTS` a `JACNomina/JACNominaPush.entitlements` y `JAC_PUSH_ENABLED` a `YES` en Debug y Release, conservar `APNS_ENVIRONMENT=development`/`production` respectivamente y regenerar perfiles mediante firma automática. El archivo push solo contiene la declaración de entitlement; no es una clave. Verificar firma/APNs antes de declarar push operativo. No cambiar secretos del sitio ni copiar certificados o claves al proyecto.
+
+Las pruebas anteriores de permisos, rechazo, desactivación y tokens tardíos se conservan mediante inyección explícita; los fixtures DEBUG de interfaz no registran APNs. La nueva prueba cubre el build suspendido sin permisos, registros ni cambios de preferencias.
+
 Actualización 0.9.4 (14): Alex dispone de Agenda de consulta y Alertas, sin nómina. Crear alerta incluye cuentas activas pendientes de activación, con su estado visible. Trabajar sobre este mismo proyecto y actualizar con Run.
 
 ## Borrado con gestos — iPhone 0.9.3 (13)
@@ -76,7 +86,7 @@ Todos los usuarios activos pueden consultar esa agenda; solo Camilo puede conect
 
 ## Actualizar desde Xcode
 
-Seguimos editando esta misma carpeta del Mac, sin depender de GitHub ni Actions. Abre su `ios/JACNomina.xcodeproj`; no necesitas descargar otro proyecto ni reemplazar la carpeta. Selecciona tu equipo de pago en **Signing & Capabilities**, conserva `co.jacmusic.nomina` como identificador y pulsa **Run** con tu iPhone seleccionado. Instala sobre la app existente; no hace falta borrarla. Los ZIP entregados son copias de respaldo opcionales. El repositorio de GitHub queda como copia histórica.
+Seguimos editando esta misma carpeta del Mac, sin depender de GitHub ni Actions. Abre su `ios/JACNomina.xcodeproj`; no necesitas descargar otro proyecto ni reemplazar la carpeta. Mientras la membresía está pendiente, selecciona tu Personal Team en **Signing & Capabilities**, conserva `co.jacmusic.nomina` como identificador y pulsa **Run** con tu iPhone seleccionado. Instala sobre la app existente; no hace falta borrarla. Los ZIP entregados son copias de respaldo opcionales. El repositorio de GitHub queda como copia histórica.
 
 La publicación del servidor actualiza las API; el binario instalado en cada iPhone se actualiza al compilar/instalar de nuevo con Xcode o distribuir una nueva versión ad hoc.
 
@@ -161,7 +171,7 @@ La interfaz usa los verdes oscuro y lima y los fondos claros del webapp, conserv
 
 **Gestión → Itinerarios** muestra los PDF recibidos de `#itinerarios-finales`, con vista previa y hoja para compartir. **Gestión → Alertas** permite consultar avisos; únicamente Camilo ve **+**, escribe el mensaje y elige destinatarios. Una notificación abre el aviso privado y permite abrir su PDF. La API aplica los mismos controles que la web.
 
-Para recibir esta versión abre el proyecto del ZIP y usa Run. Para **push real**, selecciona un equipo con membresía vigente de Apple Developer Program: Personal Team gratuito no admite APNs. El proyecto incorpora Push Notifications y el entitlement sandbox en Debug/producción en Release. Camilo debe preparar Slack y la clave APNs desde **Itinerarios → Conexión** en la web; cada usuario activa después sus notificaciones en el iPhone. Sigue [la guía de configuración](../docs/ITINERARIES_PUSH_SETUP.md). No necesita publicación en App Store.
+Para recibir esta versión abre el proyecto del ZIP y usa Run. Para **push real**, selecciona un equipo con membresía vigente de Apple Developer Program: Personal Team gratuito no admite APNs. Esta capacidad está suspendida desde 0.9.5; consulta la sección inicial para reactivarla tras la aprobación. Camilo debe preparar Slack y la clave APNs desde **Itinerarios → Conexión** en la web; cada usuario activa después sus notificaciones en el iPhone. Sigue [la guía de configuración](../docs/ITINERARIES_PUSH_SETUP.md). No necesita publicación en App Store.
 
 Las pruebas nativas usan un PDF ficticio y URLProtocol `.invalid`; no registran el simulador en los servicios reales ni envían avisos. El registro de dispositivos se desactiva al salir de la cuenta y respeta la desactivación elegida por el usuario.
 

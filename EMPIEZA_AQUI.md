@@ -45,7 +45,7 @@ No conectes Gmail, Google Calendar, Slack o Apple reales en la copia de desarrol
 
 ## 4. Compilar e instalar el iPhone
 
-Abre `JAC/ios/JACNomina.xcodeproj` con Xcode. Selecciona el esquema `JACNomina`, tu iPhone y, en **Signing & Capabilities**, tu equipo de pago y firma automática. Conserva el identificador `co.jacmusic.nomina`. Pulsa **Run** para actualizar la app instalada; no hace falta borrarla.
+Abre `JAC/ios/JACNomina.xcodeproj` con Xcode. Selecciona el esquema `JACNomina`, tu iPhone y, en **Signing & Capabilities**, tu Personal Team y firma automática mientras Apple aprueba la membresía. Desde 0.9.5 el push está suspendido temporalmente; ver `ios/README.md`. Conserva el identificador `co.jacmusic.nomina`. Pulsa **Run** para actualizar la app instalada; no hace falta borrarla.
 
 Esta app consulta el servidor publicado y sus datos reales. Para probar cambios de datos utiliza las pruebas simuladas de **Product → Test**, no acciones reales de cierre, eliminación, correo o alertas. Si vuelve la pantalla en blanco conocida con tu Xcode, consulta `ios/README.md`: desmarcar **Debug executable** permitió abrir el acceso anteriormente.
 

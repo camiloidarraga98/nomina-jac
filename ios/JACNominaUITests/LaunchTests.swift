@@ -309,13 +309,29 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "alerta-guardada")
     }
     @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
-        let app = fixture(["--uitest-reader"]); app.tabBars.buttons["Itinerarios"].tap()
+        let app = fixture(["--uitest-reader", "--uitest-push-settings"]); app.tabBars.buttons["Itinerarios"].tap()
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
         app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].swipeLeft(); XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
         app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.create"].exists)
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.notifications")
         XCTAssertTrue(app.buttons["notices.enable"].waitForExistence(timeout: 10)); XCTAssertTrue(app.buttons["notices.disable"].exists)
+    }
+
+    @MainActor func testSuspendedPushShowsStatusWithoutPermissionOrActivationControls() {
+        let app = fixture()
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        XCTAssertFalse(springboard.alerts.firstMatch.exists)
+        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.notifications")
+        XCTAssertTrue(app.staticTexts["notifications.suspended"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
+        attachScreen(app, name: "push-suspendido-personal-team")
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(app.staticTexts["notifications.suspended"].waitForExistence(timeout: 10))
+        XCTAssertFalse(springboard.alerts.firstMatch.exists)
+        app.tabBars.buttons["Itinerarios"].tap()
+        tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
+        tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
     }
 
     @MainActor func testNotificationPermissionAppearsAfterAuthenticatedStartupWithoutOpeningItineraries() {

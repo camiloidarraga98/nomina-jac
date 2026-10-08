@@ -57,7 +57,7 @@ final class PayrollClientTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suite) }
         let vault = MemorySession(), client = makeClient(vault), permission = FakeNotificationPermission()
         var remoteRequests = 0
-        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
+        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, pushAvailable: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
         await hub.bind(client); XCTAssertEqual(permission.requests, 0, "Sin sesión no se debe solicitar autorización.")
         vault.token = token; permission.granted = false
         await hub.bind(client); await hub.bind(client)
@@ -77,15 +77,38 @@ final class PayrollClientTests: XCTestCase {
             let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request)); commands.append(body["action"].text)
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{\"ok\":true}".utf8))
         }
-        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
+        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, pushAvailable: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
         await hub.bind(client); XCTAssertEqual(permission.requests, 1); XCTAssertEqual(remoteRequests, 1)
         await hub.register(String(repeating: "ab", count: 32)); await hub.disable(client)
         await hub.register(String(repeating: "cd", count: 32)); await hub.bind(client)
         XCTAssertFalse(hub.enabled); XCTAssertEqual(commands, ["register", "unregister"]); XCTAssertEqual(remoteRequests, 1)
-        let reopened = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
+        let reopened = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, pushAvailable: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
         await reopened.bind(client); XCTAssertEqual(remoteRequests, 1); XCTAssertFalse(reopened.enabled)
         await reopened.enable(client); XCTAssertTrue(reopened.enabled); XCTAssertEqual(remoteRequests, 2); XCTAssertEqual(permission.requests, 1)
         reopened.stop(); hub.stop()
+    }
+
+    @MainActor func testSuspendedPushCannotRequestPermissionRegisterOrChangeUserPreference() async throws {
+        XCTAssertFalse(JACNotifications.buildSupportsPush, "La configuración temporal del binario debe suspender push.")
+        let suite = "push-suspended-" + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set(true, forKey: "jac.push.enabled")
+        let vault = MemorySession(); vault.token = token
+        let client = makeClient(vault), permission = FakeNotificationPermission()
+        var remoteCalls = 0, networkCalls = 0
+        MockProtocol.handler = { _ in networkCalls += 1; throw URLError(.unsupportedURL) }
+        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, pushAvailable: false, registerRemote: { remoteCalls += 1 }, unregisterRemote: { remoteCalls += 1 })
+        await hub.bind(client); await hub.enable(client)
+        await hub.register(String(repeating: "ab", count: 32)); await hub.disable(client)
+        hub.received(UUID().uuidString); hub.stop()
+        XCTAssertFalse(hub.enabled); XCTAssertFalse(hub.busy); XCTAssertNil(hub.noticeID)
+        XCTAssertEqual(permission.requests, 0); XCTAssertEqual(remoteCalls, 0); XCTAssertEqual(networkCalls, 0)
+        XCTAssertEqual(defaults.object(forKey: "jac.push.enabled") as? Bool, true, "La suspensión del build no debe borrar la elección del usuario.")
+        let restored = JACNotifications(defaults: defaults, permission: permission, pushAvailable: true, registerRemote: {}, unregisterRemote: {})
+        XCTAssertTrue(restored.enabled)
+        defaults.set(false, forKey: "jac.push.enabled")
+        let optedOut = JACNotifications(defaults: defaults, permission: permission, pushAvailable: true, registerRemote: {}, unregisterRemote: {})
+        XCTAssertFalse(optedOut.enabled, "Al reactivar la capacidad se conserva una desactivación previa.")
     }
 
     func testDeviceKeychainCanStoreReplaceAndRemoveSession() throws {
@@ -522,7 +545,7 @@ final class PayrollClientTests: XCTestCase {
         do { try await reader.noticeCommand(command); XCTFail("La API debe rechazar al lector") } catch { XCTAssertTrue(error.localizedDescription.contains("Solo Camilo")) }
     }
     @MainActor func testPushRoutingValidatesIdentifiersAndLogoutNamesOnlyThisDevice() async throws {
-        let hub = JACNotifications.shared; hub.noticeID = nil
+        let hub = JACNotifications(pushAvailable: true, registerRemote: {}, unregisterRemote: {})
         hub.received("https://untrusted.example.invalid"); XCTAssertNil(hub.noticeID)
         let id = UUID().uuidString; hub.received(id); XCTAssertEqual(hub.noticeID, id.lowercased()); hub.noticeID = nil
         let vault = MemorySession(); vault.token = token
