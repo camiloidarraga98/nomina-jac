@@ -4,7 +4,7 @@ import {Bell} from 'lucide-react';
 import {Button} from '@/components/ui/button';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {browserPushClient,browserPushSupported,type WebPushClient} from '@/lib/web-push-client';
-import {NoticeSettings,type Feed} from './notices-panel';
+import {BoardingChannelSettings,NoticeSettings,type Feed} from './notices-panel';
 
 export default function NotificationSettings({userID,owner,view,enabled=true}:{userID:string;owner:boolean;view:string;enabled?:boolean}){
  const [feed,setFeed]=useState<Feed>(),[error,setError]=useState(''),[message,setMessage]=useState(''),[busy,setBusy]=useState(false),[consent,setConsent]=useState(false),[supported,setSupported]=useState(false),[active,setActive]=useState(false);
@@ -35,7 +35,7 @@ export default function NotificationSettings({userID,owner,view,enabled=true}:{u
    <div className="notice-actions"><Button className="primary" disabled={busy||!feed?.settings.webPublicKey||active} onClick={()=>void enable()}>Permitir notificaciones</Button><Button variant="outline" disabled={busy} onClick={()=>void disable()}>Desactivar en este navegador</Button></div>
   </>}
  </section>}
- {view==='conexiones'&&owner&&<section className="panel notices-panel"><div className="panel-title"><h2>Servicios conectados</h2></div><p className="muted">Configuración exclusiva de Camilo. Las claves se guardan cifradas.</p>{error&&<p className="message error" role="alert">{error}</p>}{!enabled?<p>Activa tu acceso propio para configurar estos servicios.</p>:feed?<NoticeSettings settings={feed.settings} failures={feed.failures} onBusy={setBusy} onSaved={async()=>{await refresh();}}/>:<p>Consultando…</p>}</section>}
+ {view==='conexiones'&&owner&&<section className="panel notices-panel"><div className="panel-title"><h2>Servicios conectados</h2></div><p className="muted">Configuración exclusiva de Camilo. Las claves se guardan cifradas.</p>{error&&<p className="message error" role="alert">{error}</p>}{!enabled?<p>Activa tu acceso propio para configurar estos servicios.</p>:feed?<><NoticeSettings settings={feed.settings} failures={feed.failures} onBusy={setBusy} onSaved={async()=>{await refresh();}}/><BoardingChannelSettings feed={feed} onSaved={async()=>{await refresh();}}/></>:<p>Consultando…</p>}</section>}
  <Dialog open={consent} onOpenChange={open=>{if(!open&&!busy)dismiss();}}><DialogContent className="payroll-dialog" showCloseButton={!busy} onInteractOutside={e=>{if(busy)e.preventDefault();}}><DialogTitle>Recibe tus avisos de JAC</DialogTitle><DialogDescription>Te avisaremos cuando llegue un itinerario o una alerta para ti. Confirma el permiso que mostrará tu navegador. Puedes desactivar los avisos en Configuración general → Notificaciones.</DialogDescription>{error&&<p className="message error" role="alert">{error}</p>}<div className="notice-actions"><Button className="primary" disabled={busy} onClick={()=>void enable()}>Permitir notificaciones</Button><Button variant="outline" disabled={busy} onClick={dismiss}>Ahora no</Button></div></DialogContent></Dialog>
  </>;
 }

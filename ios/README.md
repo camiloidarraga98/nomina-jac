@@ -152,3 +152,7 @@ La interfaz usa los verdes oscuro y lima y los fondos claros del webapp, conserv
 Para recibir esta versión abre el proyecto del ZIP y usa Run. Para **push real**, selecciona un equipo con membresía vigente de Apple Developer Program: Personal Team gratuito no admite APNs. El proyecto incorpora Push Notifications y el entitlement sandbox en Debug/producción en Release. Camilo debe preparar Slack y la clave APNs desde **Itinerarios → Conexión** en la web; cada usuario activa después sus notificaciones en el iPhone. Sigue [la guía de configuración](../docs/ITINERARIES_PUSH_SETUP.md). No necesita publicación en App Store.
 
 Las pruebas nativas usan un PDF ficticio y URLProtocol `.invalid`; no registran el simulador en los servicios reales ni envían avisos. El registro de dispositivos se desactiva al salir de la cuenta y respeta la desactivación elegida por el usuario.
+
+## Actualización 0.9.0 (10): pases de abordar
+
+Usa este mismo proyecto de Xcode. Itinerarios → Pases de abordar muestra los pases privados de hoy, próximos días e historial plegado según Colombia. Desde Gestión → Alertas, Camilo puede elegir Pase, adjuntar PDF/imágenes, elegir una persona y revisar la fecha. Las cuentas de Solo itinerarios no muestran Nómina, Agenda ni Administración. Ver docs/BOARDING_PASSES.md para reglas de fechas, privacidad y pruebas. La instalación física sigue usando Run y tu firma Apple; la preparación de APNs requiere la membresía aprobada y sus claves, gestionadas fuera del proyecto.

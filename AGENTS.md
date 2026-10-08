@@ -22,3 +22,5 @@ Lee `docs/PROJECT_CONTEXT.md` antes de modificar el proyecto. Habla con Camilo e
 - El código contiene datos iniciales de personal, documentos y tarifas: repositorio privado. No subas bases de producción, `.env`, `.dev.vars`, sesiones, invitaciones ni exportaciones de nómina.
 
 Esta copia parte del commit de producción `0d26668b0b3361e18b5a471f955cbc4e2a682207`, exportado el 6 de octubre de 2026, con documentación adicional. No contiene historial Git ni datos actuales de la base real. Verifica la publicación y ejecución del entorno Cloud antes de declarar completa la migración.
+
+- Pases de abordar: ver docs/BOARDING_PASSES.md; migraciones 0013/0014. Son privados de un único destinatario, sin excepción administradora de lectura. El nombre decide solo la fecha; el canal decide la identidad configurada. Mantener los controles de revisión, pertenencia y revocación antes/después de R2. No importar historial Slack. La cuenta de Alex Zuluaga es Solo itinerarios (sin nómina/Agenda); Jhon Alex conserva consulta de nómina. Clientes antiguos no deben quitar la restricción al editar cuentas.

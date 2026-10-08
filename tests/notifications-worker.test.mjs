@@ -127,3 +127,25 @@ test('Workerd publica adjuntos privados de alertas e itinerarios y limpia R2 sin
   }
  }finally{await mf.dispose();}
 });
+
+test('Workerd/D1/R2: pases por destinatario, historial y permisos privados, sin salidas reales',async()=>{
+ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
+  import {publishManualNotice,boardingFeed,noticeItem,noticeAttachment,markNoticeRead,configureBoardingChannels} from './lib/notifications';
+  const owner={id:'11111111-1111-4111-8111-111111111111',email:'camilo@mac2you.co',username:'fixture',displayName:'Fixture',fullName:null,isOwner:true,permissions:[]};
+  export default {async fetch(req:Request){const b=await req.json(),actor=b.reader?{...owner,id:'22222222-2222-4222-8222-222222222222',email:'fixture@example.invalid',isOwner:false}:owner;try{
+   if(b.action==='create')return Response.json({id:await publishManualNotice(actor,b.input,async()=>true)});
+   if(b.action==='feed')return Response.json(await boardingFeed(actor,b.history));
+   if(b.action==='item')return Response.json(await noticeItem(actor,b.id));
+   if(b.action==='file'){const f=await noticeAttachment(actor,b.id,b.file);return new Response(f.object.body);}
+   if(b.action==='read'){await markNoticeRead(actor,b.id);return Response.json({ok:true});}
+  }catch(e){return Response.json({error:e.message},{status:e.status||502});}}};
+ `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*']});
+ let outbound=0;const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-private-passes'},r2Buckets:['BUCKET'],outboundService:async()=>{outbound++;throw Error('No external traffic');}});
+ const {readFile,readdir}=await import('node:fs/promises');try{const db=await mf.getD1Database('DB');for(const name of (await readdir('drizzle')).filter(x=>x.endsWith('.sql')).sort())for(const statement of (await readFile('drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(x=>x.trim()).filter(Boolean))await db.prepare(statement).run();
+ const owner='11111111-1111-4111-8111-111111111111',reader='22222222-2222-4222-8222-222222222222';for(const [id,name] of [[owner,'owner'],[reader,'reader']])await db.prepare("INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,'fixture','[]','fixture','fixture')").bind(id,name,name+'@example.invalid',name).run();
+ const run=b=>mf.dispatchFetch('https://fixture.example.invalid/passes',{method:'POST',body:JSON.stringify(b)}),input={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase privado ficticio',body:'',travelDate:'2090-10-10',recipients:[reader],files:[{filename:'Foto.png',data:Buffer.from([137,80,78,71,13,10,26,10,0]).toString('base64')}]};
+ assert.equal((await run({action:'create',input})).status,200);assert.equal((await run({action:'create',input})).status,200);const item=await (await run({action:'item',id:input.id,reader:true})).json();assert.equal(item.travelDate,input.travelDate);assert.equal(item.attachments.length,1);
+ for(const action of ['item','read','file'])assert.equal((await run({action,id:input.id,file:item.attachments[0].id})).status,404,'Camilo no hereda acceso al pase ajeno');assert.equal((await run({action:'file',id:input.id,file:item.attachments[0].id,reader:true})).status,200);
+ assert.equal((await (await run({action:'feed',reader:true})).json()).notices.length,1);assert.equal((await (await run({action:'feed'})).json()).notices.length,0);assert.equal((await (await run({action:'feed',reader:true,history:true})).json()).notices.length,0);assert.equal(outbound,0);
+ }finally{await mf.dispose();}
+});

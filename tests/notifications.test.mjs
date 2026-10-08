@@ -290,3 +290,52 @@ test('Un borrado mientras se sube el adjunto bloquea la publicación y limpia la
  try{await assert.rejects(()=>m.publishManualNotice(actor,p,async()=>true),e=>e.status===410);}finally{beforePut=undefined;}
  assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(p.id),undefined);assert.equal(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='deleted' AND cleaned=0").get(),undefined);
 });
+
+// Boarding passes add a stricter boundary than the shared itinerary/admin feed.
+test('Pases: fecha civil Colombia, nombres españoles, cambio de año y fechas ambiguas',async()=>{
+ const out=await build({stdin:{contents:"export * from './lib/boarding-passes'",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});const b=await import('data:text/javascript;base64,'+Buffer.from(out.outputFiles[0].text).toString('base64'));
+ assert.equal(b.boardingToday(new Date('2026-10-08T04:59:59Z')),'2026-10-07');assert.equal(b.boardingToday(new Date('2026-10-08T05:00:00Z')),'2026-10-08');
+ assert.equal(b.boardingFilenameDate('Camilo 10 de octubre.pdf',new Date('2026-10-07T15:00:00Z')),'2026-10-10');assert.equal(b.boardingFilenameDate('Jhon Alex 2 de enero.pdf',new Date('2026-12-31T15:00:00Z')),'2027-01-02');assert.equal(b.boardingFilenameDate('Alex 31 de diciembre.pdf',new Date('2027-01-01T15:00:00Z')),'2026-12-31');
+ assert.equal(b.boardingFilenameDate('Alex 29 de febrero 2028.png'),'2028-02-29');for(const name of ['Pase.pdf','Camilo 31 de abril 2026.pdf','1 de octubre y 2 de octubre.pdf','Alex 29 de febrero 2026.pdf'])assert.equal(b.boardingFilenameDate(name),null);
+});
+const boardJhon='77777777-7777-4777-8777-777777777777',boardAlex='88888888-8888-4888-8888-888888888888';
+const actor=id=>({id,email:id===owner?'camilo@mac2you.co':id===boardJhon?'jhonalexcastano@gmail.com':'alexzuluagaazp@gmail.com',isOwner:id===owner,permissions:[]});
+const boardChannels=[{id:'C0C7QKT2FJQ',userId:owner,version:0},{id:'C0C8FAPHTCG',userId:boardJhon,version:0},{id:'C0C7K0QCMKQ',userId:boardAlex,version:0}];
+let privatePass;
+test('Pases manuales: un dueño, adjuntos obligatorios, permiso privado incluso frente a Camilo',async()=>{
+ for(const [id,email,name] of [[boardJhon,'jhonalexcastano@gmail.com','Jhon ficticio'],[boardAlex,'alexzuluagaazp@gmail.com','Alex ficticio']])sql.prepare('INSERT INTO payroll_users(id,username,email,name,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?)').run(id,id,email,name,'[]','fixture','fixture');
+ const input={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase privado',body:'',recipients:[boardJhon],files:[{filename:'Jhon 10 de octubre 2026.pdf',data:Buffer.from(pdfBytes).toString('base64')}]};privatePass=input;
+ const run=b=>m.publishManualNotice(actor(owner),b,async()=>true);
+ for(const bad of [{...input,recipients:[owner,boardJhon]},{...input,files:[]},{...input,travelDate:'2026-10-11'},{...input,files:[{...input.files[0],filename:'31 de abril 2026.pdf'}]}])await assert.rejects(()=>run(bad));
+ assert.equal(await run(input),input.id);assert.equal(await run(input),input.id);await assert.rejects(()=>run({...input,body:'Cambio'}),e=>e.status===409);
+ const item=await m.noticeItem(actor(boardJhon),input.id);assert.equal(item.travelDate,'2026-10-10');assert.equal(item.attachments.length,1);
+ for(const user of [owner,boardAlex,luisa]){await assert.rejects(()=>m.noticeItem(actor(user),input.id),e=>e.status===404);await assert.rejects(()=>m.markNoticeRead(actor(user),input.id),e=>e.status===404);await assert.rejects(()=>m.noticeAttachment(actor(user),input.id,item.attachments[0].id),e=>e.status===404);assert.ok(!(await m.noticeFeed(actor(user))).notices.some(n=>n.id===input.id));}
+ assert.ok(await m.noticeAttachment(actor(boardJhon),input.id,item.attachments[0].id));
+ const pending=sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(input.id);assert.deepEqual(pending.map(x=>x.user_id),[boardJhon]);
+});
+test('Pases: fechas ordenadas, historial separado y paginación independiente de las alertas',async()=>{
+ const today=new Intl.DateTimeFormat('en-CA',{timeZone:'America/Bogota',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date());
+ const create=async(date,i)=>{const id=crypto.randomUUID();await m.publishManualNotice(actor(owner),{id,kind:'boarding_pass',travelDate:date,title:'Pase '+i,body:'',recipients:[owner],files:[{filename:'Foto.png',data:Buffer.from([137,80,78,71,13,10,26,10,0]).toString('base64')}]},async()=>true);return id;};
+ const prior=await create('2020-01-01','pasado'),current=await create(today,'hoy');for(let i=0;i<43;i++)await create('2090-01-01',i);
+ const first=await m.boardingFeed(actor(owner));assert.equal(first.today,today);assert.equal(first.notices[0].id,current);assert.equal(first.notices.length,40);assert.ok(first.nextCursor);assert.ok(first.notices.every(n=>n.id!==prior));
+ const second=await m.boardingFeed(actor(owner),false,first.nextCursor);assert.equal(second.notices.length,4);assert.ok(second.notices.every(n=>!first.notices.some(o=>o.id===n.id)));
+ const history=await m.boardingFeed(actor(owner),true);assert.deepEqual(history.notices.map(n=>n.id),[prior]);assert.equal((await m.boardingFeed(actor(boardAlex))).notices.length,0);await assert.rejects(()=>m.boardingFeed(actor(owner),false,'bad'));
+});
+test('Pases Slack: mapeo CAS, canales exactos, destinatario inmutable, archivos válidos y reintentos sin duplicados',async()=>{
+ hook=url=>url.pathname==='/api/conversations.info'?Response.json({ok:true,channel:{id:url.searchParams.get('channel'),is_member:true,is_archived:false}}):null;
+ assert.equal((await api(luisaToken,{action:'boardingChannels',input:{channels:boardChannels}})).status,403);
+ await assert.rejects(()=>m.configureBoardingChannels({channels:boardChannels.map((c,i)=>i===0?{...c,userId:boardJhon}:c)},async()=>true));
+ await m.configureBoardingChannels({channels:boardChannels},async()=>true);assert.equal(sql.prepare('SELECT count(*) n FROM jac_boarding_channels').get().n,3);
+ await assert.rejects(()=>m.configureBoardingChannels({channels:boardChannels},async()=>true),e=>e.status===409);assert.ok(sql.prepare('SELECT version FROM jac_boarding_channels').all().every(r=>r.version===1));
+ fileMeta={...fileMeta,name:'Camilo 10 de octubre 2026.pdf',channels:['C0C8FAPHTCG']};const id='FBOARDTEST01';
+ assert.equal((await slack(event(id,'C0C8FAPHTCG'))).status,200);const row=sql.prepare("SELECT * FROM jac_notices WHERE source=?").get('slack:'+id);assert.equal(row.kind,'boarding_pass');assert.equal(row.travel_date,'2026-10-10');assert.deepEqual(sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(row.id).map(x=>x.user_id),[boardJhon],'El nombre Camilo no puede redirigir un pase del canal de Jhon.');
+ await slack(event(id,'C0C8FAPHTCG'));assert.equal(sql.prepare('SELECT count(*) n FROM jac_notices WHERE source=?').get('slack:'+id).n,1);
+ await assert.rejects(()=>m.noticeItem(actor(owner),row.id),e=>e.status===404);
+ const bad='FBOARDTEST02';fileMeta={...fileMeta,name:'Sin fecha.pdf'};await slack(event(bad,'C0C8FAPHTCG'));assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get(bad).status,'failed');assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:'+bad),undefined);
+ const changed='FBOARDTEST03';fileMeta={...fileMeta,name:'Jhon 11 de octubre.pdf'};await m.queueSlackFiles([changed],'C0C8FAPHTCG');sql.prepare("UPDATE jac_boarding_channels SET version=version+1 WHERE id='C0C8FAPHTCG'").run();await m.importSlackFiles();assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get(changed).status,'failed');assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:'+changed),undefined);
+ const alien='FBOARDTEST04';await m.queueSlackFiles([alien],'C_UNKNOWN');assert.equal(sql.prepare('SELECT id FROM jac_slack_files WHERE id=?').get(alien),undefined);hook=null;
+});
+test('Pases: revocar destinatario durante subida impide guardar y limpia archivos tardíos',async()=>{
+ const id=crypto.randomUUID();beforePut=async()=>{sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(boardAlex);};
+ try{await assert.rejects(()=>m.publishManualNotice(actor(owner),{id,kind:'boarding_pass',title:'Privado',body:'',travelDate:'2026-10-10',recipients:[boardAlex],files:[{filename:'Foto.png',data:Buffer.from([137,80,78,71,13,10,26,10,0]).toString('base64')}]},async()=>true));assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(id),undefined);assert.equal(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='ready' AND notice_id=?").get(id),undefined);}finally{beforePut=null;sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(boardAlex);}
+});

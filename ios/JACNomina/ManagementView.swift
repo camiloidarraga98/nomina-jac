@@ -8,10 +8,10 @@ struct ManagementView: View {
             List {
                 OperationStatusSection()
                 Section("Avisos") {
-                    NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts")
+                    if user.itinerariesOnly != true { NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts") }
                     NavigationLink { NotificationSettingsView() } label: { Label("Notificaciones", systemImage: "bell.badge") }.accessibilityIdentifier("management.notifications")
                 }
-                Section("Administración") {
+                if user.itinerariesOnly != true { Section("Administración") {
                     if let overview = store.overview {
                         NavigationLink { PeriodsView(overview: overview, archive: true, embedded: true) } label: { Label("Archivo", systemImage: "archivebox") }.accessibilityIdentifier("management.archive")
                         NavigationLink { EmployeesView(overview: overview, embedded: true) } label: { Label("Equipo", systemImage: "person.2") }.accessibilityIdentifier("management.employees")
@@ -20,7 +20,7 @@ struct ManagementView: View {
                     NavigationLink { MailView(user: user) } label: { Label("Correos y Gmail", systemImage: "envelope") }
                     if user.isOwner { NavigationLink { UsersView() } label: { Label("Usuarios y permisos", systemImage: "person.badge.key") } }
                 }
-            }.jacSurface().navigationTitle("Gestión")
+            } }.jacSurface().navigationTitle("Gestión")
         }
     }
 }

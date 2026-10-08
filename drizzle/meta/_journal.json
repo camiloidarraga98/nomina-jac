@@ -92,6 +92,20 @@
       "when": 1791391413428,
       "tag": "0012_manual_upload_token",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1791421694962,
+      "tag": "0013_boarding_passes",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791422420206,
+      "tag": "0014_itineraries_only_access",
+      "breakpoints": true
     }
   ]
 }

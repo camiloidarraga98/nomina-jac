@@ -7,7 +7,7 @@ export const dynamic='force-dynamic';
 const headers={...payrollHeaders,'Referrer-Policy':'no-referrer'};
 const failure=(e:unknown)=>Response.json({error:e instanceof CalendarFailure?e.message:'No pudimos completar la operación de Agenda. Tus datos siguen en el formulario; intenta de nuevo.'},{status:e instanceof CalendarFailure?e.status:502,headers});
 export async function GET(req:Request){
- const user=await payrollUser();if(!user||user.legacy)return Response.json({error:'Inicia sesión con tu cuenta de JAC.'},{status:401,headers});
+ const user=await payrollUser();if(user?.itinerariesOnly)return Response.json({error:'Tu cuenta solo puede consultar itinerarios.'},{status:403,headers});if(!user||user.legacy)return Response.json({error:'Inicia sesión con tu cuenta de JAC.'},{status:401,headers});
  try{
   const url=new URL(req.url);
   if(url.searchParams.get('action')==='calendars'){
@@ -19,7 +19,7 @@ export async function GET(req:Request){
  }catch(e){return failure(e);}
 }
 export async function POST(req:Request){
- const user=await payrollUser();if(!user||user.legacy)return Response.json({error:'Inicia sesión con tu cuenta de JAC.'},{status:401,headers});
+ const user=await payrollUser();if(user?.itinerariesOnly)return Response.json({error:'Tu cuenta solo puede consultar itinerarios.'},{status:403,headers});if(!user||user.legacy)return Response.json({error:'Inicia sesión con tu cuenta de JAC.'},{status:401,headers});
  if(req.headers.get('origin')!==new URL(req.url).origin)return Response.json({error:'Origen no autorizado.'},{status:403,headers});
  try{
   const body=await req.json() as Record<string,unknown>;

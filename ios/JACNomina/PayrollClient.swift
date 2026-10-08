@@ -134,8 +134,8 @@ final class PayrollClient {
         let (data, _) = try await request(path: "api/mobile/payroll", query: [URLQueryItem(name: "workspace", value: "1")])
         return try decoder.decode(PayrollWorkspace.self, from: data)
     }
-    func notices(cursor: String = "") async throws -> NoticeFeed {
-        let (data, _) = try await request(path: "api/notices", query: cursor.isEmpty ? [] : [URLQueryItem(name: "cursor", value: cursor)])
+    func notices(cursor: String = "", boarding: String? = nil) async throws -> NoticeFeed {
+        let (data, _) = try await request(path: "api/notices", query: (cursor.isEmpty ? [] : [URLQueryItem(name: "cursor", value: cursor)]) + (boarding.map { [URLQueryItem(name:"boarding",value:$0)] } ?? []))
         return try decoder.decode(NoticeFeed.self, from: data)
     }
     func noticeCommand(_ command: JSONValue) async throws { _ = try await request(path: "api/notices", body: command) }
@@ -150,10 +150,11 @@ final class PayrollClient {
         let name = (notice.filename as NSString).lastPathComponent
         return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Itinerario.pdf" : name)
     }
-    func publishNotice(id: String, kind: String, title: String, body: String, recipients: [String], files: [NoticeUpload]) async throws {
+    func publishNotice(id: String, kind: String, title: String, body: String, recipients: [String], files: [NoticeUpload], travelDate: String? = nil) async throws {
         guard files.count <= 5, files.reduce(0, { $0 + $1.data.count }) <= 10*1024*1024 else { throw APIError.message("Elige hasta 5 archivos que sumen como máximo 10 MB.") }
         for file in files { _ = try NoticeUpload.mime(file.data) }
-        _ = try await request(path: "api/notices/publish", body: .object(["id": .string(id), "kind": .string(kind), "title": .string(title), "body": .string(body), "recipients": .array(recipients.sorted().map(JSONValue.string)), "files": .array(files.map { .object(["filename": .string($0.filename), "data": .string($0.data.base64EncodedString())]) })]))
+        var payload: [String: JSONValue] = ["id": .string(id), "kind": .string(kind), "title": .string(title), "body": .string(body), "recipients": .array(recipients.sorted().map(JSONValue.string)), "files": .array(files.map { .object(["filename": .string($0.filename), "data": .string($0.data.base64EncodedString())]) })]
+        if let travelDate { payload["travelDate"] = .string(travelDate) }; _ = try await request(path:"api/notices/publish",body:.object(payload))
     }
     func noticeFile(_ item: JACNotice, file: NoticeAttachment) async throws -> ExportedDocument {
         let (data, response) = try await request(path: "api/notices/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "file", value: file.id)], document: true)

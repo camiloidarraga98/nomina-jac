@@ -7,12 +7,12 @@ struct PayrollHomeView: View {
     @ObservedObject private var push = JACNotifications.shared
     @State private var selected: String
     init(overview: PayrollOverview, agendaOnly: Bool = false) {
-        self.overview = overview; _selected = State(initialValue: agendaOnly ? "agenda" : "payroll")
+        self.overview = overview; _selected = State(initialValue: overview.user.itinerariesOnly == true ? "itineraries" : agendaOnly ? "agenda" : "payroll")
     }
     var body: some View {
         TabView(selection: $selected) {
-            Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Quincenas") } else { PeriodsView(overview: overview) } }.tabItem { Label("Quincena", systemImage: "wallet.pass") }.tag("payroll")
-            CalendarView(user: overview.user, initialMonth: store.preferredAgendaMonth).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }.tag("agenda")
+            if overview.user.itinerariesOnly != true { Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Quincenas") } else { PeriodsView(overview: overview) } }.tabItem { Label("Quincena", systemImage: "wallet.pass") }.tag("payroll")
+            CalendarView(user: overview.user, initialMonth: store.preferredAgendaMonth).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }.tag("agenda") }
             NavigationStack { if store.isAgendaOnly { ConnectionRequiredView(title: "Itinerarios") } else { NoticesView(user: overview.user) } }.tabItem { Label("Itinerarios", systemImage: "doc.text") }.tag("itineraries")
             NavigationStack { AccountView(user: overview.user) }.tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }.tag("account")
             Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Gestión") } else { ManagementView(user: overview.user) } }.tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }.tag("management")

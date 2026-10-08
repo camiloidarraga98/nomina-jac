@@ -579,4 +579,22 @@ final class PayrollClientTests: XCTestCase {
         #endif
     }
 
+    @MainActor func testBoardingDateParsingAndColombiaMidnight() throws {
+        XCTAssertEqual(BoardingClock.today(try XCTUnwrap(CalendarClock.instant("2026-10-08T04:59:59Z"))),"2026-10-07")
+        XCTAssertEqual(BoardingClock.today(try XCTUnwrap(CalendarClock.instant("2026-10-08T05:00:00Z"))),"2026-10-08")
+        let at=try XCTUnwrap(CalendarClock.instant("2026-12-31T15:00:00Z"))
+        XCTAssertEqual(BoardingClock.today(try XCTUnwrap(BoardingClock.filenameDate("Camilo 2 de enero.pdf",at:at))),"2027-01-02")
+        XCTAssertNil(BoardingClock.filenameDate("Camilo 31 de abril 2026.pdf")); XCTAssertNil(BoardingClock.filenameDate("1 de octubre y 2 de octubre.pdf"))
+    }
+    @MainActor func testPrivateBoardingFeedHistoryAndManualContract() async throws {
+        let client=UITestBackend.client(); let feed=try await client.notices(boarding:"current")
+        XCTAssertEqual(feed.notices.filter { $0.travelDate == BoardingClock.today() }.count,2)
+        XCTAssertEqual(feed.notices.count,3); let history=try await client.notices(boarding:"history"); XCTAssertEqual(history.notices.count,1)
+        let reader=UITestBackend.client(reader:true); let otherFeed=try await reader.notices(boarding:"current"); XCTAssertTrue(otherFeed.notices.isEmpty)
+        do { _ = try await reader.notice(id:"boarding-fixture-0"); XCTFail("Otro usuario no puede abrir un pase") } catch {}
+        let vault=MemorySession(); vault.token=token; let sending=makeClient(vault)
+        MockProtocol.handler = { request in let body=try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(request)); XCTAssertEqual(body["kind"].text,"boarding_pass"); XCTAssertEqual(body["travelDate"].text,"2026-10-10"); XCTAssertEqual(body["recipients"].elements,[.string("recipient-fixture")]); return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!,Data("{}".utf8)) }
+        try await sending.publishNotice(id:UUID().uuidString.lowercased(),kind:"boarding_pass",title:"Pase ficticio",body:"",recipients:["recipient-fixture"],files:[NoticeUpload(filename:"10 de octubre.pdf",data:Data("%PDF-1.4 ficticio".utf8))],travelDate:"2026-10-10")
+    }
+
 }

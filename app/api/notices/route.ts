@@ -1,12 +1,12 @@
 import {waitUntil} from 'cloudflare:workers';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {sessionToken} from '@/lib/payroll-auth-crypto';
-import {noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
+import {boardingFeed,configureBoardingChannels,noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
 import {NoticeFailure} from '@/lib/notifications-core';
 export const dynamic='force-dynamic';
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:payrollHeaders});
 const failure=(e:unknown)=>reply({error:e instanceof NoticeFailure?e.message:'No pudimos completar la operación. Conserva tus datos e intenta de nuevo.'},e instanceof NoticeFailure?e.status:502);
-export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);try{const query=new URL(req.url).searchParams;if(query.has('item'))return reply({item:await noticeItem(u,query.get('item')??'')});const feed=await noticeFeed(u,query.get('cursor')??'');waitUntil(Promise.all([importSlackFiles(),purgeNoticeAttachments()]).catch(()=>{}));return reply(feed);}catch(e){return failure(e);}}
+export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);try{const query=new URL(req.url).searchParams;if(query.has('boarding'))return reply(await boardingFeed(u,query.get('boarding')==='history',query.get('cursor')??''));if(query.has('item'))return reply({item:await noticeItem(u,query.get('item')??'')});const feed=await noticeFeed(u,query.get('cursor')??'');waitUntil(Promise.all([importSlackFiles(),purgeNoticeAttachments()]).catch(()=>{}));return reply(feed);}catch(e){return failure(e);}}
 export async function POST(req:Request){
  const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);
  if(req.headers.get('origin')!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);
@@ -19,6 +19,7 @@ export async function POST(req:Request){
   if(b.action==='read'&&typeof b.id==='string'){await markNoticeRead(u,b.id);return reply({ok:true});}
   if(!noticeOwner(u))return reply({error:'Solo Camilo puede gestionar alertas, eliminar itinerarios y configurar la integración.'},403);
   const authorize=async()=>{const actor=await payrollUser();return !!actor&&actor.id===u.id&&noticeOwner(actor);};
+  if(b.action==='boardingChannels'){await configureBoardingChannels(b.input,authorize);return reply({ok:true});}
   if(b.action==='deleteAlert'){await deleteManualNotice(u,b.id,b.confirmation,authorize);return reply({ok:true,notice:'Alerta eliminada.'});}
   if(b.action==='deleteItinerary'){await deleteItinerary(u,b.id,b.confirmation,authorize);return reply({ok:true,notice:'Itinerario eliminado.'});}
   if(b.action==='alert'){const id=await saveManualNotice(u,b.alert,authorize);waitUntil(dispatchPush().catch(()=>{}));return reply({id,notice:'Alerta guardada para los destinatarios elegidos.'});}

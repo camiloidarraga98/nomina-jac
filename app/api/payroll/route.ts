@@ -9,9 +9,9 @@ import {reopenPeriod,deleteEmployee,validateSave} from '@/lib/payroll-policy';
 import {can,savePermissionIssue} from '@/lib/payroll-permissions';
 export const dynamic='force-dynamic';
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:payrollHeaders});
-export async function GET(){if(!await payrollUser())return reply({error:'Acceso no autorizado.'},401);try{return reply(await readPayroll());}catch(e){console.error('Payroll load failed',e);return reply({error:'No se pudo cargar la nómina. Intenta de nuevo.'},503);}}
+export async function GET(){const actor=await payrollUser();if(!actor)return reply({error:'Acceso no autorizado.'},401);if(actor.itinerariesOnly)return reply({error:'Tu cuenta solo puede consultar itinerarios.'},403);try{return reply(await readPayroll());}catch(e){console.error('Payroll load failed',e);return reply({error:'No se pudo cargar la nómina. Intenta de nuevo.'},503);}}
 export async function POST(req:Request){
- const user=await payrollUser();if(!user)return reply({error:'Acceso no autorizado.'},401);
+ const user=await payrollUser();if(!user)return reply({error:'Acceso no autorizado.'},401);if(user.itinerariesOnly)return reply({error:'Tu cuenta solo puede consultar itinerarios.'},403);
  const origin=req.headers.get('origin');if(origin!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);
  try{
   if(Number(req.headers.get('content-length')||0)>8_000_000)return reply({error:'La solicitud es demasiado grande.'},413);

@@ -7,8 +7,9 @@ struct PayrollUser: Codable, Equatable {
     let displayName: String
     let isOwner: Bool
     let permissions: [String]
+    var itinerariesOnly: Bool? = nil
 
-    func can(_ permission: String) -> Bool { isOwner || permissions.contains(permission) }
+    func can(_ permission: String) -> Bool { itinerariesOnly != true && (isOwner || permissions.contains(permission)) }
 }
 
 struct PayrollOverview: Decodable {

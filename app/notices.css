@@ -13,3 +13,5 @@
 .notice-file-open:focus-visible{outline:2px solid #35643d;outline-offset:3px}
 .notice-detail-footer{display:flex;justify-content:flex-end;margin-top:12px;padding-top:20px;border-top:1px solid #e2e8e3}
 @media(max-width:480px){.notice-attachment{gap:10px;padding:12px}.notice-file-icon{width:32px;height:38px}.notice-file-open{padding:0 12px}.notice-detail-footer{margin-top:8px;padding-top:16px}}
+
+.boarding-today{border:1px solid #b6d49a;border-radius:16px;padding:20px;background:#f5faef}.boarding-today h3,.boarding-day h3{margin:0 0 14px}.boarding-count{display:inline-grid;place-items:center;min-width:28px;height:28px;background:#d9efbe;border-radius:20px;font-size:14px;margin-left:8px}.boarding-day{margin-top:24px}.boarding-history{margin-top:24px;padding-top:18px;border-top:1px solid #dce5de}.boarding-history summary{cursor:pointer;font-weight:600;padding:8px 0 16px}.boarding-history .notice-list{margin-top:8px}.boarding-history button{margin-top:8px}

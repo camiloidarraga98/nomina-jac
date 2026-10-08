@@ -349,4 +349,27 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"itinerario-manual-eliminado")
     }
 
+    @MainActor func testBoardingPassesTodayFutureHiddenHistoryAndPrivatePDF() {
+        let app=fixture(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
+        XCTAssertTrue(app.staticTexts["Pases de abordar para hoy · 2"].waitForExistence(timeout:10))
+        XCTAssertTrue(app.buttons["notices.item.boarding-fixture-0"].exists); XCTAssertFalse(app.buttons["notices.item.boarding-fixture-3"].exists)
+        tap(app,"notices.item.boarding-fixture-0"); XCTAssertFalse(app.buttons["notices.delete"].exists); tap(app,"notices.pdf")
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout:15)); tap(app,"notices.pdf.close"); tap(app,"notices.detail.close")
+        app.swipeUp(); tap(app,"boarding.history"); XCTAssertTrue(app.buttons["notices.item.boarding-fixture-3"].waitForExistence(timeout:10)); attachScreen(app,name:"pases-historial-privado")
+    }
+
+    @MainActor func testItinerariesOnlyAccountCannotSeePayrollAgendaOrAdministration() {
+        let app=XCUIApplication(); app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-itineraries-only"]; app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Itinerarios"].waitForExistence(timeout:15)); XCTAssertFalse(app.tabBars.buttons["Quincena"].exists); XCTAssertFalse(app.tabBars.buttons["Agenda"].exists)
+        app.tabBars.buttons["Gestión"].tap(); XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["management.archive"].exists); XCTAssertFalse(app.buttons["notices.alerts"].exists)
+    }
+
+    @MainActor func testManualPrivateBoardingPassWithRecipientAndAttachment() {
+        let app=fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
+        app.segmentedControls["notices.editor.kind"].buttons["Pase"].tap(); fill(app,"notices.editor.title","Pase privado manual ficticio"); tap(app,"notices.editor.fixture")
+        app.swipeUp(); tap(app,"boarding.recipient"); app.buttons["Camilo simulado"].tap(); tap(app,"notices.editor.save")
+        let item=app.buttons.matching(NSPredicate(format:"label CONTAINS %@","Pase privado manual ficticio")).firstMatch
+        XCTAssertTrue(item.waitForExistence(timeout:15)); item.tap(); XCTAssertFalse(app.buttons["notices.delete"].exists); tap(app,"notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout:15)); attachScreen(app,name:"pase-manual-pdf-privado")
+    }
+
 }

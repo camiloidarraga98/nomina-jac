@@ -1,6 +1,6 @@
 import {z} from 'zod';
 import {NoticeFailure,MAX_PDF_BYTES} from './notifications-core';
-export const manualNoticeSchema=z.object({id:z.string().uuid(),kind:z.enum(['alert','itinerary']),title:z.string().trim().min(1).max(120),body:z.string().trim().max(2000),recipients:z.array(z.string().uuid()).max(100),files:z.array(z.object({filename:z.string().min(1).max(160),data:z.string().max(14*1024*1024)}).strict()).max(5)}).strict();
+export const manualNoticeSchema=z.object({id:z.string().uuid(),kind:z.enum(['alert','itinerary','boarding_pass']),travelDate:z.string().optional(),title:z.string().trim().min(1).max(120),body:z.string().trim().max(2000),recipients:z.array(z.string().uuid()).max(100),files:z.array(z.object({filename:z.string().min(1).max(160),data:z.string().max(14*1024*1024)}).strict()).max(5)}).strict();
 export function fileMime(bytes:Uint8Array){
  if(new TextDecoder().decode(bytes.slice(0,5))==='%PDF-')return 'application/pdf';
  if(bytes.length>8&&[137,80,78,71,13,10,26,10].every((n,i)=>bytes[i]===n))return 'image/png';
