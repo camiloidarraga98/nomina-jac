@@ -540,6 +540,20 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Aprobado e incorporado a nómina"].waitForExistence(timeout:15));attachScreen(app,name:"gasto-con-comprobante-aprobado")
     }
 
+    @MainActor func testReceiptStylizedMerchantConceptCanBeAppliedAndReviewed() {
+        let app=fixture(["--uitest-offline-content","--uitest-reset-content"])
+        app.tabBars.buttons["Gestión"].tap();tap(app,"management.expenses");tap(app,"expenses.create");tap(app,"expenses.scan");tap(app,"receipt.logoFixture")
+        let concept=app.descendants(matching:.any)["receipt.concept"].firstMatch
+        XCTAssertTrue(concept.waitForExistence(timeout:30));XCTAssertTrue(concept.label.contains("Frisby"),app.debugDescription)
+        attachScreen(app,name:"factura-encabezado-estilizado-ficticio")
+        tap(app,"receipt.apply")
+        XCTAssertEqual(app.textFields["expenses.concept"].value as? String,"Frisby")
+        XCTAssertEqual(app.textFields["expenses.amount"].value as? String,"47600")
+        XCTAssertEqual(app.textFields["expenses.time"].value as? String,"13:45:20")
+        fill(app,"expenses.concept","Frisby · almuerzo revisado")
+        XCTAssertEqual(app.textFields["expenses.concept"].value as? String,"Frisby · almuerzo revisado")
+    }
+
     @MainActor func testReceiptOCRReviewOfflineDraftRelaunchAndExplicitSubmission() {
         let app=fixture(["--uitest-offline-content","--uitest-reset-content"])
         app.tabBars.buttons["Gestión"].tap();tap(app,"management.expenses");tap(app,"expenses.create");tap(app,"expenses.scan")

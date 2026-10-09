@@ -153,6 +153,39 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNoThrow(try draft.validateStorage())
         draft.receiptTime="25:75";XCTAssertThrowsError(try draft.validateStorage())
     }
+    func testReceiptConceptUsesMerchantHeadingAndExplicitCommercialName() {
+        XCTAssertEqual(ReceiptParser.parse(["FACTURA ELECTRONICA", "Gracias por tu compra", "F r i s b y", "NIT 123456789", "FECHA 08/10/2026", "TOTAL 47600"]).concept, "Frisby")
+        XCTAssertEqual(ReceiptParser.parse(["SOCIEDAD FICTICIA SAS", "Nombre comercial : Café Ficticio", "FECHA 08/10/2026"]).concept, "Café Ficticio")
+        XCTAssertEqual(ReceiptParser.parse(["FACTURA ELECTRONICA", "Razón social: Comercio Ficticio SAS", "CAJERO: Persona ficticia"]).concept, "Comercio Ficticio SAS")
+        XCTAssertEqual(ReceiptParser.parse(["Electrónica Ficticia", "TOTAL 10000"]).concept, "Electrónica Ficticia")
+        XCTAssertNil(ReceiptParser.parse(["FACTURA ELECTRONICA", "NIT 123456789", "FECHA 08/10/2026", "Pollo con arroz", "TOTAL 47600"]).concept, "Un producto no reemplaza un nombre ilegible")
+        XCTAssertNil(ReceiptParser.parse(["FACTURA ELECTRONICA", "08/10/2026", "Pollo con arroz", "TOTAL 47600"]).concept)
+        XCTAssertNil(ReceiptParser.merchantCandidate("CAJERO: Persona ficticia"))
+        XCTAssertNil(ReceiptParser.merchantCandidate("www.comercio.invalid"))
+        XCTAssertEqual(ReceiptParser.merchantCandidate("Frisby S.A.S."), "Frisby")
+        XCTAssertEqual(ReceiptParser.merchantCandidate("Frisby S.A.S. NIT 123456789"), "Frisby")
+        XCTAssertEqual(ReceiptParser.merchantCandidate("Frisbee Ficticio"), "Frisbee Ficticio", "No adivinar otra marca por parecido")
+    }
+    func testReceiptMerchantUsesHeaderGeometryWithoutChoosingBodyOrUncertainLogo() {
+        let header: [ReceiptOCR.Fragment] = [
+            .init(text: "Gracias por tu compra", bounds: CGRect(x:0.2,y:0.94,width:0.6,height:0.025)),
+            .init(text: "Frisby", bounds: CGRect(x:0.3,y:0.79,width:0.4,height:0.12)),
+            .init(text: "SOCIEDAD FICTICIA SAS", bounds: CGRect(x:0.1,y:0.73,width:0.8,height:0.025)),
+            .init(text: "NIT 123456789", bounds: CGRect(x:0.1,y:0.68,width:0.8,height:0.025)),
+            .init(text: "Pollo con arroz", bounds: CGRect(x:0.1,y:0.35,width:0.8,height:0.18))]
+        XCTAssertEqual(ReceiptOCR.merchant(in: header),"Frisby")
+        let split: [ReceiptOCR.Fragment] = [.init(text:"F r i",bounds:CGRect(x:0.2,y:0.8,width:0.2,height:0.1)), .init(text:"s b y",bounds:CGRect(x:0.4,y:0.8,width:0.2,height:0.1))]
+        XCTAssertEqual(ReceiptOCR.merchant(in:split),"Frisby")
+        XCTAssertNil(ReceiptOCR.merchant(in:[.init(text:"Nombre ilegible",bounds:CGRect(x:0.2,y:0.8,width:0.5,height:0.1),confidence:0.1)]))
+        XCTAssertNil(ReceiptOCR.merchant(in:[]))
+    }
+    @MainActor func testNativeVisionReadsStylizedMerchantWordAndPreservesDateTotalAndTime() async throws {
+        MockProtocol.handler = { _ in XCTFail("El nombre se reconoce sin red"); throw URLError(.unsupportedURL) }
+        let value = try await ReceiptOCR.readReceipt(ReceiptOCR.photograph(ReceiptOCR.fixture(logo: true)))
+        XCTAssertEqual(value.concept,"Frisby");XCTAssertEqual(value.amount,47600);XCTAssertEqual(value.date,"2026-10-08");XCTAssertEqual(value.time,"13:45:20");XCTAssertEqual(value.kind,.food)
+        let original = try await ReceiptOCR.readReceipt(ReceiptOCR.photograph(ReceiptOCR.fixture()))
+        XCTAssertEqual(original.concept,"RESTAURANTE FICTICIO JAC");XCTAssertEqual(original.amount,47600)
+    }
     private let base = URL(string: "https://payroll.example.invalid")!
     private let token = String(repeating: "a", count: 43)
 

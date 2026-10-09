@@ -3,6 +3,7 @@ import SwiftUI
 import UIKit
 import PhotosUI
 import Vision
+import ImageIO
 
 enum ExpenseKind: String, CaseIterable, Codable {
     case food = "Alimentación", transport = "Transporte", lodging = "Hospedaje", fuel = "Combustible", other = "Otros"
@@ -126,11 +127,33 @@ enum ReceiptParser {
         if result.date == nil { result.warnings.append("No se pudo leer una fecha válida. Revisa la fecha del gasto.") }
         result.kind = suggestedKind(rows)
         if result.kind == nil { result.warnings.append("Selecciona el tipo de gasto; no se pudo clasificar con certeza.") }
-        for (index, row) in rows.prefix(8).enumerated() where row.range(of: "FACTURA|ELECTRONIC|DOCUMENTO|NIT|CUFE|DIAN|FECHA|TOTAL|RECIBO|TELEFONO|DIRECCION|RESOLUCION|^[0-9$]", options: .regularExpression) == nil {
-            if row.filter({ $0.isLetter }).count >= 3, row.count <= 120 { result.concept = original[index]; break }
-        }
+        result.concept = merchantName(original)
         if result.concept == nil { result.warnings.append("Completa el concepto del gasto.") }
         return result
+    }
+    // Only names actually read in the heading may become the concept.
+    static func merchantCandidate(_ line: String) -> String? {
+        var value = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = "^(?:NOMBRE COMERCIAL|RAZ[OÓ]N SOCIAL|EMISOR|ESTABLECIMIENTO)\\s*[:：-]\\s*"
+        if let range = value.range(of: label, options: [.regularExpression, .caseInsensitive]) { value.removeSubrange(range) }
+        if let tax = value.range(of: "\\s+NIT\\b.*$", options: [.regularExpression, .caseInsensitive]) { value.removeSubrange(tax) }
+        let upper = normalize(value)
+        let metadata = "^(?:FACTURA|DOCUMENTO|RECIBO|TIQUETE|NOTA (?:CREDITO|DEBITO)|BIENVENID|GRACIAS|NIT|CUFE|DIAN|FECHA|HORA|TOTAL|SUBTOTAL|IVA|CLIENTE|ADQUIRIENTE|CONSUMIDOR|VENDEDOR|CAJERO|CAJA|MESA|PEDIDO|ORDEN|DESCRIPCION|CANTIDAD|ARTICULO|PRODUCTO|PRECIO|VALOR|EFECTIVO|CAMBIO|RESOLUCION|AUTORIZACION|RESPONSABILIDAD|REGIMEN|IMPUESTO|TELEFONO|TEL[ .:]|CELULAR|DIRECCION|CALLE|CARRERA|CRA[ .]|CL[ .]|AVENIDA|SUCURSAL|SEDE|PUNTO DE VENTA)"
+        guard upper.range(of: metadata, options: .regularExpression) == nil,
+              upper.range(of: "@|WWW[.]|HTTPS?://|\\b(?:NIT|CUFE|CIIU)\\b|[0-9]{3,}|[$]", options: .regularExpression) == nil,
+              value.filter({ $0.isLetter }).count >= 3, value.utf16.count <= 120,
+              value.first?.isNumber != true else { return nil }
+        // Spaced logo lettering is normalized only when it spells the complete name.
+        let letters = upper.filter { $0.isLetter }
+        if letters == "FRISBY" || letters == "FRISBYSAS" { return "Frisby" }
+        return value
+    }
+    static func merchantName(_ lines: [String]) -> String? {
+        let heading = Array(lines.prefix(12).prefix { dates(normalize($0)).isEmpty && normalize($0).range(of: "^(?:FECHA|HORA|DESCRIPCION|CANTIDAD|ARTICULO|PRODUCTO|SUBTOTAL|TOTAL)\\b", options: .regularExpression) == nil })
+        for label in ["NOMBRE COMERCIAL", "RAZON SOCIAL", "EMISOR", "ESTABLECIMIENTO"] {
+            if let line = heading.first(where: { normalize($0).range(of: "^" + label + "\\s*[:：-]", options: .regularExpression) != nil }), let name = merchantCandidate(line) { return name }
+        }
+        return heading.compactMap(merchantCandidate).first
     }
     private static let monthNames = ["ENE": 1, "ENERO": 1, "FEB": 2, "FEBRERO": 2, "MAR": 3, "MARZO": 3,
         "ABR": 4, "ABRIL": 4, "MAY": 5, "MAYO": 5, "JUN": 6, "JUNIO": 6, "JUL": 7, "JULIO": 7,
@@ -205,6 +228,9 @@ enum ReceiptParser {
 
 enum ReceiptOCR {
     static func orderedLines(_ fragments: [(text: String, bounds: CGRect)]) -> [String] {
+        groupedLines(fragments).map(\.text)
+    }
+    private static func groupedLines(_ fragments: [(text: String, bounds: CGRect)]) -> [(text: String, bounds: CGRect)] {
         // Receipts often put the label and price in separate OCR observations.
         // Merge only fragments on the same baseline, then read left to right.
         var rows: [[(text: String, bounds: CGRect)]] = []
@@ -214,21 +240,64 @@ enum ReceiptOCR {
                 return abs(anchor.bounds.midY - fragment.bounds.midY) < min(anchor.bounds.height, fragment.bounds.height) * 0.45
             }) { rows[index].append(fragment) } else { rows.append([fragment]) }
         }
-        return rows.map { $0.sorted { $0.bounds.minX < $1.bounds.minX }.map(\.text).joined(separator: " ") }
+        return rows.map { row in
+            (row.sorted { $0.bounds.minX < $1.bounds.minX }.map(\.text).joined(separator: " "), row.dropFirst().reduce(row[0].bounds) { $0.union($1.bounds) })
+        }
+    }
+    struct Fragment {
+        var text: String
+        var bounds: CGRect
+        var confidence: Float = 1
+    }
+    static func merchant(in fragments: [Fragment]) -> String? {
+        let reliable = fragments.filter { $0.confidence >= 0.35 }
+        guard let top = reliable.map({ $0.bounds.maxY }).max() else { return nil }
+        // Ignore the body/footer even if an item or the total has a larger font.
+        let boundary = reliable.filter { ReceiptParser.normalize($0.text).range(of: "^(?:NIT|FECHA|CUFE|DESCRIPCION|CANTIDAD|SUBTOTAL|TOTAL)\\b", options: .regularExpression) != nil }.map { $0.bounds.maxY }.max() ?? 0
+        let heading = reliable.filter { $0.bounds.midY >= max(0.5, top - 0.35) && $0.bounds.midY > boundary }
+        let rows = groupedLines(heading.map { ($0.text, $0.bounds) })
+        return rows.compactMap { row -> (String, Double)? in
+            guard let name = ReceiptParser.merchantCandidate(row.text) else { return nil }
+            let explicit = ReceiptParser.normalize(row.text).range(of: "^NOMBRE COMERCIAL\\s*[:：-]", options: .regularExpression) != nil
+            return (name, (explicit ? 1 : 0) + row.bounds.height + row.bounds.midY * 0.005)
+        }.sorted { $0.1 > $1.1 }.first?.0
+    }
+    private static func observations(_ data: Data, header: Bool = false) throws -> [Fragment] {
+        let request = VNRecognizeTextRequest()
+        request.recognitionLevel = .accurate; request.usesLanguageCorrection = true
+        request.customWords = ["Frisby"]
+        let supported = try request.supportedRecognitionLanguages()
+        request.recognitionLanguages = ["es-ES", "en-US"].filter { supported.contains($0) }
+        if header {
+            guard let source = CGImageSourceCreateWithData(data as CFData, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+                  let crop = image.cropping(to: CGRect(x: 0, y: 0, width: image.width, height: Int(Double(image.height) * 0.45))) else { return [] }
+            try VNImageRequestHandler(cgImage: crop).perform([request])
+        } else { try VNImageRequestHandler(data: data).perform([request]) }
+        try Task.checkCancellation()
+        return (request.results ?? []).compactMap { observation in
+            guard let text = observation.topCandidates(1).first else { return nil }
+            var bounds = observation.boundingBox
+            if header { bounds = CGRect(x: bounds.minX, y: 0.55 + bounds.minY * 0.45, width: bounds.width, height: bounds.height * 0.45) }
+            return Fragment(text: text.string, bounds: bounds, confidence: text.confidence)
+        }
     }
     static func recognize(_ data: Data) async throws -> [String] {
+        try await Task.detached(priority: .userInitiated) { orderedLines(try observations(data).map { ($0.text, $0.bounds) }) }.value
+    }
+    static func readReceipt(_ data: Data) async throws -> ReceiptSuggestion {
         try await Task.detached(priority: .userInitiated) {
-            let request = VNRecognizeTextRequest()
-            request.recognitionLevel = .accurate; request.usesLanguageCorrection = true
-            let supported = try request.supportedRecognitionLanguages()
-            request.recognitionLanguages = ["es-ES", "en-US"].filter { supported.contains($0) }
-            try VNImageRequestHandler(data: data).perform([request])
-            try Task.checkCancellation()
-            let fragments = (request.results ?? []).compactMap { observation -> (text: String, bounds: CGRect)? in
-                guard let text = observation.topCandidates(1).first?.string else { return nil }
-                return (text, observation.boundingBox)
-            }
-            return orderedLines(fragments)
+            let full = try observations(data), lines = orderedLines(full.map { ($0.text, $0.bounds) })
+            guard !lines.isEmpty else { throw APIError.invalid("No se pudo leer texto. Intenta otra foto o completa el gasto manualmente.") }
+            var value = ReceiptParser.parse(lines)
+            // A heading-only retry helps large stylized lettering without changing date/total order.
+            let header: [Fragment]
+            do { header = try observations(data, header: true) }
+            catch { try Task.checkCancellation(); header = [] }
+            let reliableLines = orderedLines(full.filter { $0.confidence >= 0.35 }.map { ($0.text, $0.bounds) })
+            value.concept = merchant(in: header) ?? merchant(in: full) ?? ReceiptParser.merchantName(reliableLines)
+            value.warnings.removeAll { $0 == "Completa el concepto del gasto." }
+            if value.concept == nil { value.warnings.append("Completa el concepto del gasto.") }
+            return value
         }.value
     }
     @MainActor static func photograph(_ image: UIImage) throws -> Data {
@@ -241,12 +310,16 @@ enum ReceiptOCR {
         return data
     }
     #if DEBUG
-    @MainActor static func fixture() -> UIImage {
+    @MainActor static func fixture(logo: Bool = false) -> UIImage {
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         return UIGraphicsImageRenderer(size: CGSize(width: 1100, height: 1350), format: format).image { context in
             UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1100, height: 1350))
             let lines = ["RESTAURANTE FICTICIO JAC", "FACTURA DE PRUEBA", "FECHA: 08/10/2026 13:45:20", "Almuerzo de prueba", "SUBTOTAL 40.000", "IVA 7.600", "TOTAL A PAGAR COP 47.600", "EFECTIVO 50.000", "CAMBIO 2.400", "VENCIMIENTO: 10/10/2026 09:00"]
-            for (index, line) in lines.enumerated() { (line as NSString).draw(at: CGPoint(x: 60, y: 60 + index * 125), withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 44, weight: .medium), .foregroundColor: UIColor.black]) }
+            for (index, line) in lines.enumerated() {
+                if index == 0, logo {
+                    ("Frisby" as NSString).draw(at: CGPoint(x: 320, y: 20), withAttributes: [.font: UIFont(name: "Georgia-BoldItalic", size: 100) ?? UIFont.boldSystemFont(ofSize: 100), .kern: 2, .foregroundColor: UIColor.systemRed])
+                } else { (line as NSString).draw(at: CGPoint(x: 60, y: 60 + index * 125), withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 44, weight: .medium), .foregroundColor: UIColor.black]) }
+            }
         }
     }
     #endif
@@ -271,7 +344,10 @@ struct ReceiptScannerView: View {
                     if UIImagePickerController.isSourceTypeAvailable(.camera) { Button { camera = true } label: { Label("Tomar foto de la factura", systemImage: "camera") } }
                     PhotosPicker(selection: $photo, matching: .images) { Label("Leer una foto guardada", systemImage: "photo") }.accessibilityIdentifier("receipt.photos")
                     #if DEBUG
-                    if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Leer factura ficticia") { Task { await read(ReceiptOCR.fixture()) } }.accessibilityIdentifier("receipt.fixture") }
+                    if store.client.baseURL.host?.hasSuffix(".invalid") == true {
+                        Button("Leer factura ficticia") { Task { await read(ReceiptOCR.fixture()) } }.accessibilityIdentifier("receipt.fixture")
+                        Button("Leer encabezado estilizado ficticio") { Task { await read(ReceiptOCR.fixture(logo: true)) } }.accessibilityIdentifier("receipt.logoFixture")
+                    }
                     #endif
                 }.disabled(reading)
                 if reading { Section { ProgressView("Leyendo factura…").accessibilityIdentifier("receipt.reading") } }
@@ -310,10 +386,9 @@ struct ReceiptScannerView: View {
         guard active else { return }; reading = true; error = nil; suggestion = nil
         defer { reading = false }
         do {
-            let data = try ReceiptOCR.photograph(image), lines = try await ReceiptOCR.recognize(data)
+            let data = try ReceiptOCR.photograph(image), value = try await ReceiptOCR.readReceipt(data)
             guard active else { return }; imageData = data
-            guard !lines.isEmpty else { throw APIError.invalid("No se pudo leer texto. Intenta otra foto o completa el gasto manualmente.") }
-            suggestion = ReceiptParser.parse(lines)
+            suggestion = value
         } catch { if active { self.error = error.localizedDescription } }
     }
 }
