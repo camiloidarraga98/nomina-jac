@@ -6,7 +6,7 @@ Camilo y la cuenta `jac`, como administradores, encuentran **CRM** en la barra l
 
 El listado y sus totales muestran únicamente shows de hoy en adelante, usando la fecha de Colombia. Los registros anteriores, abonos y comprobantes se conservan y sus enlaces privados siguen funcionando. El selector comienza en el mes actual.
 
-Al entrar se revisan seis meses de Agenda, desde el mes elegido. Se detectan títulos que contienen nombres de municipios colombianos; usa el listado público DIVIPOLA de DANE, con coincidencia de palabras completas y sin depender de tildes. No se modifica ningún evento de Calendar. Un título como «Reunión en Pereira» también puede ser detectado: revisa el registro y marca **Ignorar: no corresponde a un show** si hace falta. Un evento sin precio nunca entra automáticamente en nómina.
+Al entrar se revisan seis meses de Agenda, desde el mes elegido. Se detectan títulos que contienen nombres de municipios colombianos; usa el listado público DIVIPOLA de DANE, con coincidencia de palabras completas y sin depender de tildes. La detección solo consulta Calendar; crear o eliminar un evento requiere su acción específica. Un título como «Reunión en Pereira» también puede ser detectado: revisa el registro y marca **Ignorar: no corresponde a un show** si hace falta. Un evento sin precio nunca entra automáticamente en nómina.
 
 Abre un show, registra su precio de venta en COP y, opcionalmente, el empresario, observaciones y si es promocional. Cada show tiene su propio saldo:
 
@@ -22,7 +22,7 @@ Los comprobantes se abren directamente desde JAC y requieren sesión activa de a
 
 **Registrar abono** aparece arriba del CRM. Selecciona el show, registra valor/fecha/observación y adjunta comprobantes, sin abrir primero su cuenta. El selector incluye los shows activos de hoy en adelante del rango consultado, independientemente del texto de búsqueda. Los que aún no tienen precio aparecen deshabilitados con una indicación para registrarlo. La opción anterior dentro de cada cuenta sigue disponible.
 
-**Crear show** abre un formulario completo para Camilo y `jac`: nombre, fechas, todo el día u horas de Colombia, lugar y descripción compartida; valor de venta, empresario, observaciones internas y condición promocional; primer abono opcional con fecha, valor y PDF/JPG/PNG. El último día elegido es inclusivo para eventos de todo el día. Para terminar después de medianoche, elige la fecha de fin del día siguiente.
+**Crear show** abre un formulario completo para Camilo y `jac`: nombre, una **Fecha del evento**, todo el día u horas de Colombia, lugar y descripción compartida; valor de venta, empresario, observaciones internas y condición promocional; primer abono opcional con fecha, valor y PDF/JPG/PNG. Los shows se crean para un único día. En todo el día, JAC convierte internamente el fin al día siguiente exclusivo que requiere Google. Si eliges horas, el fin debe ser posterior al inicio dentro de la misma fecha de Colombia.
 
 Calendar recibe exclusivamente el nombre, las fechas/horas, el lugar y la descripción compartida. **Precio, empresario, observaciones internas, abonos y comprobantes permanecen privados en CRM.** El mismo evento aparece en Agenda web, iPhone y Google Calendar porque se usa el calendario compartido existente. En iPhone se recibe al revalidar Agenda con internet; su copia descargada sigue funcionando como antes. No requiere un binario nuevo ni cambia la configuración de sus notificaciones.
 
@@ -38,7 +38,15 @@ Al crear una quincena nueva, web e iPhone reciben automáticamente los shows act
 
 Cambiar Calendar, el precio o los abonos no reescribe quincenas existentes ni cierres históricos. Los abonos no son un gasto ni reducen el valor de venta usado por la comisión. Los cálculos de nómina, gastos por show y comisión siguen sus reglas existentes. Un cambio concurrente del CRM durante la creación rechaza el guardado para que se vuelva a revisar, sin una quincena parcialmente creada.
 
-Un evento que deja de aparecer queda marcado **Revisar: ya no aparece en Calendar**. Su cuenta y comprobantes se conservan; se excluye de nuevas importaciones. Actualizar shows de Calendar vuelve a revisar la ventana de seis meses. No se importan precios de un calendario externo ni se adivinan valores.
+## Eliminación y sincronización
+
+Dentro de la cuenta del show, **Eliminar evento** pide confirmación con su nombre y fecha actuales. Camilo y `jac` pueden eliminar el evento correspondiente de Google Calendar y retirarlo del listado del CRM. Agenda web e iPhone dejan de mostrarlo al recibir la siguiente actualización con internet. Sin conexión se conserva la última copia descargada hasta reconectar; no es posible recibir un borrado remoto sin red.
+
+Si se elimina directamente en Google Calendar, el CRM comprueba su identificador antes de retirarlo: una omisión del listado o un evento movido a otro mes no se confunden con eliminación. Confirma `cancelled`, 404 o 410 en el calendario accesible original; ante problemas de permisos, red o respuestas inválidas conserva los registros. La revisión cubre seis meses al entrar, al pulsar **Actualizar shows de Calendar** y cada minuto con el panel visible. No se añade un cron ni una conexión externa nueva.
+
+Los eventos eliminados se excluyen de nuevas importaciones y totales del listado. **Abonos, comprobantes, filas de Sheets, auditoría y nóminas existentes se conservan como historial privado**, accesible por sus enlaces autorizados. No se borran archivos de R2 ni se anulan pagos automáticamente. No se pueden registrar nuevos abonos o cambiar precios en un evento eliminado.
+
+La eliminación comprueba sesión, administrador, origen, revisión y calendario original. Usa ETag/If-Match y `sendUpdates=none`, sin invitados ni avisos JAC. Un cambio ajeno exige actualizar y confirmar de nuevo. La intención se guarda atómicamente en el estado y auditoría existentes antes de contactar Google. Una respuesta perdida permite reintentar el mismo evento y confirmar si ya no existe; no se recrea al recibir un listado viejo ni al repetir una creación anterior. Mientras está pendiente, el show queda bloqueado para cambios financieros; **Reintentar eliminación** permite resolverlo. No se importan precios externos ni se adivinan valores.
 
 ## Google Sheets: último paso de conexión
 

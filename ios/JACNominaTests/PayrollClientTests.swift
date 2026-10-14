@@ -697,6 +697,38 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNil(client.cachedAgenda()); XCTAssertEqual(vault.token, token)
     }
 
+    @MainActor func testDeletedCalendarEventDisappearsFromDownloadedAgendaAndNextOfflineLaunch() async throws {
+        let fixture = UITestBackend.client(), feed = try await fixture.agenda(month: CalendarClock.month(Date())), user = try await fixture.workspace().user
+        XCTAssertFalse(feed.events.isEmpty)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = AgendaOfflineCache(root: root), vault = MemorySession(); vault.token = token
+        let client = makeClient(vault, cache: cache), scope = try XCTUnwrap(client.agendaScope())
+        try cache.save(AgendaOfflineRecord(schema: 1, user: user, months: [SavedAgenda(data: feed, receivedAt: Date())]), scope: scope)
+        let store = PayrollStore(client: client)
+        XCTAssertFalse(try XCTUnwrap(store.cachedAgenda(month: feed.month, userID: user.id)).data.events.isEmpty)
+        var value = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(feed))
+        value["events"] = .array([]); value["upcoming"] = .array([])
+        value["updatedAt"] = .string("2099-01-01T12:00:00.000Z")
+        let payload = try JSONEncoder().encode(value)
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "payroll.example.invalid")
+            XCTAssertEqual(request.url?.path, "/api/calendar")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, payload)
+        }
+        let refreshed = try await client.agenda(month: feed.month)
+        try store.rememberAgenda(refreshed, userID: user.id, scope: scope)
+        XCTAssertTrue(try XCTUnwrap(store.cachedAgenda(month: feed.month, userID: user.id)).data.events.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(cache.load(scope)?.latest).data.events.isEmpty)
+        MockProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        let reopened = PayrollStore(client: client)
+        XCTAssertTrue(try XCTUnwrap(reopened.cachedAgenda(month: feed.month, userID: user.id)).data.events.isEmpty)
+        XCTAssertTrue(try XCTUnwrap(reopened.cachedAgenda(month: feed.month, userID: user.id)).data.upcoming.isEmpty)
+        client.beginOfflineRestore()
+        let offline = try await client.agenda(month: feed.month)
+        XCTAssertTrue(offline.events.isEmpty); XCTAssertTrue(offline.upcoming.isEmpty)
+    }
+
     @MainActor func testAgendaCacheDropsOldCalendarAndCannotRollbackConnectionOrRetainDisconnectedEvents() async throws {
         let client = UITestBackend.client(), store = PayrollStore(client: client)
         defer { store.forgetAgenda() }

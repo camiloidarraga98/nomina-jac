@@ -1,4 +1,5 @@
 import {waitUntil} from 'cloudflare:workers';
+import {prepareCrmDeletion,deleteCrmShow} from '@/lib/crm-delete';
 import {createCrmShow} from '@/lib/crm-create';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {agendaDate} from '@/lib/calendar-core';
@@ -16,6 +17,8 @@ const failure=(e:unknown)=>reply({error:e instanceof CrmFailure||e instanceof No
 export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!canCrm(u))return reply({error:'El CRM está disponible solo para administradores.'},403);try{const guard=crmGuard(req,u),q=new URL(req.url).searchParams,id=q.get('id')??(q.get('payment')?await paymentShowID(u,q.get('payment')!):null),data=id?await crmShowDetail(u,id):await crmFeed(u,q.get('month')??agendaDate().slice(0,7));if(!await guardActive(guard))throw new CrmFailure('Tu sesión cambió.',403);return reply(data);}catch(e){return failure(e);}}
 export async function POST(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!canCrm(u))return reply({error:'El CRM está disponible solo para administradores.'},403);if(req.headers.get('origin')!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);
  try{const body=await boundedNoticeJSON(req) as {action?:string;record?:unknown;month?:string;revision?:number},guard=crmGuard(req,u);
+  if(body.action==='prepareDeleteShow')return reply(await prepareCrmDeletion(u,body.record,guard));
+  if(body.action==='deleteShow')return reply(await deleteCrmShow(u,body.record,guard));
   if(body.action==='createShow'){const result=await createCrmShow(u,body.record,guard);waitUntil(syncCrmSheet(guard).catch(()=>({synced:0})));return reply(result);}
   if(body.action==='syncCalendar')return reply(await syncCrmMonth(u,body.month??agendaDate().slice(0,7),guard));
   if(body.action==='connectSheets'){const start=await startCrmSheetsOauth(u,req.headers.get('cookie')||'');return reply({url:start.url},200,start.cookie);}
