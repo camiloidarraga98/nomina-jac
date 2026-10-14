@@ -17,7 +17,7 @@ class Query {
 }
 globalThis.__calendarEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const result=qs.map(q=>q.execute());sql.exec('COMMIT');return result;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'calendar-independent-test-authentication-key-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
 globalThis.__calendarHeaders=new Headers();
-const bundle=await build({stdin:{contents:"export * as api from './app/api/calendar/route';export * as handoff from './app/api/calendar/connect/route';export * as callback from './app/api/payroll/gmail/callback/route';export * from './lib/calendar';export * from './lib/calendar-core';export * from './lib/calendar-oauth';export * from './lib/calendar-oauth-errors';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-mail';export * from './lib/payroll-mail-core';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__calendarEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__calendarHeaders;',loader:'js'}));}}]});
+const bundle=await build({stdin:{contents:"export * as api from './app/api/calendar/route';export * as handoff from './app/api/calendar/connect/route';export * as callback from './app/api/payroll/gmail/callback/route';export * from './lib/calendar';export * from './lib/calendar-core';export * from './lib/agenda-cache-context';export * from './lib/calendar-oauth';export * from './lib/calendar-oauth-errors';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-mail';export * from './lib/payroll-mail-core';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__calendarEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__calendarHeaders;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/calendar-tests-')),moduleFile=dir+'/bundle.mjs';await writeFile(moduleFile,bundle.outputFiles[0].contents);
 const m=await import(pathToFileURL(moduleFile).href);await rm(dir,{recursive:true});
 const {calendarOAuthMessage}=m;
@@ -328,4 +328,24 @@ test('Agenda OAuth acepta sesión persistente antigua y sigue comprobando su rev
   const c=await start(true);await m.revokeSession(ownerToken);
   const result=await m.callback.GET(callbackRequest(c));assert.equal(new URL(result.headers.get('location')).searchParams.get('result'),'error');
  } finally {ownerToken=previous;}
+});
+
+
+test('copia web separa claves/sesiones y rechaza un ámbito anterior antes de consultar Google',async()=>{
+ const secret=globalThis.__calendarEnv.PAYROLL_AUTH_KEY,context=m.deriveAgendaCacheContext(owner,ownerToken,secret);assert.match(context.scope,/^[A-Za-z0-9_-]{43}$/);assert.match(context.key,/^[A-Za-z0-9_-]{43}$/);assert.notEqual(context.scope,context.key);assert.ok(!JSON.stringify(context).includes(ownerToken));assert.equal(m.deriveAgendaCacheContext(owner,'invalid',secret),null);assert.notDeepEqual(context,m.deriveAgendaCacheContext('other-user',ownerToken,secret));assert.notDeepEqual(context,m.deriveAgendaCacheContext(owner,await m.makeSession(owner),secret));
+ const cookie='__Host-jac_session='+ownerToken;globalThis.__calendarHeaders=new Headers({host:'calendar.example.invalid',cookie});const before=calls.length;
+ const mismatch=await m.api.GET(new Request(base+'/api/calendar?month=2026-10',{headers:{cookie,'X-JAC-Agenda-Scope':'old-scope'}}));assert.equal(mismatch.status,401);assert.equal(calls.length,before);
+ const good=await m.api.GET(new Request(base+'/api/calendar?month=2026-10',{headers:{cookie,'X-JAC-Agenda-Scope':context.scope}}));assert.equal(good.status,200);assert.equal(good.headers.get('X-JAC-Agenda-Scope'),context.scope);assert.match(good.headers.get('Cache-Control'),/no-store/);
+});
+
+test('revocación durante lectura de Google no devuelve datos para guardar en la copia web',async()=>{
+ await connect();let revision=(await m.agendaConnection()).revision;await api(ownerToken,{action:'select',revision,calendarId:available.id});
+ const previous=ownerToken;ownerToken=await m.makeSession(owner);let revoked=false;googleHook=async url=>{if(url.pathname.endsWith('/events')&&!revoked){revoked=true;await m.revokeSession(ownerToken);}return null;};
+ try{assert.equal((await api(ownerToken)).status,401);assert.equal(revoked,true);}finally{ownerToken=previous;googleHook=null;}
+});
+
+
+test('denegación de Google descarta la copia; un fallo temporal conserva la alternativa descargada',async()=>{
+ await connect();const revision=(await m.agendaConnection()).revision;await api(ownerToken,{action:'select',revision,calendarId:available.id});
+ try{for(const status of [401,403,404,503]){googleHook=async url=>url.pathname.endsWith('/events')?Response.json({error:{}},{status}):null;const result=await api(ownerToken);assert.equal(result.body.discardCachedAgenda,status===503?undefined:true);}}finally{googleHook=null;}
 });

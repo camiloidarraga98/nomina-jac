@@ -1,39 +1,68 @@
 'use client';
-import {useState,useEffect,useCallback,useRef} from 'react';
+import {useState,useEffect,useCallback,useRef,useMemo} from 'react';
 import {ChevronLeft,ChevronRight,CalendarDays,RefreshCw,MapPin,Clock,ExternalLink,Settings2,Plus,Pencil} from 'lucide-react';
+import {bindAgendaCache,clearBrowserAgendaCache,type AgendaCacheContext} from '@/lib/agenda-cache';
 import AgendaEventEditor from './agenda-event-editor';
 import {Button} from '@/components/ui/button';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import {agendaDate,agendaMonth,agendaDayLabel,agendaEventOnDay,agendaEventTime,addAgendaDays,type AgendaData,type AgendaEvent,type AgendaCalendar,type AgendaEventDraft} from '@/lib/calendar-core';
 
-async function calendarRequest<T>(path:string,body?:unknown):Promise<T>{
- const response=await fetch(path,{cache:'no-store',...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});
- if(response.status===401){location.assign('/acceso?returnTo='+encodeURIComponent(location.pathname+location.search));throw new Error('Tu sesión venció. Inicia sesión de nuevo.');}
- const result=await response.json() as T&{error?:string};if(!response.ok)throw new Error(result.error||'No pudimos consultar Agenda.');return result;
+class AgendaRequestFailure extends Error {constructor(message:string,readonly status:number,readonly discardCachedAgenda=false){super(message);}}
+async function calendarRequest<T>(path:string,body?:unknown,scope?:string):Promise<T>{
+ const response=await fetch(path,{cache:'no-store',headers:{...(scope?{'X-JAC-Agenda-Scope':scope}:{}),...(body?{'Content-Type':'application/json'}:{})},...(body?{method:'POST',body:JSON.stringify(body)}:{})});
+ if(response.status===401){clearBrowserAgendaCache();location.assign('/acceso?returnTo='+encodeURIComponent(location.pathname+location.search));throw new Error('Tu sesión venció. Inicia sesión de nuevo.');}
+ const result=await response.json() as T&{error?:string;discardCachedAgenda?:boolean};if(!response.ok)throw new AgendaRequestFailure(result.error||'No pudimos consultar Agenda.',response.status,result.discardCachedAgenda===true);return result;
 }
-export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOwner:boolean;connectBlocked:boolean;onGoogleSetup:()=>void}){
+export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup,cacheContext=null}:{cacheContext?:AgendaCacheContext|null;isOwner:boolean;connectBlocked:boolean;onGoogleSetup:()=>void}){
  const today=agendaDate();
+ const cache=useMemo(()=>bindAgendaCache(cacheContext),[cacheContext?.scope]);
+ const request=<T,>(path:string,body?:unknown)=>calendarRequest<T>(path,body,cacheContext?.scope);
+ const [fromCache,setFromCache]=useState(false),[verified,setVerified]=useState(false),[online,setOnline]=useState(true);
+ const alive=useRef(true);
  const [month,setMonth]=useState(today.slice(0,7)),[day,setDay]=useState(today),[data,setData]=useState<AgendaData|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[settings,setSettings]=useState(false),[calendars,setCalendars]=useState<AgendaCalendar[]>([]),[calendarId,setCalendarId]=useState(''),[selected,setSelected]=useState<AgendaEvent|null>(null),[confirmDisconnect,setConfirmDisconnect]=useState(false);
  const [listing,setListing]=useState(false);
  const [editor,setEditor]=useState<{event?:AgendaEvent;day:string;revision:number}|null>(null),[savingEvent,setSavingEvent]=useState(false);
- const generation=useRef(0),lastRefresh=useRef(0),calendarRequestId=useRef(0);
+ const generation=useRef(0),lastRefresh=useRef(0),calendarRequestId=useRef(0),networkGeneration=useRef(0);
  const refresh=useCallback(async()=>{
-  const id=++generation.current;setLoading(true);setError('');lastRefresh.current=Date.now();
-  try{const result=await calendarRequest<AgendaData>('/api/calendar?month='+encodeURIComponent(month));if(id===generation.current)setData(result);}
-  catch(e){if(id===generation.current)setError(e instanceof Error?e.message:'No pudimos consultar Agenda.');}
-  finally{if(id===generation.current)setLoading(false);}
- },[month]);
- useEffect(()=>{void refresh();return()=>{generation.current++;};},[refresh]);
+  if(!alive.current)return;
+  const id=++generation.current;setLoading(true);setError('');setVerified(false);lastRefresh.current=Date.now();
+  const current=()=>alive.current&&id===generation.current;
+  try{const result=await calendarRequest<AgendaData>('/api/calendar?month='+encodeURIComponent(month),undefined,cacheContext?.scope);
+   if(current()){
+    networkGeneration.current=id;setData(result);setFromCache(false);setVerified(true);setOnline(true);
+    setSelected(previous=>previous?[...result.events,...result.upcoming].find(e=>e.id===previous.id)||null:null);
+    await cache?.write(result);return true;
+   }
+  }catch(e){if(current()){if(e instanceof AgendaRequestFailure&&(e.discardCachedAgenda||[403,409,410].includes(e.status))){cache?.clearData();setData(null);setSelected(null);setEditor(null);}setError(e instanceof Error?e.message:'No pudimos consultar Agenda.');}return false;}
+  finally{if(current())setLoading(false);}
+ },[month,cache,cacheContext?.scope]);
  useEffect(()=>{
+  alive.current=true;
+  const unsubscribe=cache?.subscribe(()=>{alive.current=false;generation.current++;setData(null);setSelected(null);setEditor(null);setVerified(false);setFromCache(false);setLoading(false);setError('La sesión cambió. Recarga Agenda para continuar.');});
+  return()=>{unsubscribe?.();alive.current=false;generation.current++;};
+ },[cache]);
+ useEffect(()=>{
+  let mounted=true;setData(null);setSelected(null);setFromCache(false);setVerified(false);
+  const startGeneration=generation.current+1;
+  // Disk restoration and network run together. A slow disk read must never
+  // replace a fresh network response (or a response for another month/session).
+  void cache?.read(month).then(saved=>{if(mounted&&alive.current&&networkGeneration.current!==startGeneration&&generation.current===startGeneration&&saved){setData(saved);setFromCache(true);}});
+  void refresh();
+  return()=>{mounted=false;generation.current++;};
+ },[refresh,cache,month]);
+ useEffect(()=>{
+  setOnline(navigator.onLine!==false);
   const onFocus=()=>{if(document.visibilityState==='visible'&&Date.now()-lastRefresh.current>30000)void refresh();};
-  window.addEventListener('focus',onFocus);document.addEventListener('visibilitychange',onFocus);
-  return()=>{window.removeEventListener('focus',onFocus);document.removeEventListener('visibilitychange',onFocus);};
+  const onOnline=()=>{setOnline(true);void refresh();},onOffline=()=>{setOnline(false);setVerified(false);};
+  const timer=window.setInterval(onFocus,60000);
+  window.addEventListener('focus',onFocus);window.addEventListener('online',onOnline);window.addEventListener('offline',onOffline);document.addEventListener('visibilitychange',onFocus);
+  return()=>{clearInterval(timer);window.removeEventListener('focus',onFocus);window.removeEventListener('online',onOnline);window.removeEventListener('offline',onOffline);document.removeEventListener('visibilitychange',onFocus);};
  },[refresh]);
  useEffect(()=>{
   if(!isOwner||!data?.connection.connected||(!settings&&data.connection.selected))return;
   const id=++calendarRequestId.current;
   setListing(true);setCalendars([]);setCalendarId('');
-  void calendarRequest<{calendars:AgendaCalendar[]}>('/api/calendar?action=calendars').then(r=>{if(id===calendarRequestId.current){setCalendars(r.calendars);setCalendarId(data.connection.selected?.id||r.calendars[0]?.id||'');}}).catch(e=>{if(id===calendarRequestId.current)setError(e instanceof Error?e.message:'No pudimos listar los calendarios.');}).finally(()=>{if(id===calendarRequestId.current)setListing(false);});
+  void request<{calendars:AgendaCalendar[]}>('/api/calendar?action=calendars').then(r=>{if(id===calendarRequestId.current){setCalendars(r.calendars);setCalendarId(data.connection.selected?.id||r.calendars[0]?.id||'');}}).catch(e=>{if(id===calendarRequestId.current)setError(e instanceof Error?e.message:'No pudimos listar los calendarios.');}).finally(()=>{if(id===calendarRequestId.current)setListing(false);});
   return()=>{calendarRequestId.current++;};
  },[isOwner,settings,data?.connection.connected,data?.connection.revision,data?.connection.selected?.id,data?.updatedAt]);
  const visible=data?.month===month?data:null,connection=data?.connection;
@@ -44,27 +73,28 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOw
  };
  async function connect(){
   setBusy(true);setError('');
-  try{const start=await calendarRequest<{url:string}>('/api/calendar',{action:'connect'});const url=new URL(start.url);if(url.protocol!=='https:'||url.hostname!=='accounts.google.com')throw new Error('La autorización de Google no es válida.');location.assign(url.toString());}
+  try{const start=await request<{url:string}>('/api/calendar',{action:'connect'});const url=new URL(start.url);if(url.protocol!=='https:'||url.hostname!=='accounts.google.com')throw new Error('La autorización de Google no es válida.');location.assign(url.toString());}
   catch(e){setError(e instanceof Error?e.message:'No pudimos abrir Google.');setBusy(false);}
  }
  async function operation(action:'select'|'disconnect'){
-  if(!connection)return;setBusy(true);setError('');setNotice('');
-  try{const result=await calendarRequest<{notice:string}>('/api/calendar',{action,revision:connection.revision,...(action==='select'?{calendarId}:{})});setNotice(result.notice);setSettings(false);setConfirmDisconnect(false);await refresh();}
+  if(!connection||!verified||!online)return;setBusy(true);setError('');setNotice('');
+  try{const result=await request<{notice:string}>('/api/calendar',{action,revision:connection.revision,...(action==='select'?{calendarId}:{})});setNotice(result.notice);setSettings(false);setConfirmDisconnect(false);cache?.clearData();setData(null);setSelected(null);setEditor(null);await refresh();}
   catch(e){setError(e instanceof Error?e.message:'No pudimos guardar la conexión.');}
   finally{setBusy(false);}
  }
  const ready=!!connection?.connected&&!!connection.selected;
  async function saveEvent(event:AgendaEventDraft,requestId:string){
-  if(!editor)return;
-  const result=await calendarRequest<{event:AgendaEvent;notice:string}>('/api/calendar',{action:editor.event?'updateEvent':'createEvent',revision:editor.revision,event,...(editor.event?{eventId:editor.event.id,etag:editor.event.etag}:{requestId})});
+  if(!editor||!verified||!online)throw new Error('Actualiza Agenda con conexión antes de guardar el evento.');
+  const result=await request<{event:AgendaEvent;notice:string}>('/api/calendar',{action:editor.event?'updateEvent':'createEvent',revision:editor.revision,event,...(editor.event?{eventId:editor.event.id,etag:editor.event.etag}:{requestId})});
   setEditor(null);setSelected(null);setNotice(result.notice);await refresh();
  }
  return <div className="agenda">
-  {error&&<div className="message error" role="alert">{error}<Button variant="outline" onClick={()=>void refresh()} disabled={loading}>Reintentar</Button></div>}
+  {error&&<div className="message error" role="alert">{error}<Button variant="outline" onClick={()=>{if(!alive.current)location.reload();else void refresh();}} disabled={loading}>Reintentar</Button></div>}
   {notice&&<div className="message success" role="status">{notice}</div>}
-  <div className="agenda-status"><div><strong>{connection?.selected?.name||'Agenda de Jhon Alex'}</strong><small>{ready?'Google Calendar · Hora de Colombia':loading?'Consultando conexión…':'Conecta Google y elige el calendario de la agenda.'}</small></div><div className="actions">{data?.canEditEvents&&ready&&<Button className="primary" onClick={()=>setEditor({day,revision:connection!.revision})} disabled={loading||busy}><Plus size={16}/>Crear evento</Button>}<Button variant="outline" aria-label="Actualizar agenda" onClick={()=>void refresh()} disabled={loading||busy}><RefreshCw size={16} className={loading?'agenda-spinning':''}/>Actualizar</Button>{isOwner&&<Button variant="outline" onClick={()=>setSettings(!settings)} disabled={busy}><Settings2 size={16}/>{settings?'Cerrar configuración':'Conexión'}</Button>}</div></div>
-  {ready&&isOwner&&!loading&&!data?.canEditEvents&&<p className="panel-note">{!connection?.writeAuthorized?'Para crear y editar eventos, abre Conexión y vuelve a autorizar Google con el permiso de edición.':'Este calendario permite consultar. Elige en Conexión uno que puedas editar.'}</p>}
-  {(!ready||settings)&&!loading&&<section className="panel agenda-connection"><div className="panel-title"><h2>{connection?.connected?'Elegir calendario':'Conectar Google Calendar'}</h2></div>
+  <div className="agenda-status"><div><strong>{connection?.selected?.name||'Agenda de Jhon Alex'}</strong><small>{ready?'Google Calendar · Hora de Colombia':loading?'Consultando conexión…':'Conecta Google y elige el calendario de la agenda.'}</small></div><div className="actions">{verified&&online&&data?.canEditEvents&&ready&&<Button className="primary" onClick={()=>setEditor({day,revision:connection!.revision})} disabled={loading||busy}><Plus size={16}/>Crear evento</Button>}<Button variant="outline" aria-label="Actualizar agenda" onClick={()=>void refresh()} disabled={loading||busy}><RefreshCw size={16} className={loading?'agenda-spinning':''}/>Actualizar</Button>{isOwner&&<Button variant="outline" onClick={()=>setSettings(!settings)} disabled={busy}><Settings2 size={16}/>{settings?'Cerrar configuración':'Conexión'}</Button>}</div></div>
+  {(fromCache||(!online&&visible))&&<p className="panel-note" role="status">{online?(loading?'Mostrando la última copia guardada. Actualizando…':'Mostrando la última copia guardada. No se pudo actualizar todavía.'):'Sin conexión. Mostrando la última copia guardada.'}</p>}
+  {ready&&verified&&isOwner&&!loading&&!data?.canEditEvents&&<p className="panel-note">{!connection?.writeAuthorized?'Para crear y editar eventos, abre Conexión y vuelve a autorizar Google con el permiso de edición.':'Este calendario permite consultar. Elige en Conexión uno que puedas editar.'}</p>}
+  {data&&(!ready||settings)&&!loading&&<section className="panel agenda-connection"><div className="panel-title"><h2>{connection?.connected?'Elegir calendario':'Conectar Google Calendar'}</h2></div>
    <p className="panel-note">{isOwner?'Usa jacmusicestudios@gmail.com y selecciona el calendario de Jhon Alex. La agenda se comparte con los usuarios activos de JAC.':'Camilo prepara la conexión y selecciona el calendario que podrá consultar el equipo.'}</p>
    {isOwner&&<div className="agenda-setup">
     {!connection?.configured?<Button onClick={onGoogleSetup}>Preparar Google en Correos</Button>:<>
@@ -73,11 +103,12 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOw
      {connectBlocked&&<p className="muted">Guarda o respalda los cambios pendientes de nómina antes de abrir Google.</p>}
     </>}
     {connection?.connected&&<>
-     <label htmlFor="agenda-calendar">Calendario de la agenda</label><select id="agenda-calendar" className="agenda-picker" value={calendarId} onChange={e=>setCalendarId(e.target.value)} disabled={busy||listing||!calendars.length}>{!calendars.length&&<option value="">{listing?'Consultando calendarios…':'No hay calendarios disponibles'}</option>}{calendars.map(c=><option key={c.id} value={c.id}>{c.name}{c.primary?' · Principal':''}</option>)}</select>
-     <div className="actions"><Button className="primary" onClick={()=>void operation('select')} disabled={busy||!calendarId}>Usar este calendario</Button><Button variant="outline" onClick={()=>setConfirmDisconnect(true)} disabled={busy}>Desconectar Agenda</Button></div>
+     <label htmlFor="agenda-calendar">Calendario de la agenda</label><select id="agenda-calendar" className="agenda-picker" value={calendarId} onChange={e=>setCalendarId(e.target.value)} disabled={!verified||!online||busy||listing||!calendars.length}>{!calendars.length&&<option value="">{listing?'Consultando calendarios…':'No hay calendarios disponibles'}</option>}{calendars.map(c=><option key={c.id} value={c.id}>{c.name}{c.primary?' · Principal':''}</option>)}</select>
+     <div className="actions"><Button className="primary" onClick={()=>void operation('select')} disabled={!verified||!online||busy||!calendarId}>Usar este calendario</Button><Button variant="outline" onClick={()=>setConfirmDisconnect(true)} disabled={!verified||!online||busy}>Desconectar Agenda</Button></div>
     </>}
    </div>}
   </section>}
+  {!loading&&!visible&&error&&<section className="panel"><p className="panel-note">No hay una copia guardada de este mes. Conéctate y vuelve a intentarlo.</p>{month!==today.slice(0,7)&&<Button variant="outline" onClick={()=>{setMonth(today.slice(0,7));setDay(today);}}>Volver al mes actual</Button>}</section>}
   {loading&&!visible?<section className="panel"><p className="panel-note" role="status">Consultando la agenda…</p></section>:ready&&visible&&<div className="agenda-layout">
    <div><section className="panel agenda-month"><div className="agenda-month-heading"><Button size="icon" variant="ghost" aria-label="Mes anterior" onClick={()=>changeMonth(-1)}><ChevronLeft/></Button><h2>{visible.monthLabel}</h2><Button size="icon" variant="ghost" aria-label="Mes siguiente" onClick={()=>changeMonth(1)}><ChevronRight/></Button><Button variant="outline" onClick={()=>{setMonth(today.slice(0,7));setDay(today);}}>Hoy</Button></div>
     <div className="agenda-weekdays" aria-hidden="true">{['Lun','Mar','Mié','Jue','Vie','Sáb','Dom'].map(d=><span key={d}>{d}</span>)}</div>
@@ -85,7 +116,7 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup}:{isOw
    </section><section className="panel agenda-day-events"><div className="panel-title"><h2>{agendaDayLabel(day)}</h2><small>{dayEvents.length} {dayEvents.length===1?'evento':'eventos'}</small></div>{dayEvents.length?dayEvents.map(e=><EventButton key={e.id} event={e} onClick={()=>setSelected(e)}/>):<div className="empty agenda-empty"><CalendarDays size={28}/><p>No hay eventos para este día.</p></div>}</section></div>
    <section className="panel agenda-upcoming"><div className="panel-title"><h2>Próximos eventos</h2></div><p className="panel-note">Los próximos 90 días · hasta {agendaDayLabel(visible.upcomingUntil)}</p>{visible.upcoming.length?visible.upcoming.map(e=><EventButton key={e.id} event={e} day={e.allDay?e.start:agendaDate(new Date(e.start))} onClick={()=>setSelected(e)}/>):<div className="empty agenda-empty"><CalendarDays size={28}/><p>No hay eventos programados en los próximos 90 días.</p></div>}<small className="agenda-updated">Actualizado {new Intl.DateTimeFormat('es-CO',{timeZone:'America/Bogota',hour:'numeric',minute:'2-digit'}).format(new Date(visible.updatedAt))}</small></section>
   </div>}
-  <Dialog open={!!selected} onOpenChange={open=>{if(!open)setSelected(null);}}><DialogContent className="payroll-dialog agenda-detail"><DialogTitle>{selected?.title||'Evento'}</DialogTitle><DialogDescription>Agenda de Jhon Alex · Hora de Colombia</DialogDescription>{selected&&<div className="agenda-event-detail"><p><CalendarDays size={17}/>{agendaDayLabel(selected.allDay?selected.start:agendaDate(new Date(selected.start)))}</p><p><Clock size={17}/>{agendaEventTime(selected)}{selected.allDay&&selected.end!==addAgendaDays(selected.start,1)&&' · hasta '+agendaDayLabel(addAgendaDays(selected.end,-1))}</p>{selected.location&&<p><MapPin size={17}/>{selected.location}</p>}{selected.description&&<p className="agenda-description">{selected.description}</p>}{data?.canEditEvents&&selected.editable&&<Button className="primary" onClick={()=>{setEditor({event:selected!,day,revision:connection!.revision});setSelected(null);}}><Pencil size={16}/>Editar evento</Button>}{selected.url&&<a className="btn" href={selected.url} target="_blank" rel="noreferrer">Ver en Google Calendar <ExternalLink size={16}/></a>}</div>}</DialogContent></Dialog>
+  <Dialog open={!!selected} onOpenChange={open=>{if(!open)setSelected(null);}}><DialogContent className="payroll-dialog agenda-detail"><DialogTitle>{selected?.title||'Evento'}</DialogTitle><DialogDescription>Agenda de Jhon Alex · Hora de Colombia</DialogDescription>{selected&&<div className="agenda-event-detail"><p><CalendarDays size={17}/>{agendaDayLabel(selected.allDay?selected.start:agendaDate(new Date(selected.start)))}</p><p><Clock size={17}/>{agendaEventTime(selected)}{selected.allDay&&selected.end!==addAgendaDays(selected.start,1)&&' · hasta '+agendaDayLabel(addAgendaDays(selected.end,-1))}</p>{selected.location&&<p><MapPin size={17}/>{selected.location}</p>}{selected.description&&<p className="agenda-description">{selected.description}</p>}{verified&&online&&data?.canEditEvents&&selected.editable&&<Button className="primary" onClick={()=>{setEditor({event:selected!,day,revision:connection!.revision});setSelected(null);}}><Pencil size={16}/>Editar evento</Button>}{selected.url&&<a className="btn" href={selected.url} target="_blank" rel="noreferrer">Ver en Google Calendar <ExternalLink size={16}/></a>}</div>}</DialogContent></Dialog>
   <Dialog open={!!editor} onOpenChange={open=>{if(!open&&!savingEvent)setEditor(null);}}><DialogContent className="payroll-dialog agenda-detail" onEscapeKeyDown={e=>{if(savingEvent)e.preventDefault();}} onInteractOutside={e=>{if(savingEvent)e.preventDefault();}}><DialogTitle>{editor?.event?'Editar evento':'Crear evento'}</DialogTitle><DialogDescription>Agenda de Jhon Alex · Hora de Colombia</DialogDescription>{editor&&<AgendaEventEditor key={editor.event?.id??'new'} event={editor.event} day={editor.day} save={saveEvent} onBusy={setSavingEvent}/>}</DialogContent></Dialog>
   <Dialog open={confirmDisconnect} onOpenChange={setConfirmDisconnect}><DialogContent className="payroll-dialog agenda-detail"><DialogTitle>Desconectar Agenda</DialogTitle><DialogDescription>El equipo dejará de consultar este calendario desde JAC. Los eventos continúan en Google Calendar.</DialogDescription><div className="actions"><Button variant="outline" onClick={()=>setConfirmDisconnect(false)} disabled={busy}>Cancelar</Button><Button className="primary" onClick={()=>void operation('disconnect')} disabled={busy}>Desconectar Agenda</Button></div></DialogContent></Dialog>
  </div>;

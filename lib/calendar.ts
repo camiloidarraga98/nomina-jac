@@ -7,7 +7,7 @@ import {AGENDA_TIME_ZONE,CALENDAR_ACCOUNT,CALENDAR_SCOPE,agendaMonth,agendaDate,
 export type CalendarCredentials={clientId:string;clientSecret:string;refreshToken:string;scopes?:string[]};
 export type CalendarConfig={credentials:string;connected_email:string;calendar_id:string;calendar_name:string;timezone:string;version:number};
 type GoogleOAuthError='invalid_grant'|'invalid_client'|'unauthorized_client'|'invalid_scope'|'access_denied';
-export class CalendarFailure extends Error {constructor(message:string,public status=400,public googleError?:GoogleOAuthError){super(message);}}
+export class CalendarFailure extends Error {constructor(message:string,public status=400,public googleError?:GoogleOAuthError,public discardCachedAgenda=false){super(message);}}
 export async function calendarConfig(){return database().prepare('SELECT credentials,connected_email,calendar_id,calendar_name,timezone,version FROM payroll_calendar WHERE id=?').bind('jac').first<CalendarConfig>();}
 export async function calendarClientCredentials(){
  const row=await database().prepare('SELECT credentials FROM payroll_gmail WHERE id=?').bind('jac').first<{credentials:string}>();
@@ -35,8 +35,8 @@ async function googleResponse(response:Response) {
   const disabled=['accessNotConfigured','serviceDisabled'].includes(reason||'');
   const oauthError=typeof e==='string'&&['invalid_grant','invalid_client','unauthorized_client','invalid_scope','access_denied'].includes(e)?e as GoogleOAuthError:undefined;
   if(response.status===412)throw new CalendarFailure('Otra persona modificó este evento. Cierra el formulario, actualiza Agenda y abre la versión actual antes de guardar.',409);
-  if(response.status===404||response.status===410)throw new CalendarFailure('El evento ya no está disponible. Actualiza Agenda.',404);
-  throw new CalendarFailure(disabled?'Activa Google Calendar API en el proyecto de Google utilizado por JAC.':response.status===401||e==='invalid_grant'?'Google requiere que vuelvas a conectar Agenda.':response.status===403?'Google no concedió acceso al calendario. Revisa la autorización y activa Google Calendar API.':response.status===429?'Google limitó las consultas. Espera un momento y actualiza.':'No pudimos consultar Google Calendar. Intenta actualizar.',502,oauthError);
+  if(response.status===404||response.status===410)throw new CalendarFailure('El evento ya no está disponible. Actualiza Agenda.',404,undefined,true);
+  throw new CalendarFailure(disabled?'Activa Google Calendar API en el proyecto de Google utilizado por JAC.':response.status===401||e==='invalid_grant'?'Google requiere que vuelvas a conectar Agenda.':response.status===403?'Google no concedió acceso al calendario. Revisa la autorización y activa Google Calendar API.':response.status===429?'Google limitó las consultas. Espera un momento y actualiza.':'No pudimos consultar Google Calendar. Intenta actualizar.',502,oauthError,response.status===401||response.status===403||!!oauthError);
  }
  return body;
 }
