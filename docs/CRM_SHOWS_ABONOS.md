@@ -4,6 +4,8 @@
 
 Camilo y la cuenta `jac`, como administradores, encuentran **CRM** en la barra lateral, en `/crm`. Las demás cuentas conservan su acceso previo, sin consulta de abonos o comprobantes.
 
+El listado y sus totales muestran únicamente shows de hoy en adelante, usando la fecha de Colombia. Los registros anteriores, abonos y comprobantes se conservan y sus enlaces privados siguen funcionando. El selector comienza en el mes actual.
+
 Al entrar se revisan seis meses de Agenda, desde el mes elegido. Se detectan títulos que contienen nombres de municipios colombianos; usa el listado público DIVIPOLA de DANE, con coincidencia de palabras completas y sin depender de tildes. No se modifica ningún evento de Calendar. Un título como «Reunión en Pereira» también puede ser detectado: revisa el registro y marca **Ignorar: no corresponde a un show** si hace falta. Un evento sin precio nunca entra automáticamente en nómina.
 
 Abre un show, registra su precio de venta en COP y, opcionalmente, el empresario, observaciones y si es promocional. Cada show tiene su propio saldo:

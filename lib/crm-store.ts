@@ -2,7 +2,7 @@ import {database} from '@/db/raw';
 import {env} from 'cloudflare:workers';
 import {z} from 'zod';
 import {readAgenda,agendaConnection,CalendarFailure} from './calendar';
-import {agendaMonth} from './calendar-core';
+import {agendaMonth,agendaDate} from './calendar-core';
 import {decodeNoticeFiles} from './notice-files';
 import {contentHash,stageTravelFiles,discardTravelFiles,uploadedGate,uploadedBindings} from './travel-files';
 import {purgeNoticeAttachments} from './notifications';
@@ -13,11 +13,11 @@ const uuid=z.string().uuid();
 const requireCrm=(u:AccessUser)=>{if(!canCrm(u))throw new CrmFailure('El CRM está disponible solo para administradores.',403);};
 export async function guardActive(guard:CrmGuard){return !!await database().prepare('SELECT 1 WHERE '+guard.sql).bind(...guard.bindings).first();}
 async function showRow(u:AccessUser,id:string){requireCrm(u);if(!uuid.safeParse(id).success)throw new CrmFailure('Show no disponible.',404);const r=await database().prepare('SELECT * FROM jac_crm_shows WHERE id=?').bind(id).first<CrmShowRow>();if(!r)throw new CrmFailure('Show no disponible.',404);return r;}
-export async function crmFeed(u:AccessUser,month:string){requireCrm(u);agendaMonth(month);const start=month+'-01',d=new Date(start+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+6);const end=d.toISOString().slice(0,10),db=database();
- const result=await db.prepare('SELECT * FROM jac_crm_shows WHERE show_date>=? AND show_date<? ORDER BY show_date,title,id LIMIT 1001').bind(start,end).all<CrmShowRow>();if(result.results.length>1000)throw new CrmFailure('Selecciona un rango con menos shows.',413);
+export async function crmFeed(u:AccessUser,month:string){requireCrm(u);agendaMonth(month);const start=month+'-01',d=new Date(start+'T12:00:00Z');d.setUTCMonth(d.getUTCMonth()+6);const end=d.toISOString().slice(0,10),today=agendaDate(),visibleStart=start>today?start:today,db=database();
+ const result=await db.prepare('SELECT * FROM jac_crm_shows WHERE show_date>=? AND show_date<? ORDER BY show_date,title,id LIMIT 1001').bind(visibleStart,end).all<CrmShowRow>();if(result.results.length>1000)throw new CrmFailure('Selecciona un rango con menos shows.',413);
  const connection=await db.prepare('SELECT spreadsheet_url,spreadsheet_id,credentials,version,creation_state,error FROM jac_crm_sheets WHERE id=?').bind('jac').first<{spreadsheet_url:string;spreadsheet_id:string;credentials:string;version:number;creation_state:string;error:string}>();
  const pending=await db.prepare('SELECT count(*) AS n FROM jac_crm_exports WHERE synced_version<version OR connection_version<>?').bind(connection?.version??0).first<{n:number}>();
- return {shows:result.results.map(publicCrmShow),month,until:end,sheets:{connected:!!connection?.credentials,url:connection?.spreadsheet_url||'',ready:!!connection?.spreadsheet_id,version:connection?.version??0,creationState:connection?.creation_state||'idle',error:connection?.error||'',pending:pending?.n??0}};
+ return {shows:result.results.map(publicCrmShow),month,today,until:end,sheets:{connected:!!connection?.credentials,url:connection?.spreadsheet_url||'',ready:!!connection?.spreadsheet_id,version:connection?.version??0,creationState:connection?.creation_state||'idle',error:connection?.error||'',pending:pending?.n??0}};
 }
 export async function crmShowDetail(u:AccessUser,id:string){const show=await showRow(u,id),db=database();const rows=(await db.prepare('SELECT p.*,u.name AS actor_name FROM jac_crm_payments p LEFT JOIN payroll_users u ON u.id=p.actor_id WHERE show_id=? ORDER BY payment_date DESC,created_at DESC LIMIT 1001').bind(id).all<CrmPaymentRow&{actor_name:string}>()).results;if(rows.length>1000)throw new CrmFailure('Este show excede el límite de abonos visibles.',413);
  const files=(await db.prepare("SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments WHERE state='ready' AND notice_id IN (SELECT 'crm-payment:'||id FROM jac_crm_payments WHERE show_id=?)").bind(id).all<{id:string;notice_id:string;filename:string;mime_type:string;size:number}>()).results;
