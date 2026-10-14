@@ -1,3 +1,4 @@
+import {importCrmPeriods,crmLinkIssue,crmPayrollGuard} from '@/lib/crm-payroll';
 import {waitUntil} from 'cloudflare:workers';
 import {planMail} from '@/lib/payroll-mail-core';
 import {mailWrites,drainMail} from '@/lib/payroll-mail';
@@ -47,8 +48,10 @@ export async function POST(req:Request){
   }
   if(body.action!=='save')return reply({error:'Acción inválida.'},400);
   const parsed=stateSchema.safeParse(body.data);if(!parsed.success)return reply({error:parsed.error.issues[0].message},400);
+  const linkIssue=crmLinkIssue(current.data,parsed.data);if(linkIssue)return reply({error:linkIssue},400);
   const permissionIssue=savePermissionIssue(current.data,parsed.data,user);if(permissionIssue)return reply({error:permissionIssue},403);
+  await importCrmPeriods(current.data,parsed.data);const complete=stateSchema.safeParse(parsed.data);if(!complete.success)return reply({error:complete.error.issues[0].message},400);
   const issue=validateSave(current.data,parsed.data,user.email,can(user,'modifyClosed'));if(issue)return reply({error:issue},400);
-  return reply(await writePayroll(parsed.data,body.version,user.email));
+  return reply(await writePayroll(parsed.data,body.version,user.email,undefined,undefined,crmPayrollGuard(current.data,parsed.data)));
  }catch(e){if(e instanceof Error&&e.message==='MAIL_SENDING')return reply({error:'Hay desprendibles enviándose para esta quincena. Espera un momento y vuelve a intentar eliminarla.'},409);if(e instanceof Error&&e.message==='CONFLICT')return reply({error:'La nómina cambió mientras guardabas. Recarga y revisa tus cambios.'},409);console.error('Payroll save failed',e);return reply({error:'No se pudo guardar. Tus cambios siguen en pantalla.'},500);}
 }

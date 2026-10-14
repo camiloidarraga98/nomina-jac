@@ -1,3 +1,4 @@
+import {importCrmPeriods,crmLinkIssue} from '@/lib/crm-payroll';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {itineraryWorkspace} from '@/lib/itineraries-access';
 import {readPayroll} from '@/lib/payroll-store';
@@ -50,6 +51,8 @@ export async function POST(req:Request){
    const next=applyMobileEdit(current.data,body.edit as MobileEdit,body.action==='remove');
    const parsed=stateSchema.safeParse(next);if(!parsed.success)return reply({error:parsed.error.issues[0].message},400);
    const permissionIssue=savePermissionIssue(current.data,parsed.data,user);if(permissionIssue)return reply({error:permissionIssue},403);
+   const linkIssue=crmLinkIssue(current.data,parsed.data);if(linkIssue)return reply({error:linkIssue},400);
+   if(body.action==='previewEdit'){await importCrmPeriods(current.data,parsed.data);const complete=stateSchema.safeParse(parsed.data);if(!complete.success)return reply({error:complete.error.issues[0].message},400);}
    const issue=validateSave(current.data,parsed.data,user.email,can(user,'modifyClosed'));if(issue)return reply({error:issue},400);
    if(body.action==='previewEdit'){
     const id=body.edit.periodId??(body.edit.kind==='period'?body.edit.record?.id:undefined),p=parsed.data.periods.find(p=>p.id===id);

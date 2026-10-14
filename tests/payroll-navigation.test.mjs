@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {build} from 'esbuild';
 import {renderToStaticMarkup} from 'react-dom/server';
-const result=await build({stdin:{contents:"export * from './lib/payroll-navigation';export {default as Page} from './app/payroll-page';export {default as Section} from './app/[...section]/page';export {default as worker} from './worker/index';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'local-navigation-fixtures',setup(b){b.onResolve({filter:/payroll-access$|payroll-store$|payroll-app$|next\/navigation$|vinext\/server\//},args=>({path:args.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path.endsWith('payroll-access')?'export const payrollUser=async()=>globalThis.__navUser;':path.endsWith('payroll-store')?'export const readPayroll=async()=>{globalThis.__navReads++;return {data:{periods:[]},version:1};};':path.endsWith('payroll-app')?'export default function App(){return null;}':path==='next/navigation'?'export function notFound(){throw new Error("NOT_FOUND");}export function redirect(url){throw new Error("REDIRECT:"+url);}':path.endsWith('image-optimization')?'export const DEFAULT_DEVICE_SIZES=[],DEFAULT_IMAGE_SIZES=[];export const handleImageOptimization=()=>new Response();':'export default {fetch:async()=>new Response("fixture",{headers:{"X-Fixture":"local"}})};',loader:'js'}));}}]});
+const result=await build({stdin:{contents:"export * from './lib/payroll-navigation';export {default as Page} from './app/payroll-page';export {default as Section} from './app/[...section]/page';export {default as worker} from './worker/index';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'local-navigation-fixtures',setup(b){b.onResolve({filter:/agenda-cache-context$|payroll-access$|payroll-store$|payroll-app$|next\/navigation$|vinext\/server\//},args=>({path:args.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path.endsWith('agenda-cache-context')?'export const agendaCacheContext=async()=>null;':path.endsWith('payroll-access')?'export const payrollUser=async()=>globalThis.__navUser;':path.endsWith('payroll-store')?'export const readPayroll=async()=>{globalThis.__navReads++;return {data:{periods:[]},version:1};};':path.endsWith('payroll-app')?'export default function App(){return null;}':path==='next/navigation'?'export function notFound(){throw new Error("NOT_FOUND");}export function redirect(url){throw new Error("REDIRECT:"+url);}':path.endsWith('image-optimization')?'export const DEFAULT_DEVICE_SIZES=[],DEFAULT_IMAGE_SIZES=[];export const handleImageOptimization=()=>new Response();':'export default {fetch:async()=>new Response("fixture",{headers:{"X-Fixture":"local"}})};',loader:'js'}));}}]});
 // File-based import keeps React package resolution local and avoids browser/network services.
 const {mkdtemp,writeFile,rm}=await import('node:fs/promises');const {resolve}=await import('node:path');
 const tmp=await mkdtemp(resolve('work/navigation-test-'));const file=resolve(tmp,'bundle.mjs');await writeFile(file,result.outputFiles[0].contents);const m=await import(file);await rm(tmp,{recursive:true});
@@ -25,7 +25,7 @@ test('enlaces directos conservan sección, pestaña y período al renderizar en 
 test('sin sesión no se lee nómina; login vuelve a la URL y Usuarios exige propietario',async()=>{
  globalThis.__navUser=null;globalThis.__navReads=0;
  const html=renderToStaticMarkup(await m.Page({route:m.payrollRoute('/agenda')}));assert.match(html,/href="\/acceso\?returnTo=%2Fagenda"/);assert.equal(globalThis.__navReads,0);
- globalThis.__navUser={...owner,isOwner:false};await assert.rejects(()=>m.Page({route:m.payrollRoute('/usuarios')}),/NOT_FOUND/);assert.equal(globalThis.__navReads,0);
+ globalThis.__navUser={...owner,isOwner:false};await assert.rejects(()=>m.Page({route:m.payrollRoute('/usuarios')}),/NOT_FOUND/);assert.equal(globalThis.__navReads,0);await assert.rejects(()=>m.Page({route:m.payrollRoute('/crm')}),/NOT_FOUND/);assert.equal(globalThis.__navReads,0);
  const app=await m.Page({route:m.payrollRoute('/personal')});assert.equal(app.props.access.isOwner,false);
 });
 test('todas las rutas de nómina conservan cabeceras de privacidad del Worker',async()=>{
@@ -36,7 +36,7 @@ test('todas las rutas de nómina conservan cabeceras de privacidad del Worker',a
 });
 test('cuenta de solo itinerarios nunca renderiza ni consulta datos de nómina',async()=>{
  globalThis.__navUser={...owner,isOwner:false,itinerariesOnly:true};globalThis.__navReads=0;
- for(const view of ['quincena','personal','archivo','correos','reglas','usuarios'])await assert.rejects(()=>m.Page({route:{view,tab:'shows'}}),/REDIRECT:\/itinerarios/);
+ for(const view of ['quincena','personal','archivo','correos','reglas','usuarios','crm'])await assert.rejects(()=>m.Page({route:{view,tab:'shows'}}),/REDIRECT:\/itinerarios/);
  for(const view of ['itinerarios','agenda','alertas','cuenta','notificaciones','configuracion']){const page=await m.Page({route:{view,tab:'shows'}});assert.deepEqual(page.props.initial.data.employees,[]);assert.deepEqual(page.props.initial.data.periods,[]);}
  assert.equal(globalThis.__navReads,0);
 });
