@@ -2,8 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {webcrypto} from 'node:crypto';
 import {build} from 'esbuild';
-const output=await build({stdin:{contents:"export * from './lib/agenda-cache';export * from './lib/calendar-core';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
-const {AgendaCache,AGENDA_CACHE_KEY,AGENDA_SCOPE_KEY,agendaMonth}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'));
+const output=await build({stdin:{contents:"export * from './lib/agenda-cache';export * from './lib/calendar-core';export * from './lib/agenda-prefetch';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
+const {AgendaCache,AGENDA_CACHE_KEY,AGENDA_SCOPE_KEY,agendaMonth,agendaWindowMonths,prefetchAgendaWindow}=await import('data:text/javascript;base64,'+Buffer.from(output.outputFiles[0].contents).toString('base64'));
 const context={scope:'test-scope-A',key:Buffer.alloc(32,1).toString('base64url')};
 function fixture(){const values=new Map(),storage={getItem:k=>values.get(k)??null,setItem:(k,v)=>values.set(k,v),removeItem:k=>values.delete(k)};return {values,storage,env:{storage,crypto:webcrypto},cache:new AgendaCache(context,{storage,crypto:webcrypto})};}
 function data(month='2026-10',revision=2,title='Evento privado ficticio'){return {connection:{configured:true,connected:true,email:'calendar@example.invalid',selected:{id:'calendar-fixture',name:'Agenda ficticia',primary:false,timeZone:'America/Bogota'},revision,writeAuthorized:true},canEditEvents:true,...agendaMonth(month),today:'2026-10-13',events:[{id:'event-fixture',title,start:month+'-13',end:month+'-14',allDay:true,location:'Lugar ficticio',description:'Descripción privada',url:'',etag:'"fixture-v1"',editable:true,recurring:false}],upcoming:[],upcomingUntil:'2027-01-11',updatedAt:'2026-10-13T15:00:00.000Z',timeZone:'America/Bogota'};}
@@ -40,4 +40,27 @@ test('lectura pendiente no publica una copia invalidada y almacenamiento bloquea
 test('una selección nueva elimina la copia anterior aunque falle cifrar la nueva',async()=>{
  const f=fixture();await f.cache.write(data());const crypto={getRandomValues:a=>webcrypto.getRandomValues(a),subtle:{importKey:(...a)=>webcrypto.subtle.importKey(...a),decrypt:(...a)=>webcrypto.subtle.decrypt(...a),encrypt:async()=>{throw Error('simulated encryption failure');}}};
  const c=new AgendaCache(context,{storage:f.storage,crypto});assert.equal(await c.write(data('2026-11',3)),false);assert.equal(await f.cache.read('2026-10'),null);
+});
+
+
+test('ventana anticipada contiene el mes actual y cinco posteriores, incluso al cambiar de año',()=>{
+ assert.deepEqual(agendaWindowMonths('2026-10'),['2026-10','2026-11','2026-12','2027-01','2027-02','2027-03']);assert.deepEqual(agendaWindowMonths('2026-12'),['2026-12','2027-01','2027-02','2027-03','2027-04','2027-05']);assert.throws(()=>agendaWindowMonths('2026-13'));
+});
+function prefetch(f,overrides={}){return prefetchAgendaWindow({first:'2026-10',revision:2,selected:'calendar-fixture',cache:f.cache,current:()=>true,now:()=>Date.parse(data().updatedAt),fetchMonth:async month=>data(month),...overrides});}
+test('precarga cinco meses sin repetir el mes vigente y restaura los seis desde cifrado',async()=>{
+ const f=fixture(),calls=[];await f.cache.write(data());assert.equal(await prefetch(f,{fetchMonth:async month=>{calls.push(month);return data(month);}}),'complete');assert.deepEqual(calls,['2026-11','2026-12','2027-01','2027-02','2027-03']);
+ const restored=new AgendaCache(context,f.env);for(const month of agendaWindowMonths('2026-10'))assert.equal((await restored.read(month)).month,month);
+ calls.length=0;assert.equal(await prefetch(f,{fetchMonth:async month=>{calls.push(month);return data(month);}}),'complete');assert.equal(calls.length,0);
+});
+test('prefetch actualiza copias vencidas pero no vuelve a descargar meses recientes',async()=>{
+ const f=fixture(),calls=[];await prefetch(f);const now=()=>Date.parse(data().updatedAt)+16*60000;assert.equal(await prefetch(f,{now,fetchMonth:async month=>{calls.push(month);return {...data(month),updatedAt:new Date(now()).toISOString()};}}),'complete');assert.equal(calls.length,6);
+ calls.length=0;await prefetch(f,{now,fetchMonth:async month=>{calls.push(month);return data(month);}});assert.equal(calls.length,0);
+});
+test('logout o navegación cancelada durante prefetch no guardan respuestas pendientes',async()=>{
+ for(const action of ['logout','navigation','clear']){const f=fixture();await f.cache.write(data());let release,started,active=true;const began=new Promise(r=>started=r),gate=new Promise(r=>release=r),calls=[];
+ const downloading=prefetch(f,{current:()=>active,fetchMonth:async month=>{calls.push(month);started();await gate;return data(month);}});await began;if(action==='logout')f.cache.invalidate();else if(action==='clear')f.cache.clearData();else active=false;release();assert.equal(await downloading,'stopped');assert.deepEqual(calls,['2026-11']);assert.equal(await f.cache.read('2026-11'),null);}
+});
+test('un cambio de calendario retira copias y una falla temporal no borra el mes disponible',async()=>{
+ const f=fixture();await f.cache.write(data());await assert.rejects(prefetch(f,{fetchMonth:async()=>{throw new TypeError('simulated offline');}}),/offline/);assert.ok(await f.cache.read('2026-10'));
+ assert.equal(await prefetch(f,{fetchMonth:async month=>data(month,3)}),'changed');assert.equal(await f.cache.read('2026-10'),null);assert.equal(await f.cache.read('2026-11'),null);
 });

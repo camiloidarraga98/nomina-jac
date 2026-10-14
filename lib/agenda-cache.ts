@@ -21,6 +21,7 @@ export class AgendaCache {
  constructor(readonly context:AgendaCacheContext,private env:CacheEnvironment){
   try{if(env.storage.getItem(AGENDA_SCOPE_KEY)!==context.scope){env.storage.removeItem(AGENDA_CACHE_KEY);env.storage.setItem(AGENDA_SCOPE_KEY,context.scope);}}catch{/* Storage unavailable: network continues normally. */}
  }
+ get epoch(){return this.generation;}
  get active(){try{return !this.stopped&&this.env.storage.getItem(AGENDA_SCOPE_KEY)===this.context.scope;}catch{return false;}}
  subscribe(fn:()=>void){this.listeners.add(fn);return()=>{this.listeners.delete(fn);};}
  stop(){if(this.stopped)return;this.stopped=true;this.generation++;for(const fn of this.listeners)fn();}

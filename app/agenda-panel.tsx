@@ -2,6 +2,7 @@
 import {useState,useEffect,useCallback,useRef,useMemo} from 'react';
 import {ChevronLeft,ChevronRight,CalendarDays,RefreshCw,MapPin,Clock,ExternalLink,Settings2,Plus,Pencil} from 'lucide-react';
 import {bindAgendaCache,clearBrowserAgendaCache,type AgendaCacheContext} from '@/lib/agenda-cache';
+import {prefetchAgendaWindow} from '@/lib/agenda-prefetch';
 import AgendaEventEditor from './agenda-event-editor';
 import {Button} from '@/components/ui/button';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
@@ -17,7 +18,7 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup,cacheC
  const today=agendaDate();
  const cache=useMemo(()=>bindAgendaCache(cacheContext),[cacheContext?.scope]);
  const request=<T,>(path:string,body?:unknown)=>calendarRequest<T>(path,body,cacheContext?.scope);
- const [fromCache,setFromCache]=useState(false),[verified,setVerified]=useState(false),[online,setOnline]=useState(true);
+ const [verified,setVerified]=useState(false),[online,setOnline]=useState(true);
  const alive=useRef(true);
  const [month,setMonth]=useState(today.slice(0,7)),[day,setDay]=useState(today),[data,setData]=useState<AgendaData|null>(null),[loading,setLoading]=useState(true),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[settings,setSettings]=useState(false),[calendars,setCalendars]=useState<AgendaCalendar[]>([]),[calendarId,setCalendarId]=useState(''),[selected,setSelected]=useState<AgendaEvent|null>(null),[confirmDisconnect,setConfirmDisconnect]=useState(false);
  const [listing,setListing]=useState(false);
@@ -29,7 +30,7 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup,cacheC
   const current=()=>alive.current&&id===generation.current;
   try{const result=await calendarRequest<AgendaData>('/api/calendar?month='+encodeURIComponent(month),undefined,cacheContext?.scope);
    if(current()){
-    networkGeneration.current=id;setData(result);setFromCache(false);setVerified(true);setOnline(true);
+    networkGeneration.current=id;setData(result);setVerified(true);setOnline(true);
     setSelected(previous=>previous?[...result.events,...result.upcoming].find(e=>e.id===previous.id)||null:null);
     await cache?.write(result);return true;
    }
@@ -38,15 +39,15 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup,cacheC
  },[month,cache,cacheContext?.scope]);
  useEffect(()=>{
   alive.current=true;
-  const unsubscribe=cache?.subscribe(()=>{alive.current=false;generation.current++;setData(null);setSelected(null);setEditor(null);setVerified(false);setFromCache(false);setLoading(false);setError('La sesión cambió. Recarga Agenda para continuar.');});
+  const unsubscribe=cache?.subscribe(()=>{alive.current=false;generation.current++;setData(null);setSelected(null);setEditor(null);setVerified(false);setLoading(false);setError('La sesión cambió. Recarga Agenda para continuar.');});
   return()=>{unsubscribe?.();alive.current=false;generation.current++;};
  },[cache]);
  useEffect(()=>{
-  let mounted=true;setData(null);setSelected(null);setFromCache(false);setVerified(false);
+  let mounted=true;setData(null);setSelected(null);setVerified(false);
   const startGeneration=generation.current+1;
   // Disk restoration and network run together. A slow disk read must never
   // replace a fresh network response (or a response for another month/session).
-  void cache?.read(month).then(saved=>{if(mounted&&alive.current&&networkGeneration.current!==startGeneration&&generation.current===startGeneration&&saved){setData(saved);setFromCache(true);}});
+  void cache?.read(month).then(saved=>{if(mounted&&alive.current&&networkGeneration.current!==startGeneration&&generation.current===startGeneration&&saved){setData(saved);}});
   void refresh();
   return()=>{mounted=false;generation.current++;};
  },[refresh,cache,month]);
@@ -58,6 +59,19 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup,cacheC
   window.addEventListener('focus',onFocus);window.addEventListener('online',onOnline);window.addEventListener('offline',onOffline);document.addEventListener('visibilitychange',onFocus);
   return()=>{clearInterval(timer);window.removeEventListener('focus',onFocus);window.removeEventListener('online',onOnline);window.removeEventListener('offline',onOffline);document.removeEventListener('visibilitychange',onFocus);};
  },[refresh]);
+ useEffect(()=>{
+  if(!cache||!verified||!online||!data?.connection.connected||!data.connection.selected)return;
+  let mounted=true;const scopeGeneration=generation.current;
+  const current=()=>mounted&&alive.current&&generation.current===scopeGeneration;
+  void prefetchAgendaWindow({first:today.slice(0,7),revision:data.connection.revision,selected:data.connection.selected.id,cache,current,fetchMonth:next=>calendarRequest<AgendaData>('/api/calendar?month='+encodeURIComponent(next),undefined,cacheContext?.scope)}).then(result=>{
+   if(current()&&result==='changed'){setData(null);setSelected(null);setEditor(null);void refresh();}
+  }).catch(e=>{
+   // A temporary background download failure leaves the visible calendar and
+   // existing copies alone. Authorization/connection failures retire them.
+   if(current()&&e instanceof AgendaRequestFailure&&(e.discardCachedAgenda||[403,409,410].includes(e.status))){cache.clearData();setData(null);setSelected(null);setEditor(null);setError(e.message);}
+  });
+  return()=>{mounted=false;};
+ },[cache,cacheContext?.scope,verified,online,data?.connection.revision,data?.connection.selected?.id,today.slice(0,7),refresh]);
  useEffect(()=>{
   if(!isOwner||!data?.connection.connected||(!settings&&data.connection.selected))return;
   const id=++calendarRequestId.current;
@@ -92,7 +106,6 @@ export default function AgendaPanel({isOwner,connectBlocked,onGoogleSetup,cacheC
   {error&&<div className="message error" role="alert">{error}<Button variant="outline" onClick={()=>{if(!alive.current)location.reload();else void refresh();}} disabled={loading}>Reintentar</Button></div>}
   {notice&&<div className="message success" role="status">{notice}</div>}
   <div className="agenda-status"><div><strong>{connection?.selected?.name||'Agenda de Jhon Alex'}</strong><small>{ready?'Google Calendar · Hora de Colombia':loading?'Consultando conexión…':'Conecta Google y elige el calendario de la agenda.'}</small></div><div className="actions">{verified&&online&&data?.canEditEvents&&ready&&<Button className="primary" onClick={()=>setEditor({day,revision:connection!.revision})} disabled={loading||busy}><Plus size={16}/>Crear evento</Button>}<Button variant="outline" aria-label="Actualizar agenda" onClick={()=>void refresh()} disabled={loading||busy}><RefreshCw size={16} className={loading?'agenda-spinning':''}/>Actualizar</Button>{isOwner&&<Button variant="outline" onClick={()=>setSettings(!settings)} disabled={busy}><Settings2 size={16}/>{settings?'Cerrar configuración':'Conexión'}</Button>}</div></div>
-  {(fromCache||(!online&&visible))&&<p className="panel-note" role="status">{online?(loading?'Mostrando la última copia guardada. Actualizando…':'Mostrando la última copia guardada. No se pudo actualizar todavía.'):'Sin conexión. Mostrando la última copia guardada.'}</p>}
   {ready&&verified&&isOwner&&!loading&&!data?.canEditEvents&&<p className="panel-note">{!connection?.writeAuthorized?'Para crear y editar eventos, abre Conexión y vuelve a autorizar Google con el permiso de edición.':'Este calendario permite consultar. Elige en Conexión uno que puedas editar.'}</p>}
   {data&&(!ready||settings)&&!loading&&<section className="panel agenda-connection"><div className="panel-title"><h2>{connection?.connected?'Elegir calendario':'Conectar Google Calendar'}</h2></div>
    <p className="panel-note">{isOwner?'Usa jacmusicestudios@gmail.com y selecciona el calendario de Jhon Alex. La agenda se comparte con los usuarios activos de JAC.':'Camilo prepara la conexión y selecciona el calendario que podrá consultar el equipo.'}</p>
