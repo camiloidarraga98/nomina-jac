@@ -1,4 +1,5 @@
 import {database} from '@/db/raw';
+import {crmReceiptBase,crmReceiptExtension} from './crm-receipts';
 import {env} from 'cloudflare:workers';
 import {z} from 'zod';
 import {readAgenda,agendaConnection,inspectAgendaEvents} from './calendar';
@@ -60,9 +61,9 @@ export async function addCrmPayment(u:AccessUser,input:unknown,guard:CrmGuard){r
  try{if(!await guardActive(guard))throw new CrmFailure('Tu sesión cambió.',403);
  const savedGate='EXISTS(SELECT 1 FROM jac_crm_payments WHERE id=? AND upload_token=?)';
  const result=await db.batch([
-  db.prepare(`UPDATE jac_crm_shows SET paid_cents=paid_cents+?,version=version+1,write_nonce=?,updated_at=? WHERE id=? AND sale_cents IS NOT NULL AND status='active' AND source_state NOT IN ('deleted','deleting') AND paid_cents+?<=? AND NOT EXISTS(SELECT 1 FROM jac_crm_payments WHERE id=? OR (show_id=? AND hash=? AND status='recorded')) AND ${guard.sql}${uploadedGate(uploads)}`).bind(amount,token,stamp,p.showId,amount,MAX_CENTS,p.id,p.showId,hash,...guard.bindings,...uploadedBindings(uploads)),
+  db.prepare(`UPDATE jac_crm_shows SET paid_cents=paid_cents+?,receipt_sequence=receipt_sequence+?,version=version+1,write_nonce=?,updated_at=? WHERE id=? AND sale_cents IS NOT NULL AND status='active' AND source_state NOT IN ('deleted','deleting') AND paid_cents+?<=? AND NOT EXISTS(SELECT 1 FROM jac_crm_payments WHERE id=? OR (show_id=? AND hash=? AND status='recorded')) AND ${guard.sql}${uploadedGate(uploads)}`).bind(amount,uploads.length,token,stamp,p.showId,amount,MAX_CENTS,p.id,p.showId,hash,...guard.bindings,...uploadedBindings(uploads)),
   db.prepare("INSERT INTO jac_crm_payments(id,show_id,amount_cents,payment_date,note,hash,actor_id,upload_token,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)").bind(p.id,p.showId,amount,p.paymentDate,p.note,hash,u.id,token,stamp,p.showId,token),
-  ...uploads.map(f=>db.prepare(`UPDATE jac_notice_attachments SET state='ready',notice_id=? WHERE id=? AND state='staged' AND ${savedGate}`).bind('crm-payment:'+p.id,f.id,p.id,token)),
+  ...uploads.map((f,i)=>db.prepare(`UPDATE jac_notice_attachments SET state='ready',notice_id=?,filename=?||(SELECT CAST(receipt_sequence-? AS INTEGER) FROM jac_crm_shows WHERE id=? AND write_nonce=?)||? WHERE id=? AND state='staged' AND ${savedGate}`).bind('crm-payment:'+p.id,crmReceiptBase(show.title)+'-',uploads.length-1-i,p.showId,token,crmReceiptExtension(f.mimeType),f.id,p.id,token)),
   db.prepare(`INSERT INTO jac_crm_exports(payment_id) SELECT ? WHERE ${savedGate}`).bind(p.id,p.id,token),
   db.prepare(`INSERT INTO jac_crm_audit(id,show_id,actor_id,action,data,created_at) SELECT ?,?,?,?,?,? WHERE ${savedGate}`).bind(crypto.randomUUID(),p.showId,u.id,'payment-added',JSON.stringify({id:p.id,amountCents:amount}),stamp,p.id,token)
  ]);committed=result[0].meta.changes===1;const row=await db.prepare('SELECT hash,actor_id,note FROM jac_crm_payments WHERE id=?').bind(p.id).first<{hash:string;actor_id:string;note:string}>();if(!row||row.hash!==hash||row.actor_id!==u.id||row.note!==p.note)throw new CrmFailure('No se confirmó el abono. Conserva el formulario y reintenta el mismo registro.',409);return {id:p.id};
@@ -77,7 +78,8 @@ export async function voidCrmPayment(u:AccessUser,input:unknown,guard:CrmGuard){
   db.prepare("INSERT INTO jac_crm_audit(id,show_id,actor_id,action,data,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)").bind(crypto.randomUUID(),row.show_id,u.id,'payment-voided',JSON.stringify({id:p.id,reason:p.reason}),stamp,row.show_id,token)
  ]);if(result[0].meta.changes!==1)throw new CrmFailure('El abono o tu sesión cambió. Actualiza el show.',409);
 }
-export async function crmReceipt(u:AccessUser,payment:string,file:string,guard:CrmGuard){requireCrm(u);if(!uuid.safeParse(payment).success||!uuid.safeParse(file).success)throw new CrmFailure('Comprobante no disponible.',404);
+export async function crmReceipt(u:AccessUser,payment:string,file:string,guard:CrmGuard){requireCrm(u);if(!uuid.safeParse(payment).success||file&&!uuid.safeParse(file).success)throw new CrmFailure('Comprobante no disponible.',404);
+ if(!file){const primary=await database().prepare(`SELECT a.id FROM jac_notice_attachments a JOIN jac_crm_payments p ON a.notice_id='crm-payment:'||p.id WHERE p.id=? AND a.state='ready' AND ${guard.sql} ORDER BY a.rowid LIMIT 1`).bind(payment,...guard.bindings).first<{id:string}>();if(!primary)throw new CrmFailure('Comprobante no disponible.',404);file=primary.id;}
  const get=()=>database().prepare(`SELECT a.file_key,a.filename,a.mime_type FROM jac_notice_attachments a JOIN jac_crm_payments p ON a.notice_id='crm-payment:'||p.id WHERE p.id=? AND a.id=? AND a.state='ready' AND ${guard.sql}`).bind(payment,file,...guard.bindings).first<{file_key:string;filename:string;mime_type:string}>();
  const r=await get();if(!r)throw new CrmFailure('Comprobante no disponible.',404);const object=await env.BUCKET.get(r.file_key);if(!object||!await get())throw new CrmFailure('Comprobante no disponible.',404);return {object,filename:r.filename,mimeType:r.mime_type};
 }

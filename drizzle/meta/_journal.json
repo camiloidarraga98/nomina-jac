@@ -134,6 +134,13 @@
       "when": 1792008038665,
       "tag": "0018_crm_creations",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792010478597,
+      "tag": "0019_crm_receipt_sequence",
+      "breakpoints": true
     }
   ]
 }

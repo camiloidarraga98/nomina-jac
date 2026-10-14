@@ -12,9 +12,11 @@ Abre un show, registra su precio de venta en COP y, opcionalmente, el empresario
 
 **Saldo = venta − suma de abonos vigentes.**
 
-Puedes registrar la fecha y el valor de cada abono, una observación y de uno a cinco comprobantes PDF/JPG/PNG, hasta 10 MB en total. Los importes conservan centavos. Si hay un pago superior al precio, aparece **saldo a favor**. El saldo se actualiza al guardar y se consulta cada 15 segundos mientras el panel está visible, además de al recuperar el foco.
+Puedes registrar la fecha y el valor de cada abono, una observación y de uno a cinco comprobantes PDF/JPG/PNG, hasta 10 MB en total. **Arrastra los comprobantes a la zona de adjuntos** o pulsa **Seleccionar archivos** para abrir el explorador. Se leen y validan automáticamente, se acumulan al agregar más y puedes quitar uno antes de guardar. El valor y la fecha del abono se confirman con **Guardar abono**; arrastrar un archivo por sí solo no registra un pago. Los importes conservan centavos. Si hay un pago superior al precio, aparece **saldo a favor**. El saldo se actualiza al guardar y se consulta cada 15 segundos mientras el panel está visible, además de al recuperar el foco.
 
 Para corregir un pago usa **Anular abono**, indicando un motivo. El pago deja de reducir el saldo; se conservan su historial y comprobantes. Los reintentos del mismo guardado no duplican pagos. Otro registro con el mismo show, valor, fecha y comprobante se rechaza mientras el anterior siga vigente.
+
+Los comprobantes nuevos se nombran automáticamente con el show y un consecutivo por show, conservando la extensión real: `Copacabana-1.pdf`, `Copacabana-2.png`, etc. El contador continúa entre abonos, incluye los comprobantes de pagos anulados y no consume números ante errores o al reintentar un pago ya guardado. El nombre definitivo se reserva en la misma transacción que registra el abono para evitar colisiones concurrentes. Los comprobantes anteriores conservan su nombre y se tienen en cuenta para continuar el contador.
 
 Los comprobantes se abren directamente desde JAC y requieren sesión activa de administrador. Los enlaces compartidos no hacen público el archivo. La autorización se comprueba antes y después de leer R2.
 
@@ -54,7 +56,9 @@ En CRM, pulsa **Conectar Google Sheets** y autoriza con `jacmusicestudios@gmail.
 
 La autorización permite acceso por archivo (`drive.file`), más identificación de la cuenta. JAC crea una hoja privada nueva llamada **Control de abonos JAC**, sin modificar otras hojas ni compartirla públicamente. Las credenciales quedan cifradas y separadas de Agenda y Gmail; no se revoca su autorización al desconectar Sheets.
 
-La pestaña **Abonos** contiene nombre del show/municipio, fecha del show, fecha del abono, valor COP, enlace privado al comprobante en JAC y estado Registrado/Anulado. Hay un identificador oculto para evitar duplicados. Cuando un abono tiene varios archivos, el enlace abre su cuenta en JAC y muestra todos sus comprobantes. Solo los administradores activos pueden abrirlos.
+La pestaña **Abonos** contiene nombre del show/municipio, fecha del show, fecha del abono, valor COP, enlace privado al comprobante en JAC y estado Registrado/Anulado. Hay un identificador oculto para evitar duplicados. El enlace abre directamente la imagen o el PDF, sin pasar por el panel de abonos. Cuando un abono tiene varios archivos, abre el primero que se adjuntó; los demás siguen disponibles en su cuenta del CRM. Si falta sesión, el navegador pasa por el acceso y vuelve al archivo. Los enlaces continúan siendo privados y no contienen credenciales.
+
+La migración `0019_crm_receipt_sequence.sql` deja pendientes las filas anteriores para sustituir sus enlaces al panel por enlaces directos. Se actualizan en las mismas filas mediante la sincronización existente al abrir CRM o pulsar **Reintentar sincronización**, sin crear otro documento ni duplicar pagos. Solo los administradores activos pueden abrirlos.
 
 JAC guarda primero el abono y su saldo. La exportación queda pendiente en D1 y se intenta en segundo plano; un fallo de Google no pierde ni duplica el pago. El panel reintenta pendientes mientras está abierto, cada minuto, y permite reintento manual. No es necesario mantener la hoja abierta. Si se cierra el panel antes de completar una entrega fallida, vuelve a abrir CRM para que se reintente.
 
@@ -70,7 +74,7 @@ Migración aditiva `0017_crm_shows.sql`, conservando 0000–0016 y los enlaces D
 
 API `/api/crm` y `/api/crm/file`: administradores, sesión/revisión vigente, origen estricto para escrituras, valores enteros en centavos, operaciones atómicas y control de concurrencia. Adjuntos privados en el BUCKET existente. Campos opcionales `crmShowId`/`crmVersion` en nómina; edición móvil anterior conserva los vínculos.
 
-La conexión real y los registros financieros reales no se utilizan como pruebas. La prueba automatizada `tests/crm.test.mjs` usa SQLite en memoria, R2 simulado y todas las salidas Google interceptadas. Las regresiones de nómina, correo, móvil/OAuth, Agenda/Workerd e Itinerarios/Alertas se conservan.
+La conexión real y los registros financieros reales no se utilizan como pruebas. Las pruebas `tests/crm-files.test.mjs` comprueban preparación, validación, acumulación y nombres; `tests/crm.test.mjs` usa SQLite en memoria, R2 simulado y todas las salidas Google interceptadas. Las regresiones de nómina, correo, móvil/OAuth, Agenda/Workerd e Itinerarios/Alertas se conservan.
 
 Fuente de municipios: [DIVIPOLA — códigos de municipios, DANE](https://www.datos.gov.co/Mapas-Nacionales/DIVIPOLA-C-digos-municipios/gdxc-w37w), 1.103 registros Municipio, consultados el 14 de octubre de 2026. Revisión futura del catálogo debe conservar las identificaciones de shows existentes.
 

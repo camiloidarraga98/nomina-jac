@@ -6,7 +6,8 @@ import {Input} from '@/components/ui/input';
 import {Dialog,DialogContent,DialogTitle,DialogDescription} from '@/components/ui/dialog';
 import CopInput from './cop-input';
 import CrmCreateForm,{type CrmCalendar} from './crm-create-form';
-import {encodeCrmFile} from './crm-files';
+import {crmFilePayload,type CrmFile} from './crm-files';
+import CrmAttachments from './crm-attachments';
 import {crmMoney,type CrmShow} from '@/lib/crm-core';
 import {agendaDate} from '@/lib/calendar-core';
 import {agendaWindowMonths} from '@/lib/agenda-prefetch';
@@ -61,14 +62,14 @@ export default function CrmPanel(){
 function CrmShowForm({value,busy,save,reload}:{value:CrmShow;busy:boolean;save:(r:unknown)=>Promise<void>;reload:()=>Promise<CrmShow>}){const [version,setVersion]=useState(value.version);const [sale,setSale]=useState(value.sale??0),[entrepreneur,setEntrepreneur]=useState(value.entrepreneur),[note,setNote]=useState(value.note),[ignored,setIgnored]=useState(value.status==='ignored'),[promotional,setPromotional]=useState(value.promotional),[error,setError]=useState(''),[conflict,setConflict]=useState(false);return <form className="editor" onSubmit={async e=>{e.preventDefault();setError('');try{await save({id:value.id,version,sale,entrepreneur,note,status:ignored?'ignored':'active',promotional});setVersion(v=>v+1);}catch(e){setConflict(e instanceof RequestFailure&&e.status===409);setError(e instanceof Error?e.message:'No se pudo guardar.');}}}><div className="form-grid"><div className="field"><span>Valor de venta (COP)</span><CopInput label="Valor de venta del CRM (COP)" value={sale} onChange={setSale}/></div><label className="field">Empresario<Input aria-label="Empresario del show" value={entrepreneur} onChange={e=>setEntrepreneur(e.target.value)} maxLength={200}/></label></div><label className="field">Observaciones<Input aria-label="Observaciones del show CRM" value={note} onChange={e=>setNote(e.target.value)} maxLength={1000}/></label><div className="actions"><label><input type="checkbox" checked={promotional} onChange={e=>setPromotional(e.target.checked)}/>Show promocional</label><label><input type="checkbox" checked={ignored} onChange={e=>setIgnored(e.target.checked)}/>Ignorar: no corresponde a un show</label></div><p className="muted">Los shows con precio se incorporan al crear una quincena de sus fechas. Cambiar este precio no modifica quincenas ya creadas.</p>{error&&<p className="message error">{error}</p>}{conflict&&<Button type="button" variant="outline" disabled={busy} onClick={async()=>{try{const latest=await reload();setVersion(latest.version);setSale(latest.sale??0);setEntrepreneur(latest.entrepreneur);setNote(latest.note);setIgnored(latest.status==='ignored');setPromotional(latest.promotional);setConflict(false);setError('');}catch(e){setError(e instanceof Error?e.message:'No pudimos recargar.');}}}>Descartar borrador y cargar valores actuales</Button>}<Button className="primary" type="submit" disabled={busy||conflict}>Guardar precio</Button></form>;}
 function CrmPaymentForm({show,shows,save,onBusy}:{show?:CrmShow;shows:CrmShow[];save:(r:unknown)=>Promise<void>;onBusy:(v:boolean)=>void}){
  const [choices]=useState(()=>shows.filter(s=>s.status==='active'&&!['deleted','deleting'].includes(s.sourceState)));
- const [showID,setShowID]=useState(show?.id??''),[id]=useState(()=>crypto.randomUUID()),[amount,setAmount]=useState(0),[date,setDate]=useState(agendaDate()),[note,setNote]=useState(''),[files,setFiles]=useState<File[]>([]),[busy,setBusy]=useState(false),[attempt,setAttempt]=useState<unknown>(null),[error,setError]=useState('');
+ const [showID,setShowID]=useState(show?.id??''),[id]=useState(()=>crypto.randomUUID()),[amount,setAmount]=useState(0),[date,setDate]=useState(agendaDate()),[note,setNote]=useState(''),[files,setFiles]=useState<CrmFile[]>([]),[preparing,setPreparing]=useState(false),[busy,setBusy]=useState(false),[attempt,setAttempt]=useState<unknown>(null),[error,setError]=useState('');
  const selected=show??choices.find(s=>s.id===showID),locked=busy||!!attempt;
  return <form className="editor" onSubmit={async e=>{
-  e.preventDefault();if(busy)return;setBusy(true);onBusy(true);setError('');
+  e.preventDefault();if(busy||preparing)return;setBusy(true);onBusy(true);setError('');
   try{
    if(!attempt&&(!selected||selected.sale===null||selected.status!=='active'))throw Error('Selecciona un show con precio de venta guardado.');
    if(!attempt&&(amount<=0||!files.length||files.length>5||files.reduce((v,f)=>v+f.size,0)>10*1024*1024))throw Error('Registra un valor positivo y hasta cinco PDF, JPG o PNG (10 MB en total).');
-   const payload=attempt??{id,showId:selected!.id,amount,paymentDate:date,note,files:await Promise.all(files.map(encodeCrmFile))};
+   const payload=attempt??{id,showId:selected!.id,amount,paymentDate:date,note,files:crmFilePayload(files)};
    setAttempt(payload);await save(payload);
   }catch(e){if(e instanceof RequestFailure&&[400,409].includes(e.status))setAttempt(null);setError(e instanceof Error?e.message:'No se confirmó el guardado. Reintenta el mismo abono.');}
   finally{setBusy(false);onBusy(false);}
@@ -77,10 +78,10 @@ function CrmPaymentForm({show,shows,save,onBusy}:{show?:CrmShow;shows:CrmShow[];
   {selected&&<div className="crm-payment-target"><strong>{selected.title}</strong><span>{selected.showDate}{selected.balance!==null?' · '+(selected.balance<0?'Saldo a favor: ':'Saldo pendiente: ')+crmMoney(Math.abs(selected.balance)):''}</span></div>}
   <div className="form-grid"><div className="field"><span>Valor del abono (COP)</span><CopInput label="Valor del abono (COP)" value={amount} onChange={setAmount} disabled={locked}/></div><label className="field">Fecha del abono<Input aria-label="Fecha del abono" type="date" value={date} onChange={e=>setDate(e.target.value)} required disabled={locked}/></label></div>
   <label className="field">Observación<Input aria-label="Observación del abono" value={note} maxLength={1000} onChange={e=>setNote(e.target.value)} disabled={locked}/></label>
-  <label className="field">Comprobantes<Input aria-label="Comprobantes del abono" type="file" accept="application/pdf,image/jpeg,image/png" multiple disabled={locked} onChange={e=>setFiles(Array.from(e.target.files??[]))}/></label>
-  {files.length>0&&<ul>{files.map((f,i)=><li key={i}>{f.name}</li>)}</ul>}
+  <CrmAttachments files={files} onChange={setFiles} title={selected?.title??''} next={selected?.receiptNext??1} disabled={locked} onPreparing={setPreparing}/>
+
   {error&&<p className="message error" role="alert">{error}</p>}
   {!!attempt&&error&&<p className="muted">Conservamos el show y el mismo intento para que reintentar no duplique el abono.</p>}
-  <Button className="primary" type="submit" disabled={busy||(!attempt&&(!selected||selected.sale===null))}>{busy?'Guardando…':attempt?'Reintentar este abono':'Guardar abono'}</Button>
+  <Button className="primary" type="submit" disabled={busy||preparing||(!attempt&&(!selected||selected.sale===null))}>{busy?'Guardando…':attempt?'Reintentar este abono':'Guardar abono'}</Button>
  </form>;
 }
