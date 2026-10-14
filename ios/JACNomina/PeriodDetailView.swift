@@ -104,6 +104,7 @@ struct PeriodDetailView: View {
             AmountRow(title: "Ingresos", value: d.calculation.gross); AmountRow(title: "Descuentos", value: d.calculation.deductions)
             AmountRow(title: "Reintegros", value: d.calculation.reimbursements); AmountRow(title: "Ventas de shows", value: d.calculation.sale)
         }
+        if let commission = d.calculation.camiloCommission { CamiloCommissionSection(value: commission) }
         Section("Pagos del equipo") {
             TextField("Buscar persona o cargo", text: $search).accessibilityIdentifier("payments.search")
             Picker("Grupo", selection: $category) { Text("Todos").tag(""); ForEach(PayrollChoices.categories, id: \.0) { Text($0.1).tag($0.0) } }
@@ -151,4 +152,35 @@ struct AmountRow: View {
     let title: String
     let value: Double
     var body: some View { LabeledContent { Text(PayrollFormat.money(value)).monospacedDigit().multilineTextAlignment(.trailing) } label: { Text(title) } }
+}
+
+struct CamiloCommissionSection: View {
+    let value: PayrollCamiloCommission
+    var body: some View {
+        Section("Comisión de Camilo · 5%") {
+            AmountRow(title: "Ventas de todos los shows", value: value.sales)
+            AmountRow(title: "Costos descontados", value: value.costs)
+            AmountRow(title: "Costos promocionales excluidos", value: value.promotionalCosts)
+            AmountRow(title: "Base de comisión", value: value.base)
+            if let amount = value.amount { AmountRow(title: "Comisión para revisión", value: amount).accessibilityIdentifier("commission.amount") }
+            else { Text("Pendiente de revisión de recorridos").foregroundStyle(.orange) }
+            if value.balance < 0 { Text("Los costos superan las ventas: comisión en cero, sin saldo al próximo corte.").font(.footnote) }
+            Text("Calculada por el servidor. No se agrega como pago a la nómina. Excluye salarios, honorarios fijos, novedades, reintegros y recorridos extra.").font(.footnote).foregroundStyle(.secondary)
+            ForEach(value.issues, id: \.self) { Text($0).font(.footnote).foregroundStyle(.orange) }
+            if value.unlinkedKilometers > 0 { AmountRow(title: "Kilómetros sin show, no descontados", value: value.unlinkedKilometers) }
+            DisclosureGroup("Costos por show") {
+                ForEach(value.shows) { show in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(show.name + (show.promotional ? " · Promocional" : "")).font(.headline)
+                        Text(PayrollFormat.date(show.date)).font(.caption).foregroundStyle(.secondary)
+                        AmountRow(title: "Ventas", value: show.sale)
+                        AmountRow(title: "Músicos", value: show.musicians); AmountRow(title: "Técnica", value: show.technical)
+                        AmountRow(title: "Conductores / km", value: show.drivers); AmountRow(title: "Gastos", value: show.expenses)
+                        AmountRow(title: "Costo total", value: show.cost); AmountRow(title: "Resultado del show", value: show.sale - show.cost)
+                        AmountRow(title: "Costo descontado", value: show.deductible)
+                    }.padding(.vertical, 6)
+                }
+            }
+        }
+    }
 }

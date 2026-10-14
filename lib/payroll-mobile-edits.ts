@@ -1,4 +1,4 @@
-import {newPeriod,updateShow,removeShow,setShowRoute,movementPaymentKind,type PayrollState,type Period,type Employee,type Concept,type Show,type Movement,type Hours,type Route,type ShowRoute,type Settings} from './payroll';
+import {newPeriod,updateShow,removeShow,setShowRoute,movementPaymentKind,type PayrollState,type Period,type Employee,type Concept,type Show,type Movement,type Hours,type Route,type ShowRoute,type Settings,type ShowExpense} from './payroll';
 
 export type MobileEdit={kind:string;periodId?:string;record?:Record<string,unknown>;id?:string};
 export class MobileEditError extends Error{}
@@ -12,6 +12,7 @@ export function applyMobileEdit(current:PayrollState,edit:MobileEdit,remove=fals
  if(remove){
   const p=period();if(typeof edit.id!=='string')throw new MobileEditError('Selecciona el registro que deseas eliminar.');
   if(edit.kind==='show')removeShow(p,edit.id);
+  else if(edit.kind==='showExpense')p.showExpenses=(p.showExpenses||[]).filter(x=>x.id!==edit.id);
   else if(edit.kind==='movement')p.movements=p.movements.filter(x=>x.id!==edit.id);
   else if(edit.kind==='route')p.routes=p.routes.filter(x=>x.id!==edit.id);
   else throw new MobileEditError('Esta eliminación no está disponible.');
@@ -27,6 +28,7 @@ export function applyMobileEdit(current:PayrollState,edit:MobileEdit,remove=fals
   case 'concept':upsert(next.concepts,record as Concept,x=>x.id);break;
   case 'settings':next.settings=record as Settings;break;
   case 'show':updateShow(period(),record as Show);break;
+  case 'showExpense':{const p=period();p.showExpenses??=[];upsert(p.showExpenses,record as ShowExpense,x=>x.id);break;}
   case 'movement':{const movement=record as Movement;upsert(period().movements,{...movement,kind:movementPaymentKind(movement)},x=>x.id);break;}
   case 'hours':upsert(period().hours,record as Hours,x=>x.employeeId);break;
   case 'route':{

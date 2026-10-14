@@ -218,3 +218,18 @@ test('API web e iPhone impiden ensayos a salario fijo y normalizan solo la noved
  }
  assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0);
 });
+
+test('gastos por show y promocional usan permisos/CAS, no alteran pagos y conservan clientes anteriores',async()=>{
+ await fakePayroll();const writer=await actor('commission-writer',['payroll']),reader=await actor('commission-reader');
+ const p={id:'commission-period',start:'2027-03-01',end:'2027-03-15'};assert.equal((await edit(writer,'period',p)).status,200);
+ const show={id:'commission-show',date:p.start,name:'Show ficticio con comisión',sale:1000000,promotional:true,participants:[{employeeId:'musica',amount:725000}]};assert.equal((await edit(writer,'show',show,p.id)).status,200);
+ const expense={id:'commission-hotel',showId:show.id,date:p.start,category:'hoteles',concept:'Hotel ficticio',amount:100000,note:''};
+ assert.equal((await edit(reader,'showExpense',expense,p.id)).status,403);
+ const before=await m.readPayroll(),preview=await edit(writer,'showExpense',expense,p.id,'previewEdit');assert.equal(preview.status,200);assert.equal((await m.readPayroll()).version,before.version);assert.equal(preview.body.detail.calculation.camiloCommission.promotionalCosts,825000);assert.equal(preview.body.detail.calculation.camiloCommission.amount,50000);
+ assert.equal((await edit(writer,'showExpense',{...expense,showId:'missing'},p.id)).status,400);
+ assert.equal((await edit(writer,'showExpense',expense,p.id)).status,200);const priced=await get('?period='+p.id,writer);assert.deepEqual(priced.body.calculation.rows,m.calculate(before.data,before.data.periods[0]).rows,'Registrar costo no paga otro reintegro');
+ assert.equal((await edit(writer,'showExpense',{...expense,amount:200000},p.id,'edit',before.version)).status,409);
+ const old={...show};delete old.promotional;assert.equal((await edit(writer,'show',old,p.id)).status,200);assert.equal((await get('?period='+p.id,writer)).body.period.shows[0].promotional,true);
+ assert.equal((await edit(writer,'show',{...show,promotional:false},p.id)).status,200);const normal=await get('?period='+p.id,writer);assert.equal(normal.body.calculation.camiloCommission.costs,825000);assert.equal(normal.body.calculation.camiloCommission.amount,8750);
+ const now=await m.readPayroll();assert.equal((await post({action:'remove',version:now.version,edit:{kind:'showExpense',periodId:p.id,id:expense.id}},writer)).status,200);assert.equal((await get('?period='+p.id,writer)).body.period.showExpenses.length,0);
+});

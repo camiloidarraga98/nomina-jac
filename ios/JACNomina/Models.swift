@@ -98,6 +98,7 @@ struct PayrollShow: Decodable, Identifiable {
     let date: String
     let name: String
     let sale: Double
+    var promotional: Bool? = nil
     let participants: [Participant]
 }
 
@@ -137,7 +138,18 @@ struct PayrollRoute: Decodable, Identifiable {
     }
 }
 
+struct PayrollCommissionShow: Decodable, Identifiable {
+    let id: String; let name: String; let date: String; let promotional: Bool
+    let sale: Double; let musicians: Double; let technical: Double; let drivers: Double
+    let expenses: Double; let cost: Double; let deductible: Double
+}
+struct PayrollCamiloCommission: Decodable {
+    let rate: Double; let sales: Double; let costs: Double; let promotionalCosts: Double
+    let balance: Double; let base: Double; let amount: Double?
+    let shows: [PayrollCommissionShow]; let issues: [String]; let unlinkedKilometers: Double
+}
 struct PayrollCalculation: Decodable {
+    var camiloCommission: PayrollCamiloCommission? = nil
     let rows: [PayrollPayment]
     let sale: Double
     let total: Double

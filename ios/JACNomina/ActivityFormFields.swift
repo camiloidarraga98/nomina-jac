@@ -18,6 +18,10 @@ struct ShowFields: View {
             ForEach(people) { ParticipantField(record: $record, employee: $0) }
             Text("Los honorarios son manuales y no dependen de las ventas. Cambiar el nombre o fecha actualiza también el recorrido de este show.").font(.footnote).foregroundStyle(.secondary)
         }
+        Section {
+            RecordToggle(title: "Show promocional", record: $record, key: "promotional").accessibilityIdentifier("editor.promotional")
+            Text("Sus costos no se descuentan para la comisión de Camilo. Los pagos del equipo se mantienen.").font(.footnote).foregroundStyle(.secondary)
+        }
     }
 }
 struct ParticipantField: View {

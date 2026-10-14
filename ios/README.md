@@ -1,3 +1,9 @@
+## Costos de show y comisión — iPhone 0.13.0 (23)
+
+En **Quincena → Actividad → Shows** puedes marcar **Show promocional** al final del formulario. **Actividad → Gastos por show** permite registrar tiquetes, hoteles, alimentación y otros costos, siempre con un show seleccionado. **Pagos** y la vista previa muestran el cálculo de comisión del servidor y el desglose por show: 5% de las ventas menos honorarios brutos, kilómetros y gastos de shows no promocionales, con mínimo cero. Se excluyen salarios/fijos y movimientos ajenos; no se agrega como pago a Camilo ni cambia lo que recibe el equipo.
+
+Actualiza este mismo proyecto con **Run**, conservando tu firma y `co.jacmusic.nomina`; push sigue suspendido. Consulta [reglas y controles](../docs/SHOW_COSTS_COMMISSION.md). Un cierre antiguo sin comisión guardada conserva su instantánea. La copia offline muestra lo que haya descargado el iPhone; registrar, editar o borrar sigue necesitando conexión.
+
 ## Escanear facturas — iPhone 0.12.2 (22)
 
 En **Gestión → Gastos de viaje → Registrar gasto → Escanear factura** puedes tomar una foto o elegir una de Fotos. El OCR nativo de Apple se ejecuta en el iPhone, sin subir la imagen a un servicio de reconocimiento. Sugiere tipo de gasto, concepto, total en COP y fecha; muestra una vista previa y permite corregir todo antes de **Enviar a revisión**. El tipo elegido se conserva en la nota como `Tipo de gasto: …`, visible también desde la web. La foto queda como comprobante privado y se mantiene el proceso de revisión/incorporación existente.

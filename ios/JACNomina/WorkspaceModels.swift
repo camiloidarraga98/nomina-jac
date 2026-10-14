@@ -64,7 +64,7 @@ struct PayrollWorkspace: Codable {
 }
 
 enum PayrollEditorKind: String {
-    case period, employee, concept, settings, show, movement, hours, route, periodEmployee, periodSettings
+    case period, employee, concept, settings, show, showExpense, movement, hours, route, periodEmployee, periodSettings
     var title: String {
         switch self {
         case .period: return "Nueva quincena"
@@ -72,6 +72,7 @@ enum PayrollEditorKind: String {
         case .concept: return "Concepto reutilizable"
         case .settings: return "Parámetros de nómina"
         case .show: return "Show y honorarios"
+        case .showExpense: return "Gasto del show"
         case .movement: return "Novedad"
         case .hours: return "Horas y salarios"
         case .route: return "Kilometraje"
@@ -122,7 +123,10 @@ struct PayrollEditorSession: Identifiable {
         case .show:
             let excluded = Set(detail?.record["excludedEmployees"].elements.map(\.text) ?? [])
             let participants = employees.filter { ["musicos", "tecnica"].contains($0.category) && !excluded.contains($0.id) }
-            return .object(["id": .string(id), "date": .string(detail?.period.start ?? ""), "name": .string(""), "sale": .number(0), "participants": .array(participants.map { .object(["employeeId": .string($0.id), "amount": .number($0.showRate)]) })])
+            return .object(["id": .string(id), "date": .string(detail?.period.start ?? ""), "name": .string(""), "sale": .number(0), "promotional": .bool(false), "participants": .array(participants.map { .object(["employeeId": .string($0.id), "amount": .number($0.showRate)]) })])
+        case .showExpense:
+            let show = detail?.period.shows.first
+            return .object(["id": .string(id), "showId": .string(show?.id ?? ""), "date": .string(show?.date ?? detail?.period.start ?? ""), "category": .string("tiquetes"), "concept": .string(""), "amount": .number(0), "note": .string("")])
         case .movement:
             let concept = workspace.data["concepts"].elements.first ?? .object([:])
             return .object(["id": .string(id), "employeeId": .string(employees.first?.id ?? ""), "concept": .string(concept["name"].text), "kind": .string(concept["kind"].text.isEmpty ? "servicio" : concept["kind"].text), "amount": .number(concept["amount"].number), "quantity": .number(1), "note": .string("")])

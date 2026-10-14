@@ -186,6 +186,18 @@ final class PayrollClientTests: XCTestCase {
         let original = try await ReceiptOCR.readReceipt(ReceiptOCR.photograph(ReceiptOCR.fixture()))
         XCTAssertEqual(original.concept,"RESTAURANTE FICTICIO JAC");XCTAssertEqual(original.amount,47600)
     }
+    func testCommissionContractIsOptionalForOldCopiesAndPreservesServerReviewedAmount() throws {
+        let fields: [String:JSONValue] = ["rows":.array([]),"sale":.number(10000000),"total":.number(2000000),"gross":.number(2000000),"deductions":.number(0),"reimbursements":.number(0),"company":.string("Empresa ficticia"),"nit":.string("TEST")]
+        var data=JSONValue.object(fields)
+        XCTAssertNil(try data.decoded(PayrollCalculation.self).camiloCommission)
+        data["camiloCommission"] = .object(["rate":.number(0.05),"sales":.number(10000000),"costs":.number(2000000),"promotionalCosts":.number(500000),"balance":.number(8000000),"base":.number(8000000),"amount":.number(400000),"shows":.array([]),"issues":.array([]),"unlinkedKilometers":.number(0)])
+        let reviewed=try data.decoded(PayrollCalculation.self)
+        XCTAssertEqual(reviewed.camiloCommission?.amount,400000);XCTAssertEqual(reviewed.total,2000000,"La comisión no se suma al neto")
+        data["camiloCommission"]["amount"] = .null
+        XCTAssertNil(try data.decoded(PayrollCalculation.self).camiloCommission?.amount)
+        let show:JSONValue = .object(["id":.string("show"),"name":.string("Ficticio"),"date":.string("2026-10-01"),"sale":.number(0),"participants":.array([]),"promotional":.bool(true)])
+        XCTAssertEqual(try show.decoded(PayrollShow.self).promotional,true)
+    }
     private let base = URL(string: "https://payroll.example.invalid")!
     private let token = String(repeating: "a", count: 43)
 

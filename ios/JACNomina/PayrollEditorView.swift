@@ -63,6 +63,7 @@ struct PayrollEditorView: View {
         case .concept: conceptFields
         case .settings, .periodSettings: SettingsFields(record: $record)
         case .show: ShowFields(record: $record, session: session)
+        case .showExpense: expenseFields
         case .movement: MovementFields(record: $record, session: session)
         case .hours: HoursFields(record: $record, session: session)
         case .route: RouteFields(record: $record, session: session)
@@ -77,6 +78,17 @@ struct PayrollEditorView: View {
             Text("Se cargarán los salarios y condiciones vigentes. Shows, kilómetros, horas y novedades comienzan vacíos.").font(.footnote).foregroundStyle(.secondary)
         }
     }
+    private var expenseFields: some View {
+        Section("Costo directo del show") {
+            RecordChoice(title: "Show del gasto", record: $record, key: "showId", options: session.detail?.period.shows.map { ($0.id, $0.name) } ?? [])
+            RecordChoice(title: "Tipo de gasto", record: $record, key: "category", options: [("tiquetes","Tiquetes"),("hoteles","Hoteles"),("alimentacion","Alimentación"),("otros","Otros gastos")])
+            RecordDateField(title: "Fecha del gasto", record: $record, key: "date", start: "", end: "")
+            RecordTextField(title: "Concepto del gasto", record: $record, key: "concept")
+            RecordNumberField(title: "Valor en COP", record: $record, key: "amount")
+            RecordTextField(title: "Observación opcional", record: $record, key: "note")
+            Text("Se incluye en el costo de este show y la comisión, sin generar un pago. Registra cada costo una sola vez.").font(.footnote).foregroundStyle(.secondary)
+        }
+    }
     private var conceptFields: some View {
         Section {
             RecordTextField(title: "Nombre del concepto", record: $record, key: "name")
@@ -88,6 +100,7 @@ struct PayrollEditorView: View {
     private var hasRequiredFields: Bool {
         switch session.kind {
         case .employee, .periodEmployee: return record["name"].text.trimmingCharacters(in: .whitespacesAndNewlines).count >= 2
+        case .showExpense: return !record["showId"].text.isEmpty && !record["concept"].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && record["amount"].number > 0
         case .concept, .show: return !record["name"].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         case .movement: return !record["employeeId"].text.isEmpty && !record["concept"].text.isEmpty
         case .route: return !record["name"].text.isEmpty && (!record["drivers"].elements.isEmpty || !record["employeeId"].text.isEmpty)
@@ -185,6 +198,7 @@ struct PreviewCalculationSection: View {
             AmountRow(title: "Ingresos", value: detail.calculation.gross); AmountRow(title: "Descuentos", value: detail.calculation.deductions)
             ForEach(Array(detail.calculation.rows.enumerated()), id: \.offset) { _, row in AmountRow(title: row.name + " · " + PayrollFormat.category(row.category), value: row.net) }
         }
+        if let commission = detail.calculation.camiloCommission { CamiloCommissionSection(value: commission) }
         if !detail.closeIssues.isEmpty { Section("Pendiente para el cierre") { ForEach(detail.closeIssues, id: \.self) { Text($0).font(.footnote) } } }
     }
 }

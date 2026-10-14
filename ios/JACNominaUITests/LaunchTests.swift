@@ -540,6 +540,28 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Aprobado e incorporado a nómina"].waitForExistence(timeout:15));attachScreen(app,name:"gasto-con-comprobante-aprobado")
     }
 
+    @MainActor func testPromotionalShowAndLinkedExpenseCanBeCreatedWithoutAddingPayrollPayment() {
+        let app=fixture(["--uitest-commission"])
+        tap(app,"period.fixture-period")
+        XCTAssertTrue(app.staticTexts["Comisión de Camilo · 5%"].waitForExistence(timeout:10))
+        tap(app,"Actividad");tap(app,"activity.shows");tap(app,"activity.add")
+        fill(app,"editor.name","Show promocional ficticio")
+        tap(app,"Listo")
+        let toggle=app.switches["editor.promotional"]
+        for _ in 0..<8 { if toggle.isHittable { break };app.swipeUp() }
+        XCTAssertTrue(toggle.exists);XCTAssertTrue(toggle.isHittable,app.debugDescription);toggle.coordinate(withNormalizedOffset:CGVector(dx:0.9,dy:0.5)).tap()
+        XCTAssertEqual(toggle.value as? String,"1");tap(app,"editor.save")
+        XCTAssertTrue(app.staticTexts["Promocional"].waitForExistence(timeout:15))
+        app.navigationBars.buttons.firstMatch.tap();tap(app,"activity.expenses");tap(app,"activity.add")
+        XCTAssertTrue(app.buttons["editor.showId"].exists)
+        fill(app,"editor.concept","Hotel de prueba vinculado");tap(app,"Listo");fill(app,"editor.amount","300000");tap(app,"editor.save")
+        XCTAssertTrue(app.staticTexts["Hotel de prueba vinculado"].waitForExistence(timeout:15))
+        let linked=app.descendants(matching:.any)["expense.linkedShow"].firstMatch
+        XCTAssertTrue(linked.waitForExistence(timeout:10),app.debugDescription)
+        XCTAssertTrue(linked.label.contains("Show promocional ficticio"),linked.label)
+        attachScreen(app,name:"gasto-de-show-promocional-ficticio")
+    }
+
     @MainActor func testReceiptStylizedMerchantConceptCanBeAppliedAndReviewed() {
         let app=fixture(["--uitest-offline-content","--uitest-reset-content"])
         app.tabBars.buttons["Gestión"].tap();tap(app,"management.expenses");tap(app,"expenses.create");tap(app,"expenses.scan");tap(app,"receipt.logoFixture")

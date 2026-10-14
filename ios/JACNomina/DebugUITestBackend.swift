@@ -192,7 +192,7 @@ private final class FixtureProtocol: URLProtocol {
                 var next = state
                 if ["edit", "previewEdit"].contains(action) { apply(command["edit"], to: &next) }
                 else if action == "remove" {
-                    let edit = command["edit"], collection = ["show": "shows", "movement": "movements", "route": "routes"][edit["kind"].text] ?? ""
+                    let edit = command["edit"], collection = ["show": "shows", "showExpense": "showExpenses", "movement": "movements", "route": "routes"][edit["kind"].text] ?? ""
                     updatePeriod(edit["periodId"].text, in: &next) { p in p[collection] = .array(p[collection].elements.filter { $0["id"] != edit["id"] }) }
                 } else if action == "close" {
                     let baseline = next
@@ -238,14 +238,19 @@ private final class FixtureProtocol: URLProtocol {
         updatePeriod(edit["periodId"].text, in: &state) { p in
             if kind == "periodSettings" { p["calculationBase"]["settings"] = record; return }
             if kind == "periodEmployee" { p["calculationBase"]["employees"] = .array(p["calculationBase"]["employees"].elements.map { $0["id"] == record["id"] ? record : $0 }); return }
-            let key = ["show": "shows", "movement": "movements", "route": "routes", "hours": "hours"][kind] ?? ""
+            let key = ["show": "shows", "showExpense": "showExpenses", "movement": "movements", "route": "routes", "hours": "hours"][kind] ?? ""
             let id = kind == "hours" ? "employeeId" : "id"; p[key] = .array(p[key].elements.filter { $0[id] != record[id] } + [record])
         }
     }
     static func calculation(_ state: JSONValue, _ p: JSONValue) -> JSONValue {
         if p["status"].text == "cerrada" { return p["snapshot"] }
         // Fixed server response for UI tests; real calculations are tested in Node.
-        return .object(["rows": .array([]), "sale": .number(0), "total": .number(0), "gross": .number(0), "deductions": .number(0), "reimbursements": .number(0), "company": state["settings"]["company"], "nit": state["settings"]["nit"], "settings": p["calculationBase"]["settings"] == .null ? state["settings"] : p["calculationBase"]["settings"]])
+        var value: JSONValue = .object(["rows": .array([]), "sale": .number(0), "total": .number(0), "gross": .number(0), "deductions": .number(0), "reimbursements": .number(0), "company": state["settings"]["company"], "nit": state["settings"]["nit"], "settings": p["calculationBase"]["settings"] == .null ? state["settings"] : p["calculationBase"]["settings"]])
+        if ProcessInfo.processInfo.arguments.contains("--uitest-commission") {
+            // Canned server contract; financial formulas are tested in Node, not implemented in the app.
+            value["camiloCommission"] = .object(["rate":.number(0.05),"sales":.number(10000000),"costs":.number(2000000),"promotionalCosts":.number(500000),"balance":.number(8000000),"base":.number(8000000),"amount":.number(400000),"shows":.array([]),"issues":.array([]),"unlinkedKilometers":.number(0)])
+        }
+        return value
     }
     static func detail(_ state: JSONValue, id: String) -> JSONValue {
         guard let p = state["periods"].elements.first(where: { $0["id"].text == id }) else { return .null }
