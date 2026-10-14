@@ -1,0 +1,1 @@
+export async function encodeCrmFile(file:File){return new Promise<{filename:string;data:string}>((resolve,reject)=>{const reader=new FileReader();reader.onerror=()=>reject(Error('No pudimos leer '+file.name));reader.onload=()=>resolve({filename:file.name,data:String(reader.result).split(',')[1]||''});reader.readAsDataURL(file);});}
