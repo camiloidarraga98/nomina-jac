@@ -164,17 +164,19 @@ struct InlineError: View {
 }
 
 enum JACTheme {
-    static let forest = Color(red: 23/255, green: 44/255, blue: 36/255)
-    static let lime = Color(red: 196/255, green: 244/255, blue: 100/255)
-    static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 16/255, green: 28/255, blue: 22/255, alpha: 1) : UIColor(red: 243/255, green: 246/255, blue: 243/255, alpha: 1) })
-    static let action = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 196/255, green: 244/255, blue: 100/255, alpha: 1) : UIColor(red: 53/255, green: 100/255, blue: 61/255, alpha: 1) })
-    static let ink = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 237/255, green: 246/255, blue: 239/255, alpha: 1) : UIColor(red: 24/255, green: 34/255, blue: 30/255, alpha: 1) })
+    // JAC logo palette. Keep status colours semantic and text readable in both appearances.
+    static let navy = Color(red: 6/255, green: 47/255, blue: 70/255)
+    static let highlight = Color(red: 98/255, green: 206/255, blue: 255/255)
+    static let primary = Color(red: 0/255, green: 111/255, blue: 189/255)
+    static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 11/255, green: 24/255, blue: 35/255, alpha: 1) : UIColor(red: 243/255, green: 247/255, blue: 251/255, alpha: 1) })
+    static let action = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 98/255, green: 206/255, blue: 255/255, alpha: 1) : UIColor(red: 0/255, green: 111/255, blue: 189/255, alpha: 1) })
+    static let ink = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 231/255, green: 241/255, blue: 250/255, alpha: 1) : UIColor(red: 22/255, green: 52/255, blue: 73/255, alpha: 1) })
     @MainActor static func configure() {
-        let tabs = UITabBarAppearance(); tabs.configureWithOpaqueBackground(); tabs.backgroundColor = UIColor(forest)
+        let tabs = UITabBarAppearance(); tabs.configureWithOpaqueBackground(); tabs.backgroundColor = .systemBackground
         for item in [tabs.stackedLayoutAppearance, tabs.inlineLayoutAppearance, tabs.compactInlineLayoutAppearance] {
-            item.normal.iconColor = UIColor(red: 172/255, green: 192/255, blue: 178/255, alpha: 1)
+            item.normal.iconColor = .secondaryLabel
             item.normal.titleTextAttributes = [.foregroundColor: item.normal.iconColor!]
-            item.selected.iconColor = UIColor(lime); item.selected.titleTextAttributes = [.foregroundColor: UIColor(lime)]
+            item.selected.iconColor = UIColor(action); item.selected.titleTextAttributes = [.foregroundColor: UIColor(action)]
         }
         UITabBar.appearance().standardAppearance = tabs; UITabBar.appearance().scrollEdgeAppearance = tabs
     }
@@ -183,7 +185,7 @@ struct JACPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.fontWeight(.semibold).padding(.horizontal, 16).padding(.vertical, 12)
-            .foregroundStyle(JACTheme.forest).background(JACTheme.lime, in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(.white).background(JACTheme.primary, in: RoundedRectangle(cornerRadius: 10))
             .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
     }
 }

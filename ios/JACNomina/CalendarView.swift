@@ -67,7 +67,7 @@ struct CalendarView: View {
                                         VStack(spacing: 4) {
                                             Text(String(Int(date.suffix(2)) ?? 0)).font(.subheadline.weight(day == date ? .bold : .regular))
                                             HStack(spacing: 2) { ForEach(0..<min(count, 3), id: \.self) { _ in Circle().fill(JACTheme.action).frame(width: 4, height: 4) } }.frame(height: 4)
-                                        }.frame(maxWidth: .infinity, minHeight: 42).background(day == date ? JACTheme.lime.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 8))
+                                        }.frame(maxWidth: .infinity, minHeight: 42).background(day == date ? JACTheme.highlight.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 8))
                                             .foregroundStyle(date.hasPrefix(month) ? Color.primary : .secondary)
                                             .overlay(RoundedRectangle(cornerRadius: 8).stroke(date == visible.today ? JACTheme.action : .clear, lineWidth: 1))
                                     }.buttonStyle(.plain).accessibilityLabel(CalendarClock.dayLabel(date) + ", \(count) eventos").accessibilityAddTraits(day == date ? .isSelected : []).accessibilityIdentifier("agenda.day.\(date)")

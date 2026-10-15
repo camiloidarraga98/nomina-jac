@@ -38,14 +38,14 @@ struct PeriodDetailView: View {
             if let error = period.error { Section { InlineError(message: error); Button("Volver a intentar") { Task { await load() } } } }
             if let d = period.detail {
                 Section {
-                    Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(JACTheme.lime)
+                    Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(JACTheme.highlight)
                     Text(PayrollFormat.money(d.calculation.total)).font(.largeTitle.weight(.bold)).minimumScaleFactor(0.6).lineLimit(1)
                     Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta", systemImage: d.period.isClosed ? "lock.fill" : "pencil")
                     if d.record["ownerOnly"].flag { Text("Corrección con condiciones históricas").font(.caption).foregroundStyle(.orange) }
                     if let closedAt = d.calculation.closedAt { LabeledContent("Fecha de cierre", value: PayrollFormat.timestamp(closedAt)) }
                     if !d.record["snapshot"]["closedBy"].text.isEmpty { LabeledContent("Cerrado por", value: d.record["snapshot"]["closedBy"].text) }
                     if !d.record["revisions"].elements.isEmpty { LabeledContent("Versiones de cierre conservadas", value: "\(d.record["revisions"].elements.count)") }
-                }.foregroundStyle(.white).listRowBackground(JACTheme.forest)
+                }.foregroundStyle(.white).listRowBackground(JACTheme.navy)
                 Section {
                     Picker("Vista de la quincena", selection: $section) {
                         Text("Pagos").tag("pagos"); Text("Actividad").tag("actividad"); Text("Documentos").tag("documentos")

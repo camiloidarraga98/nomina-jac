@@ -1,3 +1,7 @@
+## Muestra visual azul JAC — pendiente de revisión
+
+El mismo proyecto local incluye una propuesta azul para revisar Quincena, CRM y Agenda. Consulta `docs/JAC_BLUE_PREVIEW.md` y las capturas de `outputs/jac-azul-iphone-*.png`. Se mantiene el logo y las funciones existentes. Producción conserva su versión actual; esta muestra no instala una aplicación en el iPhone ni reactiva push. El respaldo ZIP de la muestra es opcional: se continúa trabajando en esta misma carpeta y proyecto.
+
 ## CRM nativo — iPhone 0.14.0 (24)
 
 En **Gestión → CRM · Shows y abonos**, Camilo y `jac` tienen el CRM nativo: shows de hoy en adelante, precios y abonos individuales con PDF/fotos, creación de un show de día único con primer abono opcional, ficha de empresario con documentos privados, presupuesto/rentabilidad, preparación y resumen semanal. Los demás usuarios conservan sus permisos anteriores.

@@ -14,7 +14,7 @@ struct LoginView: View {
                 Section {
                     BrandView().frame(maxWidth: 230).frame(maxWidth: .infinity).padding(.vertical, 16)
                     Text("La nómina de tu equipo, contigo.").font(.title2.weight(.semibold)).foregroundStyle(.white)
-                }.listRowBackground(JACTheme.forest)
+                }.listRowBackground(JACTheme.navy)
                 Section {
                     TextField("Usuario o correo", text: $username)
                         .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
