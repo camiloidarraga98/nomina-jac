@@ -96,7 +96,7 @@ Los shows promocionales conservan sus costos reales en rentabilidad, pero esos c
 
 ### Ficha del empresario
 
-**Empresarios → Nuevo empresario** guarda nombre, empresa, teléfono, correo, ciudad y observaciones. Se puede buscar y editar la ficha, consultar sus shows/saldos y adjuntar contratos o documentos PDF/JPG/PNG. Selecciona la ficha al crear un show o editar su precio para reutilizar sus datos.
+**Empresarios → Nuevo empresario** guarda nombre, empresa, teléfono, correo, ciudad y observaciones. Se puede buscar y editar la ficha, consultar sus shows/saldos y adjuntar contratos o documentos PDF/JPG/PNG. Al crear un show o editar su precio, escribe en **Empresario** y elige una sugerencia para reutilizar el contacto. Busca por nombre o empresa, con o sin tildes. Puedes conservar un nombre escrito libremente; no crea una ficha automáticamente. Al modificar el nombre se retira el vínculo anterior hasta que elijas otra sugerencia.
 
 Los documentos son privados, con autorización de administrador y sesión antes y después de leer R2. Se aceptan hasta 5 archivos/10 MB por envío y 100 documentos por ficha. Los reintentos usan un identificador estable; incluso dos envíos simultáneos del mismo intento publican un único conjunto de adjuntos. No se generan enlaces públicos ni se exportan contratos a Google Sheets.
 
@@ -117,3 +117,5 @@ Los gastos registrados en la semana y los costos de shows de esa semana son medi
 ### Validación de esta ampliación
 
 Node 24 local, TypeScript y 184 pruebas sin omisiones: CRM/archivos/concurrencia/contratos privados/migración, nómina/auth/correo/móvil/OAuth, Calendar y avisos con Workerd/D1/R2 locales y todas las salidas simuladas. UI verificada en `127.0.0.1:8773/crm` con empresario/PDF/presupuesto/nómina/tareas ficticios; se comprobó guardado, edición, vínculo a show, cifras y navegación desde el resumen. Captura `outputs/crm60-resumen-local.png`. No se usaron pagos, contratos, eventos ni conexiones reales para pruebas. Esta ampliación es del CRM web; no modifica el binario ni la firma de iOS.
+
+Ajuste visual del 15 de octubre de 2026 (v61): un solo campo **Empresario**, alineado con Valor de venta, sustituye al selector «Sin ficha vinculada» y el segundo campo. Sugerencias blancas con nombre/empresa, navegación con flechas y Enter, cierre con Escape o al salir del campo. Escape cierra primero las sugerencias sin perder el formulario ni su borrador; el cierre habitual del diálogo se conserva cuando la lista ya está cerrada. Mismo componente en Crear show y Editar precio. Sin cambios de API, permisos, esquema o cálculos.

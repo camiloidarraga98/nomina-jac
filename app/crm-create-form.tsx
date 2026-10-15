@@ -5,6 +5,7 @@ import {Input} from '@/components/ui/input';
 import CopInput from './cop-input';
 import {crmFilePayload,type CrmFile} from './crm-files';
 import CrmAttachments from './crm-attachments';
+import CrmContactInput from './crm-contact-input';
 import type {CrmContactChoice} from './crm-workspace';
 import {agendaDate,addAgendaDays} from '@/lib/calendar-core';
 export type CrmCalendar={ready:boolean;revision:number;name:string};
@@ -34,7 +35,7 @@ export default function CrmCreateForm({calendar,save,onBusy,contacts=[]}:{contac
    <label className="field">Descripción compartida<textarea aria-label="Descripción compartida del show" value={description} maxLength={8192} onChange={e=>setDescription(e.target.value)} disabled={locked}/></label>
   </section>
   <section className="crm-form-section"><h3>Datos privados del CRM</h3><p className="muted">El precio, los abonos y sus comprobantes son solo para Camilo y jac. No se envían a Calendar.</p>
-   <div className="form-grid"><div className="field"><span>Valor de venta (COP)</span><CopInput label="Valor de venta del nuevo show (COP)" value={sale} onChange={setSale} disabled={locked}/></div><div className="field"><span>Empresario</span><select className="crm-show-select" aria-label="Ficha de empresario del nuevo show" value={contactId} disabled={locked} onChange={e=>{setContactId(e.target.value);if(e.target.value)setEntrepreneur(contacts.find(c=>c.id===e.target.value)?.name??'');}}><option value="">Sin ficha vinculada</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.company?' · '+c.company:''}</option>)}</select><Input aria-label="Empresario del nuevo show" value={entrepreneur} maxLength={200} onChange={e=>setEntrepreneur(e.target.value)} disabled={locked||!!contactId}/></div></div>
+   <div className="form-grid crm-price-fields"><div className="field"><span>Valor de venta (COP)</span><CopInput label="Valor de venta del nuevo show (COP)" value={sale} onChange={setSale} disabled={locked}/></div><CrmContactInput contacts={contacts} name={entrepreneur} contactId={contactId} disabled={locked} label="Empresario del nuevo show" onChange={(name,id)=>{setEntrepreneur(name);setContactId(id);}}/></div>
    <label className="field">Observaciones internas<Input aria-label="Observaciones privadas del nuevo show" value={note} maxLength={1000} onChange={e=>setNote(e.target.value)} disabled={locked}/></label><label className="toggle"><input type="checkbox" checked={promotional} onChange={e=>setPromotional(e.target.checked)} disabled={locked}/>Show promocional</label>
   </section>
   <section className="crm-form-section"><label className="toggle"><input type="checkbox" checked={withPayment} onChange={e=>setWithPayment(e.target.checked)} disabled={locked||preparing}/>Registrar primer abono</label>
