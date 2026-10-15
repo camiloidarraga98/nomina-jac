@@ -1,6 +1,8 @@
-## Muestra visual azul JAC — pendiente de revisión
+## Identidad azul JAC — iPhone 0.14.1 (25)
 
-El mismo proyecto local incluye una propuesta azul para revisar Quincena, CRM y Agenda. Consulta `docs/JAC_BLUE_PREVIEW.md` y las capturas de `outputs/jac-azul-iphone-*.png`. Se mantiene el logo y las funciones existentes. Producción conserva su versión actual; esta muestra no instala una aplicación en el iPhone ni reactiva push. El respaldo ZIP de la muestra es opcional: se continúa trabajando en esta misma carpeta y proyecto.
+La identidad azul aprobada está aplicada a toda la app mediante el tema compartido: Quincena, Agenda, CRM, Itinerarios/Pases, Alertas, Gastos y Gestión. Conserva el logo, controles nativos, funciones, privacidad, copia sin conexión y colores de éxito/advertencia/eliminación. Consulta `docs/JAC_BLUE_PREVIEW.md`.
+
+Actualiza con **Run desde este mismo `ios/JACNomina.xcodeproj`**, esquema **JACNomina**, eligiendo tu iPhone. Conserva tu equipo/firma, `co.jacmusic.nomina` y push suspendido. No descargues ni sustituyas el proyecto. Se comprobaron 65 pruebas unitarias y cinco de interfaz en simulador nuevo; una comprobación física requiere iPhone. Release sin firma compila correctamente; estas verificaciones no instalan la actualización en tu teléfono.
 
 ## CRM nativo — iPhone 0.14.0 (24)
 

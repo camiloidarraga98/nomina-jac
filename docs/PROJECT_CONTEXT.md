@@ -1,3 +1,15 @@
+## Identidad azul JAC aprobada — 15 de octubre de 2026
+
+Camilo aprobó aplicar la muestra azul a toda la web y al mismo proyecto iPhone, y publicar exclusivamente el Site appgprj_6aa0260b82a88191a47960614238350a. Estilos compartidos y colores de acceso/configuración/Itinerarios/Pases/Alertas/formularios, favicon, theme-color y encabezados PDF/XLSX actualizados. Se mantienen logo, funciones, cálculos, permisos, privacidad, navegación, DB/BUCKET, secretos y conexiones. Sin migraciones, nuevas dependencias, cambios de lockfile ni escrituras de datos de prueba a producción.
+
+TypeScript/build correctos, 49 pruebas de servidor pasadas; revisión visual local con datos ficticios e internet de servicios interceptado, escritorio y móvil sin desbordamiento. Reporte PDF ficticio renderizado y revisado. Ver docs/JAC_BLUE_PREVIEW.md.
+
+iPhone 0.14.1/build 25 en el mismo proyecto: tema compartido azul; firma y esquema personales conservados, bundle co.jacmusic.nomina y push NO. Simulador nuevo 26685C02-61C4-4334-B6F2-DC580623E3C1: 65 unidades y cinco UI pasadas; una comprobación requiere cifrado físico del iPhone, condición existente. TEST SUCCEEDED en ios-blue63.xcresult; Release sin firma BUILD SUCCEEDED. No instalado en iPhone físico; requiere Run. Fuente nativa y respaldo ZIP locales, sin guardarla en el Site.
+
+Publicación web v63 confirmada succeeded en el Site existente, fuente `d651ccb08751a966670a54477e20e4625de8964a`, despliegue `appgdep_6ad156865d3c8191a4320c06360f40a5`, env_set_revision 2. Se guardaron únicamente los cambios web en su fuente privada; se conservaron hosting.json, DB/BUCKET y secretos/conexiones.
+
+Acceso público /acceso comprobado tras publicar: respuesta correcta, botón rgb(0,111,189), texto rgb(22,52,73), theme-color #062f46. Sin sesión autenticada en ese navegador: las pantallas internas se verificaron con fixtures locales; no se usaron datos reales para pruebas. Captura outputs/jac-azul-publicado-v63.png.
+
 ## Propuesta de identidad azul JAC — muestra local, 15 de octubre de 2026
 
 Camilo aprobó preparar primero una muestra visual de Quincena, CRM y Agenda en web/iPhone antes de extenderla al resto. Ver docs/JAC_BLUE_PREVIEW.md. Se mantienen logo y estructura; azul oscuro de navegación/resumen, azul legible para acciones, fondos claros. Se conservan colores semánticos de éxito/error/advertencia. La propuesta vive en el mismo proyecto y está pendiente de revisión; no se publica el cambio visual durante esta muestra. Producción conserva v62 y sus datos/conexiones.
