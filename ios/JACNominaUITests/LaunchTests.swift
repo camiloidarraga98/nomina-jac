@@ -112,18 +112,53 @@ final class LaunchTests: XCTestCase {
         add(attachment)
     }
 
+    @MainActor func testCRMNativeAutocompleteBudgetPreparationAndPrivateReceipt() {
+        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm")
+        let show="77777777-7777-4777-8777-777777777777",contact="88888888-8888-4888-8888-888888888888"
+        tap(app,"crm.show."+show);tap(app,"crm.price");fill(app,"crm.entrepreneur","jose");tap(app,"crm.suggestion."+contact)
+        XCTAssertEqual(app.textFields["crm.entrepreneur"].value as? String,"José · Empresario ficticio")
+        XCUIDevice.shared.press(.home);app.activate();XCTAssertTrue(app.textFields["crm.entrepreneur"].waitForExistence(timeout:10));tap(app,"crm.editor.save")
+        XCTAssertTrue(app.buttons["crm.payment"].waitForExistence(timeout:10));tap(app,"crm.payment")
+        fill(app,"crm.amount.Valor del abono (COP)","50000000");tap(app,"travel.fixture");tap(app,"crm.editor.save")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","90.000.000")).firstMatch.waitForExistence(timeout:10))
+        tap(app,"Rentabilidad");XCTAssertTrue(app.staticTexts["Comisión de toda la quincena"].waitForExistence(timeout:10));attachScreen(app,name:"crm-rentabilidad-nativa")
+        tap(app,"Preparación");tap(app,"crm.plan.save")
+        let saved=app.staticTexts["Presupuesto y preparación guardados."];for _ in 0..<8 {if saved.exists{break};app.swipeDown()};XCTAssertTrue(saved.waitForExistence(timeout:10))
+    }
+    @MainActor func testCRMContactFilesWeeklyAndReaderRestriction() {
+        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Empresarios")
+        tap(app,"crm.contact.88888888-8888-4888-8888-888888888888");tap(app,"crm.contact.files");tap(app,"travel.fixture");tap(app,"crm.editor.save")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH 'crm.file.'")).firstMatch.waitForExistence(timeout:10))
+        app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH 'crm.file.'")).firstMatch.tap();XCTAssertTrue(app.navigationBars["Documento"].waitForExistence(timeout:10));tap(app,"Listo")
+        attachScreen(app,name:"crm-empresario-nativo")
+        app.terminate();let reader=fixture(["--uitest-reader"]);reader.tabBars.buttons["Gestión"].tap();XCTAssertFalse(reader.buttons["management.crm"].exists)
+    }
+
+    @MainActor func testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary() {
+        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"crm.add");tap(app,"Crear show")
+        fill(app,"crm.create.title","PEREIRA · Nuevo ficticio");fill(app,"crm.amount.Valor de venta (COP)","140000000")
+        fill(app,"crm.entrepreneur","jose");tap(app,"crm.suggestion.88888888-8888-4888-8888-888888888888")
+        let first=app.switches["crm.firstPayment"];for _ in 0..<5{if first.exists && first.isHittable{break};app.swipeUp()};XCTAssertTrue(first.exists);first.coordinate(withNormalizedOffset:CGVector(dx:0.9,dy:0.5)).tap();XCTAssertEqual(first.value as? String,"1")
+        fill(app,"crm.amount.Valor del abono (COP)","50000000");tap(app,"travel.fixture");tap(app,"crm.editor.save")
+        XCTAssertTrue(app.textFields["crm.search"].waitForExistence(timeout:10));fill(app,"crm.search","Nuevo ficticio")
+        XCTAssertTrue(app.staticTexts["PEREIRA · Nuevo ficticio"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","90.000.000")).firstMatch.exists)
+        tap(app,"Semana");XCTAssertTrue(app.staticTexts["Resumen semanal"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["Gastos por fecha de registro"].exists);XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","50.000.000")).firstMatch.exists);attachScreen(app,name:"crm-resumen-semanal-nativo")
+    }
+
     @MainActor private func fixture(_ arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"] + arguments; app.launch()
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 20))
         return app
     }
     @MainActor private func tap(_ app: XCUIApplication, _ label: String) {
+        if !label.hasPrefix("crm.suggestion."),label != "crm.keyboard.done",app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
         let button = app.buttons[label].firstMatch
         for _ in 0..<8 { if button.exists && button.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(button.waitForExistence(timeout: 10), "Debe existir el botón \(label)")
         XCTAssertTrue(button.isHittable, "Debe poderse tocar \(label)"); button.tap()
     }
     @MainActor private func fill(_ app: XCUIApplication, _ id: String, _ value: String) {
+        if id.hasPrefix("crm."),app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
         let field = app.textFields[id].firstMatch
         for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(field.waitForExistence(timeout: 10))

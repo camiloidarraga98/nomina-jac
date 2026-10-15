@@ -69,3 +69,9 @@ La identidad nativa comparte verde oscuro, lima y superficies claras del webapp,
 ## Itinerarios y Alertas (0.6.0/build 7)
 
 Web e iPhone comparten consulta, lectura, notificaciones con contenido, creación manual de alerta o itinerario desde Alertas, destinatarios y hasta cinco adjuntos PDF/JPG/PNG (10 MB en total). Camilo puede borrar alertas e itinerarios con confirmación. Itinerarios sigue admitiendo Slack; la creación manual no usa Slack. Los adjuntos privados se descargan con sesión y permisos; en iPhone se abren con QuickLook y compartir, en temporales protegidos. Las conexiones Slack/APNs/Web Push se preparan desde la web. No se cambian funciones, rutas ni permisos de nómina o Agenda.
+
+## CRM — 0.14.0 (24)
+
+Gestión incorpora CRM para administradores: listado de próximos shows, precio/condiciones y autocompletado de empresarios, abonos manuales desde listado o cuenta, PDF/fotos, creación de un evento de un solo día y primer abono, eliminación confirmada y sincronización compartida. La ficha del empresario incluye datos de contacto, shows/saldos y contratos privados. Rentabilidad/presupuesto, vínculo explícito a nómina antigua, comisión revisable de toda la quincena, preparación/tareas y resumen semanal utilizan los endpoints web existentes; el teléfono no calcula importes financieros.
+
+Se reutiliza la copia offline cifrada y las comprobaciones de sesión, revisión, archivos y reintentos. Las escrituras requieren conexión. La conexión OAuth de Sheets sigue administrándose desde el CRM web; la app usa la hoja existente, abre su enlace y puede reintentar pendientes. No se añadieron WebViews, servicios ni permisos nuevos.

@@ -1,3 +1,19 @@
+## CRM nativo — iPhone 0.14.0 (24)
+
+En **Gestión → CRM · Shows y abonos**, Camilo y `jac` tienen el CRM nativo: shows de hoy en adelante, precios y abonos individuales con PDF/fotos, creación de un show de día único con primer abono opcional, ficha de empresario con documentos privados, presupuesto/rentabilidad, preparación y resumen semanal. Los demás usuarios conservan sus permisos anteriores.
+
+**Empresario** es un único campo que sugiere contactos guardados por nombre o empresa, con o sin tildes. Toca una sugerencia para vincularla. Escribir otro nombre retira el vínculo anterior; el texto libre no crea una ficha automáticamente. Los valores COP usan separadores y permiten borrar todo el contenido, sin un cero inicial obligatorio.
+
+**Rentabilidad** consulta los costos y la comisión del servidor. Distingue presupuesto estimado de honorarios/kilómetros/gastos registrados, conserva cierres históricos y las reglas de promocionales. La comisión mostrada es revisable y corresponde a toda la quincena, sin pago automático. Si un show antiguo no está vinculado, puedes elegir su registro de nómina sin modificarlo.
+
+**Preparación** permite responsable, fecha límite, observación y estado de contrato/hotel/transporte/itinerario, además de tareas propias. El anticipo se calcula desde los abonos. **Semana** muestra los próximos shows, saldos, abonos, gastos según fecha de registro, costos de shows de la semana y tareas pendientes; usa las fechas de Colombia del servidor.
+
+Los precios y abonos se guardan en el CRM existente, y los comprobantes reciben el mismo consecutivo y enlace privado que en la web. Crear o eliminar un show actualiza el calendario compartido mediante las API existentes; se confirma antes de eliminar y se conserva el historial de pagos. Google Sheets sigue usando la conexión existente: puedes abrir la hoja y reintentar la sincronización; su conexión inicial se administra desde la web.
+
+La copia cifrada por sesión incluye la información y documentos del CRM que termine de descargar. Desde **Mi cuenta → Copia sin conexión** puedes comprobar si quedan elementos pendientes. Sin internet puedes consultar lo descargado; guardar, sincronizar o eliminar requiere conexión. Los errores de red no cierran la sesión. Una denegación real no utiliza la copia como alternativa y retira el acceso local del CRM. Los reintentos de abonos, creación y documentos conservan el identificador mientras el formulario sigue abierto.
+
+Actualiza con **Run en este mismo proyecto**, `ios/JACNomina.xcodeproj`, esquema **JACNomina**, conservando tu equipo y `co.jacmusic.nomina`. No borres la app ni descargues un proyecto nuevo. Push continúa suspendido. La compilación de simulador y Release sin firma no equivalen a instalar la actualización en tu iPhone; Run requiere el teléfono conectado y su firma vigente.
+
 ## Costos de show y comisión — iPhone 0.13.0 (23)
 
 En **Quincena → Actividad → Shows** puedes marcar **Show promocional** al final del formulario. **Actividad → Gastos por show** permite registrar tiquetes, hoteles, alimentación y otros costos, siempre con un show seleccionado. **Pagos** y la vista previa muestran el cálculo de comisión del servidor y el desglose por show: 5% de las ventas menos honorarios brutos, kilómetros y gastos de shows no promocionales, con mínimo cero. Se excluyen salarios/fijos y movimientos ajenos; no se agrega como pago a Camilo ni cambia lo que recibe el equipo.

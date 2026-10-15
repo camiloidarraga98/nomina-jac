@@ -16,6 +16,7 @@ struct ManagementView: View {
                     NavigationLink { NotificationSettingsView() } label: { Label("Notificaciones", systemImage: "bell.badge") }.accessibilityIdentifier("management.notifications")
                 }
                 if user.itinerariesOnly != true { Section("Administración") {
+                    if user.isOwner { NavigationLink { CRMHomeView(client:store.client) } label:{ Label("CRM · Shows y abonos",systemImage:"briefcase") }.accessibilityIdentifier("management.crm") }
                     if let overview = store.overview {
                         NavigationLink { PeriodsView(overview: overview, archive: true, embedded: true) } label: { Label("Archivo", systemImage: "archivebox") }.accessibilityIdentifier("management.archive")
                         NavigationLink { EmployeesView(overview: overview, embedded: true) } label: { Label("Equipo", systemImage: "person.2") }.accessibilityIdentifier("management.employees")

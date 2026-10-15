@@ -41,7 +41,7 @@ private final class FixtureProtocol: URLProtocol {
     static var offline = false
     static var slowAgenda = false
     static var slowedWorkspace = false
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func seedOfflineContent() {
         lock.lock(); defer { lock.unlock() }
         var alert = itinerary
@@ -67,6 +67,13 @@ private final class FixtureProtocol: URLProtocol {
             }
             if Self.slowAgenda, request.url?.path == "/api/calendar", request.httpMethod == "GET" { Thread.sleep(forTimeInterval: 3) }
             if Self.cancelRead(request) { throw URLError(.cancelled) }
+            if request.url?.path == "/api/crm/file" {
+                Self.lock.lock();defer {Self.lock.unlock()}
+                let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? [],id=q.first{$0.name=="file"}?.value ?? ""
+                guard !Self.reader,let data=CRMFixture.bytes[id] else {throw URLError(.fileDoesNotExist)}
+                let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":try NoticeUpload.mime(data)])!
+                client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:data);client?.urlProtocolDidFinishLoading(self);return
+            }
             if request.url?.path == "/api/expenses/file" {
                 Self.lock.lock();defer { Self.lock.unlock() };let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? [],id=q.first { $0.name == "file" }?.value ?? "";guard let bytes=Self.attachments[id] else { throw URLError(.fileDoesNotExist) };let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":try NoticeUpload.mime(bytes)])!;client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:bytes);client?.urlProtocolDidFinishLoading(self);return
             }
@@ -106,6 +113,7 @@ private final class FixtureProtocol: URLProtocol {
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         let viewer = reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
         let visible = ([itinerary] + boardingFixtures + alerts).map { overrides[$0["id"].text] ?? $0 }.filter { !(ProcessInfo.processInfo.arguments.contains("--uitest-boarding-tomorrow") && ["boarding-fixture-0","boarding-fixture-1"].contains($0["id"].text)) && !deletedNotices.contains($0["id"].text) && ($0["kind"].text != "boarding_pass" || $0["recipients"].elements.contains(.string(viewer))) }
+        if parts.path == "/api/crm" {return try CRMFixture.response(request,reader:reader)}
         if parts.path == "/api/expenses" {
             if request.httpMethod == "POST" {
                 var input=try body(request)
@@ -281,4 +289,44 @@ private final class FixtureProtocol: URLProtocol {
         return .object(["connection": .object(["configured": .bool(true), "connected": .bool(true), "email": .string("calendar@example.invalid"), "selected": agendaCalendar, "revision": .number(1), "writeAuthorized": .bool(true)]), "canEditEvents": .bool(!ProcessInfo.processInfo.arguments.contains("--uitest-itineraries-only")), "month": .string(month), "monthLabel": .string(CalendarClock.dayLabel(month + "-01")), "days": .array(days.map(JSONValue.string)), "today": .string(today), "events": .array(days.contains(today) ? records : []), "upcoming": .array(records), "upcomingUntil": .string(CalendarClock.day(CalendarClock.calendar.date(byAdding: .day, value: 90, to: Date())!)), "updatedAt": .string(ISO8601DateFormatter().string(from: Date())), "timeZone": .string("America/Bogota")])
     }
 }
+// Native CRM fixtures: no real Calendar, Sheets, payments or contracts.
+private enum CRMFixture {
+    static let showID="77777777-7777-4777-8777-777777777777",contactID="88888888-8888-4888-8888-888888888888"
+    static var contacts:[JSONValue]=[],shows:[JSONValue]=[],payments:[String:[JSONValue]]=[:],plans:[String:JSONValue]=[:],files:[String:[JSONValue]]=[:],bytes:[String:Data]=[:],attempts:[String:JSONValue]=[:]
+    static func reset(){contacts=[.object(["id":.string(contactID),"version":.number(1),"name":.string("José · Empresario ficticio"),"company":.string("Eventos de prueba"),"phone":.string(""),"email":.string("contrato@example.invalid"),"city":.string("Pereira"),"note":.string("")])];shows=[show(id:showID,title:"PEREIRA · Show ficticio",sale:140000000)];payments=[:];plans=[:];files=[:];bytes=[:];attempts=[:]}
+    static func show(id:String,title:String,sale:Double)->JSONValue{.object(["id":.string(id),"title":.string(title),"municipality":.string("Pereira"),"showDate":.string(BoardingClock.today(CalendarClock.calendar.date(byAdding:.day,value:1,to:Date())!)),"sale":.number(sale),"paid":.number(0),"balance":.number(sale),"receiptNext":.number(1),"entrepreneur":.string(""),"contactId":.null,"note":.string(""),"promotional":.bool(false),"sourceState":.string("present"),"status":.string("active"),"version":.number(1)])}
+    static func tasks()->JSONValue{.array(zip(["contract","hotel","transport","itinerary"],["Contrato firmado","Hotel","Transporte","Itinerario"]).map{.object(["id":.string($0.0),"title":.string($0.1),"status":.string("pending"),"responsible":.string(""),"dueDate":.string(""),"note":.string("")])})}
+    static func workspace(_ id:String)->JSONValue{let s=shows.first{$0["id"].text==id} ?? .null;var p=plans[id] ?? .object(["version":.number(0),"budget":.null,"tasks":tasks()]);p["readOnly"] = .bool(s["sourceState"].text=="deleted");p["advance"] = .object(["done":.bool(s["paid"].number>0),"amount":s["paid"]]);p["profit"] = .object(["issue":.string(""),"choices":.array([]),"actual":.object(["periodId":.string("fixture-period"),"start":.string(BoardingClock.today()),"end":.string(BoardingClock.today()),"sale":s["sale"],"musicians":.number(750000),"technical":.number(250000),"drivers":.number(100000),"expenses":.number(300000),"cost":.number(1400000),"profit":.number(s["sale"].number-1400000),"variance":.null,"commissionBase":.number(s["sale"].number-1400000),"periodCommission":.number(6930000),"closed":.bool(false),"promotional":s["promotional"]])]);return p}
+    static func response(_ req:URLRequest,reader:Bool)throws ->(Int,JSONValue){guard !reader,!ProcessInfo.processInfo.arguments.contains("--uitest-itineraries-only") else{return(403,.object(["error":.string("CRM solo para administradores.")]))};let q=URLComponents(url:req.url!,resolvingAgainstBaseURL:false)!.queryItems ?? [];func value(_ k:String)->String{q.first{$0.name==k}?.value ?? ""}
+        if req.httpMethod != "POST" { let id=value("id")
+            if value("view")=="workspace"{return(200,workspace(id))}
+            if value("view")=="contacts"{return(200,.object(["contacts":.array(contacts)]))}
+            if value("view")=="contact"{return(200,.object(["contact":contacts.first{$0["id"].text==id} ?? .null,"shows":.array(shows.filter{$0["contactId"].text==id}),"files":.array(files[id] ?? [])]))}
+            if value("view")=="weekly" {
+                let day=ReceiptParser.civilDate(value("week")) ?? Date(),cal=CalendarClock.calendar,offset=(cal.component(.weekday,from:day)+5)%7
+                let from=BoardingClock.today(cal.date(byAdding:.day,value:-offset,to:day)!),to=BoardingClock.today(cal.date(byAdding:.day,value:6-offset,to:day)!)
+                let list=shows.filter{$0["sourceState"].text != "deleted" && $0["showDate"].text>=max(from,BoardingClock.today()) && $0["showDate"].text<=to}
+                let received=payments.values.flatMap{$0}.filter{$0["status"].text=="recorded" && $0["paymentDate"].text>=from && $0["paymentDate"].text<=to}.reduce(0){$0+$1["amount"].number}
+                return(200,.object(["week":.object(["from":.string(from),"to":.string(to),"today":.string(BoardingClock.today())]),"shows":.array(list),"tasks":.array([]),"pending":.number(list.reduce(0){$0+$1["balance"].number}),"received":.number(received),"expensesRegistered":.number(300000),"costs":.number(list.contains{$0["id"].text==showID} ? 1400000:0),"unpriced":.number(0),"unknownCosts":.number(Double(list.filter{$0["id"].text != showID}.count))]))
+            }
+            if !id.isEmpty{return(200,.object(["show":shows.first{$0["id"].text==id} ?? .null,"payments":.array(payments[id] ?? [])]))}
+            return(200,.object(["shows":.array(shows.filter{$0["sourceState"].text != "deleted"}),"contacts":.array(contacts),"calendar":.object(["ready":.bool(true),"revision":.number(1),"name":.string("Agenda ficticia")]),"sheets":.object(["connected":.bool(true),"ready":.bool(true),"pending":.number(0),"url":.string("")])]))
+        }
+        guard req.value(forHTTPHeaderField:"Origin")==UITestBackend.base.absoluteString,req.value(forHTTPHeaderField:"Cookie")?.hasPrefix("__Host-jac_session=")==true else{return(403,.object(["error":.string("Sesión y origen requeridos")]))}
+        let body=try FixtureProtocol.body(req),r=body["record"],action=body["action"].text,id=r["id"].text
+        func conflict()->(Int,JSONValue){(409,.object(["error":.string("El registro cambió. Recarga antes de guardar.")]))}
+        func attached(_ owner:String,_ values:JSONValue)throws->[JSONValue]{try values.elements.map{f in let id=UUID().uuidString.lowercased();guard let data=Data(base64Encoded:f["data"].text)else{throw APIError.invalid("Archivo inválido")};bytes[id]=data;return .object(["id":.string(id),"filename":f["filename"],"mimeType":.string(try NoticeUpload.mime(data)),"size":.number(Double(data.count))])}}
+        if action=="syncCalendar" || action=="syncSheets"{return(200,.object(["ok":.bool(true)]))}
+        if action=="updateShow",let i=shows.firstIndex(where:{$0["id"].text==id}){guard shows[i]["version"]==r["version"] else{return conflict()};for k in ["sale","entrepreneur","contactId","note","promotional","status"]{shows[i][k]=r[k]};shows[i]["balance"] = .number(r["sale"].number-shows[i]["paid"].number);shows[i]["version"] = .number(r["version"].number+1);return(200,.object(["ok":.bool(true)]))}
+        if action=="saveContact"{if let i=contacts.firstIndex(where:{$0["id"].text==id}){guard contacts[i]["version"]==r["version"] else{return conflict()};contacts[i]=r;contacts[i]["version"] = .number(r["version"].number+1)}else{var c=r;c["version"] = .number(1);contacts.append(c)};return(200,.object(["id":.string(id)]))}
+        if action=="savePlan"{let id=r["showId"].text;guard (plans[id]?["version"] ?? .number(0))==r["version"] else{return conflict()};var p=r;p["version"] = .number(r["version"].number+1);plans[id]=p;return(200,.object(["ok":.bool(true)]))}
+        if action=="addContactFiles"{if attempts[id] != nil{return(200,.object(["ok":.bool(true)]))};let cid=r["contactId"].text;guard let i=contacts.firstIndex(where:{$0["id"].text==cid}),contacts[i]["version"]==r["version"]else{return conflict()};files[cid,default:[]] += try attached(cid,r["files"]);contacts[i]["version"] = .number(r["version"].number+1);attempts[id]=r;return(200,.object(["ok":.bool(true)]))}
+        if action=="addPayment"{if let prior=attempts[id]{return prior==r ? (200,.object(["ok":.bool(true)])):conflict()};let sid=r["showId"].text;guard let i=shows.firstIndex(where:{$0["id"].text==sid})else{return conflict()};var p=r;p["files"] = .array(try attached(sid,r["files"]));p["version"] = .number(1);p["status"] = .string("recorded");p["actor"] = .string("Persona ficticia");payments[sid,default:[]].append(p);shows[i]["paid"] = .number(shows[i]["paid"].number+r["amount"].number);shows[i]["balance"] = .number(shows[i]["sale"].number-shows[i]["paid"].number);attempts[id]=r;return(200,.object(["ok":.bool(true)]))}
+        if action=="createShow"{let sid=id;if let s=shows.first(where:{$0["id"].text==sid}){return(200,.object(["show":s]))};var s=show(id:sid,title:r["event"]["title"].text,sale:r["sale"].number);for k in ["entrepreneur","contactId","note","promotional"]{s[k]=r[k]};s["showDate"] = .string(String(r["event"]["start"].text.prefix(10)));shows.append(s);if !r["firstPayment"].isNull {var p=r["firstPayment"];p["id"] = .string(id);p["showId"] = .string(sid);p["files"] = .array(try attached(sid,p["files"]));p["version"] = .number(1);p["status"] = .string("recorded");p["actor"] = .string("Persona ficticia");payments[sid]=[p];s["paid"]=p["amount"];s["balance"] = .number(s["sale"].number-p["amount"].number);shows[shows.count-1]=s};return(200,.object(["show":s]))}
+        if action=="prepareDeleteShow"{var d=r;d["showId"] = .string(id);d["id"] = .string(UUID().uuidString.lowercased());d["revision"] = .number(1);d["etag"] = .string("fixture-etag");return(200,.object(["record":d,"event":.object(["title":shows.first{$0["id"].text==id}?["title"] ?? .string("Ficticio")])]))}
+        if action=="deleteShow",let i=shows.firstIndex(where:{$0["id"]==r["showId"]}){shows[i]["sourceState"] = .string("deleted");return(200,.object(["ok":.bool(true)]))}
+        return(400,.object(["error":.string("Acción ficticia no admitida")]))
+    }
+}
+
 #endif

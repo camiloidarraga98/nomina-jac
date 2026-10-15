@@ -40,6 +40,7 @@ final class PayrollClient: ObservableObject {
     var onSessionInvalidated: (() -> Void)?
     private var syncTask: Task<Void, Never>?
     private var storageFailures = 0
+    private var crmGeneration = 0
     private var cacheGeneration = 0
     private let automaticOfflineSync: Bool
     let agendaCache: AgendaOfflineCache
@@ -135,13 +136,13 @@ final class PayrollClient: ObservableObject {
     }
     private func cacheable(_ path: String, query: [URLQueryItem]) -> Bool {
         if path == "api/calendar" { return !query.contains { $0.name == "action" } }
-        return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file"].contains(path)
+        return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file"].contains(path)
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0) async throws -> (Data, HTTPURLResponse) {
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
-        let scope = try offlineScope(), generation = cacheGeneration
+        let scope = try offlineScope(), generation = cacheGeneration, crmReadGeneration = crmGeneration
         let canCache = body == nil && cacheable(path, query: query)
         let saved = canCache ? scope.flatMap { offlineCache.load($0, key: key) } : nil
         if let saved, let response = saved.response, !forceNetwork, usingOfflineCopy { return (saved.data, response) }
@@ -169,6 +170,7 @@ final class PayrollClient: ObservableObject {
         do { (data, rawResponse) = try await session.data(for: request) }
         catch {
             guard sentToken == (try vault.load()), generation == cacheGeneration else { throw CancellationError() }
+            if path.hasPrefix("api/crm"),body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
             if AgendaOfflineCache.isUnavailable(error) {
                 usingOfflineCopy = true
                 if let saved, let response = saved.response, !forceNetwork { return (saved.data, response) }
@@ -184,14 +186,15 @@ final class PayrollClient: ObservableObject {
             if sentToken == (try vault.load()) { try clearSession() }
             throw APIError.unauthorized
         }
+        if path.hasPrefix("api/crm"),body == nil,crmReadGeneration != crmGeneration,!(400..<500).contains(response.statusCode) {throw CancellationError()}
         if [500, 502, 503, 504].contains(response.statusCode), let saved, let result = saved.response, !forceNetwork {
             usingOfflineCopy = true; return (saved.data, result)
         }
         guard (200..<300).contains(response.statusCode) else {
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }
-            if let scope, body == nil, [403, 404, 410].contains(response.statusCode) {
+            if let scope, (body == nil || path == "api/crm"), [403, 404, 410].contains(response.statusCode) {
                 if path.hasPrefix("api/notices"), let id = query.first(where: { ["id", "item"].contains($0.name) })?.value { removeCachedNotice(id, scope: scope) }
-                else { offlineCache.remove(scope) { URL(string: $0.url)?.path.hasPrefix("/" + path) == true } }
+                else { let prefix=path.hasPrefix("api/crm") && response.statusCode == 403 ? "/api/crm":"/"+path;offlineCache.remove(scope) { URL(string: $0.url)?.path.hasPrefix(prefix) == true } }
                 cacheGeneration += 1; syncTask?.cancel(); syncTask = nil; syncingOffline = false
                 offlineSyncMessage = "Se conserva lo descargado. Quedan datos o adjuntos por actualizar."
                 TemporaryDocuments.clear(); self.cacheRevision += 1
@@ -221,7 +224,7 @@ final class PayrollClient: ObservableObject {
     private func saveOffline(_ data: Data, response: HTTPURLResponse, key: String, revision: Int, scope: AgendaCacheScope) throws {
         guard let url = response.url else { return }
         let mime = response.mimeType ?? "application/json"
-        if url.path == "/api/notices/file" || url.path == "/api/notices/pdf" || url.path == "/api/expenses/file" {
+        if url.path == "/api/notices/file" || url.path == "/api/notices/pdf" || url.path == "/api/expenses/file" || url.path == "/api/crm/file" {
             guard data.count <= 10 * 1024 * 1024, (try? NoticeUpload.mime(data)) == mime else { throw APIError.message("No se recibió un adjunto válido para guardar.") }
         } else if !url.path.hasSuffix("/export"), (try? JSONDecoder().decode(JSONValue.self, from: data)) == nil { throw APIError.message("No se recibió información válida para guardar.") }
         if url.path == "/api/expenses", let feed = try? decoder.decode(TravelExpenseFeed.self, from: data) {
@@ -346,7 +349,7 @@ final class PayrollClient: ObservableObject {
                     } }
                     cursor = page.nextCursor; guard cursor.isEmpty || visited.insert(cursor).inserted else { throw APIError.message("No se pudo completar la copia de gastos.") }
                 } while !cursor.isEmpty
-                if workspace.user.isOwner { try await optionalRead { _ = try await self.users() } }
+                if workspace.user.isOwner { try await optionalRead { _ = try await self.users() };if workspace.user.itinerariesOnly != true {try await optionalRead {try await self.synchronizeCrmOffline()}} }
                 if workspace.user.itinerariesOnly != true {
                     try await optionalRead { _ = try await self.mail(periodID: nil) }
                     for period in workspace.periods { try await optionalRead { _ = try await self.mail(periodID: period.id) } }
@@ -441,6 +444,45 @@ final class PayrollClient: ObservableObject {
         try await noticeCommand(.object(["action": .string(item.kind == "boarding_pass" ? "deleteBoardingPass" : item.kind == "itinerary" ? "deleteItinerary" : "deleteAlert"), "id": .string(item.id), "confirmation": .string(item.id)]))
         if let scope = try offlineScope() { removeCachedNotice(item.id, scope: scope) }
     }
+    func crm(query:[String:String] = [:],forceNetwork:Bool=false) async throws -> JSONValue {
+        let(data,_)=try await request(path:"api/crm",query:query.map{URLQueryItem(name:$0.key,value:$0.value)},forceNetwork:forceNetwork)
+        return try decoder.decode(JSONValue.self,from:data)
+    }
+    func crmCommand(_ action:String,record:JSONValue? = nil,month:String? = nil) async throws -> JSONValue {
+        guard ["updateShow","createShow","addPayment","voidPayment","savePlan","linkPayroll","saveContact","addContactFiles","prepareDeleteShow","deleteShow","syncCalendar","syncSheets"].contains(action) else{throw APIError.invalid("Operación del CRM no disponible en este formulario.")}
+        var command:JSONValue = .object(["action":.string(action)]);if let record{command["record"]=record};if let month{command["month"] = .string(month)}
+        let(data,_)=try await request(path:"api/crm",body:command)
+        if !["syncSheets","prepareDeleteShow"].contains(action){crmGeneration += 1}
+        if !["syncCalendar","syncSheets","prepareDeleteShow"].contains(action),let scope=try offlineScope(){offlineCache.remove(scope){ URL(string:$0.url)?.path == "/api/crm" };cacheRevision += 1}
+        return try decoder.decode(JSONValue.self,from:data)
+    }
+    func crmUploads(_ files:[NoticeUpload]) throws -> JSONValue { try travelUploads(files) }
+    func crmFile(owner:String,file:NoticeAttachment,version:Int,contact:Bool) async throws -> ExportedDocument {
+        let query=[URLQueryItem(name:contact ? "contact":"id",value:owner),URLQueryItem(name:"file",value:file.id)]
+        let(data,response)=try await request(path:"api/crm/file",query:query,document:true,cacheRevision:version)
+        guard data.count<=10*1024*1024,response.mimeType==file.mimeType,(try NoticeUpload.mime(data))==file.mimeType else{throw APIError.invalid("No se recibió un documento válido.")}
+        return try TemporaryDocuments.save(data,filename:(file.filename as NSString).lastPathComponent)
+    }
+    private func synchronizeCrmOffline() async throws {
+        let feed=try await crm(query:["month":CalendarClock.month(Date())],forceNetwork:true)
+        _ = try await crm(query:["view":"weekly","week":BoardingClock.today()],forceNetwork:true)
+        func saveFiles(_ files:JSONValue,owner:String,version:Int,contact:Bool) async throws {
+            for file in try files.decoded([NoticeAttachment].self) {
+                try Task.checkCancellation()
+                let query=[URLQueryItem(name:contact ? "contact":"id",value:owner),URLQueryItem(name:"file",value:file.id)]
+                if let scope=try offlineScope(),offlineCache.load(scope,key:resourceKey(resourceURL(path:"api/crm/file",query:query),revision:version))==nil { _ = try await request(path:"api/crm/file",query:query,document:true,forceNetwork:true,cacheRevision:version) }
+            }
+        }
+        for show in feed["shows"].elements {
+            try Task.checkCancellation();let id=show["id"].text
+            let d=try await crm(query:["id":id],forceNetwork:true)
+            _ = try await crm(query:["view":"workspace","id":id],forceNetwork:true)
+            for p in d["payments"].elements {try await saveFiles(p["files"],owner:p["id"].text,version:Int(p["version"].number),contact:false)}
+        }
+        let directory=try await crm(query:["view":"contacts"],forceNetwork:true)
+        for c in directory["contacts"].elements {try Task.checkCancellation();let d=try await crm(query:["view":"contact","id":c["id"].text],forceNetwork:true);try await saveFiles(d["files"],owner:c["id"].text,version:Int(c["version"].number),contact:true)}
+    }
+
     func payroll(_ command: JSONValue) async throws -> PayrollEnvelope {
         let (data, _) = try await request(path: "api/mobile/payroll", body: command)
         return try decoder.decode(PayrollEnvelope.self, from: data)

@@ -42,7 +42,79 @@ private final class MockProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+private final class CRMDelayedProtocol:URLProtocol {
+    static let lock=NSLock()
+    static var held:CRMDelayedProtocol?
+    override class func canInit(with request:URLRequest)->Bool{true}
+    override class func canonicalRequest(for request:URLRequest)->URLRequest{request}
+    override func startLoading(){
+        guard request.url?.host?.hasSuffix(".invalid")==true else{client?.urlProtocol(self,didFailWithError:URLError(.unsupportedURL));return}
+        if request.httpMethod == "POST" {respond(Data("{}".utf8))}
+        else{Self.lock.lock();Self.held=self;Self.lock.unlock()}
+    }
+    func respond(_ data:Data){let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!;client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:data);client?.urlProtocolDidFinishLoading(self)}
+    static func pending()->CRMDelayedProtocol?{lock.lock();defer{lock.unlock()};return held}
+    override func stopLoading(){}
+}
+
 final class PayrollClientTests: XCTestCase {
+    @MainActor func testLateCRMReadCannotRestoreFinancialCopyAfterASave() async throws {
+        let vault=MemorySession();vault.token=String(repeating:"f",count:43)
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[CRMDelayedProtocol.self]
+        let client=PayrollClient(baseURL:UITestBackend.base,vault:vault,configuration:config)
+        let pending=Task{try await client.crm(query:["id":"77777777-7777-4777-8777-777777777777"])}
+        for _ in 0..<100{if CRMDelayedProtocol.pending() != nil{break};try await Task.sleep(for:.milliseconds(10))}
+        let held=try XCTUnwrap(CRMDelayedProtocol.pending())
+        _ = try await client.crmCommand("savePlan",record:.object([:]))
+        held.respond(Data("{\"show\":{\"sale\":1}}".utf8))
+        do{_ = try await pending.value;XCTFail("Una lectura anterior al guardado no debe volver a la interfaz o caché")}catch{XCTAssertTrue(error is CancellationError)}
+        XCTAssertNil(client.cached(JSONValue.self,path:"api/crm",query:[URLQueryItem(name:"id",value:"77777777-7777-4777-8777-777777777777")]))
+    }
+
+    func testCRMAmountsAreEditableWithoutLeadingZeroAndPreserveCentavos() {
+        XCTAssertTrue(CRMFields.money(0.5).contains("0,50"));XCTAssertTrue(CRMFields.money(140000000).contains("140.000.000"))
+        XCTAssertEqual(CRMMoney.edit("")?.value,0);XCTAssertEqual(CRMMoney.edit("0140000000")?.text,"140.000.000")
+        XCTAssertEqual(CRMMoney.edit("1.000,")?.text,"1.000,");XCTAssertEqual(CRMMoney.edit("1.000,50")?.value,1000.5)
+        XCTAssertNil(CRMMoney.edit("-100"));XCTAssertNil(CRMMoney.edit("1,234"));XCTAssertNil(CRMMoney.edit("1000000000001"))
+    }
+
+    @MainActor func testCRMReusesContactsPaymentsPlansAndPrivateFilesWithStableRetries() async throws {
+        let client=UITestBackend.client()
+        let feed=try await client.crm(),show=try XCTUnwrap(feed["shows"].elements.first),contact=try XCTUnwrap(feed["contacts"].elements.first)
+        XCTAssertEqual(CRMFields.matches("jose",in:feed["contacts"].elements).count,1)
+        XCTAssertEqual(CRMFields.matches("eventos",in:feed["contacts"].elements).count,1)
+        var record=CRMFields.showRecord(show);record["contactId"]=contact["id"];record["entrepreneur"]=contact["name"]
+        _ = try await client.crmCommand("updateShow",record:record)
+        let detail=try await client.crm(query:["id":show["id"].text]);XCTAssertEqual(detail["show"]["contactId"],contact["id"])
+        let proof=NoticeUpload(filename:"Ficticio.pdf",data:Data("%PDF-1.4\nPRUEBA SIN DATOS REALES\n%%EOF".utf8))
+        let payment:JSONValue = .object(["id":.string(UUID().uuidString.lowercased()),"showId":show["id"],"amount":.number(50000000),"paymentDate":.string(BoardingClock.today()),"note":.string("Ficticio"),"files":try client.crmUploads([proof])])
+        _ = try await client.crmCommand("addPayment",record:payment);_ = try await client.crmCommand("addPayment",record:payment)
+        let paid=try await client.crm(query:["id":show["id"].text]);XCTAssertEqual(paid["payments"].elements.count,1);XCTAssertEqual(paid["show"]["balance"].number,90000000)
+        let plan=try await client.crm(query:["view":"workspace","id":show["id"].text]);XCTAssertTrue(plan["advance"]["done"].flag)
+        var tasks=plan["tasks"].elements;tasks[0]["status"] = .string("done")
+        _ = try await client.crmCommand("savePlan",record:.object(["showId":show["id"],"version":plan["version"],"budget":.null,"tasks":.array(tasks)]))
+        let latest=try await client.crm(query:["view":"workspace","id":show["id"].text]);XCTAssertEqual(latest["tasks"].elements[0]["status"].text,"done")
+        let p=try XCTUnwrap(paid["payments"].elements.first),file=try XCTUnwrap(p["files"].elements.first).decoded(NoticeAttachment.self)
+        let document=try await client.crmFile(owner:p["id"].text,file:file,version:1,contact:false);XCTAssertEqual(try Data(contentsOf:document.url),proof.data);TemporaryDocuments.remove(document)
+        let upload:JSONValue = .object(["id":.string(UUID().uuidString.lowercased()),"contactId":contact["id"],"version":contact["version"],"files":try client.crmUploads([proof])])
+        _ = try await client.crmCommand("addContactFiles",record:upload);_ = try await client.crmCommand("addContactFiles",record:upload)
+        let profile=try await client.crm(query:["view":"contact","id":contact["id"].text]);XCTAssertEqual(profile["files"].elements.count,1)
+        let contract=try XCTUnwrap(profile["files"].elements.first).decoded(NoticeAttachment.self)
+        let contractDoc=try await client.crmFile(owner:contact["id"].text,file:contract,version:2,contact:true);XCTAssertEqual(try Data(contentsOf:contractDoc.url),proof.data);TemporaryDocuments.remove(contractDoc)
+    }
+    @MainActor func testCRMOfflineCopyUsesSessionEncryptionAndDenialNeverFallsBackToSavedData() async throws {
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let client=UITestBackend.client(contentCache:cache,downloadOffline:false),feed=try await client.crm(query:["month":CalendarClock.month(Date())])
+        XCTAssertFalse(feed["shows"].elements.isEmpty)
+        let (offline,vault)=relaunchFixture(cache);offline.beginOfflineRestore();MockProtocol.handler={_ in throw URLError(.notConnectedToInternet)}
+        let restored=try await offline.crm(query:["month":CalendarClock.month(Date())]);XCTAssertEqual(restored,feed)
+        do{_ = try await offline.crmCommand("syncSheets");XCTFail("No se permiten escrituras offline")}catch{}
+        MockProtocol.handler={req in (HTTPURLResponse(url:req.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"error\":\"Acceso retirado\"}".utf8))}
+        do{_ = try await offline.crm(query:["month":CalendarClock.month(Date())],forceNetwork:true);XCTFail("La denegación no sirve la copia")}catch{guard case APIError.forbidden=error else{return XCTFail(error.localizedDescription)}}
+        XCTAssertNotNil(vault.token);XCTAssertNil(offline.cached(JSONValue.self,path:"api/crm",query:[URLQueryItem(name:"month",value:CalendarClock.month(Date()))]))
+        try offline.clearSession();XCTAssertTrue(cache.entries(OfflineResponseCache.scope(origin:UITestBackend.base.absoluteString,token:String(repeating:"f",count:43))).isEmpty)
+    }
+
     func testReceiptParserChoosesTotalAndIssueDateInsteadOfTaxesCashAndDueDate() {
         let value = ReceiptParser.parse(["Restaurante Ficticio", "FACTURA 882299", "FECHA EMISIÓN 08/10/2026", "VENCE 10/10/2026", "SUBTOTAL 40.000", "IVA 7.600", "TOTAL A PAGAR COP 47.600,00", "EFECTIVO 50.000", "CAMBIO 2.400"])
         XCTAssertEqual(value.amount, 47600); XCTAssertEqual(value.date, "2026-10-08")
