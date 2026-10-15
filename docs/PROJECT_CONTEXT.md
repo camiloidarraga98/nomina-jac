@@ -1,3 +1,9 @@
+## Detección CRM de Cali — 15 de octubre de 2026
+
+Camilo informó que no aparecían los eventos «CALI - LA COMADRE» (16 de octubre) y «PRIVADO-CALI» (17). La lectura de Calendar, con la cuenta jacmusicestudios@gmail.com, confirmó ambos. DIVIPOLA usa SANTIAGO DE CALI y el detector solo contemplaba el alias de Bogotá; el nombre corto Cali no coincidía. Se añade el alias exacto Cali → SANTIAGO DE CALI, con las mismas reglas de palabras completas, normalización y deduplicación. No se cambian eventos, fechas, precios ni abonos y no hay migraciones. La sincronización normal incorpora los eventos existentes por su ID estable; el cambio se aplica al CRM web y al nativo mediante la API compartida.
+
+Verificación en este Mac con Node 24: 90 pruebas de nómina/autenticación/correo/CRM/workspace pasadas, incluidas dos regresiones nuevas (alias y sincronización de dos eventos ficticios sin duplicados, precios conservados y sin escritura a Calendar); TypeScript correcto. Solo servicios simulados en pruebas, sin avisos ni pagos reales. Build local correcto y publicación v62 confirmada succeeded en el mismo Site; fuente 0600351cbd13d5c92efd2cc8bf15ea44d7a8b2b6, despliegue appgdep_6ad12acc95a881918ed6ac7efdd6605e, env_set_revision 2. Se conservan DB/BUCKET y conexiones. La comprobación visual del listado real quedó limitada porque el navegador de Codex no tiene sesión JAC activa; no se declara visto el listado autenticado tras publicar.
+
 # Contexto de Nómina JAC Music
 
 ## Itinerarios limpios y permiso al entrar — web v32 / iPhone 0.8.0/build 9

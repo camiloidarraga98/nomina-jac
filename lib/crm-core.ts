@@ -8,7 +8,7 @@ export const MAX_CENTS=100_000_000_000_000;
 export function cents(value:number){const n=Math.round(value*100);if(!Number.isFinite(value)||value<0||n>MAX_CENTS||!Number.isSafeInteger(n)||Math.abs(value*100-n)>0.001)throw new CrmFailure('Revisa el valor COP: usa hasta dos decimales y un máximo de un billón.');return n;}
 export const crmMoney=(amount:number)=>'$ '+amount.toLocaleString('es-CO',{minimumFractionDigits:0,maximumFractionDigits:2});
 const normalize=(s:string)=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/[^A-Z0-9]+/g,' ').trim();
-const names=[...new Set(municipalities.map(m=>m.name))].map(name=>({name,match:normalize(name)})).concat([{name:'BOGOTÁ, D.C.',match:'BOGOTA'}]).sort((a,b)=>b.match.length-a.match.length);
+const names=[...new Set(municipalities.map(m=>m.name))].map(name=>({name,match:normalize(name)})).concat([{name:'BOGOTÁ, D.C.',match:'BOGOTA'},{name:'SANTIAGO DE CALI',match:'CALI'}]).sort((a,b)=>b.match.length-a.match.length);
 export function showMunicipalities(title:string){const text=' '+normalize(title)+' ',found:{name:string;match:string}[]=[];for(const m of names)if(text.includes(' '+m.match+' ')&&!found.some(other=>(' '+other.match+' ').includes(' '+m.match+' ')))found.push(m);return [...new Set(found.map(m=>m.name))];}
 export function calendarShowDate(event:AgendaEvent){return event.allDay?event.start:agendaDate(new Date(event.start));}
 export type CrmShowRow={id:string;calendar_id:string;event_id:string;title:string;municipality:string;show_date:string;source_state:string;status:string;sale_cents:number|null;paid_cents:number;receipt_sequence:number;entrepreneur:string;contact_id:string;note:string;promotional:number;version:number;created_at:string;updated_at:string};
