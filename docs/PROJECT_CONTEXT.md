@@ -1,3 +1,7 @@
+## Corte de pago mensual de Jenny — 15 de octubre de 2026
+
+Camilo pidió retirar la nómina dependiente de Jenny de la primera quincena y pagarla únicamente en la segunda. El código y la semilla ya admitían ciclo mensual/corte 2; la ficha real estaba en corte 1. Se corrigió únicamente Corte del pago mensual a Segunda quincena mediante Personal con la sesión autorizada de Camilo. El primer guardado fue rechazado por revisión desactualizada; se recargó y se reaplicó solo ese campo sobre la versión vigente, sin sobrescribir cambios ajenos. Se confirmó Cambios guardados y en 1–15 octubre la fila muestra Pago mensual · Segunda quincena / Fuera de este corte. Su neto dejó de formar parte del total; los demás valores, salario, movilización y cierres históricos se conservan. No hubo cierre, envío, cambio de código, migración ni despliegue. Web e iPhone comparten la configuración guardada; el teléfono debe refrescar con conexión. La regla mensual ya está cubierta por tests/payroll.test.mjs, ejecutada correctamente en la comprobación previa sin cambios de sus entradas.
+
 ## Detección CRM de Cali — 15 de octubre de 2026
 
 Camilo informó que no aparecían los eventos «CALI - LA COMADRE» (16 de octubre) y «PRIVADO-CALI» (17). La lectura de Calendar, con la cuenta jacmusicestudios@gmail.com, confirmó ambos. DIVIPOLA usa SANTIAGO DE CALI y el detector solo contemplaba el alias de Bogotá; el nombre corto Cali no coincidía. Se añade el alias exacto Cali → SANTIAGO DE CALI, con las mismas reglas de palabras completas, normalización y deduplicación. No se cambian eventos, fechas, precios ni abonos y no hay migraciones. La sincronización normal incorpora los eventos existentes por su ID estable; el cambio se aplica al CRM web y al nativo mediante la API compartida.
@@ -133,7 +137,7 @@ El 6 de octubre de 2026, después de un aviso de cuota de GitHub Actions, Camilo
 - Músicos: $750.000/show; Mauricio, director: $2.000.000/show, con ajuste manual por participante y evento. Las ventas no determinan los honorarios.
 - Técnica: tarifas editables por persona, iniciales de las nóminas de septiembre. No inventar reglas nuevas para diferencias entre shows.
 - Victor y Nicolás inactivos; Yonier y Fernando los reemplazan con las condiciones respectivas. Andrés Ricardo Rey sigue incluido.
-- Jenny: pago mensual. Javier: sin AFP por devolución de saldos.
+- Jenny: pago mensual exclusivamente en la segunda quincena (fin de mes); no se incluye en la primera. Javier: sin AFP por devolución de saldos.
 - Ensayo: $80.000 editable, como honorario por evento. Camilo confirmó que nunca se paga a quienes tienen salario fijo. Pasaje Manizales-Pereira: $18.000 por trayecto; $180.000 era un error.
 - Conductores: misma ruta, un kilometraje por show y pagos automáticos a ambos. Mariano: $1.250/km más salario; Jhon Fredy Zambrano: $1.000/km. Permite kilometraje extra ajeno a shows.
 - Administración: base habitual más novedades; siete categorías de horas. Divisor inicial 210 y factores editables 0,35 / 0,90 / 1,25 / 1,25 / 1,75 / 2,15 / 2,65. No actualizar automáticamente salarios ni reglas por cambio de año.
