@@ -1,4 +1,5 @@
 import {database} from '@/db/raw';
+import {crmDirectory} from './crm-workspace';
 import {crmReceiptBase,crmReceiptExtension} from './crm-receipts';
 import {env} from 'cloudflare:workers';
 import {z} from 'zod';
@@ -19,7 +20,8 @@ export async function crmFeed(u:AccessUser,month:string){requireCrm(u);agendaMon
  const connection=await db.prepare('SELECT spreadsheet_url,spreadsheet_id,credentials,version,creation_state,error FROM jac_crm_sheets WHERE id=?').bind('jac').first<{spreadsheet_url:string;spreadsheet_id:string;credentials:string;version:number;creation_state:string;error:string}>();
  const calendar=await agendaConnection();
  const pending=await db.prepare('SELECT count(*) AS n FROM jac_crm_exports WHERE synced_version<version OR connection_version<>?').bind(connection?.version??0).first<{n:number}>();
- return {shows:result.results.map(publicCrmShow),month,today,until:end,calendar:{revision:calendar.revision,ready:calendar.connected&&calendar.writeAuthorized&&!!calendar.selected,name:calendar.selected?.name??''},sheets:{connected:!!connection?.credentials,url:connection?.spreadsheet_url||'',ready:!!connection?.spreadsheet_id,version:connection?.version??0,creationState:connection?.creation_state||'idle',error:connection?.error||'',pending:pending?.n??0}};
+ const contacts=await crmDirectory();if(contacts.length>1000)throw new CrmFailure('Hay demasiados empresarios para este listado.',413);
+ return {contacts,shows:result.results.map(publicCrmShow),month,today,until:end,calendar:{revision:calendar.revision,ready:calendar.connected&&calendar.writeAuthorized&&!!calendar.selected,name:calendar.selected?.name??''},sheets:{connected:!!connection?.credentials,url:connection?.spreadsheet_url||'',ready:!!connection?.spreadsheet_id,version:connection?.version??0,creationState:connection?.creation_state||'idle',error:connection?.error||'',pending:pending?.n??0}};
 }
 export async function crmShowDetail(u:AccessUser,id:string){const show=await showRow(u,id),db=database();const rows=(await db.prepare('SELECT p.*,u.name AS actor_name FROM jac_crm_payments p LEFT JOIN payroll_users u ON u.id=p.actor_id WHERE show_id=? ORDER BY payment_date DESC,created_at DESC LIMIT 1001').bind(id).all<CrmPaymentRow&{actor_name:string}>()).results;if(rows.length>1000)throw new CrmFailure('Este show excede el límite de abonos visibles.',413);
  const files=(await db.prepare("SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments WHERE state='ready' AND notice_id IN (SELECT 'crm-payment:'||id FROM jac_crm_payments WHERE show_id=?)").bind(id).all<{id:string;notice_id:string;filename:string;mime_type:string;size:number}>()).results;
@@ -47,8 +49,9 @@ export async function syncCrmMonth(u:AccessUser,month:string,guard:CrmGuard){req
  for(let i=0;i<writes.length;i+=80)await db.batch(writes.slice(i,i+80));return {detected};
 }
 export async function updateCrmShow(u:AccessUser,input:unknown,guard:CrmGuard){requireCrm(u);const parsed=crmShowInput.safeParse(input);if(!parsed.success)throw new CrmFailure('Revisa el precio y los datos del show.');const p=parsed.data,old=await showRow(u,p.id),db=database(),nonce=crypto.randomUUID(),sale=cents(p.sale),stamp=new Date().toISOString();
+ const contactId=p.contactId===undefined?old.contact_id:p.contactId??'',contact=contactId?await db.prepare('SELECT name FROM jac_crm_contacts WHERE id=?').bind(contactId).first<{name:string}>():null;if(contactId&&!contact)throw new CrmFailure('Ese empresario no está disponible.');
  const result=await db.batch([
-  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,note=?,status=?,promotional=?,version=version+1,write_nonce=?,updated_at=? WHERE id=? AND version=? AND source_state NOT IN ('deleted','deleting') AND ${guard.sql}`).bind(sale,p.entrepreneur,p.note,p.status,Number(p.promotional),nonce,stamp,p.id,p.version,...guard.bindings),
+  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,contact_id=?,note=?,status=?,promotional=?,version=version+1,write_nonce=?,updated_at=? WHERE id=? AND version=? AND source_state NOT IN ('deleted','deleting') AND ${guard.sql}`).bind(sale,contact?.name??p.entrepreneur,contactId,p.note,p.status,Number(p.promotional),nonce,stamp,p.id,p.version,...guard.bindings),
   db.prepare("INSERT INTO jac_crm_audit(id,show_id,actor_id,action,data,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)").bind(crypto.randomUUID(),p.id,u.id,'show-updated',JSON.stringify({previousSale:old.sale_cents,newSale:sale,status:p.status,promotional:p.promotional}),stamp,p.id,nonce),
   db.prepare("UPDATE jac_crm_exports SET version=version+1,error='' WHERE payment_id IN (SELECT id FROM jac_crm_payments WHERE show_id=?) AND EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)").bind(p.id,p.id,nonce)
  ]);if(result[0].meta.changes!==1)throw new CrmFailure('El show o tu sesión cambió. Actualiza antes de guardar.',409);

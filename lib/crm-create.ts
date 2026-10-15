@@ -16,7 +16,8 @@ export async function createCrmShow(user:AccessUser,input:unknown,actor:CrmGuard
  if(!canCrm(user)||!canEditAgenda(user))throw new CrmFailure('Solo administradores pueden crear shows desde el CRM.',403);
  const parsed=inputSchema.safeParse(input);if(!parsed.success)throw new CrmFailure('Revisa los datos del evento, la venta y el primer abono.');
  const p=parsed.data,draft=validateAgendaDraft(p.event);if(draft.allDay?draft.end!==addAgendaDays(draft.start,1):agendaDate(new Date(draft.start))!==agendaDate(new Date(draft.end)))throw new CrmFailure('El show debe realizarse en un único día. Revisa la fecha y las horas.');if(p.firstPayment)decodeNoticeFiles(p.firstPayment.files);
- const eventHash=await contentHash(draft),payloadHash=await contentHash({event:draft,sale:p.sale,entrepreneur:p.entrepreneur,note:p.note,promotional:p.promotional,firstPayment:p.firstPayment??null}),db=database();
+ const eventHash=await contentHash(draft),payloadHash=await contentHash({event:draft,sale:p.sale,entrepreneur:p.entrepreneur,note:p.note,promotional:p.promotional,...(p.contactId?{contactId:p.contactId}:{}),firstPayment:p.firstPayment??null}),db=database();
+ if(p.contactId&&!await db.prepare('SELECT id FROM jac_crm_contacts WHERE id=?').bind(p.contactId).first())throw new CrmFailure('Ese empresario no está disponible.');
  if(!await guardActive(actor))throw new CrmFailure('Tu sesión cambió.',403);
  let creation=await db.prepare('SELECT * FROM jac_crm_creations WHERE id=?').bind(p.id).first<Creation>();
  const c=await calendarConfig();
@@ -54,10 +55,11 @@ export async function createCrmShow(user:AccessUser,input:unknown,actor:CrmGuard
  }
 }
 async function initializeAccount(creation:Creation,event:AgendaEvent,p:z.infer<typeof inputSchema>,user:AccessUser,guard:CrmGuard){
+ const contact=p.contactId?await database().prepare('SELECT name FROM jac_crm_contacts WHERE id=?').bind(p.contactId).first<{name:string}>():null;if(p.contactId&&!contact)throw new CrmFailure('Ese empresario no está disponible.');
  const db=database(),stamp=new Date().toISOString(),nonce=crypto.randomUUID(),pending="EXISTS(SELECT 1 FROM jac_crm_creations WHERE id=? AND status='pending')",saved="EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)";
  await db.batch([
   db.prepare(`INSERT OR IGNORE INTO jac_crm_shows(id,calendar_id,event_id,title,municipality,show_date,created_at,updated_at) SELECT ?,?,?,?,?,?,?,? WHERE ${pending} AND ${guard.sql}`).bind(creation.show_id,creation.calendar_id,event.id,event.title,showMunicipalities(event.title).join(' / ')||event.title,calendarShowDate(event),stamp,stamp,creation.id,...guard.bindings),
-  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,note=?,promotional=?,status='active',source_state='present',version=version+1,write_nonce=?,updated_at=? WHERE id=? AND sale_cents IS NULL AND source_state NOT IN ('deleted','deleting') AND ${pending} AND ${guard.sql}`).bind(cents(p.sale),p.entrepreneur,p.note,Number(p.promotional),nonce,stamp,creation.show_id,creation.id,...guard.bindings),
+  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,contact_id=?,note=?,promotional=?,status='active',source_state='present',version=version+1,write_nonce=?,updated_at=? WHERE id=? AND sale_cents IS NULL AND source_state NOT IN ('deleted','deleting') AND ${pending} AND ${guard.sql}`).bind(cents(p.sale),contact?.name??p.entrepreneur,p.contactId??'',p.note,Number(p.promotional),nonce,stamp,creation.show_id,creation.id,...guard.bindings),
   db.prepare(`INSERT INTO jac_crm_audit(id,show_id,actor_id,action,data,created_at) SELECT ?,?,?,?,?,? WHERE ${saved}`).bind(crypto.randomUUID(),creation.show_id,user.id,'show-created',JSON.stringify({saleCents:cents(p.sale),promotional:p.promotional,creationId:creation.id}),stamp,creation.show_id,nonce),
   db.prepare(`UPDATE jac_crm_creations SET status='account_ready',updated_at=? WHERE id=? AND status='pending' AND ${saved}`).bind(stamp,creation.id,creation.show_id,nonce)
  ]);

@@ -5,11 +5,12 @@ import {Input} from '@/components/ui/input';
 import CopInput from './cop-input';
 import {crmFilePayload,type CrmFile} from './crm-files';
 import CrmAttachments from './crm-attachments';
+import type {CrmContactChoice} from './crm-workspace';
 import {agendaDate,addAgendaDays} from '@/lib/calendar-core';
 export type CrmCalendar={ready:boolean;revision:number;name:string};
-export default function CrmCreateForm({calendar,save,onBusy}:{calendar?:CrmCalendar;save:(record:unknown)=>Promise<void>;onBusy:(v:boolean)=>void}){
+export default function CrmCreateForm({calendar,save,onBusy,contacts=[]}:{contacts?:CrmContactChoice[];calendar?:CrmCalendar;save:(record:unknown)=>Promise<void>;onBusy:(v:boolean)=>void}){
  const [id]=useState(()=>crypto.randomUUID()),[title,setTitle]=useState(''),[startDate,setStartDate]=useState(agendaDate()),[allDay,setAllDay]=useState(true),[startTime,setStartTime]=useState('19:00'),[endTime,setEndTime]=useState('21:00'),[location,setLocation]=useState(''),[description,setDescription]=useState('');
- const [sale,setSale]=useState(0),[entrepreneur,setEntrepreneur]=useState(''),[note,setNote]=useState(''),[promotional,setPromotional]=useState(false),[withPayment,setWithPayment]=useState(false),[amount,setAmount]=useState(0),[paymentDate,setPaymentDate]=useState(agendaDate()),[paymentNote,setPaymentNote]=useState(''),[files,setFiles]=useState<CrmFile[]>([]),[preparing,setPreparing]=useState(false),[busy,setBusy]=useState(false),[attempt,setAttempt]=useState<unknown>(null),[error,setError]=useState('');
+ const [sale,setSale]=useState(0),[entrepreneur,setEntrepreneur]=useState(''),[contactId,setContactId]=useState(''),[note,setNote]=useState(''),[promotional,setPromotional]=useState(false),[withPayment,setWithPayment]=useState(false),[amount,setAmount]=useState(0),[paymentDate,setPaymentDate]=useState(agendaDate()),[paymentNote,setPaymentNote]=useState(''),[files,setFiles]=useState<CrmFile[]>([]),[preparing,setPreparing]=useState(false),[busy,setBusy]=useState(false),[attempt,setAttempt]=useState<unknown>(null),[error,setError]=useState('');
  const locked=busy||!!attempt;
  return <form className="editor crm-create-form" onSubmit={async e=>{
   e.preventDefault();if(busy||preparing)return;setError('');setBusy(true);onBusy(true);
@@ -18,7 +19,7 @@ export default function CrmCreateForm({calendar,save,onBusy}:{calendar?:CrmCalen
    if(!attempt&&withPayment&&(amount<=0||!files.length||files.length>5||files.reduce((v,f)=>v+f.size,0)>10*1024*1024))throw Error('El primer abono requiere valor positivo y hasta cinco PDF, JPG o PNG (10 MB en total).');
    const start=allDay?startDate:new Date(startDate+'T'+startTime+':00-05:00').toISOString(),end=allDay?addAgendaDays(startDate,1):new Date(startDate+'T'+endTime+':00-05:00').toISOString();
    if(!attempt&&(end<=start||startDate<agendaDate()))throw Error('Elige una fecha de hoy en adelante y una hora de fin posterior al inicio en el mismo día.');
-   const record=attempt??{id,revision:calendar!.revision,event:{title:title.trim(),start,end,allDay,location,description},sale,entrepreneur,note,promotional,...(withPayment?{firstPayment:{amount,paymentDate,note:paymentNote,files:crmFilePayload(files)}}:{})};
+   const record=attempt??{id,revision:calendar!.revision,event:{title:title.trim(),start,end,allDay,location,description},sale,entrepreneur,...(contactId?{contactId}:{}),note,promotional,...(withPayment?{firstPayment:{amount,paymentDate,note:paymentNote,files:crmFilePayload(files)}}:{})};
    setAttempt(record);await save(record);
   }catch(e){if(e instanceof Error&&'status' in e&&e.status===400)setAttempt(null);setError(e instanceof Error?e.message:'No se confirmó el resultado. Reintenta este mismo formulario.');}
   finally{setBusy(false);onBusy(false);}
@@ -33,7 +34,7 @@ export default function CrmCreateForm({calendar,save,onBusy}:{calendar?:CrmCalen
    <label className="field">Descripción compartida<textarea aria-label="Descripción compartida del show" value={description} maxLength={8192} onChange={e=>setDescription(e.target.value)} disabled={locked}/></label>
   </section>
   <section className="crm-form-section"><h3>Datos privados del CRM</h3><p className="muted">El precio, los abonos y sus comprobantes son solo para Camilo y jac. No se envían a Calendar.</p>
-   <div className="form-grid"><div className="field"><span>Valor de venta (COP)</span><CopInput label="Valor de venta del nuevo show (COP)" value={sale} onChange={setSale} disabled={locked}/></div><label className="field">Empresario<Input aria-label="Empresario del nuevo show" value={entrepreneur} maxLength={200} onChange={e=>setEntrepreneur(e.target.value)} disabled={locked}/></label></div>
+   <div className="form-grid"><div className="field"><span>Valor de venta (COP)</span><CopInput label="Valor de venta del nuevo show (COP)" value={sale} onChange={setSale} disabled={locked}/></div><div className="field"><span>Empresario</span><select className="crm-show-select" aria-label="Ficha de empresario del nuevo show" value={contactId} disabled={locked} onChange={e=>{setContactId(e.target.value);if(e.target.value)setEntrepreneur(contacts.find(c=>c.id===e.target.value)?.name??'');}}><option value="">Sin ficha vinculada</option>{contacts.map(c=><option key={c.id} value={c.id}>{c.name}{c.company?' · '+c.company:''}</option>)}</select><Input aria-label="Empresario del nuevo show" value={entrepreneur} maxLength={200} onChange={e=>setEntrepreneur(e.target.value)} disabled={locked||!!contactId}/></div></div>
    <label className="field">Observaciones internas<Input aria-label="Observaciones privadas del nuevo show" value={note} maxLength={1000} onChange={e=>setNote(e.target.value)} disabled={locked}/></label><label className="toggle"><input type="checkbox" checked={promotional} onChange={e=>setPromotional(e.target.checked)} disabled={locked}/>Show promocional</label>
   </section>
   <section className="crm-form-section"><label className="toggle"><input type="checkbox" checked={withPayment} onChange={e=>setWithPayment(e.target.checked)} disabled={locked||preparing}/>Registrar primer abono</label>

@@ -79,3 +79,41 @@ La conexión real y los registros financieros reales no se utilizan como pruebas
 Fuente de municipios: [DIVIPOLA — códigos de municipios, DANE](https://www.datos.gov.co/Mapas-Nacionales/DIVIPOLA-C-digos-municipios/gdxc-w37w), 1.103 registros Municipio, consultados el 14 de octubre de 2026. Revisión futura del catálogo debe conservar las identificaciones de shows existentes.
 
 Google: [permisos de Sheets](https://developers.google.com/workspace/sheets/api/scopes), [autorización por archivo de Drive](https://developers.google.com/workspace/drive/api/guides/api-specific-auth), [OAuth para servidor web](https://developers.google.com/identity/protocols/oauth2/web-server).
+
+## Rentabilidad, empresarios, preparación y resumen semanal — 15 de octubre de 2026
+
+El CRM conserva el acceso financiero exclusivo de Camilo y `jac`. Las nuevas pestañas principales son **Shows y abonos**, **Resumen semanal** y **Empresarios**. Al abrir un show se encuentran **Cuenta y abonos**, **Rentabilidad** y **Preparación**.
+
+### Rentabilidad por show
+
+**Rentabilidad** permite definir un presupuesto estimado de músicos, técnica, conductores/kilómetros, tiquetes, hoteles, alimentación y otros gastos. Se compara con los costos registrados en la nómina vinculada; el presupuesto no se suma como gasto ni modifica precios, pagos o nómina. El resultado registrado usa el valor de venta de esa nómina y sus costos centrales existentes: honorarios de músicos/técnica/conductores, kilómetros de ese show y gastos directos vinculados. No incluye salarios fijos/dependientes ni recorridos extra, reintegros o viajes ajenos al show.
+
+Los shows importados desde CRM a una quincena se reconocen por su identificador. Para shows antiguos agregados manualmente puede seleccionarse **Vincular show existente de nómina**, sin modificarla. No se adivina el vínculo por nombre o fecha ni se suman vínculos duplicados. Un show de nómina no puede asignarse a dos cuentas CRM; la escritura revisa la versión actual de nómina y preparación.
+
+En una nómina abierta los costos están en construcción. En una cerrada se usa la instantánea histórica; cierres anteriores sin desglose se indican como no disponibles y no se recalculan. Si el precio de CRM difiere de la venta de nómina, se señala y se conserva el valor de la nómina.
+
+Los shows promocionales conservan sus costos reales en rentabilidad, pero esos costos se excluyen de la comisión de Camilo según las reglas existentes. Se muestra el aporte del show a la base y la **comisión revisable de toda la quincena**. El mínimo cero se aplica a la quincena completa; no se crea un pago automático ni una segunda fórmula de liquidación.
+
+### Ficha del empresario
+
+**Empresarios → Nuevo empresario** guarda nombre, empresa, teléfono, correo, ciudad y observaciones. Se puede buscar y editar la ficha, consultar sus shows/saldos y adjuntar contratos o documentos PDF/JPG/PNG. Selecciona la ficha al crear un show o editar su precio para reutilizar sus datos.
+
+Los documentos son privados, con autorización de administrador y sesión antes y después de leer R2. Se aceptan hasta 5 archivos/10 MB por envío y 100 documentos por ficha. Los reintentos usan un identificador estable; incluso dos envíos simultáneos del mismo intento publican un único conjunto de adjuntos. No se generan enlaces públicos ni se exportan contratos a Google Sheets.
+
+La migración aditiva `0020_crm_workspace.sql` convierte nombres de empresarios ya registrados en fichas reutilizables, agrupando coincidencias exactas sin distinguir mayúsculas y espacios extremos. No inventa teléfonos/correos ni altera ventas, abonos o versiones financieras. Modificar una ficha no reescribe automáticamente el texto histórico de sus shows.
+
+### Preparación del show
+
+**Preparación** incluye contrato firmado, hotel, transporte e itinerario, con estado **Pendiente / Listo / No aplica**, responsable, fecha límite y observación. Se pueden añadir tareas propias, hasta 30 en total. **Anticipo recibido** se calcula automáticamente con los abonos vigentes, sin una casilla manual que pueda contradecirlos.
+
+Pulsa **Guardar preparación** para confirmar los cambios. Presupuesto y tareas tienen una revisión independiente de la cuenta financiera. Si otro administrador cambia la preparación, el borrador se conserva y se requiere recargar antes de guardar. Cambiar entre pestañas del show conserva el borrador; **Recargar y descartar borrador** lo reemplaza explícitamente. No envía mensajes, hace reservas ni consulta pases privados.
+
+### Resumen semanal
+
+La semana va de lunes a domingo en Colombia. Muestra los shows de hoy en adelante dentro de la semana elegida, su saldo por cobrar, abonos recibidos por fecha del pago, gastos directos por fecha de registro, costos acumulados de los shows de esa semana y tareas pendientes hasta el domingo, incluyendo atrasadas de shows futuros. Se distingue la falta de precio o de costos vinculados; un dato pendiente no se presenta como costo cero confirmado. Las tareas abren directamente **Preparación** del show.
+
+Los gastos registrados en la semana y los costos de shows de esa semana son medidas distintas: un hotel puede registrarse antes del día del show. El resumen excluye eventos eliminados de shows/costos/tareas; los abonos vigentes siguen reflejando su fecha de recepción como historial financiero. Consulta periódicamente mientras el panel está visible y permite actualizar manualmente. Es una vista dentro de CRM, sin correos, notificaciones, cron ni nuevas conexiones externas.
+
+### Validación de esta ampliación
+
+Node 24 local, TypeScript y 184 pruebas sin omisiones: CRM/archivos/concurrencia/contratos privados/migración, nómina/auth/correo/móvil/OAuth, Calendar y avisos con Workerd/D1/R2 locales y todas las salidas simuladas. UI verificada en `127.0.0.1:8773/crm` con empresario/PDF/presupuesto/nómina/tareas ficticios; se comprobó guardado, edición, vínculo a show, cifras y navegación desde el resumen. Captura `outputs/crm60-resumen-local.png`. No se usaron pagos, contratos, eventos ni conexiones reales para pruebas. Esta ampliación es del CRM web; no modifica el binario ni la firma de iOS.

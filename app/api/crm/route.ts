@@ -1,3 +1,4 @@
+import {crmWorkspace,crmWeekly,crmContactDetail,crmDirectory,saveCrmPlan,linkCrmPayroll,saveCrmContact,addCrmContactFiles} from '@/lib/crm-workspace';
 import {waitUntil} from 'cloudflare:workers';
 import {prepareCrmDeletion,deleteCrmShow} from '@/lib/crm-delete';
 import {createCrmShow} from '@/lib/crm-create';
@@ -14,9 +15,13 @@ import {CalendarFailure} from '@/lib/calendar';
 export const dynamic='force-dynamic';
 const reply=(data:unknown,status=200,cookie?:string)=>Response.json(data,{status,headers:{...payrollHeaders,...(cookie?{'Set-Cookie':cookie}:{})}});
 const failure=(e:unknown)=>reply({error:e instanceof CrmFailure||e instanceof NoticeFailure||e instanceof CalendarFailure?e.message:'No pudimos completar la operación. Tus datos se conservan; intenta de nuevo.'},e instanceof CrmFailure||e instanceof NoticeFailure||e instanceof CalendarFailure?e.status:502);
-export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!canCrm(u))return reply({error:'El CRM está disponible solo para administradores.'},403);try{const guard=crmGuard(req,u),q=new URL(req.url).searchParams,id=q.get('id')??(q.get('payment')?await paymentShowID(u,q.get('payment')!):null),data=id?await crmShowDetail(u,id):await crmFeed(u,q.get('month')??agendaDate().slice(0,7));if(!await guardActive(guard))throw new CrmFailure('Tu sesión cambió.',403);return reply(data);}catch(e){return failure(e);}}
+export async function GET(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!canCrm(u))return reply({error:'El CRM está disponible solo para administradores.'},403);try{const guard=crmGuard(req,u),q=new URL(req.url).searchParams,id=q.get('id')??(q.get('payment')?await paymentShowID(u,q.get('payment')!):null),data=q.get('view')==='workspace'?await crmWorkspace(u,q.get('id')??'',guard):q.get('view')==='weekly'?await crmWeekly(u,q.get('week')??undefined,guard):q.get('view')==='contacts'?{contacts:await crmDirectory()}:q.get('view')==='contact'?await crmContactDetail(u,q.get('id')??'',guard):id?await crmShowDetail(u,id):await crmFeed(u,q.get('month')??agendaDate().slice(0,7));if(!await guardActive(guard))throw new CrmFailure('Tu sesión cambió.',403);return reply(data);}catch(e){return failure(e);}}
 export async function POST(req:Request){const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!canCrm(u))return reply({error:'El CRM está disponible solo para administradores.'},403);if(req.headers.get('origin')!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);
  try{const body=await boundedNoticeJSON(req) as {action?:string;record?:unknown;month?:string;revision?:number},guard=crmGuard(req,u);
+  if(body.action==='savePlan'){await saveCrmPlan(u,body.record,guard);return reply({ok:true});}
+  if(body.action==='linkPayroll'){await linkCrmPayroll(u,body.record,guard);return reply({ok:true});}
+  if(body.action==='saveContact')return reply(await saveCrmContact(u,body.record,guard));
+  if(body.action==='addContactFiles')return reply(await addCrmContactFiles(u,body.record,guard));
   if(body.action==='prepareDeleteShow')return reply(await prepareCrmDeletion(u,body.record,guard));
   if(body.action==='deleteShow')return reply(await deleteCrmShow(u,body.record,guard));
   if(body.action==='createShow'){const result=await createCrmShow(u,body.record,guard);waitUntil(syncCrmSheet(guard).catch(()=>({synced:0})));return reply(result);}
