@@ -17,7 +17,7 @@ async function activeOwner(context:NativeContext){
 }
 
 export async function startNativeMailOauth(user:AccessUser,cookies:string){
- if(!user.isOwner||user.legacy||user.itinerariesOnly)throw new Error('Solo un administrador puede conectar Gmail.');
+ if(!user.isOwner||user.legacy||user.itinerariesOnly||user.mediaOnly)throw new Error('Solo un administrador puede conectar Gmail.');
  const token=sessionToken(cookies,true);if(!valid(token))throw new Error('Inicia sesión de nuevo.');
  const oauth=await startMailOauth(user.email),ticket=random(),nonce=random();
  const context:NativeContext={kind:'native-gmail',...oauth,actor:user.email,userId:user.id,sessionId:tokenHash(token),nonce};

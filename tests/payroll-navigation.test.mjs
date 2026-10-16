@@ -40,3 +40,10 @@ test('cuenta de solo itinerarios nunca renderiza ni consulta datos de nómina',a
  for(const view of ['itinerarios','agenda','alertas','cuenta','notificaciones','configuracion']){const page=await m.Page({route:{view,tab:'shows'}});assert.deepEqual(page.props.initial.data.employees,[]);assert.deepEqual(page.props.initial.data.periods,[]);}
  assert.equal(globalThis.__navReads,0);
 });
+test('fotógrafo entra a Fotografía y Cuenta sin leer nómina, Agenda o administración',async()=>{
+ globalThis.__navUser={...owner,isOwner:false,mediaOnly:true,itinerariesOnly:true};globalThis.__navReads=0;
+ for(const view of ['quincena','agenda','itinerarios','alertas','gastos','archivo','usuarios','crm','configuracion'])await assert.rejects(()=>m.Page({route:{view,tab:'shows'}}),/REDIRECT:\/fotografia/);
+ for(const view of ['fotografia','cuenta']){const page=await m.Page({route:{view,tab:'shows'}});assert.deepEqual(page.props.initial.data.employees,[]);assert.deepEqual(page.props.initial.data.periods,[]);assert.equal(page.props.agendaCache,null);}
+ assert.equal(globalThis.__navReads,0);
+ globalThis.__navUser={...owner,isOwner:false};await assert.rejects(()=>m.Page({route:{view:'fotografia',tab:'shows'}}),/NOT_FOUND/);assert.equal(globalThis.__navReads,0);
+});

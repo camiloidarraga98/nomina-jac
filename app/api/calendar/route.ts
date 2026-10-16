@@ -8,6 +8,7 @@ const headers={...payrollHeaders,'Referrer-Policy':'no-referrer'};
 const failure=(e:unknown)=>Response.json({...(e instanceof CalendarFailure&&e.discardCachedAgenda?{discardCachedAgenda:true}:{}),error:e instanceof CalendarFailure?e.message:'No pudimos completar la operación de Agenda. Tus datos siguen en el formulario; intenta de nuevo.'},{status:e instanceof CalendarFailure?e.status:502,headers});
 export async function GET(req:Request){
  const user=await payrollUser();if(!user||user.legacy)return Response.json({error:'Inicia sesión con tu cuenta de JAC.'},{status:401,headers});
+ if(user.mediaOnly)return Response.json({error:'Tu cuenta solo tiene acceso a fotos y videos.'},{status:403,headers});
  const cacheContext=await agendaCacheContext(user);if(req.headers.has('X-JAC-Agenda-Scope')&&req.headers.get('X-JAC-Agenda-Scope')!==cacheContext?.scope)return Response.json({error:'La sesión cambió. Vuelve a entrar a Agenda.'},{status:401,headers});
  try{
   const url=new URL(req.url);
@@ -22,6 +23,7 @@ export async function GET(req:Request){
 }
 export async function POST(req:Request){
  const user=await payrollUser();if(!user||user.legacy)return Response.json({error:'Inicia sesión con tu cuenta de JAC.'},{status:401,headers});
+ if(user.mediaOnly)return Response.json({error:'Tu cuenta solo tiene acceso a fotos y videos.'},{status:403,headers});
  const cacheContext=await agendaCacheContext(user);if(req.headers.has('X-JAC-Agenda-Scope')&&req.headers.get('X-JAC-Agenda-Scope')!==cacheContext?.scope)return Response.json({error:'La sesión cambió. Vuelve a entrar a Agenda.'},{status:401,headers});
  if(req.headers.get('origin')!==new URL(req.url).origin)return Response.json({error:'Origen no autorizado.'},{status:403,headers});
  try{

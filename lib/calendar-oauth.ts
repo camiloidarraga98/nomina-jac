@@ -18,7 +18,7 @@ async function activeOwner(c:Context){
  return !!row&&accountAdministrator(row)&&row.email===c.actor;
 }
 export async function startCalendarOauth(user:AccessUser,cookies:string,native=false){
- if(!user.isOwner||user.legacy||user.itinerariesOnly)throw new CalendarFailure('Solo un administrador puede conectar Agenda.',403);
+ if(!user.isOwner||user.legacy||user.itinerariesOnly||user.mediaOnly)throw new CalendarFailure('Solo un administrador puede conectar Agenda.',403);
  const session=sessionToken(cookies,true);if(!valid(session))throw new CalendarFailure('Inicia sesión de nuevo.',401);
  const credentials=await calendarClientCredentials(),config=await ensureCalendarConfig(),state=random(),verifier=random(),guard=random(),nonce=random();
  const challenge=base64Url(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(verifier))));

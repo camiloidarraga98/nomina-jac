@@ -3,7 +3,7 @@ import municipalities from './colombia-municipalities.json';
 import {validAgendaDate,agendaDate,type AgendaEvent} from './calendar-core';
 import type {AccessUser} from './payroll-permissions';
 export class CrmFailure extends Error {constructor(message:string,readonly status=400){super(message);}}
-export const canCrm=(u:AccessUser)=>!u.legacy&&!u.itinerariesOnly&&u.isOwner;
+export const canCrm=(u:AccessUser)=>!u.mediaOnly&&!u.legacy&&!u.itinerariesOnly&&u.isOwner;
 export const MAX_CENTS=100_000_000_000_000;
 export function cents(value:number){const n=Math.round(value*100);if(!Number.isFinite(value)||value<0||n>MAX_CENTS||!Number.isSafeInteger(n)||Math.abs(value*100-n)>0.001)throw new CrmFailure('Revisa el valor COP: usa hasta dos decimales y un máximo de un billón.');return n;}
 export const crmMoney=(amount:number)=>'$ '+amount.toLocaleString('es-CO',{minimumFractionDigits:0,maximumFractionDigits:2});

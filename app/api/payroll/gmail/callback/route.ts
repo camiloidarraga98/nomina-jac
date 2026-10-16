@@ -1,10 +1,12 @@
 import {finishCrmSheetsOauth} from '@/lib/crm-sheets-oauth';
+import {finishMediaOauth} from '@/lib/media-oauth';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {finishMailOauth} from '@/lib/payroll-mail';
 import {finishNativeMailOauth} from '@/lib/payroll-mobile-oauth';
 import {finishCalendarCallback} from '@/lib/calendar-oauth';
 export const dynamic='force-dynamic';
 export async function GET(req:Request){
+ try{const media=await finishMediaOauth(req);if(media)return new Response(null,{status:303,headers:{...payrollHeaders,'Referrer-Policy':'no-referrer',Location:media.url,'Set-Cookie':media.cookie}});}catch{console.error('Media Drive callback failed');}
  try{const crm=await finishCrmSheetsOauth(req);if(crm)return new Response(null,{status:303,headers:{...payrollHeaders,'Referrer-Policy':'no-referrer',Location:crm.url,'Set-Cookie':crm.cookie}});}catch{console.error('CRM Sheets callback failed');}
  try{const calendar=await finishCalendarCallback(req);if(calendar)return new Response(null,{status:303,headers:{...payrollHeaders,'Referrer-Policy':'no-referrer',Location:calendar.url,'Set-Cookie':calendar.cookie}});}catch{console.error('Calendar callback failed');}
  try{const native=await finishNativeMailOauth(req);if(native)return new Response(null,{status:303,headers:{...payrollHeaders,'Referrer-Policy':'no-referrer',Location:native.url,'Set-Cookie':native.cookie}});}catch{console.error('Native Gmail callback failed');}
