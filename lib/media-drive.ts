@@ -3,16 +3,16 @@ import {mailKey} from './payroll-mail';
 import {encryptMail,decryptMail} from './payroll-mail-core';
 import {calendarGooglePost,CalendarFailure} from './calendar';
 import {sessionToken,tokenHash} from './payroll-auth-crypto';
-import {canReadMedia,canUploadMedia,canConnectMedia,MediaFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_SCOPE,MEDIA_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,validMediaID,validMediaRequestID,mediaFolderName,mediaUploadInput,mediaKind,mediaSignature,mediaRange,mediaItemOrder,mediaThumbnailURL,type MediaItem} from './media-core';
+import {canReadMedia,canUploadMedia,canConnectMedia,MediaFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_SCOPE,MEDIA_CHUNK_SIZE,MEDIA_DIRECT_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,validMediaID,validMediaRequestID,mediaFolderName,mediaUploadInput,mediaKind,mediaSignature,mediaRange,mediaItemOrder,mediaThumbnailURL,type MediaItem} from './media-core';
 import {sectionSql,type AccessUser} from './payroll-permissions';
 
 export type MediaConnection={id:string;credentials:string;email:string;version:number};
 export type MediaSecret={clientId:string;clientSecret:string;refreshToken:string;scopes:string[]};
 export type MediaGuard={sql:string;bindings:(string|number)[];actorID:string};
 type Context={guard:MediaGuard;config:MediaConnection;access:string};
-type DriveFile={id:string;name:string;mimeType:string;parents?:string[];trashed?:boolean;size?:string;createdTime?:string;modifiedTime?:string;thumbnailLink?:string;capabilities?:{canAddChildren?:boolean;canDownload?:boolean};shortcutDetails?:unknown};
+type DriveFile={id:string;name:string;mimeType:string;parents?:string[];trashed?:boolean;size?:string;createdTime?:string;modifiedTime?:string;thumbnailLink?:string;capabilities?:{canAddChildren?:boolean;canDownload?:boolean};appProperties?:Record<string,string>;shortcutDetails?:unknown};
 type Operation={id:string;actor_id:string;parent_id:string;payload_hash:string;kind:string;drive_id:string;name:string;mime_type:string;size:number;offset:number;status:string;session_payload:string;connection_version:number;claim:string;claim_at:string;expires_at:string};
-const fields='id,name,mimeType,parents,trashed,size,createdTime,modifiedTime,thumbnailLink,capabilities(canAddChildren,canDownload),shortcutDetails';
+const fields='id,name,mimeType,parents,trashed,size,createdTime,modifiedTime,thumbnailLink,capabilities(canAddChildren,canDownload),shortcutDetails,appProperties';
 const safeID=(id:unknown)=>{if(!validMediaID(id))throw new MediaFailure('El archivo o carpeta no es válido.');return id;};
 export function mediaStoredGuard(sessionID:string,actorID:string,mode:'read'|'upload'|'connect'='read'):MediaGuard {
  const role=mode==='upload'?`(${sectionSql('mu','media')} AND ${sectionSql('mu','mediaUpload')})`:mode==='connect'?"mu.media_only=0 AND mu.itineraries_only=0 AND mu.owner=1 AND mu.email='camilo@mac2you.co'":sectionSql('mu','media');
@@ -24,9 +24,10 @@ export async function mediaConfig(){return database().prepare('SELECT id,credent
 export async function ensureMediaConfig(){await database().prepare('INSERT OR IGNORE INTO jac_media_connection(id,updated_at) VALUES (?,?)').bind('jac',new Date().toISOString()).run();return (await mediaConfig())!;}
 export async function storeMediaConnection(secret:MediaSecret,version:number,g:MediaGuard){const r=await database().prepare(`UPDATE jac_media_connection SET credentials=?,email=?,version=version+1,updated_at=? WHERE id='jac' AND version=? AND ${g.sql}`).bind(await encryptMail(secret,mailKey()),'jacmusicestudios@gmail.com',new Date().toISOString(),version,...g.bindings).run();if(r.meta.changes!==1)throw new MediaFailure('La sesión o la conexión cambió. Vuelve a conectar Drive.',409);}
 async function live(c:Context){const row=await mediaConfig();if(!row||row.version!==c.config.version||row.credentials!==c.config.credentials||!await mediaGuardActive(c.guard))throw new MediaFailure('La sesión, los permisos o la conexión cambiaron. Actualiza Fotografía.',403);}
-export async function mediaContext(g:MediaGuard):Promise<Context>{if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión o tus permisos cambiaron.',403);const config=await mediaConfig();if(!config?.credentials||config.email!=='jacmusicestudios@gmail.com')throw new MediaFailure('Camilo debe conectar la carpeta de Google Drive desde Fotografía.',409);const secret=await decryptMail<MediaSecret>(config.credentials,mailKey());if(!secret.scopes.includes(MEDIA_SCOPE))throw new MediaFailure('Vuelve a autorizar el acceso a la carpeta de fotografías.',409);let result:Record<string,unknown>;try{result=await calendarGooglePost({client_id:secret.clientId,client_secret:secret.clientSecret,refresh_token:secret.refreshToken,grant_type:'refresh_token'});}catch(e){if(e instanceof CalendarFailure&&['invalid_grant','access_denied'].includes(e.googleError||''))throw new MediaFailure('Google retiró la autorización de Fotografía. Camilo debe volver a conectar Drive.',403);throw new MediaFailure('No pudimos renovar el acceso a Drive. Camilo puede volver a conectarlo.',502);}if(typeof result.access_token!=='string')throw new MediaFailure('Google no confirmó el acceso a Drive.',502);const c={guard:g,config,access:result.access_token};await live(c);return c;}
+let accessCache:{credentials:string;version:number;access:string;until:number}|undefined;
+export async function mediaContext(g:MediaGuard):Promise<Context>{if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión o tus permisos cambiaron.',403);const config=await mediaConfig();if(!config?.credentials||config.email!=='jacmusicestudios@gmail.com')throw new MediaFailure('Camilo debe conectar la carpeta de Google Drive desde Fotografía.',409);if(accessCache?.credentials===config.credentials&&accessCache.version===config.version&&accessCache.until>Date.now()){const c={guard:g,config,access:accessCache.access};await live(c);return c;}const secret=await decryptMail<MediaSecret>(config.credentials,mailKey());if(!secret.scopes.includes(MEDIA_SCOPE))throw new MediaFailure('Vuelve a autorizar el acceso a la carpeta de fotografías.',409);let result:Record<string,unknown>;try{result=await calendarGooglePost({client_id:secret.clientId,client_secret:secret.clientSecret,refresh_token:secret.refreshToken,grant_type:'refresh_token'});}catch(e){if(e instanceof CalendarFailure&&['invalid_grant','access_denied'].includes(e.googleError||''))throw new MediaFailure('Google retiró la autorización de Fotografía. Camilo debe volver a conectar Drive.',403);throw new MediaFailure('No pudimos renovar el acceso a Drive. Camilo puede volver a conectarlo.',502);}if(typeof result.access_token!=='string')throw new MediaFailure('Google no confirmó el acceso a Drive.',502);const c={guard:g,config,access:result.access_token};await live(c);const lifetime=typeof result.expires_in==='number'?Math.min(3600,result.expires_in):0;if(lifetime>120)accessCache={credentials:config.credentials,version:config.version,access:c.access,until:Date.now()+(lifetime-60)*1000};return c;}
 function googleURL(url:string){const u=new URL(url);if(u.origin!=='https://www.googleapis.com'||u.username||u.password||u.hash||!/^\/(?:upload\/)?drive\/v3\//.test(u.pathname))throw new MediaFailure('Google devolvió una dirección de archivo inesperada.',502);return u.toString();}
-async function request(c:Context,url:string,options:RequestInit={},resume=false){await live(c);let r:Response;const controller=new AbortController(),deadline=setTimeout(()=>controller.abort(),60000);try{r=await fetch(googleURL(url),{...options,headers:{...Object.fromEntries(new Headers(options.headers)),Authorization:'Bearer '+c.access},redirect:'manual',signal:controller.signal});}catch(e){if(e instanceof MediaFailure)throw e;throw new MediaFailure('La conexión con Drive se interrumpió. Puedes reintentar sin duplicar el archivo.',502);}finally{clearTimeout(deadline);}try{await live(c);}catch(e){await r.body?.cancel().catch(()=>{});throw e;}if(r.status>=300&&r.status<400&&!(resume&&r.status===308))throw new MediaFailure('Google devolvió una redirección inesperada.',502);return r;}
+async function request(c:Context,url:string,options:RequestInit={},resume=false){await live(c);let r:Response;const controller=new AbortController(),deadline=setTimeout(()=>controller.abort(),60000);try{r=await fetch(googleURL(url),{...options,headers:{...Object.fromEntries(new Headers(options.headers)),Authorization:'Bearer '+c.access},redirect:'manual',signal:controller.signal});}catch(e){if(e instanceof MediaFailure)throw e;throw new MediaFailure('La conexión con Drive se interrumpió. Puedes reintentar sin duplicar el archivo.',502);}finally{clearTimeout(deadline);}try{await live(c);}catch(e){await r.body?.cancel().catch(()=>{});throw e;}if(r.status>=300&&r.status<400&&!(resume&&r.status===308))throw new MediaFailure('Google devolvió una redirección inesperada.',502);if(r.status===401)accessCache=undefined;return r;}
 async function checked(r:Response){if(r.ok||r.status===308)return;if(r.status===416){await r.body?.cancel().catch(()=>{});throw new MediaFailure('El rango solicitado no está disponible.',416);}const body=await r.json().catch(()=>({})) as {error?:{errors?:{reason?:string}[]}};const reasons=Array.isArray(body?.error?.errors)?body.error.errors.map(e=>e?.reason):[];if(reasons.some(v=>['rateLimitExceeded','userRateLimitExceeded','dailyLimitExceeded','storageQuotaExceeded'].includes(v||'')))throw new MediaFailure('Google alcanzó un límite temporal o de almacenamiento. Conserva el archivo y vuelve a intentar.',503);throw new MediaFailure(r.status===404||r.status===410?'El archivo o la carpeta ya no está disponible.':r.status===403?'Google no permite acceder a esta carpeta o archivo. Revisa el acceso de la cuenta de JAC.':r.status===429?'Google limitó temporalmente las consultas. Intenta de nuevo en un momento.':r.status===401?'Camilo debe volver a conectar Google Drive.':'Google no confirmó la operación. Conserva el archivo y vuelve a intentar.',r.status===404||r.status===410?404:r.status===401||r.status===403?403:502);}
 async function json<T>(c:Context,url:string,options:RequestInit={}):Promise<T>{const r=await request(c,url,options);await checked(r);const data=await r.json() as T;await live(c);return data;}
 async function metadata(c:Context,id:string){const f=await json<DriveFile>(c,'https://www.googleapis.com/drive/v3/files/'+safeID(id)+'?'+new URLSearchParams({fields,supportsAllDrives:'true'}));if(f.id!==id||f.trashed||f.shortcutDetails||!mediaKind(f.mimeType)||typeof f.name!=='string')throw new MediaFailure('El archivo o carpeta no está disponible en Fotografía.',404);return f;}
@@ -76,7 +77,7 @@ async function ancestry(c:Context,id:string){
 }
 async function parent(c:Context,id:string){const chain=await ancestry(c,id),f=chain.at(-1)!;if(f.mimeType!==MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una carpeta.');if(f.capabilities?.canAddChildren!==true)throw new MediaFailure('La cuenta de Google de JAC necesita permiso para añadir contenido a esta carpeta.',403);return chain;}
 const item=(f:DriveFile):MediaItem=>({id:f.id,name:f.name,mimeType:f.mimeType,kind:mediaKind(f.mimeType)!,size:Number(f.size||0),createdAt:f.createdTime||'',modifiedAt:f.modifiedTime||'',thumbnailAvailable:!!f.thumbnailLink});
-export async function mediaFeed(g:MediaGuard,user:AccessUser,folder=MEDIA_ROOT_ID,pageToken?:string){safeID(folder);if(pageToken&&(pageToken.length>4096||/[\u0000-\u0020\u007f]/.test(pageToken)))throw new MediaFailure('La página solicitada no es válida.');const root={id:MEDIA_ROOT_ID,name:'Fotografía JAC'},flags={canRead:canReadMedia(user),canUpload:canUploadMedia(user),canConnect:canConnectMedia(user)};if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión cambió.',403);const cfg=await mediaConfig();if(!cfg?.credentials)return {connected:false,...flags,root,folder:root,breadcrumbs:[root],items:[]};const c=await mediaContext(g),chain=await ancestry(c,folder);if(chain.at(-1)!.mimeType!==MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una carpeta.');const q="'"+folder+"' in parents and trashed=false and (mimeType='"+MEDIA_FOLDER_MIME+"' or mimeType contains 'image/' or mimeType contains 'video/')",data=await json<{files?:DriveFile[];nextPageToken?:string}>(c,'https://www.googleapis.com/drive/v3/files?'+new URLSearchParams({q,fields:'nextPageToken,files('+fields+')',orderBy:'folder,createdTime desc,name',pageSize:'100',supportsAllDrives:'true',includeItemsFromAllDrives:'true',...(pageToken?{pageToken}:{})}));const items=(data.files||[]).filter(f=>validMediaID(f.id)&&!f.trashed&&!f.shortcutDetails&&f.parents?.includes(folder)&&!!mediaKind(f.mimeType)).map(item).sort(mediaItemOrder);await ancestry(c,folder);await rememberLocations(c,folder,items);await live(c);return {connected:true,...flags,root:{id:chain[0].id,name:chain[0].name},folder:{id:folder,name:chain.at(-1)!.name},breadcrumbs:chain.map(f=>({id:f.id,name:f.name})),items,...(data.nextPageToken?{nextPageToken:data.nextPageToken}:{})};}
+export async function mediaFeed(g:MediaGuard,user:AccessUser,folder=MEDIA_ROOT_ID,pageToken?:string){safeID(folder);if(pageToken&&(pageToken.length>4096||/[\u0000-\u0020\u007f]/.test(pageToken)))throw new MediaFailure('La página solicitada no es válida.');const root={id:MEDIA_ROOT_ID,name:'Fotografía JAC'},flags={canRead:canReadMedia(user),canUpload:canUploadMedia(user),canConnect:canConnectMedia(user)};if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión cambió.',403);const cfg=await mediaConfig();if(!cfg?.credentials)return {connected:false,...flags,root,folder:root,breadcrumbs:[root],items:[]};const c=await mediaContext(g),chain=await ancestry(c,folder);if(chain.at(-1)!.mimeType!==MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una carpeta.');const q="'"+folder+"' in parents and trashed=false and (mimeType='"+MEDIA_FOLDER_MIME+"' or mimeType contains 'image/' or mimeType contains 'video/')",data=await json<{files?:DriveFile[];nextPageToken?:string}>(c,'https://www.googleapis.com/drive/v3/files?'+new URLSearchParams({q,fields:'nextPageToken,files('+fields+')',orderBy:'folder,createdTime desc,name',pageSize:'100',supportsAllDrives:'true',includeItemsFromAllDrives:'true',...(pageToken?{pageToken}:{})}));const items=(data.files||[]).filter(f=>validMediaID(f.id)&&!f.trashed&&!f.shortcutDetails&&f.parents?.includes(folder)&&!!mediaKind(f.mimeType)).map(item).sort(mediaItemOrder);const pending=await pendingDirectIDs(items.map(i=>i.id));items.splice(0,items.length,...items.filter(i=>!pending.has(i.id)));await ancestry(c,folder);await rememberLocations(c,folder,items);await live(c);return {connected:true,...flags,root:{id:chain[0].id,name:chain[0].name},folder:{id:folder,name:chain.at(-1)!.name},breadcrumbs:chain.map(f=>({id:f.id,name:f.name})),items,...(data.nextPageToken?{nextPageToken:data.nextPageToken}:{})};}
 const hash=async(v:unknown)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify(v))))).map(b=>b.toString(16).padStart(2,'0')).join('');
 const operation=(id:string)=>database().prepare('SELECT * FROM jac_media_operations WHERE id=?').bind(id).first<Operation>();
 async function begin(c:Context,input:{id:string;parentId:string;name:string;mimeType:string;size:number;kind:string}){const digest=await hash(input),now=new Date().toISOString();await live(c);await database().prepare(`INSERT OR IGNORE INTO jac_media_operations(id,actor_id,parent_id,payload_hash,kind,name,mime_type,size,connection_version,created_at,expires_at) SELECT ?,?,?,?,?,?,?,?,?,?,? WHERE ${c.guard.sql}`).bind(input.id,c.guard.actorID,input.parentId,digest,input.kind,input.name,input.mimeType,input.size,c.config.version,now,new Date(Date.now()+7*86400000).toISOString(),...c.guard.bindings).run();const row=await operation(input.id);if(!row||row.actor_id!==c.guard.actorID||row.payload_hash!==digest||row.connection_version!==c.config.version)throw new MediaFailure('Esta solicitud ya pertenece a otro archivo, cuenta o conexión.',409);if(row.status!=='ready'&&row.expires_at<now)throw new MediaFailure('La subida venció. Selecciona el archivo como una nueva subida.',410);return row;}
@@ -99,8 +100,8 @@ async function thumbnailBytes(response:Response){
  try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>MEDIA_THUMBNAIL_MAX_BYTES){await reader.cancel().catch(()=>{});throw new MediaFailure('La miniatura supera el tamaño permitido.',502);}parts.push(value);}}finally{reader.releaseLock();}
  if(!size)throw new MediaFailure('Google no devolvió una miniatura válida.',502);const bytes=new Uint8Array(size);let position=0;for(const part of parts){bytes.set(part,position);position+=part.length;}return bytes;
 }
-export async function mediaFile(g:MediaGuard,id:string,thumbnail:boolean,range:string|null){
- const c=await mediaContext(g),chain=await ancestry(c,safeID(id)),f=chain.at(-1)!;
+export async function mediaFile(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string){
+ const c=await mediaContext(g);await publishedDirect(id);const chain=await ancestry(c,safeID(id)),f=chain.at(-1)!;if(revision&&f.modifiedTime!==revision)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);
  if(f.mimeType===MEDIA_FOLDER_MIME||f.capabilities?.canDownload===false)throw new MediaFailure('El archivo no se puede abrir.',403);
  const requested=thumbnail?null:mediaRange(range);let r:Response,preview:Uint8Array|undefined;
  if(thumbnail){
@@ -113,12 +114,102 @@ export async function mediaFile(g:MediaGuard,id:string,thumbnail:boolean,range:s
   if(!/^image\/(jpeg|png|gif|webp)(?:;|$)/i.test(r.headers.get('content-type')||'')){await r.body?.cancel().catch(()=>{});throw new MediaFailure('Google no devolvió una miniatura válida.',502);}
   preview=await thumbnailBytes(r);
  }else{
-  r=await request(c,'https://www.googleapis.com/drive/v3/files/'+id+'?alt=media&supportsAllDrives=true',{headers:requested?{Range:requested}:{}});await checked(r);
+  r=await request(c,'https://www.googleapis.com/drive/v3/files/'+id+'?alt=media&supportsAllDrives=true',{headers:requested?{Range:requested}:{}});await checked(r);if(requested&&(r.status!==206||!/^bytes \d+-\d+\/\d+$/.test(r.headers.get('content-range')||''))){await r.body?.cancel();throw new MediaFailure('Google no confirmó el tramo solicitado.',502);}
  }
  // The preview is bounded and fully read before the final ancestry/permission
  // check. Original videos remain streamed and keep their existing range support.
- await ancestry(c,id);await live(c);
+ const final=await ancestry(c,id);if(revision&&final.at(-1)!.modifiedTime!==revision){await r.body?.cancel();throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);}await live(c);
  const headers=new Headers({'Content-Type':thumbnail?r.headers.get('content-type')!:f.mimeType,'Content-Disposition':"inline; filename*=UTF-8''"+encodeURIComponent(f.name.replace(/[\u0000-\u001f\u007f]/g,'').slice(0,180)),'Accept-Ranges':thumbnail?'none':'bytes','Content-Security-Policy':"default-src 'none'; sandbox"});
  if(preview)headers.set('Content-Length',String(preview.byteLength));else for(const name of ['content-length','content-range']){const value=r.headers.get(name);if(value)headers.set(name,value);}
  return new Response(preview?preview as BodyInit:r.body,{status:thumbnail?200:r.status,headers});
+}
+
+// Direct sessions are bearer capabilities for ONE reserved new file. Google may
+// keep them alive for a week; logout cannot retroactively shorten that lease.
+// Initiate outside the shared tree. Only JAC can publish the completed file into
+// its destination after current authorization, signature and identity checks.
+async function pendingDirectIDs(ids:string[]){
+ if(!ids.length)return new Set<string>();
+ const rows=await database().prepare("SELECT drive_id FROM jac_media_operations WHERE kind='direct' AND status<>'ready' AND drive_id IN(SELECT value FROM json_each(?))").bind(JSON.stringify(ids)).all<{drive_id:string}>();
+ return new Set(rows.results.map(r=>r.drive_id));
+}
+async function publishedDirect(id:string){if((await pendingDirectIDs([id])).has(id))throw new MediaFailure('El archivo aún no está disponible en Fotografía.',404);}
+export async function mediaMetadata(g:MediaGuard,id:string){const c=await mediaContext(g);await publishedDirect(safeID(id));const chain=await ancestry(c,id),f=chain.at(-1)!;if(f.mimeType===MEDIA_FOLDER_MIME||f.capabilities?.canDownload===false)throw new MediaFailure('El archivo no se puede abrir.',403);await live(c);return {item:item(f)};}
+async function directRow(c:Context,id:unknown){
+ if(!validMediaRequestID(id))throw new MediaFailure('La subida no es válida.');
+ const row=await operation(id);
+ if(!row||row.actor_id!==c.guard.actorID||row.kind!=='direct')throw new MediaFailure('La subida no existe.',404);
+ if(row.status==='cancelled'||row.connection_version!==c.config.version||row.status!=='ready'&&row.expires_at<new Date().toISOString())throw new MediaFailure('La subida venció o se canceló.',410);
+ await parent(c,row.parent_id);return row;
+}
+async function directState(c:Context,row:Operation){
+ await live(c);const base={id:row.id,offset:row.offset,chunkSize:MEDIA_DIRECT_CHUNK_SIZE,complete:row.status==='ready'};
+ if(base.complete)return base;
+ const secret=await decryptMail<{url:string}>(row.session_payload,mailKey());return {...base,uploadURL:sessionURL(secret.url)};
+}
+export async function startDirectMediaUpload(g:MediaGuard,input:Record<string,unknown>,origin:string){
+ const data=mediaUploadInput(input),c=await mediaContext(g);await parent(c,data.parentId);
+ const row=await begin(c,{id:data.id,parentId:data.parentId,name:data.filename,mimeType:data.mimeType,size:data.size,kind:'direct'});
+ if(row.status==='cancelled')throw new MediaFailure('La subida fue cancelada.',410);
+ if(row.session_payload||row.status==='ready')return directMediaUploadStatus(g,row.id);
+ const claim=await lock(c,row);try{
+  const id=await reserve(c,row,claim);await parent(c,row.parent_id);
+  const response=await request(c,'https://www.googleapis.com/upload/drive/v3/files?'+new URLSearchParams({uploadType:'resumable',supportsAllDrives:'true',fields}),{method:'POST',headers:{'Content-Type':'application/json','X-Upload-Content-Type':row.mime_type,'X-Upload-Content-Length':String(row.size),Origin:origin},body:JSON.stringify({id,name:row.name,mimeType:row.mime_type,appProperties:{jac_media_request:row.id,jac_media_staged:'1'}})});
+  await checked(response);const url=sessionURL(response.headers.get('location'));await response.body?.cancel();
+  await update(c,row.id,claim,{session:await encryptMail({url},mailKey()),offset:0});return await directState(c,(await operation(row.id))!);
+ }finally{await unlock(row.id,claim);}
+}
+async function finishDirect(c:Context,row:Operation,claim:string,stagingParent:string){
+ const file=await metadata(c,row.drive_id);
+ if(file.id!==row.drive_id||file.name!==row.name||file.mimeType!==row.mime_type||Number(file.size)!==row.size||file.appProperties?.jac_media_request!==row.id||file.appProperties?.jac_media_staged!=='1')throw new MediaFailure('El archivo final no coincide con la subida.',422);
+ // A retry may find a successful move whose response was lost. Never adopt an
+ // arbitrary externally moved file, even if its ID happens to be reserved here.
+ if(file.parents?.length&&!(file.parents.length===1&&(file.parents[0]===row.parent_id||file.parents[0]===stagingParent)))throw new MediaFailure('La ubicación de la subida cambió.',403);
+ const end=Math.min(63,row.size-1),response=await request(c,'https://www.googleapis.com/drive/v3/files/'+row.drive_id+'?alt=media&supportsAllDrives=true',{headers:{Range:`bytes=0-${end}`}});await checked(response);
+ if(response.status!==206||response.headers.get('content-range')!==`bytes 0-${end}/${row.size}`){await response.body?.cancel();throw new MediaFailure('Google no confirmó el contenido del archivo.',502);}
+ const bytes=await thumbnailBytes(response);if(bytes.length!==end+1||!mediaSignature(bytes,row.mime_type))throw new MediaFailure('El contenido no corresponde a la foto o video seleccionado.',422);
+ await parent(c,row.parent_id);
+ if(!file.parents?.includes(row.parent_id)){
+  const moved=await json<DriveFile>(c,'https://www.googleapis.com/drive/v3/files/'+row.drive_id+'?'+new URLSearchParams({addParents:row.parent_id,...(file.parents?.length?{removeParents:file.parents.join(',')}:{}),supportsAllDrives:'true',fields}),{method:'PATCH',headers:{'Content-Type':'application/json'},body:'{}'});
+  if(moved.id!==row.drive_id)throw new MediaFailure('Google no confirmó la carpeta del archivo.',502);
+ }
+ await ancestry(c,row.drive_id);await update(c,row.id,claim,{offset:row.size,status:'ready'});return directState(c,(await operation(row.id))!);
+}
+// New files without explicit parents are placed in the owner's My Drive root.
+// Resolve that ID with Google, never accept a staging parent from the client.
+
+export async function directMediaUploadStatus(g:MediaGuard,id:unknown){
+ const c=await mediaContext(g),row=await directRow(c,id);
+ if(row.status==='ready'){await ancestry(c,row.drive_id);return directState(c,row);}
+ if(!row.session_payload)throw new MediaFailure('Prepara primero la subida.',409);
+ const claim=await lock(c,row);try{
+  const {url}=await decryptMail<{url:string}>(row.session_payload,mailKey());
+  const response=await request(c,sessionURL(url),{method:'PUT',headers:{'Content-Range':'bytes */'+row.size,'Content-Length':'0'},body:new Uint8Array()},true);
+  if(response.status===308){await checked(response);const range=response.headers.get('range');if(range&&!/^bytes=0-\d+$/.test(range))throw new MediaFailure('Google no confirmó el progreso.',502);const offset=range?Number(range.slice(8))+1:0;await response.body?.cancel();if(!Number.isSafeInteger(offset)||offset<row.offset||offset>=row.size)throw new MediaFailure('Google devolvió un progreso inesperado.',502);await update(c,row.id,claim,{offset});return directState(c,(await operation(row.id))!);}
+  if(!response.ok&&![404,410].includes(response.status))await checked(response);else await response.body?.cancel();
+  // The session may disappear after the final PUT. The fixed file ID recovers
+  // that success without creating a second file.
+  const root=await json<{id:string}>(c,'https://www.googleapis.com/drive/v3/files/root?fields=id');if(!validMediaID(root.id))throw new MediaFailure('Google no confirmó la ubicación temporal.',502);
+  try{return await finishDirect(c,row,claim,root.id);}catch(e){if(e instanceof MediaFailure&&e.status===404)throw new MediaFailure('La sesión de subida venció. Selecciona el archivo de nuevo.',410);throw e;}
+ }finally{await unlock(row.id,claim);}
+}
+export async function cancelDirectMediaUpload(g:MediaGuard,id:unknown){
+ const c=await mediaContext(g),row=await directRow(c,id);if(row.status==='ready')return {cancelled:false};
+ const claim=await lock(c,row);try{await update(c,row.id,claim,{status:'cancelled',session:''});return {cancelled:true};}finally{await unlock(row.id,claim);}
+}
+
+// Compatibility path only when a browser/network refuses the direct request.
+// It resumes the SAME reserved file/session; never creates an alternate copy.
+export async function relayDirectMediaUpload(g:MediaGuard,id:unknown,offset:number,bytes:Uint8Array){
+ const c=await mediaContext(g),row=await directRow(c,id);
+ if(row.status==='ready'){await ancestry(c,row.drive_id);return directState(c,row);}
+ if(!Number.isSafeInteger(offset)||offset!==row.offset||!bytes.length||bytes.length>MEDIA_CHUNK_SIZE||offset+bytes.length>row.size||(offset+bytes.length<row.size&&bytes.length!==MEDIA_CHUNK_SIZE))throw new MediaFailure('El progreso cambió. Revisa el estado de la subida.',409);
+ if(offset===0&&!mediaSignature(bytes,row.mime_type))throw new MediaFailure('El contenido no corresponde al archivo seleccionado.',422);
+ const claim=await lock(c,row);try{
+  const {url}=await decryptMail<{url:string}>(row.session_payload,mailKey());
+  const response=await request(c,sessionURL(url),{method:'PUT',headers:{'Content-Type':row.mime_type,'Content-Length':String(bytes.length),'Content-Range':`bytes ${offset}-${offset+bytes.length-1}/${row.size}`},body:bytes as BodyInit},true);await checked(response);
+  if(response.status===308){await response.body?.cancel();const range=response.headers.get('range');if(range!==`bytes=0-${offset+bytes.length-1}`)throw new MediaFailure('Google no confirmó el progreso de subida.',502);await update(c,row.id,claim,{offset:offset+bytes.length});return directState(c,(await operation(row.id))!);}
+  await response.body?.cancel();const root=await json<{id:string}>(c,'https://www.googleapis.com/drive/v3/files/root?fields=id');if(!validMediaID(root.id))throw new MediaFailure('Google no confirmó la ubicación temporal.',502);
+  return await finishDirect(c,row,claim,root.id);
+ }finally{await unlock(row.id,claim);}
 }

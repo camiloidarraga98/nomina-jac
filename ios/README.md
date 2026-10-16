@@ -302,3 +302,7 @@ Actualización del mismo proyecto: Pases de abordar muestra hoy y mañana; prior
 Verificación 0.9.3 (13): simulador local ios-gestures37-native-style.xcresult TEST SUCCEEDED (gestos, confirmación breve, PDF/historial y lector); itinerario manual con adjunto también pasó. Release sin firma correcto. Web v37 publicada en el Site existente. Instalar con Run desde este mismo proyecto.
 
 0.9.4 (14) verificada en simulador: 37 unitarias y cinco pruebas de interfaz distintas pasadas; una comprobación física omitida explícitamente. Release sin firma correcto. Web v38 publicada; ver docs/PROJECT_CONTEXT.md.
+
+## Fotografía 0.19.0 (31)
+
+Mismo proyecto: subidas directas a Drive con control final JAC, reproducción nativa por rangos y caché cifrada limitada para fotos abiertas. Se conservan descargas offline por carpeta y Guardar en Fotos. Ver [transferencias](../docs/PHOTOGRAPHY_TRANSFER.md). Para actualizar tu teléfono, Run en JACNomina sobre tu iPhone; no necesitas descargar otro proyecto. Firma personal y co.jacmusic.nomina conservados; push continúa suspendido. Build Release sin firma y pruebas locales con fixtures verificados; instalación física pendiente de Run.

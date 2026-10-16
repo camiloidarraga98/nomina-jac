@@ -693,20 +693,30 @@ final class PayrollClient: ObservableObject {
     }
     func uploadMedia(_ file: MediaLocalFile, parentID: String, progress: @escaping (Int64, Int64) -> Void) async throws {
         guard !usingOfflineCopy else { throw APIError.invalid("Conéctate para subir fotos y videos.") }
-        var plan = try await mediaUploadCommand(["action": .string("start"), "id": .string(file.id), "parentId": .string(parentID), "filename": .string(file.name), "mimeType": .string(file.mimeType), "size": .number(Double(file.size))])
+        let stamp = try mediaAccessStamp()
+        var plan = try await mediaUploadCommand(["action": .string("start"), "transport": .string("direct"), "id": .string(file.id), "parentId": .string(parentID), "filename": .string(file.name), "mimeType": .string(file.mimeType), "size": .number(Double(file.size))])
         try plan.validate(for: file); progress(plan.offset, file.size)
-        let handle = try FileHandle(forReadingFrom: file.url); defer { try? handle.close() }
+        let handle = try FileHandle(forReadingFrom: file.url); defer { try? handle.close() }; var compatible = false
         while !plan.complete {
             try Task.checkCancellation()
             try handle.seek(toOffset: UInt64(plan.offset))
-            let count = min(plan.chunkSize, Int(file.size - plan.offset))
+            let count = min(compatible ? 1024 * 1024 : plan.chunkSize, Int(file.size - plan.offset))
             guard count > 0, let chunk = try handle.read(upToCount: count), chunk.count == count else { throw APIError.invalid("El archivo local cambió. Vuelve a seleccionarlo.") }
-            let (req, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "id", value: file.id), URLQueryItem(name: "offset", value: String(plan.offset))], method: "PUT")
+            let (legacyRequest, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "id", value: file.id), URLQueryItem(name: "offset", value: String(plan.offset))] + (plan.uploadURL == nil ? [] : [URLQueryItem(name: "transport", value: "direct")]), method: "PUT")
             let previous = plan.offset
             do {
-                let (data, raw) = try await mediaSession.upload(for: req, from: chunk)
-                _ = try validateMediaResponse(raw, data: data, token: token, generation: generation)
-                plan = try decoder.decode(MediaUploadState.self, from: data)
+                guard stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+                if let url = plan.uploadURL, !compatible {
+                    let direct = try Self.directMediaRequest(url, mime: file.mimeType, offset: previous, count: count, total: file.size)
+                    let (_, raw) = try await mediaSession.upload(for: direct, from: chunk)
+                    guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
+                    guard let response = raw as? HTTPURLResponse, (200..<300).contains(response.statusCode) || response.statusCode == 308 else { throw APIError.message("Drive no confirmó la transferencia. Reintenta para consultar su avance.") }
+                    plan = try await mediaUploadCommand(["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)])
+                } else {
+                    let (data, raw) = try await mediaSession.upload(for: legacyRequest, from: chunk)
+                    _ = try validateMediaResponse(raw, data: data, token: token, generation: generation)
+                    plan = try decoder.decode(MediaUploadState.self, from: data)
+                }
             } catch {
                 if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
                 if case APIError.unauthorized = error { throw error }
@@ -714,14 +724,26 @@ final class PayrollClient: ObservableObject {
                 if case APIError.invalid = error { throw error }
                 // A timed-out chunk may already be in Drive. Ask JAC for the
                 // committed offset before retrying; never create a second file.
-                plan = try await mediaUploadCommand(["action": .string("status"), "id": .string(file.id)])
+                plan = try await mediaUploadCommand(["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)])
                 try plan.validate(for: file)
+                if plan.uploadURL != nil, !compatible, plan.offset == previous { compatible = true; continue }
                 guard plan.offset > previous else { throw error }
             }
             try plan.validate(for: file)
             guard plan.offset > previous else { throw APIError.message("La subida no avanzó. Reintenta el mismo archivo.") }
             progress(plan.offset, file.size)
         }
+    }
+    static func directMediaRequest(_ url: URL, mime: String, offset: Int64, count: Int, total: Int64) throws -> URLRequest {
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme == "https", parts.host == "www.googleapis.com", parts.port == nil, parts.user == nil, parts.password == nil, parts.fragment == nil,
+              parts.path.range(of: "^/upload/drive/v3/files(/[A-Za-z0-9_-]+)?$", options: .regularExpression) != nil,
+              parts.queryItems?.contains(where: { $0.name == "upload_id" && !($0.value ?? "").isEmpty }) == true,
+              offset >= 0, count > 0, count <= 8 * 1024 * 1024, offset + Int64(count) <= total else { throw APIError.invalid("La autorización de subida no es válida.") }
+        var request = URLRequest(url: url); request.httpMethod = "PUT"; request.httpShouldHandleCookies = false; request.cachePolicy = .reloadIgnoringLocalCacheData; request.timeoutInterval = 120
+        request.setValue(mime, forHTTPHeaderField: "Content-Type"); request.setValue("bytes \(offset)-\(offset + Int64(count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
+        // This request intentionally has no JAC cookie, owner OAuth token or
+        // Authorization header. The URL only authorizes its reserved new file.
+        return request
     }
     func mediaThumbnail(_ item: MediaItem) async throws -> Data {
         let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "thumbnail", value: "1")], document: true, forceNetwork: true)
@@ -744,7 +766,16 @@ final class PayrollClient: ObservableObject {
         }
         let generation = cacheGeneration
         do {
+            if mediaOffline.hasFile(item, scope: scope) {
+                try await validateMediaItem(item)
+                if let saved = try await restoredMediaDocument(item, scope: scope) { return saved }
+            }
             let document = try await downloadMediaDocument(item)
+            if item.kind == "image", item.size <= 24 * 1024 * 1024, MediaStorageReview.freeBytes > item.size * 2 + 64 * 1024 * 1024 {
+                let cache = mediaOffline, work = Task.detached(priority: .utility) { try cache.saveFile(document.url, item: item, scope: scope, preview: true) }
+                do { try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() } }
+                catch { if scope.id != (try mediaScope())?.id { cache.clear(scope) } }
+            }
             guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { TemporaryDocuments.remove(document); throw CancellationError() }
             return document
         }
@@ -753,11 +784,27 @@ final class PayrollClient: ObservableObject {
             throw error
         }
     }
+    func validateMediaItem(_ item: MediaItem) async throws {
+        let (data, _) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "metadata", value: "1")], forceNetwork: true)
+        struct Result: Decodable { let item: MediaItem }
+        let current = try decoder.decode(Result.self, from: data).item
+        guard current.id == item.id, current.size == item.size, current.mimeType == item.mimeType, current.modifiedAt == item.modifiedAt else { throw APIError.conflict("El archivo cambió. Actualiza la carpeta.") }
+    }
+    func mediaRange(_ item: MediaItem, offset: Int64, count: Int) async throws -> Data {
+        guard count > 0, count <= 1024 * 1024, offset >= 0, offset < item.size, offset + Int64(count) <= item.size else { throw APIError.invalid("El tramo de video no es válido.") }
+        var (req, token, generation) = try mediaRequest(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "revision", value: item.modifiedAt)])
+        req.setValue("bytes=\(offset)-\(offset + Int64(count) - 1)", forHTTPHeaderField: "Range")
+        let (data, raw) = try await mediaSession.data(for: req)
+        let response = try validateMediaResponse(raw, data: data, token: token, generation: generation)
+        guard response.statusCode == 206, response.mimeType == item.mimeType, data.count == count,
+              response.value(forHTTPHeaderField: "Content-Range") == "bytes \(offset)-\(offset + Int64(count) - 1)/\(item.size)" else { throw APIError.invalid("El video cambió o llegó incompleto. Actualiza la carpeta.") }
+        return data
+    }
     private func downloadMediaDocument(_ item: MediaItem) async throws -> ExportedDocument {
         guard item.kind != "folder", item.size > 0, item.size <= MediaLocalFile.maximumSize else { throw APIError.invalid("El archivo no está disponible para abrirse.") }
         let free = (try? FileManager.default.attributesOfFileSystem(forPath: TemporaryDocuments.root.deletingLastPathComponent().path)[.systemFreeSize] as? NSNumber)?.int64Value ?? Int64.max
         guard free > item.size + 64 * 1024 * 1024 else { throw APIError.invalid("No hay espacio suficiente para abrir este archivo en el dispositivo.") }
-        let (req, token, generation) = try mediaRequest(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id)])
+        let (req, token, generation) = try mediaRequest(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "revision", value: item.modifiedAt)])
         let (temporary, raw) = try await mediaSession.download(for: req)
         defer { try? FileManager.default.removeItem(at: temporary) }
         try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: temporary.path)
@@ -765,7 +812,7 @@ final class PayrollClient: ObservableObject {
         let prefix = try handle.read(upToCount: 64 * 1024) ?? Data()
         let response = try validateMediaResponse(raw, data: prefix, token: token, generation: generation)
         let count = (try temporary.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
-        guard count > 0, Int64(count) <= MediaLocalFile.maximumSize, response.mimeType == item.mimeType else { throw APIError.invalid("No se recibió una foto o video válido.") }
+        guard count > 0, Int64(count) == item.size, response.mimeType == item.mimeType else { throw APIError.invalid("No se recibió una foto o video válido.") }
         try Task.checkCancellation()
         return try TemporaryDocuments.move(temporary, filename: MediaLocalFile.safeName(item.name))
     }

@@ -394,6 +394,90 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(progress, file.size); XCTAssertEqual(starts, 1); XCTAssertEqual(status, 1); XCTAssertEqual(chunks, [1024 * 1024, 1024 * 1024, 99]); XCTAssertEqual(received, bytes)
         MockProtocol.handler = nil
     }
+    @MainActor func testDirectMediaUploadSkipsJACForBytesAndRecoversCommittedTimeout() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://mock.example.invalid")!, vault: vault, configuration: config)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        let bytes = Data(repeating: 71, count: 8 * 1024 * 1024 + 19); try bytes.write(to: source); defer { try? FileManager.default.removeItem(at: source) }
+        let file = try MediaLocalFile.stage(source); defer { file.remove(); MockProtocol.handler = nil }
+        var offset = 0, starts = 0, statuses = 0, chunks: [Int] = [], received = Data(), failed = false
+        MockProtocol.handler = { req in
+            if req.url?.host == "www.googleapis.com" {
+                XCTAssertEqual(req.httpMethod, "PUT"); XCTAssertNil(req.value(forHTTPHeaderField: "Cookie")); XCTAssertNil(req.value(forHTTPHeaderField: "Authorization")); XCTAssertNil(req.value(forHTTPHeaderField: "Origin"))
+                let chunk = try MockProtocol.requestBody(req)
+                XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Range"), "bytes \(offset)-\(offset + chunk.count - 1)/\(bytes.count)")
+                offset += chunk.count; chunks.append(chunk.count); received.append(chunk)
+                if !failed { failed = true; throw URLError(.timedOut) }
+                return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data())
+            }
+            XCTAssertEqual(req.url?.path, "/api/media/upload"); XCTAssertEqual(req.httpMethod, "POST"); XCTAssertEqual(req.value(forHTTPHeaderField: "Cookie"), "__Host-jac_session=" + vault.token!)
+            let command = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(req)); XCTAssertEqual(command["transport"].text, "direct"); XCTAssertEqual(command["id"].text, file.id)
+            if command["action"].text == "start" { starts += 1 } else { XCTAssertEqual(command["action"].text, "status"); statuses += 1 }
+            var state: JSONValue = .object(["id": .string(file.id), "offset": .number(Double(offset)), "chunkSize": .number(8 * 1024 * 1024), "complete": .bool(offset == bytes.count)])
+            if offset < bytes.count { state["uploadURL"] = .string("https://www.googleapis.com/upload/drive/v3/files?upload_id=fixture-one-file") }
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(state))
+        }
+        var progress: Int64 = 0; try await client.uploadMedia(file, parentID: "fixture-day") { sent, _ in progress = sent }
+        XCTAssertEqual(progress, file.size); XCTAssertEqual(starts, 1); XCTAssertEqual(statuses, 2); XCTAssertEqual(chunks, [8 * 1024 * 1024, 19]); XCTAssertEqual(received, bytes)
+        for value in ["http://www.googleapis.com/upload/drive/v3/files?upload_id=x", "https://attacker.invalid/upload/drive/v3/files?upload_id=x", "https://www.googleapis.com:443/upload/drive/v3/files?upload_id=x", "https://user@www.googleapis.com/upload/drive/v3/files?upload_id=x", "https://www.googleapis.com/drive/v3/files/other?upload_id=x", "https://www.googleapis.com/upload/drive/v3/files"] {
+            XCTAssertThrowsError(try PayrollClient.directMediaRequest(URL(string: value)!, mime: "video/mp4", offset: 0, count: 19, total: 19))
+        }
+    }
+    @MainActor func testDirectMediaUploadFallsBackToSameSessionIfNetworkRefusesDirectBytes() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://mock.example.invalid")!, vault: vault, configuration: config)
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png"), bytes = Data(repeating: 71, count: 1024 * 1024 + 13)
+        try bytes.write(to: url); defer { try? FileManager.default.removeItem(at: url); MockProtocol.handler = nil }
+        let file = try MediaLocalFile.stage(url); defer { file.remove() }; var offset = 0, direct = 0, starts = 0, chunks: [Int] = []
+        MockProtocol.handler = { req in
+            if req.url?.host == "www.googleapis.com" { direct += 1; throw URLError(.cannotConnectToHost) }
+            if req.httpMethod == "PUT" {
+                let q = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!.queryItems!
+                XCTAssertEqual(q.first { $0.name == "id" }?.value, file.id); XCTAssertEqual(q.first { $0.name == "transport" }?.value, "direct")
+                let data = try MockProtocol.requestBody(req); offset += data.count; chunks.append(data.count)
+            } else {
+                let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(req)); XCTAssertEqual(body["id"].text, file.id)
+                if body["action"].text == "start" { starts += 1 }
+            }
+            var result: JSONValue = .object(["id": .string(file.id), "offset": .number(Double(offset)), "chunkSize": .number(8 * 1024 * 1024), "complete": .bool(offset == bytes.count)])
+            if offset < bytes.count { result["uploadURL"] = .string("https://www.googleapis.com/upload/drive/v3/files?upload_id=fixture") }
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(result))
+        }
+        try await client.uploadMedia(file, parentID: "fixture-day") { _, _ in }
+        XCTAssertEqual(offset, bytes.count); XCTAssertEqual(direct, 1); XCTAssertEqual(starts, 1); XCTAssertEqual(chunks, [1024 * 1024, 13])
+    }
+    @MainActor func testMediaPhotoCacheRevalidatesEveryOpenAndRevocationPurgesIt() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://mock.example.invalid")!, vault: vault, configuration: config)
+        let item = MediaItem(id: "photo-cache", name: "Foto ficticia.png", mimeType: "image/png", kind: "image", size: Int64(MediaFixture.photo.count), modifiedAt: "fixture-revision", thumbnailAvailable: true)
+        var originals = 0, metadata = 0, revoked = false
+        MockProtocol.handler = { req in
+            let parts = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!
+            if parts.queryItems?.contains(where: { $0.name == "metadata" }) == true {
+                metadata += 1
+                return (HTTPURLResponse(url: req.url!, statusCode: revoked ? 403 : 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, revoked ? Data("{\"error\":\"Acceso retirado\"}".utf8) : try JSONEncoder().encode(["item": item]))
+            }
+            originals += 1; return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": item.mimeType])!, MediaFixture.photo)
+        }
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        for _ in 0..<2 { let document = try await client.mediaDocument(item); XCTAssertEqual(try Data(contentsOf: document.url), MediaFixture.photo); TemporaryDocuments.remove(document) }
+        XCTAssertEqual(originals, 1); XCTAssertEqual(metadata, 1); let scope = try XCTUnwrap(client.mediaScope()); XCTAssertTrue(client.mediaOffline.hasFile(item, scope: scope))
+        revoked = true
+        do { _ = try await client.mediaDocument(item); XCTFail("A cached image must never bypass a confirmed 403") } catch { guard case APIError.forbidden = error else { return XCTFail(String(describing: error)) } }
+        XCTAssertEqual(originals, 1); XCTAssertEqual(metadata, 2); XCTAssertFalse(client.mediaOffline.hasFile(item, scope: scope))
+    }
+    @MainActor func testMediaStreamingAssetUsesAuthenticatedRangesAndRejectsChangedContent() async throws {
+        let client = UITestBackend.client(), feed = try await client.media(folder: "media-day"), item = try XCTUnwrap(feed.items.first { $0.kind == "video" })
+        try await client.validateMediaItem(item)
+        let source = try MediaVideoStream(client: client, item: item); defer { source.cancel() }
+        let tracks = try await source.asset.loadTracks(withMediaType: .video); XCTAssertEqual(tracks.count, 1)
+        let data = try await client.mediaRange(item, offset: 0, count: min(1024, Int(item.size))); XCTAssertEqual(data, MediaFixture.video.prefix(data.count))
+        try client.clearSession()
+        do { _ = try await client.mediaRange(item, offset: 0, count: 16); XCTFail("A closed session cannot request another range") } catch { guard case APIError.unauthorized = error else { return XCTFail(String(describing: error)) } }
+    }
     @MainActor func testLateCRMReadCannotRestoreFinancialCopyAfterASave() async throws {
         let vault=MemorySession();vault.token=String(repeating:"f",count:43)
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[CRMDelayedProtocol.self]

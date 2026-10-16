@@ -74,7 +74,7 @@ private final class FixtureProtocol: URLProtocol {
     }
     private func deliverResponse() {
         do {
-            guard request.url?.host == "ui-fixture.example.invalid" else { throw URLError(.unsupportedURL) }
+            guard request.url?.host == "ui-fixture.example.invalid" || (request.url?.host == "www.googleapis.com" && request.url?.path == "/upload/drive/v3/files") else { throw URLError(.unsupportedURL) }
             if Self.offline { throw URLError(.notConnectedToInternet) }
             if ProcessInfo.processInfo.arguments.contains("--uitest-slow-content"), request.url?.path == "/api/mobile/payroll", request.url?.query?.contains("workspace=1") == true {
                 Self.lock.lock(); let delay = !Self.slowedWorkspace; Self.slowedWorkspace = true; Self.lock.unlock()
@@ -86,10 +86,21 @@ private final class FixtureProtocol: URLProtocol {
             }
             if Self.slowAgenda, request.url?.path == "/api/calendar", request.httpMethod == "GET" { Thread.sleep(forTimeInterval: 3) }
             if Self.cancelRead(request) { throw URLError(.cancelled) }
+            if request.url?.host == "www.googleapis.com" {
+                guard request.url?.path == "/upload/drive/v3/files", request.value(forHTTPHeaderField: "Cookie") == nil, request.value(forHTTPHeaderField: "Authorization") == nil else { throw URLError(.unsupportedURL) }
+                let result = try MediaFixture.direct(request), response = HTTPURLResponse(url: request.url!, statusCode: result, httpVersion: nil, headerFields: nil)!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed); client?.urlProtocolDidFinishLoading(self); return
+            }
             if request.url?.path == "/api/media/file" {
                 let result = try MediaFixture.file(request)
-                let response = HTTPURLResponse(url: request.url!, statusCode: result.0, httpVersion: nil, headerFields: ["Content-Type": result.1])!
-                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed); client?.urlProtocol(self, didLoad: result.2); client?.urlProtocolDidFinishLoading(self); return
+                var code = result.0, body = result.2, headers = ["Content-Type": result.1]
+                if code == 200, let range = request.value(forHTTPHeaderField: "Range") {
+                    let parts = range.replacingOccurrences(of: "bytes=", with: "").split(separator: "-")
+                    guard parts.count == 2, let start = Int(parts[0]), let end = Int(parts[1]), start >= 0, end >= start, end < body.count else { throw URLError(.badServerResponse) }
+                    headers["Content-Range"] = "bytes \(start)-\(end)/\(body.count)"; code = 206; body = body.subdata(in: start..<(end + 1))
+                }
+                let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: headers)!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed); client?.urlProtocol(self, didLoad: body); client?.urlProtocolDidFinishLoading(self); return
             }
             if request.url?.path == "/api/crm/file" {
                 Self.lock.lock();defer {Self.lock.unlock()}
@@ -414,8 +425,17 @@ enum MediaFixture {
         lock.lock(); defer { lock.unlock() }
         let q = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems ?? [], id = q.first { $0.name == "id" }?.value ?? ""
         guard let bytes = files[id] else { return (404, "application/json", Data("{\"error\":\"Archivo ficticio no encontrado\"}".utf8)) }
-        let mime = items.values.flatMap { $0 }.first { $0["id"].text == id }?["mimeType"].text ?? "image/png"
+        let record = items.values.flatMap { $0 }.first { $0["id"].text == id }
+        if q.contains(where: { $0.name == "metadata" }), let record { return (200, "application/json", try JSONEncoder().encode(JSONValue.object(["item": record]))) }
+        let mime = record?["mimeType"].text ?? "image/png"
         return (200, q.contains { $0.name == "thumbnail" } ? "image/png" : mime, q.contains { $0.name == "thumbnail" } ? photo : bytes)
+    }
+    static func direct(_ request: URLRequest) throws -> Int {
+        lock.lock(); defer { lock.unlock() }
+        let id = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "upload_id" }?.value ?? ""
+        guard var upload = uploads[id], request.httpMethod == "PUT", let range = request.value(forHTTPHeaderField: "Content-Range"), range.hasPrefix("bytes \(upload.1.count)-") else { return 400 }
+        upload.1.append(try bytes(request)); uploads[id] = upload
+        return upload.1.count == Int(upload.0["size"].number) ? 200 : 308
     }
     static func response(_ request: URLRequest) throws -> (Int, JSONValue) {
         lock.lock(); defer { lock.unlock() }
@@ -444,7 +464,11 @@ enum MediaFixture {
                 if input["action"].text == "start", uploads[id] == nil { uploads[id] = (input, Data()) }
             }
             guard let upload = uploads[id] else { return (404, .object(["error": .string("Subida ficticia no encontrada")])) }
-            return (200, .object(["id": .string(id), "offset": .number(Double(upload.1.count)), "chunkSize": .number(1024 * 1024), "complete": .bool(upload.1.count == Int(upload.0["size"].number))]))
+            let complete = upload.1.count == Int(upload.0["size"].number)
+            if complete, files[id] == nil { files[id] = upload.1; items[upload.0["parentId"].text, default: []].append(item(id: id, name: upload.0["filename"].text, mime: upload.0["mimeType"].text, kind: upload.0["mimeType"].text.hasPrefix("video/") ? "video" : "image", size: upload.1.count)) }
+            var state: JSONValue = .object(["id": .string(id), "offset": .number(Double(upload.1.count)), "chunkSize": .number(8 * 1024 * 1024), "complete": .bool(complete)])
+            if !complete { state["uploadURL"] = .string("https://www.googleapis.com/upload/drive/v3/files?upload_id=" + id) }
+            return (200, state)
         }
         return (404, .object(["error": .string("Ruta ficticia no prevista")]))
     }

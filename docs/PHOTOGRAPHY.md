@@ -32,6 +32,9 @@ Metadatos e índices se cifran y los archivos grandes se procesan con FileHandle
 
 ## Archivos y servidor
 
+**Actualización del 16 de octubre:** el nuevo transporte directo, aislamiento antes de publicar, ruta compatible, reproducción por rangos y caché limitada se documentan en [Transferencias de Fotografía](PHOTOGRAPHY_TRANSFER.md). Esa entrega sustituye la descripción inicial de transporte por bloques de 1 MiB a continuación; el protocolo anterior permanece para clientes antiguos.
+
+
 JPEG, PNG, GIF, WebP, HEIC/HEIF, TIFF, MP4, MOV, WebM y M4V; máximo 20 GiB por archivo. Las posibilidades de reproducción/importación dependen también del códec del dispositivo. La web usa miniatura para HEIC/TIFF y permite descargar el original; un video no compatible muestra el error sin abrir Drive. Mac/iPhone usan vistas nativas y reproductores AVKit de plataforma sobre una descarga privada, sin WebView ni aplicaciones externas.
 
 Los originales se guardan directamente en Drive. D1 conserva conexión cifrada y operaciones de subida/carpeta, sin duplicar las fotos en R2 ni cargar videos completos en memoria del Worker. Subidas por bloques de 1 MiB, progreso y recuperación mediante estado de Google; el último bloque puede ser menor. IDs de archivo reservados y UUID de petición estables evitan duplicados ante respuestas perdidas. Las sesiones de subida se cifran y no se entregan al navegador/teléfono; los clientes solo acceden a API privadas de JAC.

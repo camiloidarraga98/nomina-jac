@@ -87,3 +87,7 @@ xcodebuild -project macos/JACMac.xcodeproj -scheme JACMac \
 Las mismas pruebas de cliente se compilan para ambos sistemas, incluidas API, concurrencia, permisos, cifrado, restauración sin red, borradores, adjuntos, CRM, OCR y OAuth. La comprobación de protección física de iOS se conserva; en Mac verifica permisos privados de los archivos. Los UI tests usan solo `.invalid` y una sesión ficticia, sin tocar el Llavero ni conexiones reales. La excepción de validación de bibliotecas está restringida al **ejecutor de UI tests** para permitir su firma local; no pertenece al producto JAC.
 
 Las pruebas y capturas locales quedan en `work/local/mac-native-*.xcresult` y `work/local/mac-ux-*.xcresult`. Los informes de intentos fallidos se conservan junto a las repeticiones corregidas. Ver `docs/MAC_NATIVE.md` para la entrega inicial y `docs/MAC_UX.md` para la distribución 1.1.0.
+
+## Fotografía 1.6.0 (8)
+
+La misma app incorpora subida directa limitada a cada archivo, reproducción progresiva y caché privada para fotos. Conserva sesión, permisos y copia offline cifrada. Ver [transferencias y verificación](../docs/PHOTOGRAPHY_TRANSFER.md). App universal compilada y firma estricta comprobada en outputs/JAC Music.app; cerrar y reabrir la instancia anterior para usar esta versión.

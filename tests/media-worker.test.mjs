@@ -38,6 +38,7 @@ async function fixture({readyFile=false,omitFileParents=false,readerPermissions=
    assert.equal(url.pathname,'/worker-preview=s320');if(state.thumbnailRedirect)return new Response(null,{status:307,headers:{Location:'https://untrusted.example.invalid/collect'}});
    if(state.afterThumbnail)await state.afterThumbnail();const bytes=new Uint8Array(state.thumbnailSize);bytes.set([255,216,255,1].slice(0,bytes.length));return new Response(bytes,{headers:{'Content-Type':'image/jpeg','Content-Length':String(bytes.length)}});
   }
+  if(url.pathname==='/drive/v3/files/root')return Response.json({id:'worker_my_drive_root'});
   if(url.pathname==='/drive/v3/files/generateIds')return Response.json({ids:[fileID]});
   if(url.pathname==='/upload/drive/v3/files'&&req.method==='POST'){state.metadata=JSON.parse(new TextDecoder().decode(entry.bytes));state.size=Number(req.headers.get('x-upload-content-length'));return new Response(null,{headers:{Location:'https://www.googleapis.com/upload/drive/v3/files?upload_id=fixture-worker-session'}});}
   if(url.pathname==='/upload/drive/v3/files'&&req.method==='PUT'){
@@ -54,11 +55,12 @@ async function fixture({readyFile=false,omitFileParents=false,readerPermissions=
    if(q===ordinary&&state.listPages){assert.equal(url.searchParams.get('orderBy'),'folder,createdTime desc,name');assert.match(url.searchParams.get('fields'),/createdTime/);const token=url.searchParams.get('pageToken')||'';assert.ok(token in state.listPages);return Response.json(state.listPages[token]);}
    return Response.json({files:file?.parents?.includes(folderID)?[{...file,id:state.listedID}]:[]});
   }
-  const id=url.pathname.split('/').at(-1),value=metadata(id);if(!value)return new Response(null,{status:404});
+  const id=url.pathname.split('/').at(-1),value=metadata(id);if(!value)return new Response(null,{status:404});if(req.method==='PATCH'){state.metadata.parents=[url.searchParams.get('addParents')];return Response.json(metadata(id));}
   if(url.searchParams.get('alt')==='media'){
    if(state.redirect)return new Response(null,{status:307,headers:{Location:'https://untrusted.example.invalid/collect'}});
    if(state.afterRead)await state.afterRead();
-   const range=req.headers.get('range');if(range){assert.equal(range,'bytes=2-5');return new Response(new Uint8Array([1,2,3,4]),{status:206,headers:{'content-type':'image/png','content-range':'bytes 2-5/'+state.size,'content-length':'4'}});}
+   const range=req.headers.get('range');if(range&&state.metadata?.appProperties?.jac_media_staged==='1'){assert.equal(range,'bytes=0-12');const bytes=new Uint8Array(13);bytes.set([137,80,78,71,13,10,26,10]);return new Response(bytes,{status:206,headers:{'content-type':'image/png','content-range':'bytes 0-12/13'}});}
+   if(range){assert.equal(range,'bytes=2-5');return new Response(new Uint8Array([1,2,3,4]),{status:206,headers:{'content-type':'image/png','content-range':'bytes 2-5/'+state.size,'content-length':'4'}});}
    return new Response(new Uint8Array(state.size),{headers:{'content-type':'image/png','content-length':String(state.size)}});
   }
   if(state.omitFileParents&&id===fileID){const {parents,...withoutParents}=value;return Response.json(withoutParents);}
@@ -181,5 +183,19 @@ test('Workerd requests globally ordered creation pages rather than sorting by la
   const first=await call('/api/media?folder='+folderID,{role:'owner'});assert.equal(first.status,200);const feed=await first.json();assert.equal(feed.nextPageToken,'page_2');assert.deepEqual(feed.items.map(item=>item.id),[newest.id,middle.id]);
   const second=await call('/api/media?folder='+folderID+'&pageToken='+feed.nextPageToken,{role:'owner'});assert.equal(second.status,200);const page=await second.json();assert.deepEqual(page.items.map(item=>item.id),[oldest.id]);assert.equal(page.items[0].createdAt,oldest.createdTime);assert.equal(page.items[0].modifiedAt,oldest.modifiedTime);assert.equal(page.nextPageToken,undefined);
   assert.equal(state.calls.filter(call=>new URL(call.url).searchParams.get('orderBy')==='folder,createdTime desc,name').length,2);
+ }finally{await mf.dispose();}
+});
+
+test('Workerd separates direct file bytes from JAC control and publishes only after guarded checks',async()=>{
+ const {mf,db,state,call}=await fixture();try{
+  const id=crypto.randomUUID(),body={action:'start',transport:'direct',id,parentId:folderID,filename:'directa-ficticia.png',mimeType:'image/png',size:13};
+  let response=await call('/api/media/upload',{role:'photo',method:'POST',body:JSON.stringify(body)});assert.equal(response.status,200);const plan=await response.json();assert.equal(plan.chunkSize,8*1024*1024);assert.ok(plan.uploadURL.includes('upload_id=fixture-worker-session'));assert.ok(!JSON.stringify(plan).includes('fixture-worker-access'));assert.equal(state.metadata.parents,undefined);
+  // Represents a direct device -> fake Drive transfer; no bytes reach Workerd.
+  state.offset=state.size;state.metadata.parents=['worker_my_drive_root'];
+  response=await call('/api/media/file?id='+fileID,{role:'owner'});assert.equal(response.status,404);
+  response=await call('/api/media/upload',{role:'owner',method:'POST',body:JSON.stringify({action:'status',transport:'direct',id})});assert.equal(response.status,404);
+  response=await call('/api/media/upload',{role:'photo',method:'POST',body:JSON.stringify({action:'status',transport:'direct',id})});assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.deepEqual(state.metadata.parents,[folderID]);
+  assert.ok(state.calls.filter(c=>c.method==='PUT').every(c=>c.bytes.length===0));assert.equal(state.calls.filter(c=>c.method==='PATCH').length,1);
+  const row=await db.prepare('SELECT session_payload FROM jac_media_operations WHERE id=?').bind(id).first();assert.ok(!row.session_payload.includes('upload_id'));
  }finally{await mf.dispose();}
 });

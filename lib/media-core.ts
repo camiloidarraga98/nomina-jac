@@ -4,6 +4,7 @@ import {validAgendaDate} from './calendar-core';
 export const MEDIA_ROOT_ID='1yH4pNYQxArfynzho-IPBtx5w4AWbQ-C5';
 export const MEDIA_SCOPE='https://www.googleapis.com/auth/drive';
 export const MEDIA_CHUNK_SIZE=1024*1024;
+export const MEDIA_DIRECT_CHUNK_SIZE=8*1024*1024;
 export const MEDIA_MAX_SIZE=20*1024*1024*1024;
 export const MEDIA_THUMBNAIL_MAX_BYTES=512*1024;
 export const MEDIA_THUMBNAIL_EDGE=320;

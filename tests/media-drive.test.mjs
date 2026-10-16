@@ -45,19 +45,20 @@ globalThis.fetch=async(input,options={})=>{
   if(url.origin==='https://oauth2.googleapis.com')return Response.json({access_token:'fixture-access',refresh_token:'fixture-refresh',scope:'openid email '+m.MEDIA_SCOPE});
   if(url.origin==='https://openidconnect.googleapis.com')return Response.json(account);
   if(url.origin==='https://lh3.googleusercontent.com'){assert.equal(headers.get('authorization'),'Bearer fixture-access');return new Response(new Uint8Array([255,216,255,1]),{headers:{'content-type':'image/jpeg'}});}
-  assert.equal(options.redirect,'manual');assert.equal(headers.get('authorization'),'Bearer fixture-access');
+  assert.equal(options.redirect,'manual');if(url.pathname.startsWith('/upload/')&&entry.method==='PUT'&&!headers.has('authorization')){assert.equal(headers.get('cookie'),null);}else assert.equal(headers.get('authorization'),'Bearer fixture-access');
+  if(url.pathname==='/drive/v3/files/root')return Response.json({id:'my_drive_fixture'});
   if(url.pathname.endsWith('/generateIds'))return Response.json({ids:['reserved_fixture_'+(++sequence)]});
   if(url.pathname==='/upload/drive/v3/files'&&entry.method==='POST'){
-   const metadata=JSON.parse(options.body),id='fixture_session_'+sessions.size; sessions.set(id,{metadata,offset:0,size:Number(headers.get('X-Upload-Content-Length'))});
+   const metadata=JSON.parse(options.body),id='fixture_session_'+sessions.size; sessions.set(id,{metadata,bytes:new Uint8Array(),offset:0,size:Number(headers.get('X-Upload-Content-Length'))});
    return new Response(null,{status:200,headers:{Location:'https://www.googleapis.com/upload/drive/v3/files?upload_id='+id}});
   }
   if(url.pathname==='/upload/drive/v3/files'&&entry.method==='PUT'){
    const session=sessions.get(url.searchParams.get('upload_id'));if(!session)return new Response(null,{status:404});const range=headers.get('Content-Range');
    if(range.startsWith('bytes */'))return session.offset===session.size?Response.json(files.get(session.metadata.id)):empty308(session.offset);
    const match=range.match(/^bytes (\d+)-(\d+)\/(\d+)$/);assert.ok(match);const [,start,end,total]=match.map(Number);assert.equal(total,session.size);assert.equal(options.body.byteLength,end-start+1);
-   if(start!==session.offset)return new Response(null,{status:400});session.offset=end+1;
+   if(start!==session.offset)return new Response(null,{status:400});const joined=new Uint8Array(session.bytes.length+options.body.byteLength);joined.set(session.bytes);joined.set(new Uint8Array(options.body),session.bytes.length);session.bytes=joined;session.offset=end+1;
    if(session.offset<session.size)return empty308(session.offset);
-   const final={...session.metadata,size:String(session.size),trashed:false,capabilities:{canDownload:true}};files.set(final.id,final);return Response.json(final,{status:201});
+   const final={...session.metadata,parents:session.metadata.parents||['my_drive_fixture'],bytes:session.bytes,size:String(session.size),trashed:false,capabilities:{canDownload:true}};files.set(final.id,final);return Response.json(final,{status:201});
   }
   if(url.pathname==='/drive/v3/files'&&entry.method==='POST'){const body=JSON.parse(options.body),f={...body,trashed:false,capabilities:{canAddChildren:true}};files.set(body.id,f);return Response.json(f);}
   if(url.pathname==='/drive/v3/files'&&entry.method==='GET'){
@@ -68,8 +69,9 @@ globalThis.fetch=async(input,options={})=>{
    const name=match[1].replace(/\\(['\\])/g,'$1');return Response.json({files:[...files.values()].filter(f=>f.parents?.includes(parent)&&f.name===name&&!f.trashed)});
   }
   const id=url.pathname.match(/^\/drive\/v3\/files\/([A-Za-z0-9_-]+)$/)?.[1],f=files.get(id);if(!f)return new Response(null,{status:404});
+  if(entry.method==='PATCH'){const parents=f.parents||[];f.parents=[...parents.filter(p=>p!==url.searchParams.get('removeParents')),url.searchParams.get('addParents')];return Response.json(f);}
   if(url.searchParams.get('alt')==='media'){
-   const range=headers.get('range');if(range){const match=range.match(/^bytes=(\d+)-(\d+)$/);if(match&&Number(match[1])<=Number(match[2])&&Number(match[2])<Number(f.size)){const start=Number(match[1]),end=Number(match[2]);return new Response(new Uint8Array(end-start+1),{status:206,headers:{'Content-Type':f.mimeType,'Content-Range':`bytes ${start}-${end}/${f.size}`,'Content-Length':String(end-start+1)}});}return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+f.size}});}
+   const range=headers.get('range');if(range){const match=range.match(/^bytes=(\d+)-(\d+)$/);if(match&&Number(match[1])<=Number(match[2])&&Number(match[2])<Number(f.size)){const start=Number(match[1]),end=Number(match[2]);return new Response(f.bytes?f.bytes.slice(start,end+1):new Uint8Array(end-start+1),{status:206,headers:{'Content-Type':f.mimeType,'Content-Range':`bytes ${start}-${end}/${f.size}`,'Content-Length':String(end-start+1)}});}return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+f.size}});}
    return new Response(new Uint8Array(Number(f.size)),{headers:{'Content-Type':f.mimeType}});
   }
   return Response.json(f);
@@ -334,4 +336,57 @@ test('OAuth diagnostics distinguish each authorization failure with only allowli
   }
   assert.equal(logs.length,expected.length);assert.ok(!JSON.stringify(logs).includes(tag));
  }finally{console.error=oldLog;beforeQuery=undefined;hook=undefined;sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(ownerID);sql.exec('DROP TRIGGER IF EXISTS media_fixture_deny_storage');}
+});
+
+async function sendDirect(state,bytes,total){return fetch(state.uploadURL,{method:'PUT',redirect:'manual',headers:{'Content-Type':'image/png','Content-Range':`bytes ${state.offset}-${state.offset+bytes.length-1}/${total}`},body:bytes});}
+test('direct upload is one-file only, quarantined until authorized finalization and idempotent after response loss',async()=>{
+ const g=await guard(),record=input({size:13});const state=await m.startDirectMediaUpload(g,record,base);
+ assert.equal(state.chunkSize,8*1024*1024);assert.ok(state.uploadURL.startsWith('https://www.googleapis.com/upload/drive/v3/files?upload_id='));assert.ok(!JSON.stringify(state).includes('fixture-access'));assert.ok(!JSON.stringify(state).includes('fixture-drive-refresh'));
+ const post=calls.find(c=>c.method==='POST'&&c.url.pathname.startsWith('/upload/'));assert.equal(post.headers.get('origin'),base);assert.equal(JSON.parse(post.options.body).parents,undefined);
+ const bytes=chunk().slice(0,13);await sendDirect(state,bytes,record.size);
+ const row=sql.prepare('SELECT * FROM jac_media_operations WHERE id=?').get(record.id),id=row.drive_id;assert.deepEqual(files.get(id).parents,['my_drive_fixture']);assert.ok(!row.session_payload.includes('upload_id'));
+ await assert.rejects(()=>m.mediaFile(g,id,false,null),fails(404));
+ let moved=false;hook=async(entry,next)=>{const r=await next();if(entry.method==='PATCH'&&!moved){moved=true;throw new Error('Lost move response');}return r;};await assert.rejects(()=>m.directMediaUploadStatus(g,record.id),fails(502));
+ const partial=await m.mediaFeed(g,await m.authenticatedSession(photoToken),folderID);assert.ok(!partial.items.some(f=>f.id===id));await assert.rejects(()=>m.mediaMetadata(g,id),fails(404));
+ hook=undefined;sessions.clear();const done=await m.directMediaUploadStatus(g,record.id);assert.equal(done.complete,true);assert.equal(done.offset,13);assert.equal(done.uploadURL,undefined);assert.deepEqual(await m.startDirectMediaUpload(g,record,base),done);assert.deepEqual(files.get(id).parents,[folderID]);
+ assert.equal(calls.filter(c=>c.method==='POST'&&c.url.pathname.startsWith('/upload/')).length,1);assert.equal(calls.filter(c=>c.method==='PATCH').length,1);assert.equal(calls.filter(c=>c.method==='PUT'&&!c.headers.has('authorization')).length,1);
+});
+test('a revoked direct capability can finish only its isolated file, never publish or read it in JAC',async()=>{
+ const g=await guard(),record=input({size:13}),state=await m.startDirectMediaUpload(g,record,base);sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(photoToken));
+ await sendDirect(state,chunk().slice(0,13),13);await assert.rejects(()=>m.directMediaUploadStatus(g,record.id),fails(403));
+ const id=sql.prepare('SELECT drive_id FROM jac_media_operations WHERE id=?').get(record.id).drive_id;assert.deepEqual(files.get(id).parents,['my_drive_fixture']);assert.equal(calls.filter(c=>c.method==='PATCH').length,0);const owner=await guard(ownerToken,'read');await assert.rejects(()=>m.mediaFile(owner,id,false,null),fails(404));
+});
+test('direct progress resumes exactly and validates signature, ownership, parent, connection and cancellation',async()=>{
+ const g=await guard(),record=input(),state=await m.startDirectMediaUpload(g,record,base);await sendDirect(state,chunk(),record.size);let progress=await m.directMediaUploadStatus(g,record.id);assert.equal(progress.offset,m.MEDIA_CHUNK_SIZE);
+ await assert.rejects(async()=>m.directMediaUploadStatus(await guard(ownerToken),record.id),fails(404));
+ await sendDirect(progress,new Uint8Array(13),record.size);const id=sql.prepare('SELECT drive_id FROM jac_media_operations WHERE id=?').get(record.id).drive_id;
+ files.get(folderID).parents=[outsideID];await assert.rejects(()=>m.directMediaUploadStatus(g,record.id),fails(403));files.get(folderID).parents=[m.MEDIA_ROOT_ID];
+ files.get(id).bytes=new Uint8Array(record.size);await assert.rejects(()=>m.directMediaUploadStatus(g,record.id),fails(422));assert.deepEqual(files.get(id).parents,['my_drive_fixture']);
+ await m.cancelDirectMediaUpload(g,record.id);await assert.rejects(()=>m.directMediaUploadStatus(g,record.id),fails(410));await assert.rejects(()=>m.startDirectMediaUpload(g,record,base),fails(410));assert.equal(sql.prepare('SELECT session_payload FROM jac_media_operations WHERE id=?').get(record.id).session_payload,'');
+ const other=input({size:13}),next=await m.startDirectMediaUpload(g,other,base);await sendDirect(next,chunk().slice(0,13),13);sql.prepare("UPDATE jac_media_connection SET version=version+1 WHERE id='jac'").run();await assert.rejects(()=>m.directMediaUploadStatus(g,other.id),fails(410));
+});
+test('direct endpoints preserve origin checks, size limits and keep pending files private',async()=>{
+ const request=req(photoToken,'/api/media/upload'),record=input({size:13});let response=await m.uploadApi.POST(new Request(request,{method:'POST',headers:request.headers,body:JSON.stringify({action:'start',transport:'direct',...record})}));assert.equal(response.status,200);const state=await response.json();assert.ok(state.uploadURL);assert.match(response.headers.get('cache-control'),/no-store/);
+ const bad=new Request(request,{method:'POST',headers:{...Object.fromEntries(request.headers),Origin:'https://wrong.example.invalid'},body:JSON.stringify({action:'directStatus',id:record.id})});assert.equal((await m.uploadApi.POST(bad)).status,403);
+});
+
+test('memory-only OAuth reuse still checks current session, connection and fresh file ancestry',async()=>{
+ const g=await guard();hook=(entry,next)=>entry.url.origin==='https://oauth2.googleapis.com'?Response.json({access_token:'fixture-access',expires_in:3600}):next();
+ await m.mediaMetadata(g,imageID);await m.mediaMetadata(g,imageID);assert.equal(calls.filter(c=>c.url.origin==='https://oauth2.googleapis.com').length,1);assert.ok(calls.filter(c=>c.url.pathname.endsWith('/'+imageID)).length>=2);
+ files.get(imageID).parents=[outsideID];await assert.rejects(()=>m.mediaMetadata(g,imageID),fails(403));files.get(imageID).parents=[folderID];
+ sql.prepare("UPDATE jac_media_connection SET version=version+1 WHERE id='jac'").run();await m.mediaMetadata(g,imageID);assert.equal(calls.filter(c=>c.url.origin==='https://oauth2.googleapis.com').length,2);
+ sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(photoToken));await assert.rejects(()=>m.mediaMetadata(g,imageID),fails(403));assert.equal(calls.filter(c=>c.url.origin==='https://oauth2.googleapis.com').length,2);
+});
+test('native video revision is checked before and after Drive fetches a private range',async()=>{
+ const g=await guard(ownerToken,'read');files.get(imageID).modifiedTime='2026-10-16T12:00:00Z';await assert.rejects(()=>m.mediaFile(g,imageID,false,'bytes=2-5','outdated-revision'),fails(409));
+ const response=await m.mediaFile(g,imageID,false,'bytes=2-5',files.get(imageID).modifiedTime);assert.equal(response.status,206);await response.arrayBuffer();
+ hook=async(entry,next)=>{const r=await next();if(entry.url.searchParams.get('alt')==='media')files.get(imageID).modifiedTime='2026-10-16T13:00:00Z';return r;};await assert.rejects(()=>m.mediaFile(g,imageID,false,'bytes=2-5','2026-10-16T12:00:00Z'),fails(409));
+});
+
+test('compatible relay resumes the same isolated direct file without duplicate IDs or bypassing final checks',async()=>{
+ const g=await guard(),record=input(),plan=await m.startDirectMediaUpload(g,record,base);assert.equal(plan.offset,0);
+ let state=await m.relayDirectMediaUpload(g,record.id,0,chunk());assert.equal(state.offset,m.MEDIA_CHUNK_SIZE);assert.equal(state.complete,false);assert.ok(state.uploadURL);
+ await assert.rejects(()=>m.relayDirectMediaUpload(g,record.id,0,chunk()),fails(409));
+ state=await m.relayDirectMediaUpload(g,record.id,state.offset,new Uint8Array(13));assert.equal(state.complete,true);assert.equal(state.offset,record.size);
+ assert.equal(calls.filter(c=>c.method==='POST'&&c.url.pathname.startsWith('/upload/')).length,1);assert.equal(calls.filter(c=>c.method==='PATCH').length,1);
 });

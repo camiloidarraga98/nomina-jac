@@ -203,8 +203,9 @@ struct MediaUploadState: Decodable {
     let offset: Int64
     let chunkSize: Int
     let complete: Bool
+    let uploadURL: URL?
     func validate(for file: MediaLocalFile) throws {
-        guard id == file.id, offset >= 0, offset <= file.size, chunkSize > 0, chunkSize <= 1024 * 1024,
+        guard id == file.id, offset >= 0, offset <= file.size, chunkSize > 0, chunkSize <= 8 * 1024 * 1024, (chunkSize <= 1024 * 1024 || complete || uploadURL != nil),
               !complete || offset == file.size else { throw APIError.invalid("El estado de la subida no es válido. Vuelve a intentarlo.") }
     }
 }
@@ -515,7 +516,15 @@ struct MediaGalleryView: View {
         guard opening == nil else { return }; opening = item.id
         openingTask = Task {
             defer { opening = nil; openingTask = nil }
-            do { let document = try await store.client.mediaDocument(item); previewDocument = document; preview = MediaPreview(item: item, document: document) }
+            do {
+                if item.kind == "video", !store.client.usingOfflineCopy {
+                    try await store.client.validateMediaItem(item)
+                    try Task.checkCancellation()
+                    preview = MediaPreview(item: item, document: nil, stream: try MediaVideoStream(client: store.client, item: item))
+                } else {
+                    let document = try await store.client.mediaDocument(item); previewDocument = document; preview = MediaPreview(item: item, document: document, stream: nil)
+                }
+            }
             catch { if let message = store.reportReadFailure(error) { self.error = message } }
         }
     }
@@ -523,7 +532,7 @@ struct MediaGalleryView: View {
         guard !queue.contains(where: { !completed.contains($0.id) }) else { error = "Sube o quita los archivos seleccionados antes de cambiar de carpeta."; return }
         queue = []; completed = [];uploadDestination=nil; generation = UUID(); folderID = id; loadedPages = 1; feed = nil; items = []
     }
-    private func clearPreview() { if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil }
+    private func clearPreview() { preview?.stream?.cancel(); if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil }
     private func thumbnailDenied(_ failure:Error) {
         items=[];feed=nil;queue.forEach{$0.remove()};queue=[];uploadDestination=nil;clearPreview();error=store.reportReadFailure(failure)
     }
@@ -688,7 +697,7 @@ private struct MediaFolderEditor: View {
         catch { if case APIError.invalid = error { attempted = false }; self.error = error.localizedDescription; store.report(error) }
     }
 }
-private struct MediaPreview: Identifiable { let item: MediaItem; let document: ExportedDocument; var id: String { item.id } }
+private struct MediaPreview: Identifiable { let item: MediaItem; let document: ExportedDocument?; let stream: MediaVideoStream?; var id: String { item.id } }
 private struct MediaPreviewSheet: View {
     let preview: MediaPreview
     @Environment(\.dismiss) private var dismiss
@@ -697,14 +706,104 @@ private struct MediaPreviewSheet: View {
     var body: some View {
         NavigationStack {
             Group {
-                if preview.item.kind == "video" { MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video").onAppear { player = AVPlayer(url: preview.document.url); player?.play() }.onDisappear { player?.pause(); player = nil } }
-                else { DocumentPreview(url: preview.document.url) }
+                if let stream = preview.stream { MediaStreamingPlayer(stream: stream) }
+                else if let document = preview.document, preview.item.kind == "video" { MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video").onAppear { player = AVPlayer(url: document.url); player?.play() }.onDisappear { player?.pause(); player = nil } }
+                else if let document = preview.document { DocumentPreview(url: document.url) }
             }.privacySensitive().navigationTitle(preview.item.name).jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() }.accessibilityIdentifier("media.preview.close") } }
         }.onChange(of: phase) { _, value in if value != .active { player?.pause() } }
         #if os(macOS)
         .frame(minWidth: 720, minHeight: 520)
         #endif
+    }
+}
+
+// AVFoundation asks for only the byte ranges it needs. JAC authorizes each
+// range; the Google credential never enters AVPlayer. The small block cache is
+// memory-only and tied to this asset, revision and Keychain session generation.
+@MainActor
+final class MediaVideoStream: NSObject, ObservableObject, AVAssetResourceLoaderDelegate {
+    let asset: AVURLAsset
+    private let client: PayrollClient
+    private let item: MediaItem
+    private let stamp: String
+    private var active = true
+    private var requests: [ObjectIdentifier: Task<Void, Never>] = [:]
+    private var blocks: [Int64: Data] = [:]
+    private var order: [Int64] = []
+    @Published private(set) var error: String?
+    init(client: PayrollClient, item: MediaItem) throws {
+        guard let stamp = try client.mediaAccessStamp() else { throw APIError.unauthorized }
+        self.client = client; self.item = item; self.stamp = stamp
+        asset = AVURLAsset(url: URL(string: "jac-media://asset/" + UUID().uuidString)!)
+        super.init(); asset.resourceLoader.setDelegate(self, queue: .main)
+    }
+    nonisolated func resourceLoader(_ resourceLoader: AVAssetResourceLoader, shouldWaitForLoadingOfRequestedResource request: AVAssetResourceLoadingRequest) -> Bool {
+        Task { @MainActor [weak self] in self?.start(request) }; return true
+    }
+    nonisolated func resourceLoader(_ resourceLoader: AVAssetResourceLoader, didCancel request: AVAssetResourceLoadingRequest) {
+        Task { @MainActor [weak self] in self?.requests.removeValue(forKey: ObjectIdentifier(request))?.cancel() }
+    }
+    private func valid() throws {
+        try Task.checkCancellation()
+        guard active, stamp == (try client.mediaAccessStamp()), client.accessUser?.canReadMedia != false else { blocks.removeAll(); order.removeAll(); throw CancellationError() }
+    }
+    private func start(_ request: AVAssetResourceLoadingRequest) {
+        let key = ObjectIdentifier(request)
+        guard active, !request.isCancelled else { request.finishLoading(with: CancellationError()); return }
+        requests[key] = Task { @MainActor [weak self] in
+            guard let self else { return }; defer { requests.removeValue(forKey: key) }
+            do {
+                try valid()
+                if let info = request.contentInformationRequest {
+                    info.contentType = UTType(mimeType: item.mimeType)?.identifier
+                    info.contentLength = item.size; info.isByteRangeAccessSupported = true
+                }
+                if let dataRequest = request.dataRequest {
+                    let start = max(dataRequest.currentOffset, dataRequest.requestedOffset)
+                    let end = dataRequest.requestsAllDataToEndOfResource ? item.size : min(item.size, dataRequest.requestedOffset + Int64(dataRequest.requestedLength))
+                    guard start >= 0, start <= end, end <= item.size else { throw APIError.invalid("El tramo de video no es válido.") }
+                    var offset = start
+                    while offset < end {
+                        try valid(); guard !request.isCancelled else { throw CancellationError() }
+                        let blockStart = offset / (1024 * 1024) * (1024 * 1024)
+                        let block: Data
+                        if let saved = blocks[blockStart] { block = saved }
+                        else {
+                            block = try await client.mediaRange(item, offset: blockStart, count: Int(min(1024 * 1024, item.size - blockStart)))
+                            try valid(); blocks[blockStart] = block; order.removeAll { $0 == blockStart }; order.append(blockStart)
+                            while order.count > 8 { blocks.removeValue(forKey: order.removeFirst()) }
+                        }
+                        try valid(); guard !request.isCancelled else { throw CancellationError() }
+                        let index = Int(offset - blockStart), count = min(block.count - index, Int(end - offset))
+                        guard count > 0 else { throw APIError.invalid("El video llegó incompleto.") }
+                        dataRequest.respond(with: block.subdata(in: index..<(index + count))); offset += Int64(count)
+                    }
+                }
+                try valid(); if !request.isCancelled { request.finishLoading() }
+            } catch {
+                if !(error is CancellationError), (error as? URLError)?.code != .cancelled { self.error = error.localizedDescription }
+                blocks.removeAll(); order.removeAll()
+                if !request.isCancelled { request.finishLoading(with: error) }
+            }
+        }
+    }
+    func trimCache() { blocks.removeAll(); order.removeAll() }
+    func cancel() { active = false; requests.values.forEach { $0.cancel() }; requests.removeAll(); blocks.removeAll(); order.removeAll(); asset.cancelLoading() }
+}
+private struct MediaStreamingPlayer: View {
+    @ObservedObject var stream: MediaVideoStream
+    @Environment(\.scenePhase) private var phase
+    @State private var player: AVPlayer?
+    var body: some View {
+        VStack(spacing: 12) {
+            if let error = stream.error { InlineError(message: error) }
+            MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video")
+        }
+        .onAppear { player = AVPlayer(playerItem: AVPlayerItem(asset: stream.asset)); player?.play() }
+        .onChange(of: stream.error) { _, value in if value != nil { player?.pause(); player?.replaceCurrentItem(with: nil); stream.cancel() } }
+        .onDisappear { player?.pause(); player?.replaceCurrentItem(with: nil); player = nil; stream.cancel() }
+        .onChange(of: phase) { _, value in if value != .active { player?.pause(); stream.trimCache() } }
     }
 }
 
@@ -716,6 +815,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         var feeds: [String: MediaFeed] = [:]
         var files: [String: MediaItem] = [:]
         var downloads: [String: MediaFeed] = [:]
+        var previewAccess: [String: Double]?
     }
     let root: URL
     private let lock = NSRecursiveLock()
@@ -793,7 +893,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         while result.count < count { guard let next = try handle.read(upToCount: count - result.count), !next.isEmpty else { throw APIError.invalid("La copia del archivo está incompleta. Vuelve a descargarlo.") }; result.append(next) }
         return result
     }
-    func saveFile(_ source: URL, item: MediaItem, scope: AgendaCacheScope) throws {
+    func saveFile(_ source: URL, item: MediaItem, scope: AgendaCacheScope, preview: Bool = false) throws {
         lock.lock(); do { try prepare(scope) } catch { lock.unlock(); throw error }; lock.unlock()
         let destination = encryptedFile(item, scope: scope), partial = destination.appendingPathExtension(UUID().uuidString + ".partial")
         defer { try? FileManager.default.removeItem(at: partial) }
@@ -814,7 +914,17 @@ final class MediaOfflineCache: @unchecked Sendable {
         guard !revoked.contains(scope.id) else { throw CancellationError() }
         if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
         try FileManager.default.moveItem(at: partial, to: destination)
-        var index = readIndex(scope); index.files[item.id] = item; try writeIndex(index, scope: scope)
+        var index = readIndex(scope); index.files[item.id] = item
+        if preview { index.previewAccess = (index.previewAccess ?? [:]).merging([item.id: Date().timeIntervalSince1970]) { _, new in new } }
+        else { index.previewAccess?.removeValue(forKey: item.id) }
+        let pinned = Set(index.downloads.values.flatMap { $0.items.map(\.id) })
+        var automatic = (index.previewAccess ?? [:]).filter { !pinned.contains($0.key) }
+        var total = automatic.keys.reduce(Int64(0)) { $0 + (index.files[$1]?.size ?? 0) }
+        for id in automatic.sorted(by: { $0.value < $1.value }).map(\.key) where total > 128 * 1024 * 1024 {
+            if let old = index.files.removeValue(forKey: id) { total -= old.size; try? FileManager.default.removeItem(at: encryptedFile(old, scope: scope)) }
+            automatic.removeValue(forKey: id); index.previewAccess?.removeValue(forKey: id)
+        }
+        try writeIndex(index, scope: scope)
     }
     func document(_ item: MediaItem, scope: AgendaCacheScope) throws -> ExportedDocument? {
         guard hasFile(item, scope: scope) else { return nil }

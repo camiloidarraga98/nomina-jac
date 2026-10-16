@@ -7,16 +7,17 @@ import {Input} from '@/components/ui/input';
 import {Dialog,DialogContent,DialogDescription,DialogTitle} from '@/components/ui/dialog';
 import './media.css';
 import {mediaOAuthMessage} from '@/lib/media-core';
+import {sendMediaDirectChunk,directMediaUploadURL} from '@/lib/media-upload-client';
 
 type MediaItem={id:string;name:string;mimeType:string;kind:'folder'|'image'|'video';size:number;createdAt?:string;modifiedAt:string;thumbnailAvailable:boolean};
 type MediaFolder={id:string;name:string};
 type MediaFeed={connected:boolean;canRead:boolean;canUpload:boolean;canConnect:boolean;root:MediaFolder;folder:MediaFolder;breadcrumbs:MediaFolder[];items:MediaItem[];nextPageToken?:string};
-type UploadState={id:string;offset:number;chunkSize:number;complete:boolean};
+type UploadState={id:string;offset:number;chunkSize:number;complete:boolean;uploadURL?:string};
 type PendingUpload={id:string;parentId:string;folderName:string;file:File;mimeType:string;state:'waiting'|'uploading'|'done'|'error';offset:number;error:string};
 type FolderAttempt={id:string;parentId:string;name:string;date:string};
 type Thumbnail={url?:string;state:'loading'|'ready'|'pending'|'error'};
 class MediaFailure extends Error {constructor(message:string,readonly status=0){super(message);}}
-const CHUNK=1024*1024,MAX_FILE=20*1024*1024*1024;
+const CHUNK=1024*1024,DIRECT_CHUNK=8*1024*1024,MAX_FILE=20*1024*1024*1024;
 const FILE_TYPES:Record<string,string>={jpg:'image/jpeg',jpeg:'image/jpeg',png:'image/png',gif:'image/gif',webp:'image/webp',heic:'image/heic',heif:'image/heif',tif:'image/tiff',tiff:'image/tiff',mp4:'video/mp4',mov:'video/quicktime',webm:'video/webm',m4v:'video/x-m4v'};
 const ACCEPT=Object.keys(FILE_TYPES).map(x=>'.'+x).join(',');
 const fileURL=(id:string,thumbnail=false)=>'/api/media/file?id='+encodeURIComponent(id)+(thumbnail?'&thumbnail=1':'');
@@ -63,8 +64,11 @@ export default function MediaPanel(){
  const [feed,setFeed]=useState<MediaFeed|null>(null),[folder,setFolder]=useState(''),[loading,setLoading]=useState(true),[error,setError]=useState(''),[notice,setNotice]=useState(''),[search,setSearch]=useState(''),[dragging,setDragging]=useState(false),[preview,setPreview]=useState<MediaItem|null>(null),[previewThumbnail,setPreviewThumbnail]=useState(false),[previewError,setPreviewError]=useState(''),[creating,setCreating]=useState(false),[folderName,setFolderName]=useState(''),[folderDate,setFolderDate]=useState(today),[folderError,setFolderError]=useState(''),[saving,setSaving]=useState(false),[connecting,setConnecting]=useState(false),[uploads,setUploads]=useState<PendingUpload[]>([]);
  const [uploadOpen,setUploadOpen]=useState(false),[draftFiles,setDraftFiles]=useState<File[]>([]),[draftError,setDraftError]=useState(''),[destinationMode,setDestinationMode]=useState<'current'|'new'|'existing'>('current'),[eventName,setEventName]=useState(''),[eventDate,setEventDate]=useState(today),[destination,setDestination]=useState<MediaFeed|null>(null),[destinationLoading,setDestinationLoading]=useState(false),[destinationError,setDestinationError]=useState('');
  const mounted=useRef(false),authorized=useRef(false),uploadAllowed=useRef(false),currentFolder=useRef(''),loadedPages=useRef(1),readGeneration=useRef(0),readController=useRef<AbortController|null>(null),uploadController=useRef<AbortController|null>(null),queue=useRef<PendingUpload[]>([]),working=useRef(false),fileInput=useRef<HTMLInputElement>(null),createAttempt=useRef<FolderAttempt|null>(null),uploadFolderAttempt=useRef<FolderAttempt|null>(null),destinationController=useRef<AbortController|null>(null),destinationGeneration=useRef(0),dragDepth=useRef(0);
+ const [previewURL,setPreviewURL]=useState('');
+ const originalCache=useRef(new Map<string,{revision:string;size:number;mime:string;url:string}>());
+ const clearOriginals=useCallback(()=>{for(const cached of originalCache.current.values())URL.revokeObjectURL(cached.url);originalCache.current.clear();setPreviewURL('');},[]);
  currentFolder.current=folder;
- const revoke=useCallback(()=>{authorized.current=false;uploadAllowed.current=false;readGeneration.current++;uploadController.current?.abort();destinationController.current?.abort();destinationGeneration.current++;uploadFolderAttempt.current=null;queue.current=[];if(mounted.current){setFeed(null);setPreview(null);setCreating(false);setUploadOpen(false);setDraftFiles([]);setDestination(null);setUploads([]);setLoading(false);setError('Tu cuenta ya no tiene acceso a la galería.');}},[]);
+ const revoke=useCallback(()=>{clearOriginals();authorized.current=false;uploadAllowed.current=false;readGeneration.current++;uploadController.current?.abort();destinationController.current?.abort();destinationGeneration.current++;uploadFolderAttempt.current=null;queue.current=[];if(mounted.current){setFeed(null);setPreview(null);setCreating(false);setUploadOpen(false);setDraftFiles([]);setDestination(null);setUploads([]);setLoading(false);setError('Tu cuenta ya no tiene acceso a la galería.');}},[clearOriginals]);
  const {images:thumbnails,failed:thumbnailFailed,retry:retryThumbnails}=useMediaThumbnails(feed,revoke);
  const request=useCallback(async<T,>(path:string,init:RequestInit={},signal?:AbortSignal):Promise<T>=>{
   const response=await fetch(path,{...init,cache:'no-store',credentials:'same-origin',signal});
@@ -73,6 +77,34 @@ export default function MediaPanel(){
   if(!response.ok)throw new MediaFailure(data.error||'No pudimos completar la operación. Reintenta.',response.status);
   return data;
  },[revoke]);
+ useEffect(()=>{
+  setPreviewURL('');if(!preview||preview.kind!=='image')return;
+  if(previewThumbnail||preview.size>24*1024*1024){setPreviewURL(fileURL(preview.id,previewThumbnail));return;}
+  const selected=preview,controller=new AbortController();
+  void(async()=>{try{
+   let cached=originalCache.current.get(selected.id);
+   if(cached){
+    const {item}=await request<{item:MediaItem}>(fileURL(selected.id)+'&metadata=1',{},controller.signal);
+    if(item.id!==selected.id||item.modifiedAt!==selected.modifiedAt||item.size!==selected.size||item.mimeType!==selected.mimeType)throw new Error('La foto cambió. Actualiza la carpeta.');
+    if(cached.revision!==item.modifiedAt||cached.size!==item.size||cached.mime!==item.mimeType){URL.revokeObjectURL(cached.url);originalCache.current.delete(item.id);cached=undefined;}
+   }
+   if(!cached){
+    const response=await fetch(fileURL(selected.id)+'&revision='+encodeURIComponent(selected.modifiedAt),{credentials:'same-origin',cache:'no-store',signal:controller.signal});
+    if(response.status===401||response.status===403){revoke();if(response.status===401)location.assign('/acceso?returnTo=%2Ffotografia');throw new Error('Tu cuenta ya no tiene acceso a esta foto.');}
+    if(!response.ok||response.headers.get('content-type')?.split(';')[0]!==selected.mimeType){await response.body?.cancel();throw new Error('No pudimos descargar esta foto. Actualiza la carpeta.');}
+    const reader=response.body?.getReader();if(!reader)throw new Error('La foto no tiene contenido.');const parts:BlobPart[]=[];let size=0;
+    try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.byteLength;if(size>selected.size||size>24*1024*1024){await reader.cancel();throw new Error('La foto cambió. Actualiza la carpeta.');}parts.push(value as BlobPart);}}finally{reader.releaseLock();}
+    if(size!==selected.size)throw new Error('La foto llegó incompleta. Intenta de nuevo.');
+    if(controller.signal.aborted)return;
+    cached={revision:selected.modifiedAt,size,mime:selected.mimeType,url:URL.createObjectURL(new Blob(parts,{type:selected.mimeType}))};originalCache.current.set(selected.id,cached);
+    let total=[...originalCache.current.values()].reduce((sum,v)=>sum+v.size,0);
+    for(const [id,value]of originalCache.current){if(total<=48*1024*1024)break;if(id===selected.id)continue;URL.revokeObjectURL(value.url);originalCache.current.delete(id);total-=value.size;}
+   }
+   if(!controller.signal.aborted&&authorized.current)setPreviewURL(cached.url);
+  }catch(e){if(!controller.signal.aborted){if(selected.thumbnailAvailable){setPreviewThumbnail(true);setPreviewError('Mostrando una vista previa compatible.');}else setPreviewError(message(e));}}})();
+  return()=>controller.abort();
+ },[preview,previewThumbnail,request,revoke]);
+ useEffect(()=>()=>{for(const cached of originalCache.current.values())URL.revokeObjectURL(cached.url);originalCache.current.clear();},[]);
  const post=useCallback(<T,>(path:string,body:unknown,signal?:AbortSignal)=>request<T>(path,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},signal),[request]);
  const refresh=useCallback(async(target=currentFolder.current,pages=loadedPages.current,quiet=false)=>{
   readController.current?.abort();const controller=new AbortController();readController.current=controller;const generation=++readGeneration.current;
@@ -87,11 +119,11 @@ export default function MediaPanel(){
    }
    if(!mounted.current||generation!==readGeneration.current||target!==currentFolder.current||!result)return;
    authorized.current=result.canRead;uploadAllowed.current=result.canUpload&&result.connected;
-   if(!result.connected){setPreview(null);uploadAllowed.current=false;}
+   if(!result.connected){clearOriginals();setPreview(null);uploadAllowed.current=false;}
    setFeed({...result,items:items.filter((item,index,all)=>all.findIndex(x=>x.id===item.id)===index).sort(newestFirst)});setError('');
   }catch(e){if(controller.signal.aborted)return;if(mounted.current&&generation===readGeneration.current)setError(message(e));}
   finally{if(mounted.current&&generation===readGeneration.current)setLoading(false);}
- },[request,revoke]);
+ },[request,revoke,clearOriginals]);
  useEffect(()=>{
   mounted.current=true;void refresh(folder,1);
   const foreground=()=>{if(document.visibilityState==='visible')void refresh();},timer=setInterval(foreground,30000);
@@ -103,16 +135,25 @@ export default function MediaPanel(){
  function updateUpload(id:string,update:Partial<PendingUpload>){queue.current=queue.current.map(item=>item.id===id?{...item,...update}:item);if(mounted.current)setUploads([...queue.current]);}
  async function uploadRequest<T>(path:string,init:RequestInit):Promise<T>{const controller=new AbortController();uploadController.current=controller;const timer=setTimeout(()=>controller.abort(),90000);try{return await request<T>(path,init,controller.signal);}finally{clearTimeout(timer);if(uploadController.current===controller)uploadController.current=null;}}
  const uploadPost=<T,>(body:unknown)=>uploadRequest<T>('/api/media/upload',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)});
- function validateProgress(state:UploadState,item:PendingUpload){if(state.id!==item.id||!Number.isSafeInteger(state.offset)||state.offset<0||state.offset>item.file.size||state.chunkSize!==CHUNK||(state.complete&&state.offset!==item.file.size))throw new Error('No se pudo confirmar el avance del archivo. Reintenta para consultar su estado.');return state;}
- async function reconcile(item:PendingUpload,error:unknown):Promise<UploadState>{if(!mounted.current||!uploadAllowed.current||error instanceof MediaFailure&&[400,401,403,404,410,413,415,422].includes(error.status))throw error;return validateProgress(await uploadPost<UploadState>({action:'status',id:item.id}),item);}
+ function validateProgress(state:UploadState,item:PendingUpload){if(state.id!==item.id||!Number.isSafeInteger(state.offset)||state.offset<0||state.offset>item.file.size||![CHUNK,DIRECT_CHUNK].includes(state.chunkSize)||(state.complete&&state.offset!==item.file.size))throw new Error('No se pudo confirmar el avance del archivo. Reintenta para consultar su estado.');return state;}
+ async function reconcile(item:PendingUpload,error:unknown):Promise<UploadState>{if(!mounted.current||!uploadAllowed.current||error instanceof MediaFailure&&[400,401,403,404,410,413,415,422].includes(error.status))throw error;return validateProgress(await uploadPost<UploadState>({action:'status',transport:'direct',id:item.id}),item);}
  async function processQueue(){
   if(working.current)return;working.current=true;
   try{while(mounted.current&&uploadAllowed.current){const item=queue.current.find(x=>x.state==='waiting');if(!item)break;updateUpload(item.id,{state:'uploading',error:''});
    try{
-    let state:UploadState;try{state=validateProgress(await uploadPost<UploadState>({action:'start',id:item.id,parentId:item.parentId,filename:item.file.name,mimeType:item.mimeType,size:item.file.size}),item);}catch(e){state=await reconcile(item,e);}
-    updateUpload(item.id,{offset:state.offset});
-    while(!state.complete){if(!mounted.current||!uploadAllowed.current)throw new Error('La subida se ha detenido.');const offset=state.offset,chunk=item.file.slice(offset,Math.min(offset+CHUNK,item.file.size));
-     try{state=validateProgress(await uploadRequest<UploadState>('/api/media/upload?id='+encodeURIComponent(item.id)+'&offset='+offset,{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:chunk}),item);}catch(e){state=await reconcile(item,e);}
+    let state:UploadState;try{state=validateProgress(await uploadPost<UploadState>({action:'start',transport:'direct',id:item.id,parentId:item.parentId,filename:item.file.name,mimeType:item.mimeType,size:item.file.size}),item);}catch(e){state=await reconcile(item,e);}
+    updateUpload(item.id,{offset:state.offset});let compatible=false;
+    while(!state.complete){if(!mounted.current||!uploadAllowed.current)throw new Error('La subida se ha detenido.');const offset=state.offset,chunk=item.file.slice(offset,Math.min(offset+(compatible?CHUNK:state.chunkSize),item.file.size));
+     try{
+      if(state.uploadURL&&!compatible){
+       try{directMediaUploadURL(state.uploadURL);}catch{throw new MediaFailure('La autorización de subida no es válida.',422);}
+       const controller=new AbortController();uploadController.current=controller;const timer=setTimeout(()=>controller.abort(),120000);
+       try{await sendMediaDirectChunk(state.uploadURL,item.mimeType,chunk,offset,item.file.size,controller.signal);}
+       finally{clearTimeout(timer);if(uploadController.current===controller)uploadController.current=null;}
+       if(!mounted.current||!uploadAllowed.current)throw new Error('La subida se ha detenido.');
+       state=validateProgress(await uploadPost<UploadState>({action:'status',transport:'direct',id:item.id}),item);
+      }else state=validateProgress(await uploadRequest<UploadState>('/api/media/upload?id='+encodeURIComponent(item.id)+'&offset='+offset+(state.uploadURL?'&transport=direct':''),{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:chunk}),item);
+     }catch(e){state=await reconcile(item,e);if(state.uploadURL&&!compatible&&state.offset===offset){compatible=true;continue;}}
      if(state.offset<=offset&&!state.complete)throw new Error('La conexión se interrumpió. Pulsa Reintentar para continuar desde el último tramo confirmado.');
      updateUpload(item.id,{offset:state.offset});
     }
@@ -179,6 +220,6 @@ export default function MediaPanel(){
    {draftError&&<p className="message error" role="alert">{draftError}</p>}<div className="media-dialog-actions"><Button type="button" variant="outline" disabled={saving} onClick={closeUpload}>Cancelar</Button><Button className="primary" type="submit" disabled={saving||!draftFiles.length||destinationMode==='new'&&(!eventName.trim()||!eventDate)||destinationMode==='existing'&&(!destination||destinationLoading||!!destinationError)}>{saving?<><LoaderCircle size={16} className="media-spin"/>Preparando…</>:uploadFolderAttempt.current?'Reintentar creación y subir':destinationMode==='new'?'Crear carpeta y subir':'Subir '+draftFiles.length+' '+(draftFiles.length===1?'archivo':'archivos')}</Button></div>
   </form></DialogContent></Dialog>
   <Dialog open={creating} onOpenChange={value=>{if(!saving){setCreating(value);if(!value)createAttempt.current=null;}}}><DialogContent className="media-folder-dialog"><DialogTitle>Nueva carpeta</DialogTitle><DialogDescription>Organiza las fotos y los videos de un show o día de trabajo.</DialogDescription><form onSubmit={event=>{event.preventDefault();void createFolder();}}><label>Nombre del show o jornada<Input autoFocus aria-label="Nombre de la carpeta" maxLength={160} required value={folderName} disabled={saving||!!createAttempt.current} placeholder="Ej. Pereira · Show principal" onChange={event=>setFolderName(event.target.value)}/></label><label>Día de trabajo<Input aria-label="Día de trabajo" type="date" required value={folderDate} disabled={saving||!!createAttempt.current} onChange={event=>setFolderDate(event.target.value)}/></label>{folderError&&<p className="message error" role="alert">{folderError}</p>}<div className="media-dialog-actions"><Button type="button" variant="outline" disabled={saving} onClick={()=>{setCreating(false);createAttempt.current=null;}}>Cancelar</Button><Button type="submit" className="primary" disabled={saving||!folderName.trim()||!folderDate}>{saving?'Creando…':createAttempt.current?'Reintentar creación':'Crear carpeta'}</Button></div></form></DialogContent></Dialog>
-  <Dialog open={!!preview} onOpenChange={value=>{if(!value){setPreview(null);setPreviewError('');}}}><DialogContent className="media-preview"><DialogTitle>{preview?.name||'Vista previa'}</DialogTitle><DialogDescription>{preview?bytes(preview.size)+' · '+fileDate(preview.modifiedAt):'Fotos y videos de JAC Music'}</DialogDescription>{preview&&<><div className="media-preview-stage">{preview.kind==='video'?<video key={preview.id} controls playsInline preload="metadata" src={fileURL(preview.id)} onError={()=>{setPreviewError('Este video no se puede reproducir aquí. Puedes descargar el original para abrirlo en tu dispositivo.');void refresh(currentFolder.current,loadedPages.current,true);}}/>:<img key={preview.id+String(previewThumbnail)} src={fileURL(preview.id,previewThumbnail)} alt={preview.name} onError={()=>{if(!previewThumbnail&&preview.thumbnailAvailable){setPreviewThumbnail(true);setPreviewError('Mostrando una vista previa compatible. El archivo original está disponible para descargar.');}else setPreviewError('No pudimos mostrar esta imagen. Puedes descargar el original si tu navegador no admite su formato.');void refresh(currentFolder.current,loadedPages.current,true);}}/>}</div>{previewError&&<p className="media-preview-error" role="alert">{previewError}</p>}<div className="media-preview-footer"><span>{previewThumbnail?'Vista previa optimizada':'Archivo original'} · JAC Music</span><a href={fileURL(preview.id)} download={preview.name}><Download size={17}/>Descargar original</a></div></>}</DialogContent></Dialog>
+  <Dialog open={!!preview} onOpenChange={value=>{if(!value){setPreview(null);setPreviewError('');}}}><DialogContent className="media-preview"><DialogTitle>{preview?.name||'Vista previa'}</DialogTitle><DialogDescription>{preview?bytes(preview.size)+' · '+fileDate(preview.modifiedAt):'Fotos y videos de JAC Music'}</DialogDescription>{preview&&<><div className="media-preview-stage">{preview.kind==='video'?<video key={preview.id} controls playsInline preload="metadata" src={fileURL(preview.id)} onError={()=>{setPreviewError('Este video no se puede reproducir aquí. Puedes descargar el original para abrirlo en tu dispositivo.');void refresh(currentFolder.current,loadedPages.current,true);}}/>:!previewURL?<LoaderCircle className="media-spin" size={28} aria-label="Abriendo foto"/>:<img key={preview.id+String(previewThumbnail)} src={previewURL} alt={preview.name} onError={()=>{if(!previewThumbnail&&preview.thumbnailAvailable){setPreviewThumbnail(true);setPreviewError('Mostrando una vista previa compatible. El archivo original está disponible para descargar.');}else setPreviewError('No pudimos mostrar esta imagen. Puedes descargar el original si tu navegador no admite su formato.');void refresh(currentFolder.current,loadedPages.current,true);}}/>}</div>{previewError&&<p className="media-preview-error" role="alert">{previewError}</p>}<div className="media-preview-footer"><span>{previewThumbnail?'Vista previa optimizada':'Archivo original'} · JAC Music</span><a href={fileURL(preview.id)} download={preview.name}><Download size={17}/>Descargar original</a></div></>}</DialogContent></Dialog>
  </section>;
 }
