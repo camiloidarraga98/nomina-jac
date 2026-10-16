@@ -1,4 +1,11 @@
 import SwiftUI
+
+// Keep the iPhone's system picker; Mac dates open from a complete button.
+#if os(macOS)
+typealias JACDatePicker = MacDatePicker
+#else
+typealias JACDatePicker = SwiftUI.DatePicker<Text>
+#endif
 #if os(iOS)
 import UIKit
 #else

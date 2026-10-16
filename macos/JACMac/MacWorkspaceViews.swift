@@ -179,6 +179,7 @@ struct MacCRMHomeView: View {
     @State private var search = ""
     @State private var filter = MacCRMFilter.all
     @State private var selection: String?
+    @State private var presentation = "cards"
     @State private var openedShow: String?
     @State private var sort = [KeyPathComparator(\MacCRMRow.day)]
     @State private var editor: CRMEditorRequest?
@@ -198,17 +199,18 @@ struct MacCRMHomeView: View {
                 ContentUnavailableView("CRM no disponible", systemImage: "lock", description: Text("Solo administradores de JAC."))
             } else {
                 VStack(spacing: 0) {
-                    VStack(alignment: .leading, spacing: 18) {
-                        MacPageHeader(title: "Shows y abonos", subtitle: "Ventas, comprobantes y preparación de cada fecha.")
-                        HStack {
-                            Picker("Sección", selection: $section) { Text("Shows").tag("shows"); Text("Semana").tag("weekly"); Text("Empresarios").tag("contacts") }
-                                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 350).accessibilityIdentifier("crm.sections")
+                    VStack(alignment: .leading, spacing: 14) {
+                        hero
+                        HStack(spacing:6) {
+                            sectionButton("Shows", symbol:"music.mic", value:"shows")
+                            sectionButton("Semana", symbol:"calendar", value:"weekly")
+                            sectionButton("Empresarios", symbol:"person.2", value:"contacts")
                             Spacer()
                             if busy { ProgressView().controlSize(.small).accessibilityLabel("Actualizando CRM") }
-                        }
+                            if store.isOffline { Label("Copia sin conexión",systemImage:"wifi.slash").font(.caption).foregroundStyle(.secondary) }
+                        }.accessibilityIdentifier("crm.sections")
                         if let error { HStack { InlineError(message: error); Spacer(); Button("Reintentar") { Task { await load() } } } }
-                        if store.isOffline { Label("Sin conexión · Consultando lo descargado", systemImage: "wifi.slash").font(.callout).foregroundStyle(.secondary) }
-                    }.padding(22)
+                    }.padding(.horizontal,24).padding(.top,22).padding(.bottom,14)
                     if section == "shows" { shows }
                     else { List { if section == "weekly" { CRMWeeklyView() } else { CRMContactsView() } }.jacSurface() }
                 }.background(JACTheme.canvas).navigationTitle("CRM")
@@ -239,15 +241,83 @@ struct MacCRMHomeView: View {
             }
         }.environmentObject(crm)
     }
-    private var shows: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                Picker("Mostrar", selection: $filter) { ForEach(MacCRMFilter.allCases, id: \.self) { Text($0.rawValue).tag($0) } }.frame(width: 180).accessibilityIdentifier("crm.filter")
-                Spacer()
-                DatePicker("Desde el mes", selection: Binding(get: { ReceiptParser.civilDate(month + "-01") ?? Date() }, set: { month = CalendarClock.month($0); selection = nil; Task { await load() } }), in: (ReceiptParser.civilDate(CalendarClock.month(Date()) + "-01") ?? Date())..., displayedComponents: .date)
+    private var allShows:[MacCRMRow] { MacCRMRow.visible(feed["shows"].elements,today:BoardingClock.today(),query:"",filter:.all) }
+    private var hero:some View {
+        HStack(alignment:.center,spacing:24) {
+            VStack(alignment:.leading,spacing:10) {
+                Text("JAC MUSIC  /  CRM").font(.system(size:10,weight:.bold)).tracking(2.2).foregroundStyle(JACTheme.highlight)
+                Text("Shows y abonos").font(.system(size:28,weight:.semibold,design:.rounded)).foregroundStyle(.white)
+                HStack(spacing:16) {
+                    heroCount("\(allShows.count) shows",symbol:"music.mic")
+                    heroCount("\(allShows.filter{$0.balance>0}.count) con saldo",symbol:"circle.lefthalf.filled")
+                    heroCount("\(allShows.filter{$0.sale<0}.count) sin precio",symbol:"pencil.line")
+                }.foregroundStyle(.white.opacity(0.85))
+            }
+            Spacer(minLength:0)
+            Image(systemName:"waveform").font(.system(size:62,weight:.ultraLight)).foregroundStyle(JACTheme.highlight.opacity(0.5)).accessibilityHidden(true)
+        }.padding(.horizontal,24).padding(.vertical,21).frame(maxWidth:.infinity,alignment:.leading)
+            .background(LinearGradient(colors:[JACTheme.navy,Color(red:0.02,green:0.30,blue:0.47)],startPoint:.leading,endPoint:.trailing),in:RoundedRectangle(cornerRadius:20))
+            .overlay(RoundedRectangle(cornerRadius:20).stroke(.white.opacity(0.12),lineWidth:1))
+            .accessibilityIdentifier("crm.hero")
+    }
+    private func heroCount(_ text:String,symbol:String)->some View {Label(text,systemImage:symbol).font(.system(size:12,weight:.medium))}
+    private func sectionButton(_ title:String,symbol:String,value:String)->some View {
+        Button {section=value} label: {
+            Label(title,systemImage:symbol).font(.system(size:13,weight:.semibold)).padding(.horizontal,14).padding(.vertical,10)
+                .foregroundStyle(section==value ? JACTheme.action:Color.secondary)
+                .background(section==value ? JACTheme.action.opacity(0.1):Color.clear,in:RoundedRectangle(cornerRadius:10))
+                .contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityIdentifier("crm.section."+value).accessibilityAddTraits(section==value ? .isSelected:[])
+    }
+    private var shows:some View {
+        VStack(spacing:0) {
+            HStack(spacing:12) {
+                Picker("Mostrar",selection:$filter){ForEach(MacCRMFilter.allCases,id:\.self){Text($0.rawValue).tag($0)}}.labelsHidden().frame(width:140).accessibilityIdentifier("crm.filter")
+                Menu {
+                    Button("Fecha del show"){sort=[KeyPathComparator(\MacCRMRow.day)]}
+                    Button("Nombre del show"){sort=[KeyPathComparator(\MacCRMRow.title)]}
+                    Button("Empresario"){sort=[KeyPathComparator(\MacCRMRow.entrepreneur)]}
+                    Button("Mayor venta"){sort=[KeyPathComparator(\MacCRMRow.sale,order:.reverse)]}
+                    Button("Más abonos"){sort=[KeyPathComparator(\MacCRMRow.paid,order:.reverse)]}
+                    Button("Mayor saldo"){sort=[KeyPathComparator(\MacCRMRow.balance,order:.reverse)]}
+                } label:{Image(systemName:"arrow.up.arrow.down")}.help("Ordenar shows").fixedSize()
+                Spacer(minLength:8)
+                MacDatePicker("Desde el mes",selection:Binding(get:{ReceiptParser.civilDate(month+"-01") ?? Date()},set:{month=CalendarClock.month($0);selection=nil;Task{await load()}}),in:(ReceiptParser.civilDate(CalendarClock.month(Date())+"-01") ?? Date())...Date.distantFuture,displayedComponents:.date,monthOnly:true)
                     .fixedSize().disabled(busy).accessibilityIdentifier("crm.month")
-            }.padding(.horizontal, 22).padding(.bottom, 16)
-            Divider()
+                HStack(spacing:2) {
+                    layoutButton("cards",symbol:"rectangle.grid.1x2",title:"Vista de fichas")
+                    layoutButton("table",symbol:"tablecells",title:"Vista de tabla")
+                }.padding(3).background(JACTheme.card,in:RoundedRectangle(cornerRadius:9))
+            }.padding(.horizontal,24).padding(.bottom,14)
+            if presentation == "table" {table.padding(.horizontal,24).padding(.bottom,16)}
+            else {
+                ScrollView {
+                    LazyVStack(spacing:12) {
+                        if rows.isEmpty {emptyShows.padding(.vertical,36)}
+                        ForEach(rows){row in
+                            Button {selection=row.id;openedShow=row.id} label:{MacCRMShowCard(row:row)}
+                                .buttonStyle(.plain).accessibilityIdentifier("crm.card."+row.id)
+                                .contextMenu {showMenu(row)}
+                        }
+                    }.padding(.horizontal,24).padding(.top,2).padding(.bottom,22).frame(maxWidth:1240).frame(maxWidth:.infinity)
+                }.accessibilityIdentifier("crm.cards")
+            }
+            HStack(spacing:14) {
+                Text("\(rows.count) \(rows.count == 1 ? "show":"shows")").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                if let url=URL(string:feed["sheets"]["url"].text),url.scheme=="https",url.host=="docs.google.com" {Link("Hoja de abonos",destination:url).font(.caption)}
+                Label(feed["sheets"]["ready"].flag ? "Sheets conectado":"Sheets sin configurar",systemImage:feed["sheets"]["ready"].flag ? "checkmark.icloud":"icloud.slash").font(.caption).foregroundStyle(.secondary)
+                if presentation == "table" {Button("Abrir show"){openedShow=selection}.disabled(selected==nil).accessibilityIdentifier("crm.openShow")}
+            }.padding(.horizontal,24).padding(.vertical,12)
+        }
+    }
+    private func layoutButton(_ value:String,symbol:String,title:String)->some View {
+        Button {presentation=value} label:{Image(systemName:symbol).font(.system(size:13,weight:.medium)).frame(width:28,height:25)
+            .foregroundStyle(presentation==value ? JACTheme.action:Color.secondary)
+            .background(presentation==value ? JACTheme.action.opacity(0.1):Color.clear,in:RoundedRectangle(cornerRadius:6)).contentShape(Rectangle())}
+            .buttonStyle(.plain).help(title).accessibilityLabel(title).accessibilityIdentifier("crm.layout."+value)
+    }
+    private var table:some View {
             Table(rows, selection: $selection, sortOrder: $sort) {
                 TableColumn("Show", value: \MacCRMRow.title) { row in
                     VStack(alignment: .leading, spacing: 3) { Text(row.title).fontWeight(.medium); if row.value["promotional"].flag { Text("Promocional").font(.caption).foregroundStyle(.secondary) } }
@@ -267,15 +337,17 @@ struct MacCRMHomeView: View {
                     }
                 } primaryAction: { ids in if let id = ids.first { openedShow = id } }
                 .overlay { if rows.isEmpty { if feed.isNull && busy { ProgressView("Consultando shows…") } else { ContentUnavailableView(search.isEmpty ? "No hay shows en este filtro" : "Sin resultados", systemImage: "music.mic", description: Text("Cambia la búsqueda, el filtro o el mes para ver otras fechas.")) } } }
-            Divider()
-            HStack(spacing: 16) {
-                Text("\(rows.count) shows").font(.caption).foregroundStyle(.secondary)
-                Spacer()
-                if let url = URL(string: feed["sheets"]["url"].text), url.scheme == "https", url.host == "docs.google.com" { Link("Hoja de abonos", destination: url).font(.caption) }
-                Label(feed["sheets"]["ready"].flag ? "Sheets conectado" : "Sheets sin configurar", systemImage: feed["sheets"]["ready"].flag ? "checkmark.icloud" : "icloud.slash").font(.caption).foregroundStyle(.secondary)
-                Button("Abrir show") { openedShow = selection }.disabled(selected == nil).accessibilityIdentifier("crm.openShow")
-            }.padding(.horizontal, 20).padding(.vertical, 12)
-        }
+                .clipShape(RoundedRectangle(cornerRadius:14))
+                .overlay(RoundedRectangle(cornerRadius:14).stroke(JACTheme.action.opacity(0.12),lineWidth:1))
+    }
+    @ViewBuilder private var emptyShows:some View {
+        if feed.isNull && busy {ProgressView("Consultando shows…").frame(maxWidth:.infinity)}
+        else {ContentUnavailableView(search.isEmpty ? "No hay shows en este filtro":"Sin resultados",systemImage:"music.mic",description:Text("Cambia la búsqueda, el filtro o el mes para ver otras fechas."))}
+    }
+    @ViewBuilder private func showMenu(_ row:MacCRMRow)->some View {
+        Button("Abrir show"){openedShow=row.id}
+        Button("Registrar abono"){editor=CRMEditorRequest(kind:.payment,record:row.value,feed:feed)}.disabled(!canWrite || !row.active || row.sale<0)
+        Button("Editar precio y empresario"){editor=CRMEditorRequest(kind:.price,record:CRMFields.showRecord(row.value),feed:feed)}.disabled(!canWrite || !row.active)
     }
     private func money(_ value: JSONValue) -> some View { Text(value.isNull ? "Sin precio" : CRMFields.money(value.number)).monospacedDigit() }
     private func restoreCached() { if let saved = crm.cached(["month": month]) { crm.feed = saved } }
@@ -298,6 +370,62 @@ struct MacCRMHomeView: View {
         } catch { if error is CancellationError { queuedReload=true } else { self.error = store.reportReadFailure(error) } }
     }
     private func syncSheets() async { do { _ = try await crm.command("syncSheets"); await load() } catch { self.error = error.localizedDescription } }
+}
+
+private struct MacCRMShowCard:View {
+    let row:MacCRMRow
+    @State private var hovering=false
+    var body:some View {
+        ViewThatFits(in:.horizontal) {
+            HStack(spacing:18) {dateBadge;identity.frame(minWidth:190,idealWidth:270,maxWidth:.infinity,alignment:.leading);metrics;arrow}
+            VStack(alignment:.leading,spacing:18) {
+                HStack(spacing:14){dateBadge;identity;Spacer(minLength:0);arrow}
+                HStack{Spacer(minLength:0);metrics}
+            }
+        }.padding(18).frame(maxWidth:.infinity,alignment:.leading)
+            .background(JACTheme.card,in:RoundedRectangle(cornerRadius:16))
+            .overlay(RoundedRectangle(cornerRadius:16).stroke(hovering ? JACTheme.action.opacity(0.55):JACTheme.action.opacity(0.1),lineWidth:1))
+            .shadow(color:JACTheme.navy.opacity(hovering ? 0.08:0.025),radius:hovering ? 9:4,x:0,y:2)
+            .contentShape(RoundedRectangle(cornerRadius:16)).onHover{hovering=$0}
+    }
+    private var dateBadge:some View {
+        VStack(spacing:3) {
+            Text(datePart("MMM").uppercased()).font(.system(size:9,weight:.bold)).tracking(1)
+            Text(datePart("d")).font(.system(size:25,weight:.semibold,design:.rounded))
+            Text(datePart("EEE").capitalized).font(.system(size:10,weight:.medium))
+        }.foregroundStyle(JACTheme.action).frame(width:54,height:76)
+            .background(JACTheme.action.opacity(0.09),in:RoundedRectangle(cornerRadius:12))
+            .accessibilityLabel(row.displayDate)
+    }
+    private var identity:some View {
+        VStack(alignment:.leading,spacing:8) {
+            Text(row.title).font(.system(size:15,weight:.semibold)).foregroundStyle(JACTheme.ink).lineLimit(2).fixedSize(horizontal:false,vertical:true)
+            Label(row.entrepreneur.isEmpty ? "Empresario por registrar":row.entrepreneur,systemImage:"person.crop.circle").font(.system(size:12)).foregroundStyle(.secondary).lineLimit(1)
+            if row.value["promotional"].flag {JACBadge(title:"Promocional",tone:.violet)}
+            else if row.sale<0 {JACBadge(title:"Por cotizar",tone:.amber)}
+            else if row.balance<=0 {JACBadge(title:"Al día",tone:.teal)}
+        }.frame(maxWidth:.infinity,alignment:.leading)
+    }
+    private var metrics:some View {
+        HStack(spacing:16) {
+            metric("Venta",value:row.value["sale"],highlight:false)
+            metric("Abonos",value:row.value["paid"],highlight:false)
+            Rectangle().fill(JACTheme.action.opacity(0.12)).frame(width:1,height:38)
+            metric("Saldo",value:row.value["balance"],highlight:true)
+        }.fixedSize(horizontal:true,vertical:false)
+    }
+    private func metric(_ title:String,value:JSONValue,highlight:Bool)->some View {
+        VStack(alignment:.trailing,spacing:7) {
+            Text(title).font(.system(size:11,weight:.medium)).foregroundStyle(.secondary)
+            Text(value.isNull ? "Sin precio":CRMFields.money(value.number)).font(.system(size:highlight ? 16:13,weight:highlight ? .semibold:.medium,design:.rounded))
+                .monospacedDigit().foregroundStyle(highlight ? JACTheme.action:JACTheme.ink)
+        }.frame(minWidth:highlight ? 122:103,alignment:.trailing)
+    }
+    private var arrow:some View {Image(systemName:"chevron.right").font(.system(size:11,weight:.semibold)).foregroundStyle(JACTheme.action.opacity(hovering ? 1:0.45))}
+    private func datePart(_ pattern:String)->String {
+        guard let date=ReceiptParser.civilDate(row.day) else{return row.day}
+        let f=DateFormatter();f.locale=Locale(identifier:"es_CO");f.timeZone=CalendarClock.calendar.timeZone;f.dateFormat=pattern;return f.string(from:date)
+    }
 }
 
 private struct MacCRMSearch:ViewModifier {

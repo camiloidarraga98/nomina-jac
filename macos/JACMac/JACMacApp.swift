@@ -22,10 +22,11 @@ import AppKit
                 .task {
                     guard !Self.testing else{return};await store.restore()
                     #if DEBUG
-                    if ProcessInfo.processInfo.arguments.contains("--uitest-payroll"),ProcessInfo.processInfo.arguments.contains("--uitest-compact-window") {
+                    if ProcessInfo.processInfo.arguments.contains("--uitest-payroll"),ProcessInfo.processInfo.arguments.contains("--uitest-compact-window") || ProcessInfo.processInfo.arguments.contains("--uitest-wide-window") {
                         await Task.yield()
                         if let window=NSApp.windows.first(where:{$0.isVisible && $0.canBecomeMain}) {
-                            window.setContentSize(NSSize(width:1000,height:700))
+                            let compact=ProcessInfo.processInfo.arguments.contains("--uitest-compact-window")
+                            window.setContentSize(NSSize(width:compact ? 1000:1240,height:compact ? 700:798))
                             window.center()
                         }
                     }

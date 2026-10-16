@@ -73,7 +73,7 @@ struct PayrollEditorView: View {
     }
     private var periodFields: some View {
         Section {
-            DatePicker("Mes de la quincena", selection: $month, displayedComponents: .date).onChange(of: month) { _, _ in updatePeriodDates() }
+            JACDatePicker("Mes de la quincena", selection: $month, displayedComponents: .date).onChange(of: month) { _, _ in updatePeriodDates() }
             Picker("Quincena", selection: $half) { Text("Primera · 1 al 15").tag(1); Text("Segunda · 16 al fin de mes").tag(2) }.onChange(of: half) { _, _ in updatePeriodDates() }
             LabeledContent("Inicio", value: PayrollFormat.date(record["start"].text))
             LabeledContent("Fin", value: PayrollFormat.date(record["end"].text))

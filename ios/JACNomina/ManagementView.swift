@@ -260,7 +260,7 @@ struct ExpenseComposer:View {
                     Picker("Tipo de gasto",selection:$draft.kind) { Text("Sin clasificar").tag("");ForEach(ExpenseKind.allCases,id:\.rawValue) { Text($0.rawValue).tag($0.rawValue) } }.accessibilityIdentifier("expenses.kind")
                     TextField("Concepto",text:$draft.concept).accessibilityIdentifier("expenses.concept")
                     TextField("Valor en COP",text:$draft.amount).keyboardType(.numberPad).accessibilityIdentifier("expenses.amount")
-                    DatePicker("Fecha",selection:selectedDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("expenses.date")
+                    JACDatePicker("Fecha",selection:selectedDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("expenses.date")
                     TextField("Hora de factura (opcional)",text:Binding(get:{ draft.receiptTime ?? "" },set:{ draft.receiptTime=$0.isEmpty ? nil : $0 })).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("expenses.time")
                     TextField("Nota opcional",text:$draft.note,axis:.vertical).lineLimit(2...5)
                 }.disabled(busy || draft.attempted)

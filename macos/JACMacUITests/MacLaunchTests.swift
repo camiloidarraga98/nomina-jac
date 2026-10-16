@@ -71,6 +71,7 @@ final class MacLaunchTests:XCTestCase {
         let app=fixture()
         XCTAssertTrue(app.descendants(matching:.any)["mac.nav.crm"].exists)
         click(app,"mac.nav.crm")
+        click(app,"crm.layout.table")
         XCTAssertTrue(app.descendants(matching:.any)["crm.table"].waitForExistence(timeout:15))
         let row="crm.show.77777777-7777-4777-8777-777777777777"
         XCTAssertTrue(app.descendants(matching:.any)[row].waitForExistence(timeout:10))
@@ -86,7 +87,7 @@ final class MacLaunchTests:XCTestCase {
         go(app,"5")
         XCTAssertTrue(app.buttons["management.employees"].waitForExistence(timeout:10));shot(app,"mac-ux-configuracion")
         click(app,"management.archive");XCTAssertTrue(app.staticTexts["Archivo de quincenas"].waitForExistence(timeout:10))
-        go(app,"6");click(app,"crm.create")
+        go(app,"6");click(app,"crm.layout.table");click(app,"crm.create")
         XCTAssertTrue(app.textFields["crm.create.title"].waitForExistence(timeout:10));shot(app,"mac-ux-crear-show")
         app.buttons["Cerrar"].firstMatch.click()
         click(app,"crm.quickPayment")
@@ -112,6 +113,46 @@ final class MacLaunchTests:XCTestCase {
         shot(app,"mac-ux-abono-oscuro");app.buttons["Cerrar"].firstMatch.click()
         go(app,"5");XCTAssertTrue(app.buttons["management.expenses"].waitForExistence(timeout:10))
         shot(app,"mac-ux-configuracion-oscura")
+    }
+    @MainActor func testJACShowCardsOpenDirectlyAndKeepTheTableAvailable() {
+        let app=fixture(["--uitest-crm-design","--uitest-wide-window"])
+        click(app,"mac.nav.crm")
+        let card=app.buttons["crm.card.77777777-7777-4777-8777-777777777777"]
+        XCTAssertTrue(card.waitForExistence(timeout:15));XCTAssertTrue(app.descendants(matching:.any)["crm.hero"].exists)
+        shot(app,"mac-crm12-fichas")
+        card.coordinate(withNormalizedOffset:CGVector(dx:0.95,dy:0.8)).click()
+        XCTAssertTrue(app.buttons["crm.price"].waitForExistence(timeout:10))
+        go(app,"5");go(app,"6");click(app,"crm.layout.table")
+        XCTAssertTrue(app.descendants(matching:.any)["crm.table"].waitForExistence(timeout:10))
+        shot(app,"mac-crm12-tabla")
+    }
+    @MainActor func testDateSelectorsAndAgendaRespondAcrossTheWholeDayCell() {
+        let app=fixture();go(app,"6");click(app,"crm.quickPayment")
+        let field=app.buttons["date.open.Fecha del abono"]
+        for (offset,point) in [(1,CGVector(dx:0.08,dy:0.2)),(2,CGVector(dx:0.92,dy:0.2)),(3,CGVector(dx:0.08,dy:0.8)),(4,CGVector(dx:0.92,dy:0.8))] {
+            XCTAssertTrue(field.waitForExistence(timeout:10));field.coordinate(withNormalizedOffset:CGVector(dx:0.97,dy:0.5)).click()
+            let day=app.buttons["date.day."+civilDay(offset)]
+            XCTAssertTrue(day.waitForExistence(timeout:10));day.coordinate(withNormalizedOffset:point).click()
+            XCTAssertEqual(field.value as? String,dateLabel(offset),"También el borde de la celda debe seleccionar la fecha.")
+            expectation(for:NSPredicate(format:"exists == false"),evaluatedWith:app.buttons["date.close"]);waitForExpectations(timeout:5)
+        }
+        field.coordinate(withNormalizedOffset:CGVector(dx:0.97,dy:0.5)).click();let input=app.textFields["date.input"];XCTAssertTrue(input.waitForExistence(timeout:10));input.click();input.typeText(formatDate(5,"dd/MM/yyyy"));click(app,"date.apply")
+        XCTAssertEqual(field.value as? String,dateLabel(5))
+        expectation(for:NSPredicate(format:"exists == false"),evaluatedWith:app.buttons["date.close"]);waitForExpectations(timeout:5)
+        field.coordinate(withNormalizedOffset:CGVector(dx:0.97,dy:0.5)).click();XCTAssertTrue(app.buttons["date.close"].waitForExistence(timeout:10));shot(app,"mac-crm12-selector-fechas");click(app,"date.close")
+        expectation(for:NSPredicate(format:"exists == false"),evaluatedWith:app.buttons["date.close"]);waitForExpectations(timeout:5)
+        app.buttons["Cerrar"].firstMatch.click();go(app,"2")
+        let day=app.buttons["agenda.day."+civilDay(1)]
+        XCTAssertTrue(day.waitForExistence(timeout:10));day.coordinate(withNormalizedOffset:CGVector(dx:0.08,dy:0.5)).click()
+        XCTAssertEqual(day.value as? String,"Seleccionado")
+        shot(app,"mac-crm12-agenda-dia")
+    }
+    private func civilDay(_ offset:Int)->String {formatDate(offset,"yyyy-MM-dd")}
+    private func dateLabel(_ offset:Int)->String {formatDate(offset,"d MMM yyyy").capitalized}
+    private func formatDate(_ offset:Int,_ pattern:String)->String {
+        var c=Calendar(identifier:.gregorian);c.timeZone=TimeZone(identifier:"America/Bogota")!
+        let f=DateFormatter();f.locale=Locale(identifier:"es_CO");f.timeZone=c.timeZone;f.dateFormat=pattern
+        return f.string(from:c.date(byAdding:.day,value:offset,to:Date())!)
     }
     @MainActor func testReaderCannotCreatePayrollOrEnterCRM() {
         let app=fixture(["--uitest-reader"])

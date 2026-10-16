@@ -77,7 +77,7 @@ struct CRMHomeView:View {
     }
     private var showList:some View {
         Group {
-            Section { DatePicker("Desde el mes",selection:Binding(get:{ ReceiptParser.civilDate(month+"-01") ?? Date() },set:{ month=CalendarClock.month($0);Task { await load() } }),in:(ReceiptParser.civilDate(CalendarClock.month(Date())+"-01") ?? Date())...,displayedComponents:.date).disabled(busy).accessibilityIdentifier("crm.month")
+            Section { JACDatePicker("Desde el mes",selection:Binding(get:{ ReceiptParser.civilDate(month+"-01") ?? Date() },set:{ month=CalendarClock.month($0);Task { await load() } }),in:(ReceiptParser.civilDate(CalendarClock.month(Date())+"-01") ?? Date())...,displayedComponents:.date).disabled(busy).accessibilityIdentifier("crm.month")
                 TextField("Buscar show o empresario",text:$search).accessibilityIdentifier("crm.search") }
             Section("Shows de hoy en adelante") {
                 ForEach(feed["shows"].crmItems.filter { $0.value["status"].text != "ignored" && $0.value["showDate"].text >= BoardingClock.today() && (search.isEmpty || ($0.value["title"].text+" "+$0.value["entrepreneur"].text).localizedStandardContains(search)) }) { item in
@@ -262,9 +262,9 @@ ToolbarItem(placement:.confirmationAction) {
         case .create:
             Section("Evento compartido en Agenda") {
                 TextField("Nombre del show o municipio",text:text("title")).accessibilityIdentifier("crm.create.title")
-                DatePicker("Día del evento",selection:$date,in:CalendarClock.calendar.startOfDay(for:Date())...,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone)
+                JACDatePicker("Día del evento",selection:$date,in:CalendarClock.calendar.startOfDay(for:Date())...,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone)
                 Toggle("Todo el día",isOn:$allDay)
-                if !allDay { DatePicker("Hora de inicio",selection:$startTime,displayedComponents:.hourAndMinute).environment(\.timeZone,CalendarClock.calendar.timeZone);DatePicker("Hora de fin",selection:$endTime,displayedComponents:.hourAndMinute).environment(\.timeZone,CalendarClock.calendar.timeZone) }
+                if !allDay { JACDatePicker("Hora de inicio",selection:$startTime,displayedComponents:.hourAndMinute).environment(\.timeZone,CalendarClock.calendar.timeZone);JACDatePicker("Hora de fin",selection:$endTime,displayedComponents:.hourAndMinute).environment(\.timeZone,CalendarClock.calendar.timeZone) }
                 TextField("Lugar",text:text("location"));TextField("Descripción compartida",text:text("description"),axis:.vertical).lineLimit(2...5)
             }.disabled(locked)
             Section("Datos privados del CRM") { priceFields;boolField("Show promocional","promotional");Text("El precio, empresario y abonos no se envían a Calendar.").font(.footnote).foregroundStyle(.secondary) }.disabled(locked)
@@ -288,7 +288,7 @@ ToolbarItem(placement:.confirmationAction) {
         TextField("Observaciones internas",text:text("note"),axis:.vertical).lineLimit(2...5)
     }.disabled(locked) }
     private var paymentFields:some View { Group {
-        Section("Abono") { CRMAmountField(title:"Valor del abono (COP)",value:$paymentAmount);DatePicker("Fecha del abono",selection:$paymentDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone);TextField("Observación del abono",text:text("paymentNote"),axis:.vertical).lineLimit(2...4) }.disabled(locked)
+        Section("Abono") { CRMAmountField(title:"Valor del abono (COP)",value:$paymentAmount);JACDatePicker("Fecha del abono",selection:$paymentDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone);TextField("Observación del abono",text:text("paymentNote"),axis:.vertical).lineLimit(2...4) }.disabled(locked)
         TravelAttachmentsPicker(files:$files,importing:$importing).disabled(locked)
     } }
     private func text(_ key:String) -> Binding<String> { Binding(get:{draft[key].text},set:{draft[key] = .string($0)}) }
@@ -388,7 +388,7 @@ struct CRMPlanView:View {
                 Picker("Estado",selection:taskText(index,"status")){Text("Pendiente").tag("pending");Text("Listo").tag("done");Text("No aplica").tag("na")}.accessibilityIdentifier("crm.task."+task["id"].text)
                 TextField("Responsable",text:taskText(index,"responsible"));TextField("Observación",text:taskText(index,"note"),axis:.vertical).lineLimit(2...4)
                 Toggle("Fecha límite",isOn:Binding(get:{!task["dueDate"].text.isEmpty},set:{setTask(index,"dueDate",.string($0 ? show["showDate"].text:""))}))
-                if !task["dueDate"].text.isEmpty {DatePicker("Día límite",selection:Binding(get:{ReceiptParser.civilDate(task["dueDate"].text) ?? Date()},set:{setTask(index,"dueDate",.string(BoardingClock.today($0)))}),displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone)}
+                if !task["dueDate"].text.isEmpty {JACDatePicker("Día límite",selection:Binding(get:{ReceiptParser.civilDate(task["dueDate"].text) ?? Date()},set:{setTask(index,"dueDate",.string(BoardingClock.today($0)))}),displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone)}
                 if !["contract","hotel","transport","itinerary"].contains(task["id"].text) {Button("Quitar tarea",role:.destructive){draft["tasks"] = .array(draft["tasks"].elements.filter{$0["id"] != task["id"]})}}
             }.disabled(busy || store.isOffline || data["readOnly"].flag)
         }

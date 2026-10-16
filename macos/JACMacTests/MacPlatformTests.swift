@@ -3,6 +3,24 @@ import AppKit
 @testable import JACMac
 
 final class MacPlatformTests:XCTestCase {
+    func testDateCalendarLimitsAndPreservesTimeInColombia() throws {
+        let c=CalendarClock.calendar
+        XCTAssertNil(MacDateSelection.parse("31/02/2026",calendar:c))
+        XCTAssertEqual(MacDateSelection.parse("16/10/2026",calendar:c).map(PayrollDates.iso),"2026-10-16")
+        XCTAssertEqual(MacDateSelection.parse("1/2/2026",calendar:c).map(PayrollDates.iso),"2026-02-01")
+        let lower=try XCTUnwrap(CalendarClock.instant("2026-10-16T08:30:00-05:00")),upper=try XCTUnwrap(CalendarClock.instant("2026-10-20T18:00:00-05:00"))
+        let original=try XCTUnwrap(CalendarClock.instant("2026-10-17T14:45:00-05:00")),range=lower...upper
+        XCTAssertFalse(MacDateSelection.permits(PayrollDates.parse("2026-10-15"),range:range,calendar:c))
+        XCTAssertTrue(MacDateSelection.permits(PayrollDates.parse("2026-10-16"),range:range,calendar:c))
+        XCTAssertFalse(MacDateSelection.permits(PayrollDates.parse("2026-10-21"),range:range,calendar:c))
+        let selected=MacDateSelection.select(PayrollDates.parse("2026-10-19"),preserving:original,range:range,calendar:c)
+        XCTAssertEqual(PayrollDates.iso(selected),"2026-10-19");XCTAssertEqual(c.component(.hour,from:selected),14);XCTAssertEqual(c.component(.minute,from:selected),45)
+        XCTAssertEqual(MacDateSelection.select(PayrollDates.parse("2026-10-14"),preserving:original,range:range,calendar:c),lower)
+        XCTAssertEqual(MacDateSelection.select(PayrollDates.parse("2026-10-22"),preserving:original,range:range,calendar:c),upper)
+        let days=MacDateSelection.days(in:PayrollDates.parse("2026-10-01"),calendar:c)
+        XCTAssertEqual(days.count,42);XCTAssertEqual(c.component(.weekday,from:days[0]),2)
+        XCTAssertEqual(days.filter{c.component(.month,from:$0)==10}.count,31)
+    }
     func testMacNavigationPreservesFinancialRestrictionEvenForOwnerFlag() {
         var user=PayrollUser(id:"fixture",email:"fixture@example.invalid",username:"fixture",displayName:"Ficticio",isOwner:true,permissions:[],itinerariesOnly:true)
         XCTAssertFalse(MacSection.payroll.allowed(user));XCTAssertFalse(MacSection.crm.allowed(user))

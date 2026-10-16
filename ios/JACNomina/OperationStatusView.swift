@@ -90,7 +90,7 @@ struct RecordDateField: View {
     let start: String
     let end: String
     var body: some View {
-        DatePicker(title, selection: Binding(get: { PayrollDates.parse(record[key].text) }, set: { record[key] = .string(PayrollDates.iso($0)) }), in: PayrollDates.parse(start)...PayrollDates.parse(end), displayedComponents: .date)
+        JACDatePicker(title, selection: Binding(get: { PayrollDates.parse(record[key].text) }, set: { record[key] = .string(PayrollDates.iso($0)) }), in: PayrollDates.parse(start)...PayrollDates.parse(end), displayedComponents: .date)
     }
 }
 

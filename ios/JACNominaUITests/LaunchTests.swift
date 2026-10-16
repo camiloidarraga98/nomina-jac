@@ -1,6 +1,15 @@
 import XCTest
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testAgendaDayEdgesSelectTheWholeVisibleCell() {
+        let app=fixture();app.tabBars.buttons["Agenda"].tap()
+        var c=Calendar(identifier:.gregorian);c.timeZone=TimeZone(identifier:"America/Bogota")!
+        let f=DateFormatter();f.timeZone=c.timeZone;f.dateFormat="yyyy-MM-dd"
+        let date=c.date(byAdding:.day,value:1,to:Date())!
+        let cell=app.buttons["agenda.day."+f.string(from:date)]
+        XCTAssertTrue(cell.waitForExistence(timeout:15));cell.coordinate(withNormalizedOffset:CGVector(dx:0.08,dy:0.5)).tap()
+        XCTAssertEqual(cell.value as? String,"Seleccionado")
+    }
     override func setUpWithError() throws {
         continueAfterFailure = false
     }

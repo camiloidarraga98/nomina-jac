@@ -1,5 +1,7 @@
 # JAC para Mac 1.1.0 (2) — distribución y controles de escritorio
 
+La revisión posterior **1.2.0 (3)** reemplaza la tabla como vista inicial por fichas con identidad JAC y corrige las áreas de selección de fechas. La tabla se conserva. Ver `docs/MAC_CRM_DESIGN.md`.
+
 Continuidad del mismo proyecto local, el 15 de octubre de 2026. Camilo pidió acercar la distribución a la web, mostrar CRM en la barra lateral y perfeccionar la experiencia de macOS. El icono anterior se conserva.
 
 ## Cambios

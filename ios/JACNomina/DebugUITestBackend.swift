@@ -293,7 +293,20 @@ private final class FixtureProtocol: URLProtocol {
 private enum CRMFixture {
     static let showID="77777777-7777-4777-8777-777777777777",contactID="88888888-8888-4888-8888-888888888888"
     static var contacts:[JSONValue]=[],shows:[JSONValue]=[],payments:[String:[JSONValue]]=[:],plans:[String:JSONValue]=[:],files:[String:[JSONValue]]=[:],bytes:[String:Data]=[:],attempts:[String:JSONValue]=[:]
-    static func reset(){contacts=[.object(["id":.string(contactID),"version":.number(1),"name":.string("José · Empresario ficticio"),"company":.string("Eventos de prueba"),"phone":.string(""),"email":.string("contrato@example.invalid"),"city":.string("Pereira"),"note":.string("")])];shows=[show(id:showID,title:"PEREIRA · Show ficticio",sale:140000000)];payments=[:];plans=[:];files=[:];bytes=[:];attempts=[:]}
+    static func reset(){contacts=[.object(["id":.string(contactID),"version":.number(1),"name":.string("José · Empresario ficticio"),"company":.string("Eventos de prueba"),"phone":.string(""),"email":.string("contrato@example.invalid"),"city":.string("Pereira"),"note":.string("")])];shows=[show(id:showID,title:"PEREIRA · Show ficticio",sale:140000000)];payments=[:];plans=[:];files=[:];bytes=[:];attempts=[:];designShows()}
+    static func designShows() {
+        guard ProcessInfo.processInfo.arguments.contains("--uitest-crm-design") else{return}
+        for (index,title) in ["MANIZALES · Fecha de prueba","VALLEDUPAR · Show promocional ficticio","SANTA ROSA · Show de prueba","MEDELLÍN · Presentación ficticia para comprobar títulos largos"].enumerated() {
+            var s=show(id:"99999999-9999-4999-8999-99999999999\(index)",title:title,sale:90000000+Double(index)*10000000)
+            s["showDate"] = .string(BoardingClock.today(CalendarClock.calendar.date(byAdding:.day,value:index+3,to:Date())!))
+            s["entrepreneur"] = .string(index==3 ? "":"Empresario ficticio")
+            if index==1 {s["sale"] = .number(0);s["balance"] = .number(0);s["promotional"] = .bool(true)}
+            else if index==3 {s["sale"] = .null;s["balance"] = .null}
+            else {s["paid"] = .number(20000000);s["balance"] = .number(s["sale"].number-20000000)}
+            shows.append(s)
+        }
+    }
+
     static func show(id:String,title:String,sale:Double)->JSONValue{.object(["id":.string(id),"title":.string(title),"municipality":.string("Pereira"),"showDate":.string(BoardingClock.today(CalendarClock.calendar.date(byAdding:.day,value:1,to:Date())!)),"sale":.number(sale),"paid":.number(0),"balance":.number(sale),"receiptNext":.number(1),"entrepreneur":.string(""),"contactId":.null,"note":.string(""),"promotional":.bool(false),"sourceState":.string("present"),"status":.string("active"),"version":.number(1)])}
     static func tasks()->JSONValue{.array(zip(["contract","hotel","transport","itinerary"],["Contrato firmado","Hotel","Transporte","Itinerario"]).map{.object(["id":.string($0.0),"title":.string($0.1),"status":.string("pending"),"responsible":.string(""),"dueDate":.string(""),"note":.string("")])})}
     static func workspace(_ id:String)->JSONValue{let s=shows.first{$0["id"].text==id} ?? .null;var p=plans[id] ?? .object(["version":.number(0),"budget":.null,"tasks":tasks()]);p["readOnly"] = .bool(s["sourceState"].text=="deleted");p["advance"] = .object(["done":.bool(s["paid"].number>0),"amount":s["paid"]]);p["profit"] = .object(["issue":.string(""),"choices":.array([]),"actual":.object(["periodId":.string("fixture-period"),"start":.string(BoardingClock.today()),"end":.string(BoardingClock.today()),"sale":s["sale"],"musicians":.number(750000),"technical":.number(250000),"drivers":.number(100000),"expenses":.number(300000),"cost":.number(1400000),"profit":.number(s["sale"].number-1400000),"variance":.null,"commissionBase":.number(s["sale"].number-1400000),"periodCommission":.number(6930000),"closed":.bool(false),"promotional":s["promotional"]])]);return p}

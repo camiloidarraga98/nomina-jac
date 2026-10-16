@@ -16,6 +16,10 @@ Requiere macOS 14 o posterior. El producto Release incluye Apple Silicon e Intel
 
 ## Distribución de escritorio
 
+En **1.2.0 (3)**, CRM comienza con fichas de show: fecha destacada, empresario, estado y venta/abonos/saldo separados. Haz clic en cualquier parte de una ficha para abrirla. La cabecera azul JAC resume cuántos shows hay, cuáles tienen saldo y cuáles no tienen precio. El botón de tabla conserva las columnas ordenables de la vista anterior; las fichas también pueden ordenarse desde su menú. Las cifras monetarias siguen viniendo del servidor.
+
+Los campos de fecha del Mac abren el calendario desde toda la superficie del botón. Cada día responde en su celda completa, incluidos los bordes; también puedes escribir día/mes/año. Se respetan el rango permitido y la hora original del campo. En Agenda se amplía igualmente el área de clic de cada día; esta corrección compartida también queda en el proyecto de iPhone. Su selector del sistema se conserva. Ver `docs/MAC_CRM_DESIGN.md` para los resultados de esta revisión.
+
 Desde **1.1.0 (2)**, la barra lateral muestra **CRM, Quincena, Agenda e Itinerarios**, y debajo **Mi cuenta y Configuración**. CRM aparece para administradores. Configuración reúne Alertas, Gastos, Archivo, Personal, Correos, Conceptos, Notificaciones, Servicios conectados y Usuarios según los permisos de la cuenta. La ventana se puede redimensionar y la barra lateral ocultar.
 
 CRM dispone de una tabla con búsqueda por show o empresario, columnas ordenables de fecha, venta, abonos y saldo, filtros de saldo pendiente/sin precio y acceso a Semana y Empresarios. Selecciona un show y pulsa **Abrir show**, haz doble clic o utiliza su menú contextual. **Nuevo show** y **Registrar abono** están visibles en la barra superior. Se conservan los formularios, documentos privados, rentabilidad y preparación existentes; los importes provienen del servidor.

@@ -74,7 +74,8 @@ struct CalendarView: View {
                                         }.frame(maxWidth: .infinity, minHeight: 42).background(day == date ? JACTheme.primary : .clear, in: RoundedRectangle(cornerRadius: 13))
                                             .foregroundStyle(day == date ? .white : date.hasPrefix(month) ? JACTheme.ink : .secondary)
                                             .overlay(RoundedRectangle(cornerRadius: 13).stroke(date == visible.today ? JACTone.teal.color : .clear, lineWidth: 1))
-                                    }.buttonStyle(.plain).accessibilityLabel(CalendarClock.dayLabel(date) + ", \(count) eventos").accessibilityAddTraits(day == date ? .isSelected : []).accessibilityIdentifier("agenda.day.\(date)")
+                                            .contentShape(Rectangle())
+                                    }.buttonStyle(.plain).accessibilityLabel(CalendarClock.dayLabel(date) + ", \(count) eventos").accessibilityValue(day == date ? "Seleccionado":"").accessibilityAddTraits(day == date ? .isSelected : []).accessibilityIdentifier("agenda.day.\(date)")
                                 }
                             }
                             ViewThatFits(in:.horizontal) {
@@ -311,8 +312,8 @@ struct AgendaEventEditor: View {
                 Section {
                     TextField("Título", text: $title).accessibilityIdentifier("agenda.editor.title")
                     Toggle("Todo el día", isOn: $allDay).accessibilityIdentifier("agenda.editor.allDay")
-                    DatePicker("Inicio", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute]).accessibilityIdentifier("agenda.editor.start")
-                    DatePicker(allDay ? "Último día" : "Fin", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute]).accessibilityIdentifier("agenda.editor.end")
+                    JACDatePicker("Inicio", selection: $start, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute]).accessibilityIdentifier("agenda.editor.start")
+                    JACDatePicker(allDay ? "Último día" : "Fin", selection: $end, displayedComponents: allDay ? [.date] : [.date, .hourAndMinute]).accessibilityIdentifier("agenda.editor.end")
                 } header: { Text("Evento") } footer: { Text("Hora de Colombia. Se guardará en el calendario seleccionado de Google.") }
                 Section("Lugar y descripción") {
                     TextField("Lugar", text: $location).accessibilityIdentifier("agenda.editor.location")
