@@ -1,5 +1,7 @@
 # Versión nativa de JAC para Mac — 15 de octubre de 2026
 
+La distribución posterior **1.1.0 (2)** incorpora CRM directo en la barra lateral, tabla de escritorio y Configuración reorganizada. Ver `docs/MAC_UX.md`. El registro de abajo corresponde a la entrega inicial 1.0.0.
+
 La nueva app se desarrolla en esta misma carpeta del Mac y utiliza el servicio existente. No modifica producción, sus DB/BUCKET, secretos ni DNS. La web sigue publicada en el Site `appgprj_6aa0260b82a88191a47960614238350a`. No se crea otro Site y no se ejecuta un despliegue durante este trabajo.
 
 ## Fuente y alcance

@@ -16,9 +16,11 @@ Requiere macOS 14 o posterior. El producto Release incluye Apple Silicon e Intel
 
 ## Distribución de escritorio
 
-La barra lateral conserva **Quincena, Agenda, Itinerarios, Mi cuenta y Gestión**. Gestión reúne CRM, Alertas, Gastos, Archivo, Equipo, Correos, Conceptos y Usuarios según los permisos de la cuenta. La ventana se puede redimensionar y la barra lateral ocultar.
+Desde **1.1.0 (2)**, la barra lateral muestra **CRM, Quincena, Agenda e Itinerarios**, y debajo **Mi cuenta y Configuración**. CRM aparece para administradores. Configuración reúne Alertas, Gastos, Archivo, Personal, Correos, Conceptos, Notificaciones, Servicios conectados y Usuarios según los permisos de la cuenta. La ventana se puede redimensionar y la barra lateral ocultar.
 
-El menú **JAC** ofrece accesos de teclado: ⌘1–⌘5 para las secciones principales, ⌘6 para CRM cuando corresponde, ⌘7 para Alertas y ⌘R para actualizar. El sistema proporciona sus menús de edición y manejo de ventanas.
+CRM dispone de una tabla con búsqueda por show o empresario, columnas ordenables de fecha, venta, abonos y saldo, filtros de saldo pendiente/sin precio y acceso a Semana y Empresarios. Selecciona un show y pulsa **Abrir show**, haz doble clic o utiliza su menú contextual. **Nuevo show** y **Registrar abono** están visibles en la barra superior. Se conservan los formularios, documentos privados, rentabilidad y preparación existentes; los importes provienen del servidor.
+
+El menú **JAC** conserva accesos de teclado: ⌘1 Quincena, ⌘2 Agenda, ⌘3 Itinerarios, ⌘4 Mi cuenta, ⌘5 Configuración, ⌘6 CRM cuando corresponde, ⌘7 Alertas y ⌘R para actualizar la sección activa de CRM/Agenda o la información general. El sistema proporciona sus menús de edición y manejo de ventanas. Los editores mantienen su hoja abierta al usar accesos de navegación.
 
 Los documentos se abren en una vista previa nativa de Mac con **Guardar una copia**, **Compartir** e **Imprimir** para PDF. Se conservan la autorización y la descarga privada antes de abrirlos. En abonos, gastos y publicaciones puedes elegir archivos o arrastrar PDF/JPG/PNG al formulario, dentro de los límites existentes. El OCR usa Vision localmente y admite archivos y cámara; siempre muestra los datos para revisión antes de enviar. La cámara necesita el permiso de macOS y una cámara disponible.
 
@@ -48,4 +50,4 @@ xcodebuild -project macos/JACMac.xcodeproj -scheme JACMac \
 
 Las mismas pruebas de cliente se compilan para ambos sistemas, incluidas API, concurrencia, permisos, cifrado, restauración sin red, borradores, adjuntos, CRM, OCR y OAuth. La comprobación de protección física de iOS se conserva; en Mac verifica permisos privados de los archivos. Los UI tests usan solo `.invalid` y una sesión ficticia, sin tocar el Llavero ni conexiones reales. La excepción de validación de bibliotecas está restringida al **ejecutor de UI tests** para permitir su firma local; no pertenece al producto JAC.
 
-Las pruebas y capturas locales quedan en `work/local/mac-native-*.xcresult`. Los informes de intentos fallidos se conservan junto a las repeticiones corregidas. Ver `docs/MAC_NATIVE.md` para el registro final de comprobaciones y límites.
+Las pruebas y capturas locales quedan en `work/local/mac-native-*.xcresult` y `work/local/mac-ux-*.xcresult`. Los informes de intentos fallidos se conservan junto a las repeticiones corregidas. Ver `docs/MAC_NATIVE.md` para la entrega inicial y `docs/MAC_UX.md` para la distribución 1.1.0.

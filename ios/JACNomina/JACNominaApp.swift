@@ -197,6 +197,13 @@ enum JACTheme {
     @MainActor static func configure() {}
     #endif
 }
+#if os(macOS)
+struct JACPrimaryButtonStyle: PrimitiveButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        Button(configuration).buttonStyle(.borderedProminent).controlSize(.large).tint(JACTheme.primary).fixedSize(horizontal:true,vertical:false)
+    }
+}
+#else
 struct JACPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
@@ -206,6 +213,8 @@ struct JACPrimaryButtonStyle: ButtonStyle {
             .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
     }
 }
+#endif
+
 extension View {
     // Mark the content, not the NavigationStack/TabView that owns it. On iOS 27
     // redacting the whole navigation hierarchy for a background snapshot can
@@ -253,6 +262,9 @@ struct JACFeatureBanner: View {
     var symbol = "waveform"
     var tone: JACTone = .blue
     var body: some View {
+        #if os(macOS)
+        MacPageHeader(title:macTitle,subtitle:subtitle,symbol:symbol)
+        #else
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 10) {
                 Image(systemName: symbol).font(.subheadline.bold()).frame(width: 32, height: 32)
@@ -276,7 +288,20 @@ struct JACFeatureBanner: View {
             }
             .clipShape(RoundedRectangle(cornerRadius: 24))
             .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.08), lineWidth: 1))
+        #endif
     }
+    #if os(macOS)
+    private var macTitle:String {
+        switch symbol {
+        case "wallet.pass": "Quincenas"
+        case "archivebox": "Archivo de quincenas"
+        case "briefcase": "CRM · Shows y abonos"
+        case "slider.horizontal.3": "Configuración general"
+        default: title
+        }
+    }
+    #endif
+
 }
 struct JACIcon: View {
     let symbol: String
@@ -314,6 +339,14 @@ struct JACAccessCard: View {
             .accessibilityElement(children: .ignore).accessibilityLabel(title)
     }
 }
+#if os(macOS)
+struct JACSecondaryButtonStyle: PrimitiveButtonStyle {
+    var tone:JACTone = .blue
+    func makeBody(configuration:Configuration)->some View {
+        Button(configuration).buttonStyle(.bordered).controlSize(.regular).fixedSize(horizontal:true,vertical:false)
+    }
+}
+#else
 struct JACSecondaryButtonStyle: ButtonStyle {
     var tone: JACTone = .blue
     @Environment(\.isEnabled) private var enabled
@@ -323,6 +356,7 @@ struct JACSecondaryButtonStyle: ButtonStyle {
             .opacity(enabled ? 1 : 0.45)
     }
 }
+#endif
 
 // Platform presentation adapters. The domain model and all server commands are shared.
 #if os(iOS)
@@ -433,6 +467,16 @@ extension View {
     @ViewBuilder func jacFileDrop(enabled:Bool=true, receive:@escaping ([URL])->Void) -> some View {
         #if os(macOS)
         dropDestination(for:URL.self) {urls,_ in guard enabled,!urls.isEmpty else{return false};receive(urls);return true}
+        #else
+        self
+        #endif
+    }
+}
+
+extension View {
+    @ViewBuilder func jacRefreshCommand(_ action:@escaping ()->Void)->some View {
+        #if os(macOS)
+        focusedSceneValue(\.macRefresh,action)
         #else
         self
         #endif

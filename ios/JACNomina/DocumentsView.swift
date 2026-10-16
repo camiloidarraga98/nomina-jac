@@ -108,10 +108,12 @@ struct ExportButton: View {
                     .jacSurface().navigationTitle(title ?? format.title).jacInlineTitle()
                     .toolbar {
                         ToolbarItem(placement: .jacLeading) { Button("Listo") { document = nil } }
+                        #if os(iOS)
                         ToolbarItem(placement: .jacTrailing) {
                             if file.url.pathExtension.lowercased() == "pdf" { Button { JACPlatform.printDocument(file.url) } label: { Image(systemName: "printer") }.accessibilityLabel("Imprimir documento") }
                         }
                         ToolbarItem(placement: .jacTrailing) { ShareLink(item: file.url) { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("Compartir documento") }
+                        #endif
                     }
             }
         }

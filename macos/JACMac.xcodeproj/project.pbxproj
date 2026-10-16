@@ -623,6 +623,7 @@
 				<string>4CBF0EE22D8328F94501507F</string>
 				<string>44F8ADBE00EB097112B48675</string>
 				<string>FC9C65BB818A8526B2119F2B</string>
+				<string>F06180F4D846EA22D2A6C324</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -707,9 +708,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.0</string>
+				<string>1.1.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>2</string>
 				<key>INFOPLIST_FILE</key>
 				<string>JACMac/Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
@@ -765,9 +766,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.0</string>
+				<string>1.1.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>2</string>
 				<key>INFOPLIST_FILE</key>
 				<string>JACMac/Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
@@ -832,6 +833,7 @@
 				<string>B1E049D3B944F0CC4C259344</string>
 				<string>79F3609E132B630EBECD867D</string>
 				<string>5C3EE6FC46FF8450C6E5D608</string>
+				<string>E766B6ED100AD043A0875974</string>
 			</array>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
@@ -1513,6 +1515,24 @@
 				<string>8FFFBB115997ACB4EDB4FF13</string>
 				<string>B2350E7A5DCCDFD6652391EB</string>
 			</array>
+		</dict>
+		<key>E766B6ED100AD043A0875974</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>JACMac/MacWorkspaceViews.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
+		<key>F06180F4D846EA22D2A6C324</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>E766B6ED100AD043A0875974</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

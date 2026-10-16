@@ -143,7 +143,7 @@ struct CRMShowView:View {
                 else { CRMPlanView(id:id,show:detail["show"],tab:tab,data:$planData,draft:$planDraft) }
             }.scrollContentBackground(.hidden).refreshable { await load() }
         }.jacSurface()
-            .navigationTitle(detail["show"]["title"].text.isEmpty ? "Show":detail["show"]["title"].text).jacInlineTitle()
+            .navigationTitle(detail["show"]["title"].text.isEmpty ? "Show":detail["show"]["title"].text).jacInlineTitle().jacRefreshCommand { Task { await load() } }
             .task { tab=initialTab;await load();while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30));await load()}catch{break}} }
             .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             .onChange(of:crm.denied) {_,denied in if denied {editor=nil;detail = .null;planData = .null;planDraft = .null;confirmDelete=false}}
@@ -236,11 +236,18 @@ struct CRMEditor:View {
                 if let error { InlineError(message:error) }
                 if attempt != nil { Text("Se conservan los datos enviados. Reintenta la misma solicitud para evitar duplicados.").font(.footnote) }
                 fields
+                #if os(iOS)
                 Section { Button(busy ? "Guardando…":attempt != nil ? "Reintentar guardado":"Guardar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("crm.editor.save") }
+                #endif
             }.scrollDismissesKeyboard(.never).onChange(of:contactFocused){_,focused in if focused {withAnimation{proxy.scrollTo("crm.contact.row",anchor:.top)}}}.onReceive(NotificationCenter.default.publisher(for:JACPlatform.keyboardShown)){_ in if contactFocused{withAnimation{proxy.scrollTo("crm.contact.row",anchor:.top)}}}.jacSurface().navigationTitle(request.title).jacInlineTitle()
                 .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cerrar") { dismiss() }.disabled(busy || importing) }
 #if os(iOS)
 ToolbarItemGroup(placement:.keyboard){Spacer();Button("Listo"){JACPlatform.endEditing()}.accessibilityIdentifier("crm.keyboard.done")}
+#else
+ToolbarItem(placement:.confirmationAction) {
+    Button(busy ? "Guardando…":attempt != nil ? "Reintentar guardado":"Guardar") { Task { await save() } }
+        .buttonStyle(.borderedProminent).tint(JACTheme.primary).disabled(busy || importing || store.isOffline).accessibilityIdentifier("crm.editor.save")
+}
 #endif
  }
                 .onAppear { setup() }

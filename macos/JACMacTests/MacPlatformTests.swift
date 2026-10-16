@@ -9,6 +9,29 @@ final class MacPlatformTests:XCTestCase {
         for section in [MacSection.agenda,.itineraries,.alerts,.account,.management]{XCTAssertTrue(section.allowed(user))}
         user.itinerariesOnly=false;XCTAssertTrue(MacSection.payroll.allowed(user));XCTAssertTrue(MacSection.crm.allowed(user))
     }
+    func testSidebarMatchesWebAndSettingsRespectEveryAccountRole() {
+        let owner=PayrollUser(id:"owner",email:"owner@example.invalid",username:"owner",displayName:"Owner",isOwner:true,permissions:[])
+        let reader=PayrollUser(id:"reader",email:"reader@example.invalid",username:"reader",displayName:"Reader",isOwner:false,permissions:[])
+        var restricted=owner;restricted.itinerariesOnly=true
+        XCTAssertEqual(MacSection.sidebar(for:owner),[.crm,.payroll,.agenda,.itineraries,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:reader),[.payroll,.agenda,.itineraries,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:restricted),[.agenda,.itineraries,.account,.management])
+        XCTAssertFalse(MacSettingsRoute.users.allowed(reader));XCTAssertFalse(MacSettingsRoute.connections.allowed(reader))
+        XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(restricted)},[.expenses,.alerts,.notifications])
+    }
+    func testCRMTableFiltersDatesStatusAndSearchButUsesServerBalancesVerbatim() {
+        let show:JSONValue = .object(["id":.string("show"),"title":.string("PEREIRA"),"showDate":.string("2026-10-17"),"entrepreneur":.string("José"),"status":.string("active"),"sale":.number(140000000),"paid":.number(50000000),"balance":.number(777)])
+        var old=show;old["id"] = .string("old");old["showDate"] = .string("2026-10-14")
+        var ignored=show;ignored["id"] = .string("ignored");ignored["status"] = .string("ignored")
+        var deleted=show;deleted["id"] = .string("deleted");deleted["sourceState"] = .string("deleted")
+        var unpriced=show;unpriced["id"] = .string("unpriced");unpriced["sale"] = .null;unpriced["balance"] = .null
+        let feed=[show,old,ignored,deleted,unpriced]
+        let rows=MacCRMRow.visible(feed,today:"2026-10-15",query:"jose",filter:.all)
+        XCTAssertEqual(rows.map(\.id),["show","unpriced"]);XCTAssertEqual(rows[0].balance,777);XCTAssertEqual(rows[0].paid,50000000)
+        XCTAssertEqual(MacCRMRow.visible(feed,today:"2026-10-15",query:"",filter:.pending).map(\.id),["show"])
+        XCTAssertEqual(MacCRMRow.visible(feed,today:"2026-10-15",query:"",filter:.unpriced).map(\.id),["unpriced"])
+        XCTAssertTrue(MacCRMRow.visible(feed,today:"2026-10-15",query:"sin resultados",filter:.all).isEmpty)
+    }
     func testFinderUploadsRejectWebLinksDirectoriesAndInvalidContentBeforeSending() throws {
         XCTAssertThrowsError(try NoticeUpload.readLocalFiles([URL(string:"https://example.invalid/file.pdf")!]))
         let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)

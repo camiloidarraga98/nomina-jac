@@ -7,6 +7,7 @@ import AppKit
     @StateObject private var connectivity=AgendaConnectivity()
     @Environment(\.scenePhase) private var phase
     @State private var section:MacSection = .payroll
+    @FocusedValue(\.macRefresh) private var refreshAction
     var body:some Scene {
         Window("JAC Music",id:"jac-main") {
             Group {
@@ -20,6 +21,15 @@ import AppKit
                 .background(MacPrivacyShield())
                 .task {
                     guard !Self.testing else{return};await store.restore()
+                    #if DEBUG
+                    if ProcessInfo.processInfo.arguments.contains("--uitest-payroll"),ProcessInfo.processInfo.arguments.contains("--uitest-compact-window") {
+                        await Task.yield()
+                        if let window=NSApp.windows.first(where:{$0.isVisible && $0.canBecomeMain}) {
+                            window.setContentSize(NSSize(width:1000,height:700))
+                            window.center()
+                        }
+                    }
+                    #endif
                     while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30))}catch{return};if NSApp.isActive && store.hasSavedSession {try? await store.refreshAutomatically()}}
                 }
                 .onChange(of:phase){_,value in if value == .active && store.hasSavedSession && !Self.testing {Task{try? await store.refreshAutomatically()}}}
@@ -33,11 +43,11 @@ import AppKit
                     }
                     Divider()
                     if let user=store.overview?.user,user.isOwner,user.itinerariesOnly != true {
-                        Button("Servicios conectados en la web…"){NSWorkspace.shared.open(PayrollClient.productionURL.appendingPathComponent("conexiones"))}
+                        Button("Servicios conectados en la web…"){NSWorkspace.shared.open(PayrollClient.productionURL.appendingPathComponent("configuracion/conexiones"))}
                         Button("Autorización de Sheets en la web…"){NSWorkspace.shared.open(PayrollClient.productionURL.appendingPathComponent("crm"))}
                         Divider()
                     }
-                    Button("Actualizar información"){Task{try? await store.refresh()}}.keyboardShortcut("r",modifiers:.command).disabled(!store.hasSavedSession || store.busy)
+                    Button("Actualizar información"){if let refreshAction {refreshAction()} else {Task{try? await store.refresh()}}}.keyboardShortcut("r",modifiers:.command).disabled(!store.hasSavedSession || store.busy)
                 }
             }
         Settings {NotificationSettingsView().environmentObject(store).frame(width:680,height:500)}
@@ -52,13 +62,22 @@ import AppKit
     }
 }
 @MainActor final class MacAppDelegate:NSObject,NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification:Notification) {
+        #if DEBUG
+        let arguments=ProcessInfo.processInfo.arguments
+        if arguments.contains("--uitest-payroll"),arguments.contains("--uitest-dark") {NSApp.appearance=NSAppearance(named:.darkAqua)}
+        #endif
+    }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication)->Bool{false}
 }
 enum MacSection:String,CaseIterable,Identifiable {
     case payroll,agenda,itineraries,account,management,crm,alerts
     var id:String{rawValue}
-    var title:String{switch self {case .payroll:"Quincena";case .agenda:"Agenda";case .itineraries:"Itinerarios";case .account:"Mi cuenta";case .management:"Gestión";case .crm:"CRM";case .alerts:"Alertas"}}
+    var title:String{switch self {case .payroll:"Quincena";case .agenda:"Agenda";case .itineraries:"Itinerarios";case .account:"Mi cuenta";case .management:"Configuración";case .crm:"CRM";case .alerts:"Alertas"}}
     var icon:String{switch self {case .payroll:"wallet.pass";case .agenda:"calendar.badge.clock";case .itineraries:"airplane";case .account:"person.crop.circle";case .management:"slider.horizontal.3";case .crm:"briefcase";case .alerts:"bell.badge"}}
+    static let primary: [MacSection] = [.crm, .payroll, .agenda, .itineraries]
+    static let personal: [MacSection] = [.account, .management]
+    static func sidebar(for user:PayrollUser)->[MacSection] { (primary+personal).filter{$0.allowed(user)} }
     func allowed(_ user:PayrollUser)->Bool {switch self{case .payroll:user.itinerariesOnly != true;case .crm:user.isOwner && user.itinerariesOnly != true;default:true}}
 }
 private struct MacWorkspace:View {
@@ -66,34 +85,58 @@ private struct MacWorkspace:View {
     let overview:PayrollOverview
     @Binding var section:MacSection
     private var selected:MacSection{section.allowed(overview.user) ? section:.itineraries}
+    private var sidebarSelection: Binding<MacSection> {
+        Binding(get:{section},set:{next in guard !NSApp.windows.contains(where:{$0.attachedSheet != nil}) else{return};section=next})
+    }
     var body:some View {
         NavigationSplitView {
             VStack(spacing:0) {
-                BrandView().frame(width:170).padding(.top,20).padding(.bottom,24)
-                List(selection:$section) {
-                    ForEach([MacSection.payroll,.agenda,.itineraries,.account,.management].filter{$0.allowed(overview.user)}) {item in Label(item.title,systemImage:item.icon).tag(item).padding(.vertical,9).accessibilityIdentifier("mac.nav."+item.rawValue)}
+                BrandView().frame(width:136).padding(.top,16).padding(.bottom,18)
+                List(selection:sidebarSelection) {
+                    Section("JAC Music") {
+                        ForEach(MacSection.primary.filter{$0.allowed(overview.user)}) { item in sidebarRow(item) }
+                    }
+                    Section("Personal") {
+                        ForEach(MacSection.personal) { item in sidebarRow(item) }
+                    }
                 }.listStyle(.sidebar)
-                VStack(alignment:.leading,spacing:6) {
-                    Text(overview.user.displayName).font(.headline)
-                    Label(store.isOffline ? "Copia sin conexión":"JAC Music",systemImage:store.isOffline ? "wifi.slash":"checkmark.shield").font(.caption).foregroundStyle(.secondary)
-                }.frame(maxWidth:.infinity,alignment:.leading).padding(20)
-            }.background(JACTheme.canvas).navigationSplitViewColumnWidth(min:210,ideal:240,max:300)
+                Divider().padding(.horizontal,16)
+                HStack(spacing:10) {
+                    Image(systemName:"person.crop.circle.fill").font(.title2).foregroundStyle(.secondary)
+                    VStack(alignment:.leading,spacing:4) {
+                        Text(overview.user.displayName).font(.subheadline.weight(.medium)).lineLimit(1)
+                        Label(store.isOffline ? "Copia sin conexión":"JAC Music",systemImage:store.isOffline ? "wifi.slash":"checkmark.shield").font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength:0)
+                }.padding(16)
+            }.navigationSplitViewColumnWidth(min:210,ideal:235,max:290)
         } detail: {
             Group {
-                if store.isAgendaOnly && selected != .agenda && selected != .account {ContentUnavailableView("Conéctate para descargar esta sección",systemImage:"wifi.slash")}
-                else {
+                if store.isAgendaOnly && selected != .agenda && selected != .account {
+                    VStack(spacing:16) {
+                        ContentUnavailableView("Esta sección todavía no está descargada",systemImage:"wifi.slash",description:Text("Puedes consultar tu Agenda guardada. Conéctate para descargar el resto de JAC."))
+                        Button("Reintentar conexión"){Task{try? await store.refresh()}}.buttonStyle(.borderedProminent)
+                    }
+                } else {
                     switch selected {
                     case .payroll:PeriodsView(overview:overview)
                     case .agenda:CalendarView(user:overview.user,initialMonth:store.preferredAgendaMonth)
                     case .itineraries:NavigationStack{NoticesView(user:overview.user)}
                     case .account:NavigationStack{AccountView(user:overview.user)}
-                    case .management:ManagementView(user:overview.user)
-                    case .crm:NavigationStack{CRMHomeView(client:store.client)}
+                    case .management:MacManagementView(user:overview.user)
+                    case .crm:NavigationStack{MacCRMHomeView(client:store.client)}
                     case .alerts:NavigationStack{NoticesView(user:overview.user,kind:"alert")}
                     }
                 }
-            }.id(selected).toolbar {ToolbarItem{Button{Task{try? await store.refresh()}}label:{Image(systemName:"arrow.clockwise")}.help("Actualizar información (⌘R)").disabled(store.busy)}}
+            }.id(selected).toolbar {
+                if selected != .crm && selected != .agenda {
+                    ToolbarItem { Button {Task{try? await store.refresh()}} label:{Image(systemName:"arrow.clockwise")}.help("Actualizar información (⌘R)").disabled(store.busy) }
+                }
+            }
         }.onAppear{if !section.allowed(overview.user){section = .itineraries}}
+    }
+    private func sidebarRow(_ item:MacSection)->some View {
+        Label(item.title,systemImage:item.icon).font(.body.weight(.medium)).padding(.vertical,4).tag(item).accessibilityIdentifier("mac.nav."+item.rawValue)
     }
 }
 
