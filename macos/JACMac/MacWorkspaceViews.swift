@@ -28,18 +28,18 @@ struct MacPageHeader: View {
 }
 
 enum MacSettingsRoute: String, CaseIterable, Identifiable {
-    case account, expenses, alerts, notifications, connections, employees, concepts, archive, mail, users
+    case imageQuality, account, expenses, alerts, notifications, connections, employees, concepts, archive, mail, users
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .account: "Mi cuenta";case .expenses: "Gastos de viaje"; case .alerts: "Alertas"; case .notifications: "Notificaciones"
+        case .imageQuality: "Calidad de las imágenes";case .account: "Mi cuenta";case .expenses: "Gastos de viaje"; case .alerts: "Alertas"; case .notifications: "Notificaciones"
         case .connections: "Servicios conectados"; case .employees: "Personal"; case .concepts: "Conceptos y reglas"
         case .archive: "Archivo"; case .mail: "Correos"; case .users: "Usuarios y permisos"
         }
     }
     var subtitle: String {
         switch self {
-        case .account: "Sesión, acceso y copia guardada";case .expenses: "Facturas, borradores y reintegros"; case .alerts: "Avisos y publicaciones del equipo"
+        case .imageQuality: "2, 4, 6 MB o archivos originales";case .account: "Sesión, acceso y copia guardada";case .expenses: "Facturas, borradores y reintegros"; case .alerts: "Avisos y publicaciones del equipo"
         case .notifications: "Preferencias de este Mac"; case .connections: "Calendar, Slack y Google Sheets"
         case .employees: "Personas, condiciones y tarifas"; case .concepts: "Parámetros de la liquidación"
         case .archive: "Quincenas cerradas y documentos"; case .mail: "Gmail y desprendibles de pago"
@@ -48,7 +48,7 @@ enum MacSettingsRoute: String, CaseIterable, Identifiable {
     }
     var symbol: String {
         switch self {
-        case .account: "person.crop.circle";case .expenses: "receipt"; case .alerts: "bell.badge"; case .notifications: "bell"
+        case .imageQuality: "photo";case .account: "person.crop.circle";case .expenses: "receipt"; case .alerts: "bell.badge"; case .notifications: "bell"
         case .connections: "point.3.connected.trianglepath.dotted"; case .employees: "person.2"
         case .concepts: "slider.horizontal.3"; case .archive: "archivebox"; case .mail: "envelope"
         case .users: "person.badge.key"
@@ -63,6 +63,7 @@ enum MacSettingsRoute: String, CaseIterable, Identifiable {
     }
     func allowed(_ user: PayrollUser) -> Bool {
         return switch self {
+        case .imageQuality: user.canUploadMedia
         case .account: true
         case .expenses: user.hasSection(.itineraries)
         case .alerts: user.hasSection(.alerts)
@@ -88,12 +89,13 @@ struct MacManagementView: View {
                     settingsGroup("Tu cuenta",items:[.account])
                     settingsGroup("Trabajo diario", items: [.expenses, .alerts])
                     settingsGroup("Administración", items: [.employees, .concepts, .archive, .mail])
-                    settingsGroup("Preferencias y acceso", items: [.notifications, .connections, .users])
+                    settingsGroup("Preferencias y acceso", items: [.imageQuality, .notifications, .connections, .users])
                 }.padding(24).frame(maxWidth: 1120, alignment: .leading).frame(maxWidth: .infinity, alignment: .leading)
             }.jacSurface().navigationTitle("Configuración")
                 .navigationDestination(item: $route) { item in
                     if item.allowed(user) {
                         switch item {
+                        case .imageQuality: MediaImageQualitySettings()
                         case .account: AccountView(user:user)
                         case .expenses: TravelExpensesView()
                         case .alerts: NoticesView(user: user, kind: "alert")

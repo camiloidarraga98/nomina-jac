@@ -1,3 +1,5 @@
+> Fotografía (16 octubre): visor anterior/siguiente y calidad de imágenes 2/4/6 MB u original desde Gestión/Configuración y el menú de Fotografía. Preferencia por dispositivo; videos intactos. Ver [guía de visor y calidad](../docs/PHOTOGRAPHY_VIEWER_QUALITY.md). Actualiza con Run sobre este mismo proyecto; no hace falta descargar otro.
+
 ## App universal iPhone/iPad — 0.20.0 (32)
 
 ## Fotografía R2 · iPhone/iPad 0.21.0 (33)

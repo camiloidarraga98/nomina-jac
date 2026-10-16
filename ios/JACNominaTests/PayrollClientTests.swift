@@ -181,6 +181,47 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(MediaGalleryOrder.sorted([legacy,old,file,new]).map(\.id),["new","old","legacy","file"])
         XCTAssertEqual(MediaGalleryOrder.sorted([item("b","Igual",nil),item("a","Igual",nil)]).map(\.id),["a","b"])
     }
+    func testLargeJPEGIsReducedBeforeUploadWithoutChangingTheSourceAndKeepsThumbnail() async throws {
+        let width=4000,height=3000
+        var pixels=[UInt8](repeating:255,count:width*height*4),random:UInt32=12345
+        for index in stride(from:0,to:pixels.count,by:4) {for channel in 0..<3 {random=1664525 &* random &+ 1013904223;pixels[index+channel]=UInt8(truncatingIfNeeded:random>>24)}}
+        let data=Data(pixels),provider=try XCTUnwrap(CGDataProvider(data:data as CFData)),image=try XCTUnwrap(CGImage(width:width,height:height,bitsPerComponent:8,bitsPerPixel:32,bytesPerRow:width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGBitmapInfo(rawValue:CGImageAlphaInfo.noneSkipLast.rawValue),provider:provider,decode:nil,shouldInterpolate:false,intent:.defaultIntent))
+        let original=NSMutableData(),encoder=try XCTUnwrap(CGImageDestinationCreateWithData(original,"public.jpeg" as CFString,1,nil));CGImageDestinationAddImage(encoder,image,[kCGImageDestinationLossyCompressionQuality:1.0,kCGImagePropertyOrientation:6] as [CFString:Any] as CFDictionary);XCTAssertTrue(CGImageDestinationFinalize(encoder));XCTAssertGreaterThan(original.length,8_000_000)
+        let source=try TemporaryDocuments.save(original as Data,filename:"Cámara original.JPG");defer{TemporaryDocuments.remove(source)}
+        let sourceImage=try XCTUnwrap(CGImageSourceCreateWithURL(source.url as CFURL,nil)),sourceProperties=try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(sourceImage,0,nil) as? [CFString:Any]);XCTAssertEqual(sourceProperties[kCGImagePropertyOrientation] as? Int,6)
+        let staged=try await Task.detached {try MediaLocalFile.stage(source.url,quality:.compact)}.value;defer{staged.remove()}
+        XCTAssertEqual(staged.name,"Cámara original.JPG");XCTAssertEqual(staged.mimeType,"image/jpeg");XCTAssertLessThanOrEqual(staged.size,2_000_000);XCTAssertGreaterThan(staged.size,0)
+        XCTAssertEqual(try Data(contentsOf:source.url),original as Data,"No sobrescribir el original de la cámara")
+        let optimized=try XCTUnwrap(CGImageSourceCreateWithURL(staged.url as CFURL,nil)),properties=try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(optimized,0,nil) as? [CFString:Any])
+        XCTAssertLessThan((properties[kCGImagePropertyPixelWidth] as? Int) ?? 0,(properties[kCGImagePropertyPixelHeight] as? Int) ?? 0,"La orientación EXIF debe quedar aplicada")
+        let generated=await MediaThumbnail.jpeg(for:staged),thumbnail=try XCTUnwrap(generated);XCTAssertLessThanOrEqual(thumbnail.count,512*1024);XCTAssertNotNil(MediaThumbnail.image(thumbnail))
+        for quality in [MediaImageQuality.balanced,.detailed,.original] {
+            let next=try await Task.detached {try MediaLocalFile.stage(source.url,quality:quality)}.value;defer{next.remove()}
+            XCTAssertEqual(next.imageLimit,Int64(quality.rawValue))
+            if quality == .original {XCTAssertEqual(try Data(contentsOf:next.url),original as Data)} else {XCTAssertLessThanOrEqual(next.size,Int64(quality.rawValue));XCTAssertGreaterThan(next.size,staged.size)}
+        }
+        let movie=try TemporaryDocuments.save(MediaFixture.video,filename:"Video.mov");defer{TemporaryDocuments.remove(movie)}
+        let stagedMovie=try MediaLocalFile.stage(movie.url,quality:.compact);defer{stagedMovie.remove()};XCTAssertEqual(stagedMovie.imageLimit,0);XCTAssertEqual(try Data(contentsOf:stagedMovie.url),MediaFixture.video)
+
+    }
+    @MainActor func testPhotoViewerPagesMetadataSkipsVideosAndCleansTemporaryOriginals() async throws {
+        func photo(_ id:String)->MediaItem {MediaItem(id:id,name:id+".jpg",mimeType:"image/jpeg",kind:"image",size:17,modifiedAt:"fixture",thumbnailAvailable:true)}
+        let first=photo("one"),second=photo("two"),third=photo("three"),folder=MediaFolder(id:"folder",name:"Exact name"),initial=try TemporaryDocuments.save(MediaFixture.photo,filename:"one.png")
+        defer{TemporaryDocuments.remove(initial)}
+        var requests=[String](),loaded=[String](),denials=0
+        let viewer=MediaPhotoViewer(selected:first,document:initial,items:[first,second],token:"next",folderID:folder.id,collectionID:"r2-test",load:{item in loaded.append(item.id);return try TemporaryDocuments.save(MediaFixture.photo,filename:item.name)},page:{token in requests.append(token);return MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:[second,MediaItem(id:"movie",name:"m.mov",mimeType:"video/quicktime",kind:"video",size:20,modifiedAt:"f",thumbnailAvailable:true),third],nextPageToken:nil,provider:"r2",collectionID:"r2-test")},denied:{_ in denials+=1})
+        XCTAssertFalse(viewer.canPrevious);await viewer.move(1);XCTAssertEqual(viewer.selected.id,"two");let previous=try XCTUnwrap(viewer.document)
+        await viewer.move(1);XCTAssertEqual(viewer.selected.id,"three");XCTAssertEqual(requests,["next"]);XCTAssertEqual(viewer.items.map(\.id),["one","two","three"]);XCTAssertFalse(FileManager.default.fileExists(atPath:previous.url.path));XCTAssertFalse(viewer.canNext)
+        await viewer.move(-1);XCTAssertEqual(viewer.selected.id,"two");XCTAssertEqual(loaded,["two","three","two"]);let current=try XCTUnwrap(viewer.document);viewer.stop();XCTAssertFalse(FileManager.default.fileExists(atPath:current.url.path));XCTAssertEqual(denials,0)
+    }
+    @MainActor func testPhotoViewerCannotShowLateOriginalAfterDismissalAndWithdrawsOnDenial() async throws {
+        let first=MediaItem(id:"one",name:"one.jpg",mimeType:"image/jpeg",kind:"image",size:17,modifiedAt:"f",thumbnailAvailable:true),second=MediaItem(id:"two",name:"two.jpg",mimeType:"image/jpeg",kind:"image",size:17,modifiedAt:"f",thumbnailAvailable:true)
+        var viewer:MediaPhotoViewer!,late:ExportedDocument?,denied=0
+        viewer=MediaPhotoViewer(selected:first,document:nil,items:[first,second],token:"",folderID:"f",collectionID:nil,load:{_ in late=try TemporaryDocuments.save(MediaFixture.photo,filename:"late.png");viewer.stop();return late!},page:{_ in throw URLError(.notConnectedToInternet)},denied:{_ in denied+=1})
+        await viewer.move(1);XCTAssertNil(viewer.document);XCTAssertEqual(viewer.selected.id,"one");XCTAssertFalse(FileManager.default.fileExists(atPath:try XCTUnwrap(late).url.path));XCTAssertEqual(denied,0)
+        let revoked=MediaPhotoViewer(selected:first,document:nil,items:[first,second],token:"",folderID:"f",collectionID:nil,load:{_ in throw APIError.forbidden("Acceso retirado")},page:{_ in throw URLError(.notConnectedToInternet)},denied:{_ in denied+=1})
+        await revoked.move(1);XCTAssertEqual(denied,1);XCTAssertNil(revoked.document);XCTAssertEqual(revoked.selected.id,"one")
+    }
     @MainActor func testGalleryThumbnailUsesOnlyAuthenticatedThumbnailEndpointAndBoundsItsPixels() async throws {
         let vault=MemorySession();vault.token=String(repeating:"f",count:43)
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]

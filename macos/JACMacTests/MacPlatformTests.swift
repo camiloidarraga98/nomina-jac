@@ -52,7 +52,7 @@ final class MacPlatformTests:XCTestCase {
     func testPhotographerSidebarContainsGalleryAndConfigurationWithAccountEvenWithOwnerFlag() {
         let photographer = PayrollUser(id: "photo", email: "anderson@example.invalid", username: "anderson", displayName: "Anderson ficticio", isOwner: true, permissions: ["payroll"], itinerariesOnly: true, mediaOnly: true)
         XCTAssertEqual(MacSection.sidebar(for: photographer), [.media, .management])
-        XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(photographer)},[.account])
+        XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(photographer)},[.imageQuality,.account])
         XCTAssertFalse(MacSection.crm.allowed(photographer)); XCTAssertFalse(MacSection.agenda.allowed(photographer)); XCTAssertFalse(MacSection.alerts.allowed(photographer))
     }
     func testCRMTableFiltersDatesStatusAndSearchButUsesServerBalancesVerbatim() {

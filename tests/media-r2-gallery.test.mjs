@@ -1,6 +1,7 @@
 import test,{beforeEach} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
+import {createHash} from 'node:crypto';
 import {readFile,readdir,mkdtemp,writeFile,rm} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
@@ -56,8 +57,8 @@ const api=(body,session=photoToken)=>m.gallery.POST(req('/api/media',body,sessio
 const command=(body,session=photoToken)=>m.uploads.POST(req('/api/media/upload',body,session));
 const feed=(folder='',session=photoToken)=>m.gallery.GET(req('/api/media'+(folder?'?folder='+folder:''),undefined,session,'GET'));
 async function folder(){const r=await api({action:'createFolder',id:crypto.randomUUID(),parentId:m.R2_ROOT,name:'Show ficticio',date:'2026-10-16'});assert.equal(r.status,200);return (await r.json()).folder.id;}
-async function start(bytes=jpeg,parentId=m.R2_ROOT,id=crypto.randomUUID()){const data={action:'start',transport:'direct',id,parentId,filename:'Foto.jpg',mimeType:'image/jpeg',size:bytes.length};const r=await command(data);assert.equal(r.status,200);return {data,plan:await r.json(),bytes};}
-async function send(upload){const p=upload.plan,bytes=upload.bytes.slice(p.offset,Math.min(p.offset+p.chunkSize,upload.bytes.length));await m.sendMediaDirectChunk(p.uploadURL,'image/jpeg',new Blob([bytes]),p.offset,upload.bytes.length,new AbortController().signal);const r=await command({action:'status',transport:'direct',id:p.id});return r;}
+async function start(bytes=jpeg,parentId=m.R2_ROOT,id=crypto.randomUUID(),mimeType='image/jpeg'){const data={action:'start',transport:'direct',id,parentId,filename:mimeType==='image/png'?'Foto.png':'Foto.jpg',mimeType,size:bytes.length};const r=await command(data);assert.equal(r.status,200);return {data,plan:await r.json(),bytes};}
+async function send(upload){const p=upload.plan,bytes=upload.bytes.slice(p.offset,Math.min(p.offset+p.chunkSize,upload.bytes.length));await m.sendMediaDirectChunk(p.uploadURL,upload.data.mimeType,new Blob([bytes]),p.offset,upload.bytes.length,new AbortController().signal);const r=await command({action:'status',transport:'direct',id:p.id});return r;}
 
 test('activation starts empty, discards only the Photography Drive connection, and never reads Drive',async()=>{
  const gmail='unrelated-existing-cipher';sql.prepare("INSERT OR REPLACE INTO payroll_gmail(id,credentials,updated_at) VALUES('jac',?,?)").run(gmail,stamp);
@@ -68,7 +69,7 @@ test('activation starts empty, discards only the Photography Drive connection, a
 });
 test('folder creation is private, idempotent, chronological and isolated from legacy identifiers',async()=>{
  await activate();const body={action:'createFolder',id:crypto.randomUUID(),parentId:m.R2_ROOT,name:'Pereira',date:'2026-10-16'},first=await (await api(body)).json();assert.deepEqual(await (await api(body)).json(),first);assert.equal((await api({...body,name:'Different'})).status,409);assert.equal((await api(body,token)).status,409);assert.equal((await api({...body,id:crypto.randomUUID(),parentId:'foreign_drive_folder'})).status,410);
- const f=await (await feed()).json();assert.equal(f.items.length,1);assert.equal(f.items[0].kind,'folder');assert.equal(calls.length,1);assert.equal((await command({action:'start',id:crypto.randomUUID(),parentId:'foreign_drive_folder',filename:'x.jpg',mimeType:'image/jpeg',size:17})).status,410);
+ const f=await (await feed()).json();assert.equal(f.items.length,1);assert.equal(f.items[0].kind,'folder');assert.equal(f.items[0].name,'Pereira');assert.equal(calls.length,1);assert.equal((await command({action:'start',id:crypto.randomUUID(),parentId:'foreign_drive_folder',filename:'x.jpg',mimeType:'image/jpeg',size:17})).status,410);
 });
 test('direct multipart upload publishes once only after server-confirmed bytes, type and complete metadata',async()=>{
  await activate();const parentId=await folder(),upload=await start(jpeg,parentId);assert.equal((await (await feed(parentId)).json()).items.length,0);assert.equal(upload.plan.provider,'r2');assert.ok(!JSON.stringify(upload.plan).includes(input.secretAccessKey));
@@ -77,12 +78,12 @@ test('direct multipart upload publishes once only after server-confirmed bytes, 
  const ranged=await m.files.GET(req('/api/media/file?id='+done.fileId,undefined,token,'GET',{range:'bytes=2-5'}));assert.equal(ranged.status,206);assert.equal(ranged.headers.get('content-range'),'bytes 2-5/17');
 });
 test('multiple parts, timed-out completion and repeated status resume without duplicate objects or entries',async()=>{
- await activate();const bytes=new Uint8Array(8*1024*1024+17);bytes.set(jpeg);const upload=await start(bytes),first=await send(upload);assert.equal(first.status,200);upload.plan=await first.json();assert.equal(upload.plan.offset,8*1024*1024);assert.equal(upload.plan.complete,false);assert.equal((await (await feed()).json()).items.length,0);
+ await activate();const bytes=new Uint8Array(8*1024*1024+17);bytes.set([137,80,78,71,13,10,26,10]);const upload=await start(bytes,m.R2_ROOT,crypto.randomUUID(),'image/png'),first=await send(upload);assert.equal(first.status,200);upload.plan=await first.json();assert.equal(upload.plan.offset,8*1024*1024);assert.equal(upload.plan.complete,false);assert.equal((await (await feed()).json()).items.length,0);
  loseComplete=true;assert.equal((await send(upload)).status,502);const retry=await command({action:'status',id:upload.data.id});assert.equal(retry.status,200);assert.equal((await retry.json()).complete,true);assert.equal(objects.size,1);assert.equal((await (await feed()).json()).items.length,1);
 });
 test('invalid signatures, short parts and client offsets cannot publish media',async()=>{
  await activate();const upload=await start(new Uint8Array(17));assert.equal((await send(upload)).status,422);assert.equal((await (await feed()).json()).items.length,0);
- const other=await start(new Uint8Array(8*1024*1024+17)),id=new URL(other.plan.uploadURL).searchParams.get('uploadId');multiparts.get(id).parts.set(1,jpeg);assert.equal((await command({action:'status',id:other.data.id,offset:other.bytes.length,complete:true})).status,422);assert.equal((await (await feed()).json()).items.length,0);
+ const other=await start(new Uint8Array(8*1024*1024+17),m.R2_ROOT,crypto.randomUUID(),'image/png'),id=new URL(other.plan.uploadURL).searchParams.get('uploadId');multiparts.get(id).parts.set(1,jpeg);assert.equal((await command({action:'status',id:other.data.id,offset:other.bytes.length,complete:true})).status,422);assert.equal((await (await feed()).json()).items.length,0);
 });
 test('current permissions, actor, origin, connection and SQL guard are checked before publication',async()=>{
  await activate();const upload=await start();assert.equal((await command({action:'status',id:upload.data.id},token)).status,403);assert.equal((await m.uploads.POST(req('/api/media/upload',upload.data,photoToken,'POST',{origin:'https://untrusted.invalid'}))).status,403);
@@ -109,4 +110,36 @@ test('revocation immediately before the publish SQL and after fetching bytes den
  await activate();const upload=await start();await m.sendMediaDirectChunk(upload.plan.uploadURL,'image/jpeg',new Blob([jpeg]),0,jpeg.length,new AbortController().signal);
  let fired=false;beforeQuery=q=>{if(!fired&&q.text.startsWith('INSERT OR IGNORE INTO jac_media_r2_entries')){fired=true;sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(photographer);}};
  assert.equal((await command({action:'status',id:upload.data.id})).status,409);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,0);assert.equal(fired,true);
+});
+
+test('new folder names are exact and creation order descends independently of names and supplied dates',async()=>{
+ await activate();const ids=[];
+ for(const name of ['Zulu · Ensayo','Álbum Pereira','Bogotá 2026']){const r=await api({action:'createFolder',id:crypto.randomUUID(),parentId:m.R2_ROOT,name,date:'2099-12-31'});assert.equal(r.status,200);const folder=(await r.json()).folder;assert.equal(folder.name,name);ids.push(folder.id);}
+ for(let i=0;i<ids.length;i++)sql.prepare('UPDATE jac_media_r2_entries SET created_at=?,modified_at=? WHERE id=?').run('2026-10-'+String(10+i)+'T12:00:00Z','2099-12-31T00:00:00Z',ids[i]);
+ const f=await (await feed()).json();assert.deepEqual(f.items.map(x=>x.id),ids.toReversed());
+});
+test('JPEG limit is 2,000,000 bytes, enforced before any S3 allocation, while PNG and existing photos remain available',async()=>{
+ await activate();const before=calls.length,id=crypto.randomUUID(),body={action:'start',transport:'direct',id,parentId:m.R2_ROOT,filename:'Grande.JPG',mimeType:'image/jpeg',size:2_000_001,imageLimit:2_000_000};
+ const r=await command(body);assert.equal(r.status,413);assert.match((await r.json()).error,/nivel elegido/);assert.equal(calls.length,before);assert.equal(sql.prepare('SELECT 1 FROM jac_media_operations WHERE id=?').get(id),undefined);
+ const bytes=new Uint8Array(2_000_000);bytes.set(jpeg);const atLimit=await start(bytes);assert.equal((await send(atLimit)).status,200);
+ // A pre-existing, already published JPEG is not removed/recompressed by the new upload rule.
+ sql.prepare('UPDATE jac_media_r2_entries SET size=15000000 WHERE id=?').run('r2_'+atLimit.data.id);const f=await (await feed()).json();assert.equal(f.items[0].size,15000000);
+ assert.equal((await m.files.GET(req('/api/media/file?id='+f.items[0].id+'&metadata=1',undefined,photoToken,'GET'))).status,200);
+ const png=new Uint8Array(2_000_001);png.set([137,80,78,71,13,10,26,10]);assert.equal((await send(await start(png,m.R2_ROOT,crypto.randomUUID(),'image/png'))).status,200);
+});
+
+test('a retry across the folder naming release returns the earlier folder without renaming it or widening ownership',async()=>{
+ await activate();const body={action:'createFolder',id:crypto.randomUUID(),parentId:m.R2_ROOT,name:'Pereira',date:'2026-10-16'},first=await (await api(body)).json(),name='2026-10-16 · Pereira';
+ sql.prepare('UPDATE jac_media_r2_entries SET name=?,payload_hash=? WHERE id=?').run(name,createHash('sha256').update(JSON.stringify([photographer,m.R2_ROOT,name])).digest('hex'),first.folder.id);
+ const retry=await api(body);assert.equal(retry.status,200);assert.equal((await retry.json()).folder.name,name);assert.equal((await api({...body,date:'2026-10-17'})).status,409);assert.equal((await api(body,token)).status,409);assert.equal((await (await feed()).json()).items.length,1);
+});
+
+test('image quality accepts 2/4/6 MB or original, is immutable on retries and does not cap videos',async()=>{
+ await activate();
+ for(const [limit,size] of [[4_000_000,3_000_000],[6_000_000,5_000_000],[0,9_000_000]]){
+  const body={action:'start',transport:'direct',id:crypto.randomUUID(),parentId:m.R2_ROOT,filename:'Foto.jpg',mimeType:'image/jpeg',size,imageLimit:limit};const r=await command(body);assert.equal(r.status,200);assert.equal((await command({...body,imageLimit:limit===0?undefined:0})).status,409);
+ }
+ assert.equal((await command({action:'start',transport:'direct',id:crypto.randomUUID(),parentId:m.R2_ROOT,filename:'Video.mov',mimeType:'video/quicktime',size:15_000_000,imageLimit:2_000_000})).status,200);
+ assert.equal((await command({action:'start',transport:'direct',id:crypto.randomUUID(),parentId:m.R2_ROOT,filename:'Foto.jpg',mimeType:'image/jpeg',size:17,imageLimit:123})).status,400);
+ const bytes=new Uint8Array(3_000_000);bytes.set(jpeg);const upload=await start(bytes);assert.equal((await send(upload)).status,200,'Older/native original uploads remain supported without an imposed 2 MB cap');
 });

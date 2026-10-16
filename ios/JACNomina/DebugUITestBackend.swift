@@ -408,6 +408,9 @@ enum MediaFixture {
         lock.lock(); defer { lock.unlock() }
         files = ["media-photo": photo, "media-video": video]; uploads = [:]
         items = ["media-root": [item(id: "media-day", name: "2026-10-16 · PEREIRA", mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)], "media-day": [item(id: "media-photo", name: "Foto ficticia.png", mime: "image/png", kind: "image", size: photo.count), item(id: "media-video", name: "Video ficticio.mov", mime: "video/quicktime", kind: "video", size: video.count)]]
+        if ProcessInfo.processInfo.arguments.contains("--uitest-media-slideshow") {
+            items["media-day",default:[]].append(item(id:"media-photo-2",name:"Segunda foto ficticia.png",mime:"image/png",kind:"image",size:photo.count));files["media-photo-2"]=photo
+        }
         if ProcessInfo.processInfo.arguments.contains("--uitest-media-two-folders") {
             var other=item(id:"media-other",name:"2026-10-17 · BOGOTÁ",mime:"application/vnd.google-apps.folder",kind:"folder",size:0);other["createdAt"] = .string("2026-10-17T12:00:00Z")
             items["media-root",default:[]].append(other);items["media-other"]=[item(id:"media-other-photo",name:"Otra foto ficticia.png",mime:"image/png",kind:"image",size:photo.count)];files["media-other-photo"]=photo
@@ -448,7 +451,7 @@ enum MediaFixture {
         guard photographer || request.url?.host == "mock.example.invalid" else { return (403, .object(["error": .string("Solo el fotógrafo puede subir archivos.")])) }
         if parts.path == "/api/media", request.httpMethod == "POST" {
             let input = try JSONDecoder().decode(JSONValue.self, from: bytes(request)), id = "media-" + input["id"].text
-            let name = input["date"].text + " · " + input["name"].text
+            let name = input["name"].text
             if items[id] == nil { items[id] = []; items[input["parentId"].text, default: []].append(item(id: id, name: name, mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)) }
             return (200, .object(["folder": .object(["id": .string(id), "name": .string(name)])]))
         }

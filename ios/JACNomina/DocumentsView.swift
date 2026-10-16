@@ -229,6 +229,65 @@ struct MediaUploadState: Decodable {
               !complete || offset == file.size else { throw APIError.invalid("El estado de la subida no es válido. Vuelve a intentarlo.") }
     }
 }
+enum MediaImageQuality: Int, CaseIterable, Sendable, Identifiable {
+    case compact=2_000_000, balanced=4_000_000, detailed=6_000_000, original=0
+    static let preferenceKey="jac.media.image-quality.v1"
+    var id:Int {rawValue}
+    var label:String {self == .original ? "Sin compresión" : "Hasta \(rawValue/1_000_000) MB"}
+    static var current:Self {guard UserDefaults.standard.object(forKey:preferenceKey) != nil else{return .compact};return Self(rawValue:UserDefaults.standard.integer(forKey:preferenceKey)) ?? .compact}
+}
+struct MediaImageQualitySettings: View {
+    @AppStorage(MediaImageQuality.preferenceKey) private var limit=MediaImageQuality.compact.rawValue
+    var body: some View {
+        Form {
+            Section("Imágenes de Fotografía") {
+                ForEach(MediaImageQuality.allCases) {quality in Button {limit=quality.rawValue} label:{HStack {Text(quality.label).foregroundStyle(JACTheme.ink);Spacer();if limit==quality.rawValue {Image(systemName:"checkmark").foregroundStyle(JACTheme.action)}}.padding(.vertical,8).contentShape(Rectangle())}.buttonStyle(.plain).accessibilityIdentifier("media.quality.option."+String(quality.rawValue)).accessibilityValue(limit==quality.rawValue ? "Seleccionado" : "")}
+                Text("Se usará en las próximas selecciones de este dispositivo. Los videos siempre se suben completos.").font(.footnote).foregroundStyle(.secondary)
+            }
+            Section {
+                Text("Las imágenes que ya pesan menos se conservan. Al reducirlas se guardan como JPG; el archivo de origen queda intacto. Sin compresión conserva todos los bytes. Las miniaturas se generan por separado.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }.formStyle(.grouped).navigationTitle("Calidad de las imágenes").jacInlineTitle().jacSurface()
+    }
+}
+enum MediaJPEGOptimization {
+    static let maximumBytes = 2_000_000
+    static func prepare(_ url: URL, maximumBytes: Int = 2_000_000) throws -> Int64 {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, [kCGImageSourceShouldCache: false] as CFDictionary) else { throw APIError.invalid("No pudimos abrir este JPG para optimizarlo.") }
+        guard CGImageSourceGetCount(source)==1 else{throw APIError.invalid("Para conservar esta imagen animada o de varias páginas, elige Sin compresión.")}
+        let properties=CGImageSourceCopyPropertiesAtIndex(source,0,nil) as? [CFString:Any]
+        var edge=min(8192,max(properties?[kCGImagePropertyPixelWidth] as? Int ?? 4096,properties?[kCGImagePropertyPixelHeight] as? Int ?? 4096))
+        for _ in 0..<6 {
+            try Task.checkCancellation()
+            guard let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: edge, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: false] as CFDictionary) else { throw APIError.invalid("No pudimos preparar este JPG.") }
+            func encoded(_ quality: Double) throws -> Data {
+                let output = NSMutableData()
+                guard let destination = CGImageDestinationCreateWithData(output, UTType.jpeg.identifier as CFString, 1, nil) else { throw APIError.invalid("No pudimos optimizar el JPG.") }
+                CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+                guard CGImageDestinationFinalize(destination) else { throw APIError.invalid("No pudimos optimizar el JPG.") }
+                return output as Data
+            }
+            var accepted: Data?; let best = try encoded(0.92)
+            if best.count <= maximumBytes { accepted = best }
+            else {
+                var low = 0.48, high = 0.92
+                for attempt in 0..<6 {
+                    try Task.checkCancellation(); let quality = attempt == 0 ? low : (low + high) / 2, data = try encoded(quality)
+                    if data.count <= maximumBytes { accepted = data; low = quality }
+                    else { high = quality; if attempt == 0 { break } }
+                }
+            }
+            if let accepted {
+                try Task.checkCancellation()
+                try accepted.write(to: url, options: JACFileSecurity.writeOptions)
+                try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: url.path)
+                return Int64(accepted.count)
+            }
+            edge = edge * 3 / 4
+        }
+        throw APIError.invalid("No pudimos reducir esta imagen al tamaño elegido. Usa otro nivel o Sin compresión.")
+    }
+}
 struct MediaLocalFile: Identifiable, Sendable {
     static let maximumSize: Int64 = 20 * 1024 * 1024 * 1024
     let id: String
@@ -236,6 +295,7 @@ struct MediaLocalFile: Identifiable, Sendable {
     let name: String
     let mimeType: String
     let size: Int64
+    var imageLimit: Int64 = 0
     static func safeName(_ value: String) -> String {
         let name = (value as NSString).lastPathComponent.replacingOccurrences(of: "\u{0}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty || name == "." || name == ".." ? "Archivo" : String(name.prefix(220))
@@ -243,17 +303,17 @@ struct MediaLocalFile: Identifiable, Sendable {
     static func mime(_ url: URL) -> String? {
         ["jpg":"image/jpeg", "jpeg":"image/jpeg", "png":"image/png", "gif":"image/gif", "webp":"image/webp", "heic":"image/heic", "heif":"image/heif", "tif":"image/tiff", "tiff":"image/tiff", "mp4":"video/mp4", "mov":"video/quicktime", "webm":"video/webm", "m4v":"video/x-m4v"][url.pathExtension.lowercased()]
     }
-    static func stage(_ source: URL) throws -> MediaLocalFile {
-        guard source.isFileURL, let mimeType = mime(source) else { throw APIError.invalid("Elige fotos JPG, PNG, GIF, WebP, HEIC, HEIF o TIFF; o videos MP4, MOV, WebM o M4V.") }
+    static func stage(_ source: URL, quality: MediaImageQuality = .current) throws -> MediaLocalFile {
+        guard source.isFileURL, var mimeType = mime(source) else { throw APIError.invalid("Elige fotos JPG, PNG, GIF, WebP, HEIC, HEIF o TIFF; o videos MP4, MOV, WebM o M4V.") }
         let access = source.startAccessingSecurityScopedResource(); defer { if access { source.stopAccessingSecurityScopedResource() } }
         let values = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])
         guard values.isRegularFile == true, values.isSymbolicLink != true, let count = values.fileSize, count > 0, Int64(count) <= maximumSize else { throw APIError.invalid("El archivo debe contener una foto o video y pesar como máximo 20 GB.") }
         guard MediaStorageReview.freeBytes > Int64(count) + 64 * 1024 * 1024 else { throw APIError.invalid("No hay espacio suficiente para preparar este archivo. Libera espacio e inténtalo de nuevo.") }
-        let id = UUID().uuidString.lowercased(), name = safeName(source.lastPathComponent)
+        let id = UUID().uuidString.lowercased();var name = safeName(source.lastPathComponent)
         let folder = TemporaryDocuments.root.appendingPathComponent("media-upload-" + id, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
         try FileManager.default.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: TemporaryDocuments.root.path)
-        let destination = folder.appendingPathComponent(name)
+        var destination = folder.appendingPathComponent(name)
         do {
             guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes: JACFileSecurity.fileAttributes) else { throw APIError.message("No se pudo preparar el archivo para subirlo.") }
             let input = try FileHandle(forReadingFrom: source); defer { try? input.close() }
@@ -265,7 +325,13 @@ struct MediaLocalFile: Identifiable, Sendable {
                 try output.write(contentsOf: chunk)
             }
             guard written == Int64(count) else { throw APIError.invalid("El archivo cambió mientras se leía. Vuelve a seleccionarlo.") }
-            return MediaLocalFile(id: id, url: destination, name: name, mimeType: mimeType, size: written)
+            try output.close()
+            let imageLimit=mimeType.hasPrefix("image/") ? quality.rawValue : 0
+            if imageLimit>0,written>imageLimit {
+                written=try MediaJPEGOptimization.prepare(destination,maximumBytes:imageLimit)
+                if mimeType != "image/jpeg" {let renamed=destination.deletingPathExtension().appendingPathExtension("jpg");try FileManager.default.moveItem(at:destination,to:renamed);destination=renamed;name=renamed.lastPathComponent;mimeType="image/jpeg"}
+            }
+            return MediaLocalFile(id: id, url: destination, name: name, mimeType: mimeType, size: written, imageLimit:Int64(imageLimit))
         } catch { try? FileManager.default.removeItem(at: folder); throw error }
     }
     func remove() { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
@@ -293,6 +359,7 @@ struct MediaGalleryView: View {
     @State private var loadingFolder: String?
     @State private var mediaIsOffline = false
     @State private var choosingDestination = false
+    @State private var imageQualitySettings = false
     @State private var uploadDestination: MediaFolder?
     @State private var pickingFiles = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
@@ -377,7 +444,7 @@ struct MediaGalleryView: View {
             .refreshable { await reload() }
             .toolbar {
                 ToolbarItem {Button {Task {await reload()}} label:{Image(systemName:"arrow.clockwise")}.accessibilityLabel("Actualizar fotografías").accessibilityIdentifier("media.refresh").disabled(loading || uploading)}
-                ToolbarItem {if let folder=feed?.folder,feed?.canRead == true {Menu {folderCommands(folder)} label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel("Opciones de esta carpeta").accessibilityIdentifier("media.current.options")}}
+                ToolbarItem {if let folder=feed?.folder,feed?.canRead == true {Menu {folderCommands(folder);if user.canUploadMedia {Button("Calidad de las imágenes",systemImage:"slider.horizontal.3"){imageQualitySettings=true}.accessibilityIdentifier("media.quality")}} label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel("Opciones de esta carpeta").accessibilityIdentifier("media.current.options")}}
             }
             .task(id: folderID) {
                 await reload()
@@ -389,9 +456,10 @@ struct MediaGalleryView: View {
             .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
             .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline { Task { await reload() } } }
             .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
+            .sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
             .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
             .sheet(item: $transferReview) { review in MediaTransferReviewSheet(review: review) { folderTransfer.start(client: store.client, plan: review.plan, photos: review.photos, writer: photosWriter) } }
-            .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document) }
+            .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document, photos: items.filter { $0.kind == "image" }, feed: feed, client: store.client, denied: thumbnailDenied) }
             .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.image, .movie, .video], allowsMultipleSelection: true) { result in
                 switch result { case .success(let urls): importTask?.cancel(); importTask = Task { await readFiles(urls) }; case .failure(let failure): if (failure as? CocoaError)?.code != .userCancelled { error = failure.localizedDescription } }
             }
@@ -692,7 +760,6 @@ private struct MediaFolderEditor: View {
     @Environment(\.dismiss) private var dismiss
     @State private var requestID = UUID().uuidString.lowercased()
     @State private var name = ""
-    @State private var date = Date()
     @State private var attempted = false
     @State private var busy = false
     @State private var error: String?
@@ -702,8 +769,7 @@ private struct MediaFolderEditor: View {
                 Section("Show o día de trabajo") {
                     if !parentName.isEmpty {LabeledContent("Ubicación",value:parentName)}
                     TextField("Nombre del show o lugar", text: $name).accessibilityIdentifier("media.folder.name")
-                    JACDatePicker("Día", selection: $date, displayedComponents: .date).environment(\.timeZone, CalendarClock.calendar.timeZone)
-                    Text("Se guardará con la fecha y este nombre dentro de la carpeta actual.").font(.footnote).foregroundStyle(.secondary)
+                    Text("Se guardará con este nombre. Las carpetas más recientes aparecen primero.").font(.footnote).foregroundStyle(.secondary)
                 }.disabled(busy || attempted)
                 if let error { Section { InlineError(message: error) } }
                 Section { Button(busy ? "Creando…" : "Crear carpeta") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.isOffline).accessibilityIdentifier("media.folder.save") }
@@ -713,27 +779,105 @@ private struct MediaFolderEditor: View {
     }
     private func save() async {
         guard !busy else { return }; busy = true; attempted = true; defer { busy = false }
-        do { let folder = try await store.client.createMediaFolder(id: requestID, parentID: parentID, name: name, date: BoardingClock.today(date)); saved(folder); dismiss() }
+        do { let folder = try await store.client.createMediaFolder(id: requestID, parentID: parentID, name: name, date: BoardingClock.today()); saved(folder); dismiss() }
         catch { if case APIError.invalid = error { attempted = false }; self.error = error.localizedDescription; store.report(error) }
     }
 }
 private struct MediaPreview: Identifiable { let item: MediaItem; let document: ExportedDocument?; let stream: MediaVideoStream?; var id: String { item.id } }
+// One sheet/navigation stack stays alive while the selected document changes.
+// Each original is authorized by PayrollClient; only metadata is paged ahead.
+@MainActor
+final class MediaPhotoViewer: ObservableObject {
+    @Published private(set) var items: [MediaItem]
+    @Published private(set) var selected: MediaItem
+    @Published private(set) var document: ExportedDocument?
+    @Published private(set) var token: String
+    @Published private(set) var loading = false
+    @Published private(set) var error: String?
+    private let folderID: String
+    private let collectionID: String?
+    private let load: (MediaItem) async throws -> ExportedDocument
+    private let page: (String) async throws -> MediaFeed
+    private let denied: (Error) -> Void
+    private var task: Task<Void, Never>?
+    private var active = true
+    private var ownedDocument = false
+    init(selected: MediaItem, document: ExportedDocument?, items: [MediaItem], token: String, folderID: String, collectionID: String?, load: @escaping (MediaItem) async throws -> ExportedDocument, page: @escaping (String) async throws -> MediaFeed, denied: @escaping (Error) -> Void) {
+        self.selected=selected;self.document=document;self.items=items.contains(where:{$0.id==selected.id}) ? items : [selected];self.token=token;self.folderID=folderID;self.collectionID=collectionID;self.load=load;self.page=page;self.denied=denied
+    }
+    var index: Int { items.firstIndex(where:{$0.id==selected.id}) ?? 0 }
+    var canPrevious: Bool { !loading && index > 0 }
+    var canNext: Bool { !loading && (index+1 < items.count || !token.isEmpty) }
+    var counter: String { "\(index+1) de \(items.count)" + (token.isEmpty ? "" : "+") }
+    func start(_ direction: Int) { guard !loading else{return};task=Task {await move(direction)} }
+    func move(_ direction: Int) async {
+        guard active, !loading, direction == -1 || direction == 1 else {return}
+        let target=index+direction;guard target >= 0, target < items.count || direction == 1 && !token.isEmpty else{return}
+        loading=true;error=nil;defer {if active {loading=false}}
+        do {
+            var seen=Set<String>()
+            while target >= items.count && !token.isEmpty {
+                guard seen.insert(token).inserted else {throw APIError.invalid("No pudimos continuar la carpeta. Cierra el visor y actualiza.")}
+                let result=try await page(token);try Task.checkCancellation();guard active else{return}
+                guard result.connected,result.canRead,result.folder?.id==folderID,result.collectionID==collectionID else {throw APIError.invalid("La carpeta cambió. Cierra el visor y actualiza.")}
+                var ids=Set(items.map(\.id));items.append(contentsOf:result.items.filter {$0.kind=="image" && ids.insert($0.id).inserted});token=result.nextPageToken ?? ""
+            }
+            guard target < items.count else{return}
+            let photo=items[target],next=try await load(photo)
+            guard active,!Task.isCancelled else{TemporaryDocuments.remove(next);return}
+            if ownedDocument,let document {TemporaryDocuments.remove(document)}
+            document=next;ownedDocument=true;selected=photo
+        } catch {
+            guard active,!Task.isCancelled else{return}
+            switch error {case APIError.unauthorized,APIError.forbidden:stop();denied(error)
+            default:if !(error is CancellationError) && (error as? URLError)?.code != .cancelled {self.error=error.localizedDescription}}
+        }
+    }
+    func stop() {active=false;task?.cancel();task=nil;if ownedDocument,let document {TemporaryDocuments.remove(document)};document=nil;ownedDocument=false}
+}
 private struct MediaPreviewSheet: View {
     let preview: MediaPreview
+    @StateObject private var photos: MediaPhotoViewer
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
     @State private var player: AVPlayer?
+    init(preview: MediaPreview, photos: [MediaItem], feed: MediaFeed?, client: PayrollClient, denied: @escaping (Error)->Void) {
+        self.preview=preview
+        _photos=StateObject(wrappedValue:MediaPhotoViewer(selected:preview.item,document:preview.document,items:photos,token:feed?.nextPageToken ?? "",folderID:feed?.folder?.id ?? "",collectionID:feed?.collectionID,load:{try await client.mediaDocument($0)},page:{try await client.media(folder:feed?.folder?.id ?? "",pageToken:$0)},denied:denied))
+    }
     var body: some View {
         NavigationStack {
-            Group {
-                if let stream = preview.stream { MediaStreamingPlayer(stream: stream) }
-                else if let document = preview.document, preview.item.kind == "video" { MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video").onAppear { player = AVPlayer(url: document.url); player?.play() }.onDisappear { player?.pause(); player = nil } }
-                else if let document = preview.document { DocumentPreview(url: document.url) }
-            }.privacySensitive().navigationTitle(preview.item.name).jacInlineTitle()
+            VStack(spacing:0) {
+                Group {
+                    if let stream = preview.stream { MediaStreamingPlayer(stream: stream) }
+                    else if let document = preview.document, preview.item.kind == "video" { MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video").onAppear { player = AVPlayer(url: document.url); player?.play() }.onDisappear { player?.pause(); player = nil } }
+                    else if let document = photos.document { DocumentPreview(url: document.url).id(document.url).accessibilityIdentifier("media.photo.document") }
+                }.frame(maxWidth:.infinity,maxHeight:.infinity)
+                if preview.item.kind == "image" {
+                    Divider()
+                    HStack(spacing:18) {
+                        Button {photos.start(-1)} label:{Image(systemName:"chevron.left").frame(width:44,height:44).contentShape(Rectangle())}.disabled(!photos.canPrevious).keyboardShortcut(.leftArrow,modifiers:[]).accessibilityLabel("Foto anterior").accessibilityIdentifier("media.preview.previous")
+                        Spacer(minLength:0)
+                        VStack(spacing:3) {
+                            Text(photos.selected.name).font(.caption).lineLimit(1).accessibilityIdentifier("media.preview.name")
+                            if photos.loading {ProgressView().controlSize(.small)} else {Text(photos.counter).font(.caption2).foregroundStyle(.secondary).monospacedDigit().accessibilityIdentifier("media.preview.counter")}
+                        }
+                        Spacer(minLength:0)
+                        Button {photos.start(1)} label:{Image(systemName:"chevron.right").frame(width:44,height:44).contentShape(Rectangle())}.disabled(!photos.canNext).keyboardShortcut(.rightArrow,modifiers:[]).accessibilityLabel("Foto siguiente").accessibilityIdentifier("media.preview.next")
+                    }.buttonStyle(.plain).padding(.horizontal,16).padding(.vertical,6).background(.bar)
+                    if let error=photos.error {Text(error).font(.footnote).foregroundStyle(.red).padding(12)}
+                }
+            }.simultaneousGesture(DragGesture(minimumDistance:60).onEnded {value in
+                guard preview.item.kind=="image",abs(value.translation.width)>abs(value.translation.height)*1.5 else{return}
+                photos.start(value.translation.width<0 ? 1 : -1)
+            })
+            .privacySensitive().navigationTitle(preview.item.kind=="image" ? photos.selected.name : preview.item.name).jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() }.accessibilityIdentifier("media.preview.close") } }
         }.onChange(of: phase) { _, value in if value != .active { player?.pause() } }
+        .onDisappear {photos.stop();player?.pause()}
         #if os(macOS)
         .frame(minWidth: 720, minHeight: 520)
+        .onMoveCommand {direction in if preview.item.kind=="image" {if direction == .left {photos.start(-1)};if direction == .right {photos.start(1)}}}
         #endif
     }
 }

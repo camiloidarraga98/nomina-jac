@@ -99,6 +99,22 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Gestión"].tap();XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.media"].exists)
         attachScreen(app,name:"solo-alertas-sin-modulos-adicionales")
     }
+    @MainActor func testImageQualityPreferenceCanBeSelectedAndPersistsAcrossRelaunch() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch()
+        tap(app,"media.current.options");tap(app,"media.quality")
+        XCTAssertTrue(app.buttons["media.quality.option.0"].waitForExistence(timeout:10));XCTAssertEqual(app.buttons["media.quality.option.0"].label,"Sin compresión");tap(app,"media.quality.option.6000000")
+        tap(app,"media.quality.close");app.terminate();app.launch();tap(app,"media.current.options");tap(app,"media.quality")
+        let selected=app.buttons["media.quality.option.6000000"];XCTAssertTrue(selected.waitForExistence(timeout:10));XCTAssertEqual(selected.value as? String,"Seleccionado","La preferencia debe persistir al relanzar")
+        tap(app,"media.quality.option.2000000");tap(app,"media.quality.close")
+    }
+    @MainActor func testPhotoSlideshowMovesBothWaysWithinTheSameSheet() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-slideshow"];app.launch()
+        tap(app,"media.item.media-day");tap(app,"media.item.media-photo")
+        XCTAssertTrue(app.staticTexts["media.preview.counter"].waitForExistence(timeout:15));XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2")
+        tap(app,"media.preview.next");XCTAssertTrue(app.staticTexts["Segunda foto ficticia.png"].waitForExistence(timeout:15));XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertFalse(app.buttons["media.preview.next"].isEnabled)
+        tap(app,"media.preview.previous");XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");XCTAssertFalse(app.buttons["media.preview.previous"].isEnabled)
+        attachScreen(app,name:"fotografia-visor-anterior-siguiente");tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
+    }
     @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only"]; app.launch()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
@@ -824,6 +840,24 @@ final class LaunchTests: XCTestCase {
 // Tablet-specific flows use the same intercepted backend and account contracts.
 // Existing iPhone checks remain unchanged; these run only on a real iPad idiom.
 final class IPadTests: XCTestCase {
+    @MainActor func testImageQualityPreferenceCanBeSelectedAndPersistsAcrossRelaunch() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch()
+        tap(app,"media.current.options");tap(app,"media.quality")
+        XCTAssertTrue(app.buttons["media.quality.option.0"].waitForExistence(timeout:10));XCTAssertEqual(app.buttons["media.quality.option.0"].label,"Sin compresión");tap(app,"media.quality.option.6000000")
+        tap(app,"media.quality.close");app.terminate();app.launch();tap(app,"media.current.options");tap(app,"media.quality")
+        let selected=app.buttons["media.quality.option.6000000"];XCTAssertTrue(selected.waitForExistence(timeout:10));XCTAssertEqual(selected.value as? String,"Seleccionado","La preferencia debe persistir al relanzar")
+        tap(app,"media.quality.option.2000000");tap(app,"media.quality.close")
+    }
+
+    @MainActor func testPhotoSlideshowMovesBothWaysWithinTheSameSheet() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-slideshow"];app.launch()
+        tap(app,"media.item.media-day");tap(app,"media.item.media-photo")
+        XCTAssertTrue(app.staticTexts["media.preview.counter"].waitForExistence(timeout:15));XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2")
+        tap(app,"media.preview.next");XCTAssertTrue(app.staticTexts["Segunda foto ficticia.png"].waitForExistence(timeout:15));XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertFalse(app.buttons["media.preview.next"].isEnabled)
+        tap(app,"media.preview.previous");XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");XCTAssertFalse(app.buttons["media.preview.previous"].isEnabled)
+        capture("ipad-fotografia-visor-anterior-siguiente");tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
+    }
+
     @MainActor override func setUpWithError() throws {
         continueAfterFailure = false
         guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("Este recorrido verifica la presentación nativa de iPad.") }

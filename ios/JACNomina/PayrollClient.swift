@@ -694,7 +694,7 @@ final class PayrollClient: ObservableObject {
     func uploadMedia(_ file: MediaLocalFile, parentID: String, progress: @escaping (Int64, Int64) -> Void) async throws {
         guard !usingOfflineCopy else { throw APIError.invalid("Conéctate para subir fotos y videos.") }
         let stamp = try mediaAccessStamp()
-        var plan = try await mediaUploadCommand(["action": .string("start"), "transport": .string("direct"), "id": .string(file.id), "parentId": .string(parentID), "filename": .string(file.name), "mimeType": .string(file.mimeType), "size": .number(Double(file.size))])
+        var plan = try await mediaUploadCommand(["action": .string("start"), "transport": .string("direct"), "id": .string(file.id), "parentId": .string(parentID), "filename": .string(file.name), "mimeType": .string(file.mimeType), "size": .number(Double(file.size)), "imageLimit": .number(Double(file.imageLimit))])
         try plan.validate(for: file); progress(plan.offset, file.size)
         let handle = try FileHandle(forReadingFrom: file.url); defer { try? handle.close() }; var compatible = false
         while !plan.complete {

@@ -3,9 +3,10 @@ import {database} from '@/db/raw';
 import {mailKey} from './payroll-mail';
 import {encryptMail,decryptMail} from './payroll-mail-core';
 import {mediaGuardActive,type MediaGuard} from './media-drive';
-import {MediaFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_DIRECT_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,canReadMedia,canUploadMedia,canConnectMedia,mediaFolderName,mediaUploadInput,mediaSignature,mediaRange,validMediaRequestID,type MediaItem} from './media-core';
+import {MediaFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_DIRECT_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,canReadMedia,canUploadMedia,canConnectMedia,mediaName,mediaFolderName,mediaUploadInput,mediaSignature,mediaRange,validMediaRequestID,type MediaItem} from './media-core';
 import type {AccessUser} from './payroll-permissions';
 import type {MediaR2Secret} from './media-r2';
+import {MEDIA_IMAGE_LIMITS} from './media-image-policy';
 import {r2Request,r2PartURL,r2Bytes,r2XML,xmlValue,xmlEscape} from './media-r2-s3';
 
 export const R2_ROOT='jac_r2_root',R2_COLLECTION='jac-r2-new-20261016';
@@ -54,9 +55,9 @@ export async function r2Feed(g:MediaGuard,user:AccessUser,folder=R2_ROOT,pageTok
 }
 export async function r2Folder(g:MediaGuard,input:Record<string,unknown>){
  if(!validMediaRequestID(input.id)||typeof input.parentId!=='string')throw new MediaFailure('La solicitud de carpeta no es válida.');
- const c=await context(g),id='r2_'+input.id.toLowerCase(),parentID=rootID(input.parentId),name=mediaFolderName(input.name,input.date),digest=hash([c.g.actorID,parentID,name]),now=new Date().toISOString();await parent(c,parentID);
+ const c=await context(g),id='r2_'+input.id.toLowerCase(),parentID=rootID(input.parentId),name=mediaName(input.name),digest=hash([c.g.actorID,parentID,name]),now=new Date().toISOString();await parent(c,parentID);
  await database().prepare(`INSERT OR IGNORE INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,thumbnail_key,actor_id,payload_hash,created_at,modified_at) SELECT ?,?,?,?,0,'','',?,?,?,? WHERE ${same(c)}`).bind(id,parentID,name,MEDIA_FOLDER_MIME,g.actorID,digest,now,now,...g.bindings).run();
- const found=await entry(id);await live(c);if(!found||found.payload_hash!==digest||found.mime_type!==MEDIA_FOLDER_MIME)throw new MediaFailure('Esta solicitud ya pertenece a otra carpeta o cuenta.',409);await parent(c,id);return {folder:{id,name:found.name}};
+ const found=await entry(id);await live(c);let legacyDigest='';if(found&&found.payload_hash!==digest&&typeof input.date==='string'){try{legacyDigest=hash([g.actorID,parentID,mediaFolderName(input.name,input.date)]);}catch{}}if(!found||(found.payload_hash!==digest&&found.payload_hash!==legacyDigest)||found.mime_type!==MEDIA_FOLDER_MIME)throw new MediaFailure('Esta solicitud ya pertenece a otra carpeta o cuenta.',409);await parent(c,id);return {folder:{id,name:found.name}};
 }
 export async function r2Metadata(g:MediaGuard,id:string){const c=await context(g),rows=await chain(c,id),row=rows.at(-1);if(!row||row.mime_type===MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una foto o video.');await live(c);return {item:item(row)};}
 export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string){
@@ -78,12 +79,14 @@ async function uploadID(row:Upload){const data=await decryptMail<{uploadId:strin
 async function state(c:Context,row:Upload){await live(c);if(row.status==='ready')return {id:row.id,offset:row.size,chunkSize:MEDIA_DIRECT_CHUNK_SIZE,complete:true,provider:'r2',fileId:row.drive_id};const part=Math.floor(row.offset/MEDIA_DIRECT_CHUNK_SIZE)+1,length=Math.min(MEDIA_DIRECT_CHUNK_SIZE,row.size-row.offset);if(row.offset%MEDIA_DIRECT_CHUNK_SIZE||length<=0)throw new MediaFailure('El progreso de la subida no es válido.',502);return {id:row.id,offset:row.offset,chunkSize:MEDIA_DIRECT_CHUNK_SIZE,complete:false,provider:'r2',uploadURL:r2PartURL(c.secret,objectKey(row),await uploadID(row),part,length,row.mime_type)};}
 export async function r2Start(g:MediaGuard,input:Record<string,unknown>){
  const valid=mediaUploadInput(input);if(valid.id!==valid.id.toLowerCase())throw new MediaFailure('Usa el identificador original de la subida en minúsculas.');
- const c=await context(g),parentID=rootID(valid.parentId),digest=hash([g.actorID,parentID,valid.filename,valid.mimeType,valid.size]),now=new Date().toISOString();await parent(c,parentID);
+ const imageLimit=input.imageLimit===undefined?0:Number(input.imageLimit);if(!MEDIA_IMAGE_LIMITS.includes(imageLimit as 0|2000000|4000000|6000000))throw new MediaFailure('El nivel de compresión no es válido.');
+ if(valid.mimeType.startsWith('image/')&&imageLimit&&valid.size>imageLimit)throw new MediaFailure('La imagen supera el nivel elegido. Vuelve a seleccionarla o elige Sin compresión.',413);
+ const c=await context(g),parentID=rootID(valid.parentId),digest=hash([g.actorID,parentID,valid.filename,valid.mimeType,valid.size,...(input.imageLimit===undefined?[]:[imageLimit])]),now=new Date().toISOString();await parent(c,parentID);
  await database().prepare(`INSERT OR IGNORE INTO jac_media_operations(id,actor_id,parent_id,payload_hash,kind,drive_id,name,mime_type,size,connection_version,created_at,expires_at) SELECT ?,?,?,?,'r2-upload',?,?,?,?,?,?,? WHERE ${same(c)}`).bind(valid.id,g.actorID,parentID,digest,'r2_'+valid.id.toLowerCase(),valid.filename,valid.mimeType,valid.size,c.config.version,now,new Date(Date.now()+7*86400000).toISOString(),...g.bindings).run();
  let row=await own(c,valid.id);if(row.payload_hash!==digest)throw new MediaFailure('Esta solicitud ya pertenece a otro archivo.',409);if(row.status==='ready'||row.session_payload)return state(c,row);
  const claim=await lock(c,row);try{
   const response=await call(c,'POST',objectKey(row),{uploads:''},{'content-type':row.mime_type,'x-amz-meta-jac-request':row.id});await checked(response);const id=xmlValue(await r2XML(response),'UploadId');if(!id||id.length>2048||/[<>\s]/.test(id))throw new MediaFailure('R2 no confirmó la sesión de subida.',502);
-  await update(c,row,claim,0,'pending',await encryptMail({uploadId:id},mailKey()));row=(await operation(row.id))!;return state(c,row);
+  await update(c,row,claim,0,'pending',await encryptMail({uploadId:id,imageLimit},mailKey()));row=(await operation(row.id))!;return state(c,row);
  }finally{await unlock(row.id,claim);}
 }
 async function finalObject(c:Context,row:Upload){
@@ -93,6 +96,7 @@ async function finalObject(c:Context,row:Upload){
  const bytes=await r2Bytes(first,64);if(bytes.length!==end+1||!mediaSignature(bytes,row.mime_type))throw new MediaFailure('El contenido no corresponde a la foto o video seleccionado.',422);return true;
 }
 async function publish(c:Context,row:Upload,claim:string){
+ const policy=await decryptMail<{imageLimit?:number}>(row.session_payload,mailKey());if(row.mime_type.startsWith('image/')&&policy.imageLimit&&row.size>policy.imageLimit)throw new MediaFailure('La imagen supera el nivel de compresión elegido.',413);
  await parent(c,row.parent_id);await live(c);const now=new Date().toISOString();
  await database().prepare(`INSERT OR IGNORE INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,thumbnail_key,actor_id,payload_hash,created_at,modified_at) SELECT ?,?,?,?,?,?,'',?,?,?,? WHERE ${same(c)} AND EXISTS(SELECT 1 FROM jac_media_operations WHERE id=? AND claim=? AND connection_version=?)`).bind(row.drive_id,row.parent_id,row.name,row.mime_type,row.size,objectKey(row),c.g.actorID,row.payload_hash,now,now,...c.g.bindings,row.id,claim,c.config.version).run();
  const found=await entry(row.drive_id);if(found?.payload_hash!==row.payload_hash||found.object_key!==objectKey(row))throw new MediaFailure('No se pudo publicar el archivo.',409);await update(c,row,claim,row.size,'ready',row.session_payload);return state(c,(await operation(row.id))!);

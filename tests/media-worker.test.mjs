@@ -234,6 +234,7 @@ test('Workerd starts a fresh R2-only gallery, publishes direct bytes, serves pri
   const storage={accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0};
   assert.equal((await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify(storage)})).status,200);
   assert.equal((await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({action:'activateNewCollection',version:1})})).status,200);
+  const rejected=await call('/api/media/upload',{role:'photo',method:'POST',body:JSON.stringify({action:'start',transport:'direct',id:crypto.randomUUID(),parentId:'jac_r2_root',filename:'oversized.jpg',mimeType:'image/jpeg',size:2_000_001,imageLimit:2_000_000})});assert.equal(rejected.status,413);
   assert.equal((await db.prepare("SELECT credentials FROM jac_media_connection WHERE id='jac'").first()).credentials,'');
   let response=await call('/api/media',{role:'photo'});assert.equal(response.status,200);const root=(await response.json()).root.id;assert.equal(root,'jac_r2_root');assert.equal((await call('/api/media?folder='+folderID)).status,410);
   const id=crypto.randomUUID(),request={action:'start',transport:'direct',id,parentId:root,filename:'Foto-nueva.png',mimeType:'image/png',size:13};

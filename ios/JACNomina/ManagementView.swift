@@ -13,13 +13,13 @@ struct ManagementView: View {
     let user: PayrollUser
     @State private var destination: Destination?
     private enum Destination: String, Identifiable {
-        case account, expenses, alerts, crm, media, archive, employees, mail, notifications, concepts, users
+        case imageQuality, account, expenses, alerts, crm, media, archive, employees, mail, notifications, concepts, users
         var id:String { rawValue }
         var title:String {
             switch self {
             case .account:return "Mi cuenta";case .expenses:return "Gastos de viaje";case .alerts:return "Alertas";case .crm:return "CRM · Shows y abonos"
             case .media:return "Fotografía";case .archive:return "Archivo";case .employees:return "Equipo";case .mail:return "Correos y Gmail"
-            case .notifications:return "Notificaciones";case .concepts:return "Conceptos y reglas";case .users:return "Usuarios y permisos"
+            case .imageQuality:return "Calidad de las imágenes";case .notifications:return "Notificaciones";case .concepts:return "Conceptos y reglas";case .users:return "Usuarios y permisos"
             }
         }
         var subtitle:String {
@@ -33,7 +33,7 @@ struct ManagementView: View {
             switch self {
             case .account:return "person.crop.circle";case .expenses:return "receipt";case .alerts:return "bell.badge";case .crm:return "briefcase"
             case .media:return "photo.on.rectangle.angled";case .archive:return "archivebox";case .employees:return "person.2";case .mail:return "envelope"
-            case .notifications:return "bell";case .concepts:return "list.bullet.rectangle";case .users:return "person.badge.key"
+            case .imageQuality:return "photo.badge.checkmark";case .notifications:return "bell";case .concepts:return "list.bullet.rectangle";case .users:return "person.badge.key"
             }
         }
         var tone:JACTone {
@@ -52,6 +52,7 @@ struct ManagementView: View {
     }
     private var preferences:[Destination] {
         var items:[Destination]=user.hasNotices ? [.notifications] : []
+        if user.canUploadMedia {items.append(.imageQuality)}
         if user.hasSection(.payroll) { items.append(.concepts) };if user.isOwner && user.hasSection(.crm) {items.append(.users)}
         return items
     }
@@ -90,6 +91,7 @@ struct ManagementView: View {
                     case .archive:if user.hasSection(.payroll),let overview=store.overview {PeriodsView(overview:overview,archive:true,embedded:true)}
                     case .employees:if user.hasSection(.payroll),let overview=store.overview {EmployeesView(overview:overview,embedded:true)}
                     case .mail:if user.hasSection(.payroll) {MailView(user:user)}
+                    case .imageQuality:if user.canUploadMedia {MediaImageQualitySettings()}
                     case .notifications:if user.hasNotices {NotificationSettingsView()}
                     case .concepts:if user.hasSection(.payroll) {ConceptsRulesView(user:user)}
                     case .users:if user.hasSection(.crm) {UsersView()}
