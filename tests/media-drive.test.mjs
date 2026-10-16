@@ -29,7 +29,7 @@ let ownerToken,photoToken,readerToken,files,sessions,calls,hook,sequence,account
 const folder=(id,name,parents=[])=>({id,name,mimeType:m.MEDIA_FOLDER_MIME,parents,capabilities:{canAddChildren:true},trashed:false});
 beforeEach(async()=>{
  beforeQuery=undefined;hook=undefined;calls=[];sequence=0;account={email:'jacmusicestudios@gmail.com',email_verified:true};files=new Map([[m.MEDIA_ROOT_ID,folder(m.MEDIA_ROOT_ID,'Raíz ficticia')],[folderID,folder(folderID,'2026-10-16 · Show ficticio',[m.MEDIA_ROOT_ID])],[outsideID,folder(outsideID,'Ajena')],[imageID,{id:imageID,name:'Foto ficticia.jpg',mimeType:'image/jpeg',parents:[folderID],size:'12',thumbnailLink:'https://lh3.googleusercontent.com/fixture-preview',capabilities:{canDownload:true},trashed:false}]]);sessions=new Map();
- sql.prepare('DELETE FROM jac_media_operations').run();sql.prepare('DELETE FROM payroll_oauth').run();sql.prepare('UPDATE payroll_users SET active=1,media_only=1 WHERE id=?').run(photoID);
+ sql.prepare('DELETE FROM jac_media_locations').run();sql.prepare('DELETE FROM jac_media_operations').run();sql.prepare('DELETE FROM payroll_oauth').run();sql.prepare('UPDATE payroll_users SET active=1,media_only=1 WHERE id=?').run(photoID);
  ownerToken=await m.makeSession(ownerID);photoToken=await m.makeSession(photoID);readerToken=await m.makeSession(readerID);
  await m.saveMailCredentials('media-fixture.apps.googleusercontent.com','fixture-client-secret');await m.ensureMediaConfig();
  const cipher=await m.encryptMail({clientId:'media-fixture.apps.googleusercontent.com',clientSecret:'fixture-client-secret',refreshToken:'fixture-drive-refresh',scopes:[m.MEDIA_SCOPE]},globalThis.__mediaDriveEnv.PAYROLL_MAIL_KEY);
@@ -60,7 +60,13 @@ globalThis.fetch=async(input,options={})=>{
    const final={...session.metadata,size:String(session.size),trashed:false,capabilities:{canDownload:true}};files.set(final.id,final);return Response.json(final,{status:201});
   }
   if(url.pathname==='/drive/v3/files'&&entry.method==='POST'){const body=JSON.parse(options.body),f={...body,trashed:false,capabilities:{canAddChildren:true}};files.set(body.id,f);return Response.json(f);}
-  if(url.pathname==='/drive/v3/files'&&entry.method==='GET'){const parent=url.searchParams.get('q')?.match(/^'([^']+)' in parents/)?.[1];return Response.json({files:[...files.values()].filter(f=>f.parents?.includes(parent))});}
+  if(url.pathname==='/drive/v3/files'&&entry.method==='GET'){
+   const q=url.searchParams.get('q')||'',parent=q.match(/^'([^']+)' in parents/)?.[1];
+   const match=q.match(/(?:^| and )name\s*=\s*'((?:\\.|[^'\\])*)'\s+and\s+trashed\s*=\s*false$/);
+   assert.ok(parent,'Parent recovery must use a Google-confirmed folder locator, never a global name search');
+   if(!match)return Response.json({files:[...files.values()].filter(f=>f.parents?.includes(parent))});
+   const name=match[1].replace(/\\(['\\])/g,'$1');return Response.json({files:[...files.values()].filter(f=>f.parents?.includes(parent)&&f.name===name&&!f.trashed)});
+  }
   const id=url.pathname.match(/^\/drive\/v3\/files\/([A-Za-z0-9_-]+)$/)?.[1],f=files.get(id);if(!f)return new Response(null,{status:404});
   if(url.searchParams.get('alt')==='media'){
    const range=headers.get('range');if(range){const match=range.match(/^bytes=(\d+)-(\d+)$/);if(match&&Number(match[1])<=Number(match[2])&&Number(match[2])<Number(f.size)){const start=Number(match[1]),end=Number(match[2]);return new Response(new Uint8Array(end-start+1),{status:206,headers:{'Content-Type':f.mimeType,'Content-Range':`bytes ${start}-${end}/${f.size}`,'Content-Length':String(end-start+1)}});}return new Response(null,{status:416,headers:{'Content-Range':'bytes */'+f.size}});}
@@ -73,6 +79,13 @@ globalThis.fetch=async(input,options={})=>{
 const input=(overrides={})=>({id:crypto.randomUUID(),parentId:folderID,filename:'foto-ficticia.png',mimeType:'image/png',size:m.MEDIA_CHUNK_SIZE+13,...overrides});
 const chunk=()=>{const bytes=new Uint8Array(m.MEDIA_CHUNK_SIZE);bytes.set([137,80,78,71,13,10,26,10]);return bytes;};
 const fails=status=>e=>e instanceof m.MediaFailure&&e.status===status;
+const isNameListing=entry=>entry.method==='GET'&&entry.url.pathname==='/drive/v3/files'&&/(?:^| and )name\s*=/.test(entry.url.searchParams.get('q')||'');
+async function seedLocations(g,user){await m.mediaFeed(g,user);await m.mediaFeed(g,user,folderID);assert.equal(sql.prepare('SELECT parent_id FROM jac_media_locations WHERE file_id=?').get(imageID).parent_id,folderID);}
+async function withoutGetParents(entry,next,ids=[imageID]){
+ const response=await next(),id=entry.url.pathname.match(/^\/drive\/v3\/files\/([A-Za-z0-9_-]+)$/)?.[1];
+ if(entry.method==='GET'&&ids.includes(id)&&!entry.url.searchParams.has('alt')){const data=await response.json();delete data.parents;return Response.json(data,{status:response.status});}
+ return response;
+}
 
 test('Google permission revocation remains 403 so native caches cannot treat it as an outage',async()=>{
  const g=await guard(ownerToken,'read');
@@ -123,6 +136,82 @@ test('parent traversal rejects external roots, shortcuts, cycles and files moved
  files.set('shortcut_fixture',{...folder('shortcut_fixture','Acceso directo',[m.MEDIA_ROOT_ID]),shortcutDetails:{targetId:outsideID}});await assert.rejects(async()=>m.mediaFeed(g,await m.authenticatedSession(photoToken),'shortcut_fixture'),fails(404));
  files.set('cycle_a_fixture',folder('cycle_a_fixture','A',['cycle_b_fixture']));files.set('cycle_b_fixture',folder('cycle_b_fixture','B',['cycle_a_fixture']));await assert.rejects(()=>m.createMediaFolder(g,{id:crypto.randomUUID(),parentId:'cycle_a_fixture',name:'Ciclo',date:'2026-10-16'}),fails(403));
  files.get(imageID).parents=[outsideID];await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.equal(calls.filter(c=>c.url.searchParams.get('alt')==='media').length,0);
+});
+test('the authorized root may omit parents but a child without parents cannot expose bytes or thumbnails',async()=>{
+ const g=await guard(ownerToken,'read'),owner=await m.authenticatedSession(ownerToken);
+ delete files.get(m.MEDIA_ROOT_ID).parents;
+ const feed=await m.mediaFeed(g,owner);assert.equal(feed.connected,true);assert.equal(feed.root.id,m.MEDIA_ROOT_ID);assert.equal(feed.folder.id,m.MEDIA_ROOT_ID);assert.ok(feed.items.some(f=>f.id===folderID));
+ delete files.get(imageID).parents;const before=calls.length;
+ for(const thumbnail of [false,true])await assert.rejects(()=>m.mediaFile(g,imageID,thumbnail,null),fails(403));
+ assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media'||c.url.hostname.endsWith('googleusercontent.com')).length,0,'No file bytes or thumbnail may be requested without a proven path to the root');
+});
+test('a parent cycle is denied for original content and thumbnail requests before any bytes are fetched',async()=>{
+ const g=await guard(ownerToken,'read');files.get(imageID).parents=['cycle_parent_fixture'];files.set('cycle_parent_fixture',folder('cycle_parent_fixture','Ciclo ficticio',[imageID]));const before=calls.length;
+ for(const thumbnail of [false,true])await assert.rejects(()=>m.mediaFile(g,imageID,thumbnail,null),fails(403));
+ assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media'||c.url.hostname.endsWith('googleusercontent.com')).length,0);
+});
+test('ancestry at the traversal limit succeeds and a deeper chain is denied without fetching file bytes',async()=>{
+ const g=await guard(ownerToken,'read');
+ // Original + 22 intermediate folders + root = exactly 24 metadata reads.
+ for(let i=0;i<23;i++)files.set('depth_fixture_'+i,folder('depth_fixture_'+i,'Nivel ficticio '+i,i===22?[m.MEDIA_ROOT_ID]:['depth_fixture_'+(i+1)]));
+ files.get(imageID).parents=['depth_fixture_1'];let response=await m.mediaFile(g,imageID,false,null);assert.equal(response.status,200);await response.arrayBuffer();
+ // One extra folder makes 25 reads necessary; the bounded walk must refuse it.
+ files.get(imageID).parents=['depth_fixture_0'];const before=calls.length;await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));
+ assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media').length,0);
+});
+test('shared files missing parents in get use fresh exact-ID list parents for originals and thumbnails',async()=>{
+ const g=await guard(ownerToken,'read');await seedLocations(g,await m.authenticatedSession(ownerToken));hook=(entry,next)=>withoutGetParents(entry,next,[imageID,folderID]);
+ for(const thumbnail of [false,true]){const before=calls.length,response=await m.mediaFile(g,imageID,thumbnail,null);assert.equal(response.status,200);await response.arrayBuffer();const listings=calls.slice(before).filter(isNameListing);assert.ok(listings.length>=4,'Both image and folder membership are proven again after reading bytes');assert.ok(listings.every(c=>c.url.searchParams.get('supportsAllDrives')==='true'&&c.url.searchParams.get('includeItemsFromAllDrives')==='true'));}
+});
+test('duplicate names and metadata mismatches cannot substitute another file ID for omitted parents',async()=>{
+ const g=await guard(ownerToken,'read');await seedLocations(g,await m.authenticatedSession(ownerToken));const other={...files.get(imageID),id:'same_name_different_id_fixture',parents:[m.MEDIA_ROOT_ID]};files.set(other.id,other);
+ for(const replacement of [[other],[{...files.get(imageID),name:'Different name'}],[{...files.get(imageID),mimeType:'video/mp4'}],[{...files.get(imageID),trashed:true}],[{...files.get(imageID),shortcutDetails:{targetId:other.id}}],[{...files.get(imageID),parents:[]}],[{...files.get(imageID),parents:[folderID,outsideID]}]]){
+  const before=calls.length;hook=(entry,next)=>isNameListing(entry)?Response.json({files:replacement}):withoutGetParents(entry,next);
+  await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media').length,0);
+ }
+});
+test('a file moved after original or thumbnail fetching fails the second freshly listed ancestry check',async()=>{
+ const g=await guard(ownerToken,'read');await seedLocations(g,await m.authenticatedSession(ownerToken));
+ for(const thumbnail of [false,true]){
+  files.get(imageID).parents=[folderID];let fetched=false;const before=calls.length;
+  hook=async(entry,next)=>{const response=await withoutGetParents(entry,next);if(entry.url.searchParams.get('alt')==='media'||entry.url.hostname.endsWith('googleusercontent.com')){fetched=true;files.get(imageID).parents=[outsideID];}return response;};
+  await assert.rejects(()=>m.mediaFile(g,imageID,thumbnail,null),fails(403));assert.equal(fetched,true);assert.ok(calls.slice(before).filter(isNameListing).length>=2,'Fresh listing must run after bytes as well');
+ }
+});
+test('name fallback paginates to the exact ID, bounds repeated or excessive pages, and escapes Drive names',async()=>{
+ const g=await guard(ownerToken,'read');await seedLocations(g,await m.authenticatedSession(ownerToken));let namePages=[];
+ hook=(entry,next)=>{if(isNameListing(entry)){namePages.push(entry.url.searchParams.get('pageToken')||'');return entry.url.searchParams.has('pageToken')?next():Response.json({files:[{...files.get(imageID),id:'other_paginated_id_fixture'}],nextPageToken:'fixture-next-page'});}return withoutGetParents(entry,next);};
+ let response=await m.mediaFile(g,imageID,false,null);assert.equal(response.status,200);await response.arrayBuffer();assert.deepEqual(namePages,['','fixture-next-page','','fixture-next-page']);
+ namePages=[];hook=(entry,next)=>{if(isNameListing(entry)){namePages.push(entry.url.searchParams.get('pageToken')||'');return Response.json({files:[],nextPageToken:'repeated-fixture-page'});}return withoutGetParents(entry,next);};const before=calls.length;await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.ok(namePages.length<=10);assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media').length,0);
+ files.get(imageID).name="Foto 'especial' \\ 2026.jpg";hook=(entry,next)=>withoutGetParents(entry,next);response=await m.mediaFile(g,imageID,false,null);assert.equal(response.status,200);await response.arrayBuffer();
+ const queries=calls.filter(isNameListing).slice(-2).map(c=>c.url.searchParams.get('q'));assert.deepEqual(queries,["'"+folderID+"' in parents and name = 'Foto \\'especial\\' \\\\ 2026.jpg' and trashed=false","'"+folderID+"' in parents and name = 'Foto \\'especial\\' \\\\ 2026.jpg' and trashed=false"]);
+});
+test('a location is only a locator: missing, stale, foreign or unconfirmed hints never authorize media bytes',async()=>{
+ const g=await guard(ownerToken,'read'),owner=await m.authenticatedSession(ownerToken),version=(await m.mediaConfig()).version;
+ hook=(entry,next)=>withoutGetParents(entry,next);let before=calls.length;
+ await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.equal(calls.slice(before).filter(isNameListing).length,0,'Unobserved files do not trigger global name searches');
+ hook=undefined;await seedLocations(g,owner);
+ for(const [parent,revision] of [[outsideID,version],[folderID,version-1]]){
+  sql.prepare('UPDATE jac_media_locations SET parent_id=?,connection_version=? WHERE file_id=?').run(parent,revision,imageID);before=calls.length;hook=(entry,next)=>withoutGetParents(entry,next);
+  await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media').length,0);
+ }
+ sql.prepare('UPDATE jac_media_locations SET parent_id=?,connection_version=? WHERE file_id=?').run(folderID,version,imageID);
+ hook=(entry,next)=>isNameListing(entry)?Response.json({files:[]}):withoutGetParents(entry,next);before=calls.length;await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media').length,0,'Even a current database hint needs fresh confirmation from Google');
+ hook=undefined;await seedLocations(g,owner);sql.prepare("UPDATE jac_media_connection SET version=version+1 WHERE id='jac'").run();hook=(entry,next)=>withoutGetParents(entry,next);before=calls.length;await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.equal(calls.slice(before).filter(isNameListing).length,0,'Rotating the connection invalidates earlier location observations');
+});
+test('a forged foreign hint that is confirmed by Google still fails the full path to the authorized root',async()=>{
+ const g=await guard(ownerToken,'read'),version=(await m.mediaConfig()).version;files.get(imageID).parents=[outsideID];
+ sql.prepare('INSERT INTO jac_media_locations(file_id,parent_id,connection_version) VALUES (?,?,?)').run(imageID,outsideID,version);hook=(entry,next)=>withoutGetParents(entry,next);const before=calls.length;
+ await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.ok(calls.slice(before).some(isNameListing));assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media').length,0,'A locator cannot make an outside folder part of JAC');
+});
+test('connection rotation or session revocation during listing cannot save a location observation or deliver bytes',async()=>{
+ const g=await guard(ownerToken,'read'),owner=await m.authenticatedSession(ownerToken);
+ hook=async(entry,next)=>{const r=await next();if(entry.method==='GET'&&entry.url.pathname==='/drive/v3/files')sql.prepare("UPDATE jac_media_connection SET version=version+1 WHERE id='jac'").run();return r;};
+ await assert.rejects(()=>m.mediaFeed(g,owner,folderID),fails(403));assert.equal(sql.prepare('SELECT count(*) n FROM jac_media_locations').get().n,0);
+ hook=undefined;await seedLocations(g,owner);hook=async(entry,next)=>{const r=await withoutGetParents(entry,next);if(isNameListing(entry))sql.prepare("UPDATE jac_media_connection SET version=version+1 WHERE id='jac'").run();return r;};const before=calls.length;await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));assert.equal(calls.slice(before).filter(c=>c.url.searchParams.get('alt')==='media').length,0);
+ hook=undefined;sql.prepare('DELETE FROM jac_media_locations').run();let changed=false;
+ beforeQuery=async query=>{if(!changed&&query.text.startsWith('INSERT INTO jac_media_locations')){changed=true;sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(ownerToken));}};
+ await assert.rejects(()=>m.mediaFeed(g,owner,folderID),fails(403));assert.equal(changed,true);assert.equal(sql.prepare('SELECT count(*) n FROM jac_media_locations').get().n,0,'The final insertion must be guarded against revocation after Google returns');
 });
 test('downloads revalidate membership after fetching and preserve valid partial content',async()=>{
  const g=await guard(ownerToken,'read');const response=await m.mediaFile(g,imageID,false,'bytes=2-5');assert.equal(response.status,206);assert.equal(response.headers.get('content-range'),'bytes 2-5/12');assert.equal((await response.arrayBuffer()).byteLength,4);
