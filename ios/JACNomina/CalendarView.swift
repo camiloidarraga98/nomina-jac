@@ -19,6 +19,8 @@ struct CalendarView: View {
     @State private var requestID = UUID()
     @State private var refreshedAt = Date.distantPast
     @State private var liveMonth: String?
+    @State private var contentWidth: CGFloat = 0
+    private var wideTablet: Bool { JACDevice.isPad && contentWidth >= 820 }
     @State private var offlineMessage: String?
     init(user: PayrollUser, initialMonth: String? = nil) {
         self.user = user
@@ -56,37 +58,19 @@ struct CalendarView: View {
                 if let visible, visible.connection.connected, visible.connection.selected != nil {
                     Section { Picker("Vista de agenda", selection: $mode) { Text("Mes").tag("Mes"); Text("Próximos").tag("Próximos") }.pickerStyle(.segmented).accessibilityIdentifier("agenda.mode") }
                     if mode == "Mes" {
-                        Section {
-                            HStack {
-                                Button { shift(-1) } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Mes anterior")
-                                Spacer(); Text(visible.monthLabel.capitalized).font(.headline); Spacer()
-                                Button { shift(1) } label: { Image(systemName: "chevron.right") }.accessibilityLabel("Mes siguiente")
-                            }.buttonStyle(JACSecondaryButtonStyle(tone:.teal))
-                            .padding(.vertical,4)
-                            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 7), spacing: 5) {
-                                ForEach(["L", "M", "X", "J", "V", "S", "D"], id: \.self) { Text($0).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
-                                ForEach(visible.days, id: \.self) { date in
-                                    let count = byDay[date]?.count ?? 0
-                                    Button { day = date } label: {
-                                        VStack(spacing: 4) {
-                                            Text(String(Int(date.suffix(2)) ?? 0)).font(.subheadline.weight(day == date ? .bold : .regular))
-                                            HStack(spacing: 2) { ForEach(0..<min(count, 3), id: \.self) { _ in Circle().fill(day == date ? Color.white : JACTone.teal.color).frame(width: 4, height: 4) } }.frame(height: 4)
-                                        }.frame(maxWidth: .infinity, minHeight: 42).background(day == date ? JACTheme.primary : .clear, in: RoundedRectangle(cornerRadius: 13))
-                                            .foregroundStyle(day == date ? .white : date.hasPrefix(month) ? JACTheme.ink : .secondary)
-                                            .overlay(RoundedRectangle(cornerRadius: 13).stroke(date == visible.today ? JACTone.teal.color : .clear, lineWidth: 1))
-                                            .contentShape(Rectangle())
-                                    }.buttonStyle(.plain).accessibilityLabel(CalendarClock.dayLabel(date) + ", \(count) eventos").accessibilityValue(day == date ? "Seleccionado":"").accessibilityAddTraits(day == date ? .isSelected : []).accessibilityIdentifier("agenda.day.\(date)")
-                                }
+                        if wideTablet {
+                            Section {
+                                HStack(alignment: .top, spacing: 28) {
+                                    VStack(spacing: 12) { monthPanel(visible, byDay: byDay) }.frame(minWidth: 350, maxWidth: 490)
+                                    VStack(alignment: .leading, spacing: 18) {
+                                        Text(CalendarClock.dayLabel(day).capitalized).font(.headline)
+                                        dayEvents(byDay)
+                                    }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.top, 8)
+                                }.padding(.vertical, 8).accessibilityElement(children: .contain).accessibilityIdentifier("ipad.agenda.columns")
                             }
-                            ViewThatFits(in:.horizontal) {
-                                HStack { todayButton; Spacer(); agendaActions }
-                                VStack(alignment:.leading,spacing:10) { todayButton; agendaActions }
-                            }.padding(.top,10)
-                        }
-                        Section(CalendarClock.dayLabel(day).capitalized) {
-                            let events = byDay[day] ?? []
-                            if events.isEmpty { Text("No hay eventos para este día.").foregroundStyle(.secondary) }
-                            ForEach(events) { item in Button { event = item } label: { AgendaEventRow(event: item) }.buttonStyle(.plain).accessibilityIdentifier("agenda.event.\(item.id)") }
+                        } else {
+                            Section { monthPanel(visible, byDay: byDay) }
+                            Section(CalendarClock.dayLabel(day).capitalized) { dayEvents(byDay) }
                         }
                     } else {
                         Section { agendaActions }
@@ -106,7 +90,7 @@ struct CalendarView: View {
                         Section { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
                     }
                 }
-            }.jacSurface().navigationTitle("Agenda").jacInlineTitle().refreshable { await refresh() }.jacRefreshCommand { Task { await refresh() } }
+            }.background { GeometryReader { geometry in Color.clear.onAppear { contentWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in contentWidth = width } }.allowsHitTesting(false) }.jacSurface().navigationTitle("Agenda").jacInlineTitle().refreshable { await refresh() }.jacRefreshCommand { Task { await refresh() } }
                 .toolbar {
                     if user.isOwner { ToolbarItem(placement:.jacTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) } }
                 }
@@ -125,6 +109,40 @@ struct CalendarView: View {
                 }
                 .sheet(item: $editor) { session in AgendaEventEditor(session: session) { result in notice = result.notice; await refresh() } }
         }
+    }
+    private func monthPanel(_ visible: AgendaData, byDay: [String: [AgendaEvent]]) -> some View {
+        Group {
+            HStack {
+                Button { shift(-1) } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Mes anterior")
+                Spacer(); Text(visible.monthLabel.capitalized).font(.headline); Spacer()
+                Button { shift(1) } label: { Image(systemName: "chevron.right") }.accessibilityLabel("Mes siguiente")
+            }.buttonStyle(JACSecondaryButtonStyle(tone:.teal))
+            .padding(.vertical,4)
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 7), spacing: 5) {
+                ForEach(["L", "M", "X", "J", "V", "S", "D"], id: \.self) { Text($0).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
+                ForEach(visible.days, id: \.self) { date in
+                    let count = byDay[date]?.count ?? 0
+                    Button { day = date } label: {
+                        VStack(spacing: 4) {
+                            Text(String(Int(date.suffix(2)) ?? 0)).font(.subheadline.weight(day == date ? .bold : .regular))
+                            HStack(spacing: 2) { ForEach(0..<min(count, 3), id: \.self) { _ in Circle().fill(day == date ? Color.white : JACTone.teal.color).frame(width: 4, height: 4) } }.frame(height: 4)
+                        }.frame(maxWidth: .infinity, minHeight: JACDevice.isPad ? 56 : 42).background(day == date ? JACTheme.primary : .clear, in: RoundedRectangle(cornerRadius: 13))
+                            .foregroundStyle(day == date ? .white : date.hasPrefix(month) ? JACTheme.ink : .secondary)
+                            .overlay(RoundedRectangle(cornerRadius: 13).stroke(date == visible.today ? JACTone.teal.color : .clear, lineWidth: 1))
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel(CalendarClock.dayLabel(date) + ", \(count) eventos").accessibilityValue(day == date ? "Seleccionado":"").accessibilityAddTraits(day == date ? .isSelected : []).accessibilityIdentifier("agenda.day.\(date)")
+                }
+            }
+            ViewThatFits(in:.horizontal) {
+                HStack { todayButton; Spacer(); agendaActions }
+                VStack(alignment:.leading,spacing:10) { todayButton; agendaActions }
+            }.padding(.top,10)
+        }
+    }
+    @ViewBuilder private func dayEvents(_ byDay: [String: [AgendaEvent]]) -> some View {
+            let events = byDay[day] ?? []
+            if events.isEmpty { Text("No hay eventos para este día.").foregroundStyle(.secondary) }
+            ForEach(events) { item in Button { event = item } label: { AgendaEventRow(event: item) }.buttonStyle(.plain).accessibilityIdentifier("agenda.event.\(item.id)") }
     }
     private var todayButton: some View {
         Button("Hoy") { month = CalendarClock.month(Date()); day = CalendarClock.day(Date()) }.buttonStyle(JACSecondaryButtonStyle(tone:.teal))

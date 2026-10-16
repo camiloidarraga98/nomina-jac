@@ -464,9 +464,16 @@ enum JACPlatform {
 }
 
 enum JACDevice {
+    static var isPad: Bool {
+        #if os(iOS)
+        UIDevice.current.userInterfaceIdiom == .pad
+        #else
+        false
+        #endif
+    }
     static var name:String {
         #if os(iOS)
-        "iPhone"
+        isPad ? "iPad" : "iPhone"
         #else
         "Mac"
         #endif

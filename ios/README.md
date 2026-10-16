@@ -1,3 +1,9 @@
+## App universal iPhone/iPad — 0.20.0 (32)
+
+El **mismo proyecto** ya incluye iPad, con barra lateral nativa, CRM para administradores y Agenda adaptada al ancho disponible. Fotografía, itinerarios/pases, alertas, nómina, Gestión y Mi cuenta conservan sus accesos y funciones. El iPhone mantiene sus pestañas. Ver [App para iPad](../docs/IPAD_APP.md) para pruebas y límites de verificación.
+
+Para instalar, abre **este mismo `ios/JACNomina.xcodeproj`**, elige **JACNomina → tu iPad → Run**. Se conservan la firma personal y `co.jacmusic.nomina`; push sigue suspendido. No necesitas descargar ni sustituir otro proyecto.
+
 ## Fotografía: actualización inmediata — iPhone 0.18.1 (30)
 
 La galería muestra la última copia guardada mientras consulta Drive al entrar; ya no espera el ciclo de 30 segundos para conectarse. La app precarga el listado principal tras validar la sesión. Sin internet conserva lo descargado y la sesión, y una revocación real retira el contenido. Actualiza con **Run desde el mismo proyecto**, conservando firma y push suspendido. Ver [Fotografía: UX](../docs/PHOTOGRAPHY_UX.md).

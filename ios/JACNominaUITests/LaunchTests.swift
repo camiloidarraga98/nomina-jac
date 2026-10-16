@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class LaunchTests: XCTestCase {
     @MainActor func testVisiblePhotoThumbnailsWakeWhenSlowSessionRestoresOnline() {
@@ -818,4 +819,90 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"factura-ocr-enviada-a-revision")
     }
 
+}
+
+// Tablet-specific flows use the same intercepted backend and account contracts.
+// Existing iPhone checks remain unchanged; these run only on a real iPad idiom.
+final class IPadTests: XCTestCase {
+    @MainActor override func setUpWithError() throws {
+        continueAfterFailure = false
+        guard UIDevice.current.userInterfaceIdiom == .pad else { throw XCTSkip("Este recorrido verifica la presentación nativa de iPad.") }
+        XCUIDevice.shared.orientation = .landscapeLeft
+    }
+    @MainActor override func tearDownWithError() throws { XCUIDevice.shared.orientation = .portrait }
+    @MainActor private func tap(_ app: XCUIApplication, _ id: String) {
+        let button = app.buttons[id]; XCTAssertTrue(button.waitForExistence(timeout: 20), id); button.tap()
+    }
+    @MainActor private func capture(_ name: String) { let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment) }
+    @MainActor func testTabletSidebarCalendarRotationAndCRM() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"]; app.launch()
+        for id in ["crm", "payroll", "agenda", "itineraries", "media", "management"] { XCTAssertTrue(app.buttons["ipad.section." + id].waitForExistence(timeout: 20)) }
+        XCTAssertFalse(app.tabBars.buttons["Quincena"].exists)
+        tap(app, "ipad.section.agenda"); XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout: 20))
+        if app.frame.width >= 1300 { XCTAssertTrue(app.descendants(matching: .any)["ipad.agenda.columns"].exists) }
+        let day = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "agenda.day.")).element(boundBy: 12)
+        XCTAssertTrue(day.exists); let id = day.identifier
+        day.coordinate(withNormalizedOffset: CGVector(dx: 0.93, dy: 0.12)).tap()
+        XCTAssertEqual(day.value as? String, "Seleccionado"); capture("ipad-agenda-horizontal")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.buttons[id].waitForExistence(timeout: 10)); XCTAssertEqual(app.buttons[id].value as? String, "Seleccionado")
+        capture("ipad-agenda-vertical")
+        tap(app, "ipad.section.crm"); XCTAssertTrue(app.buttons["crm.quickPayment"].waitForExistence(timeout: 20))
+        tap(app, "crm.show.77777777-7777-4777-8777-777777777777"); XCTAssertTrue(app.buttons["crm.payment"].waitForExistence(timeout: 15)); capture("ipad-crm-show")
+        tap(app, "ipad.section.management"); tap(app, "management.account")
+        XCTAssertTrue(app.navigationBars["Mi cuenta"].waitForExistence(timeout: 10)); capture("ipad-cuenta-desde-gestion")
+    }
+    @MainActor func testTabletPhotographerUploadAndNativePreviewsRemainRestricted() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only"]; app.launch()
+        XCTAssertTrue(app.buttons["ipad.section.media"].waitForExistence(timeout: 20)); XCTAssertTrue(app.buttons["ipad.section.management"].exists)
+        for id in ["crm", "payroll", "agenda", "itineraries"] { XCTAssertFalse(app.buttons["ipad.section." + id].exists) }
+        tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
+        tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); capture("ipad-video-nativo"); tap(app, "media.preview.close")
+        tap(app, "media.add"); tap(app, "media.destination.current"); tap(app, "media.fixture"); tap(app, "media.upload")
+        for name in ["Foto de prueba.png", "Video de prueba.mov"] { XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", name)).firstMatch.waitForExistence(timeout: 20)) }
+        capture("ipad-fotografia-subidas"); tap(app, "ipad.section.management"); tap(app, "management.account")
+        XCTAssertTrue(app.navigationBars["Mi cuenta"].waitForExistence(timeout: 10)); XCTAssertFalse(app.staticTexts["Administrador de JAC"].exists)
+    }
+    @MainActor func testTabletItineraryPrivatePassAndAlertsUseNativeNavigation() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"]; app.launch()
+        tap(app, "ipad.section.itineraries"); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); tap(app, "notices.pdf")
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15)); capture("ipad-itinerario-pdf")
+        tap(app, "notices.pdf.close"); tap(app, "notices.detail.close"); tap(app, "boarding.open")
+        XCTAssertTrue(app.staticTexts["Pases de abordar para hoy · 2"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["notices.item.boarding-fixture-3"].exists)
+        tap(app, "notices.item.boarding-fixture-0")
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["notices.detail.close"].exists)
+        capture("ipad-pase-privado-directo"); tap(app, "notices.pdf.close")
+        tap(app, "ipad.section.management"); tap(app, "notices.alerts")
+        XCTAssertTrue(app.buttons["notices.create"].waitForExistence(timeout: 10)); capture("ipad-alertas")
+        tap(app, "ipad.section.agenda"); XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout: 10))
+    }
+    @MainActor func testTabletDownloadedGalleryAndAgendaSurviveOfflineRelaunch() {
+        let app = XCUIApplication(), base = ["--uitest-payroll", "--uitest-offline-content", "--uitest-fake-photos"]
+        app.launchArguments = base + ["--uitest-reset-content", "--uitest-reset-media"]; app.launch()
+        tap(app, "ipad.section.agenda"); XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout: 20))
+        tap(app, "ipad.section.media"); tap(app, "media.options.media-day"); tap(app, "media.offline"); tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
+        tap(app, "media.options.media-day"); tap(app, "media.savePhotos"); tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
+        app.terminate(); app.launchArguments = base + ["--uitest-offline"]; app.launch()
+        XCTAssertTrue(app.buttons["ipad.section.agenda"].waitForExistence(timeout: 20)); XCTAssertFalse(app.textFields["login.username"].exists)
+        tap(app, "ipad.section.agenda"); XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout: 15))
+        tap(app, "ipad.section.media"); tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
+        tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); capture("ipad-video-sin-conexion"); tap(app, "media.preview.close")
+        XCTAssertFalse(app.buttons["media.add"].exists); capture("ipad-galeria-sin-conexion")
+    }
+    @MainActor func testTabletEditorSurvivesBackgroundAndPrivacyCoversSheet() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"]; app.launch()
+        tap(app, "period.fixture-period"); tap(app, "Actividad"); tap(app, "activity.shows"); tap(app, "activity.add")
+        let field = app.textFields["editor.name"]; XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("Borrador iPad")
+        let value = field.value as? String
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(field.waitForExistence(timeout: 10)); XCTAssertEqual(field.value as? String, value); XCTAssertTrue(field.isHittable)
+        XCTAssertFalse(app.images["privacy.cover"].exists)
+        let bottom = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.995)), middle = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        bottom.press(forDuration: 0.1, thenDragTo: middle, withVelocity: .slow, thenHoldForDuration: 1)
+        XCTAssertTrue(app.images["privacy.cover"].waitForExistence(timeout: 10)); capture("ipad-privacidad-sobre-formulario")
+        app.activate(); XCTAssertTrue(field.waitForExistence(timeout: 10)); XCTAssertEqual(field.value as? String, value)
+    }
 }

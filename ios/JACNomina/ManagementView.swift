@@ -78,7 +78,7 @@ struct ManagementView: View {
                             if target != preferences.last { Divider().padding(.leading,76) }
                         }
                     }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))}
-                }.padding(18)
+                }.padding(18).frame(maxWidth: JACDevice.isPad ? 1050 : .infinity).frame(maxWidth: .infinity)
             }.jacSurface().navigationTitle("Gestión").jacInlineTitle()
                 .navigationDestination(item:$destination) { target in
                     switch target {

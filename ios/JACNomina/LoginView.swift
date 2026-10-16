@@ -45,7 +45,7 @@ struct LoginView: View {
                     NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() }
                         .font(.subheadline.weight(.medium)).frame(maxWidth:.infinity).padding(.vertical,4)
                     Text("Usa la misma cuenta que en la web. Acceso exclusivo del equipo autorizado.").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity).multilineTextAlignment(.center)
-                }.padding(20)
+                }.padding(20).frame(maxWidth: JACDevice.isPad ? 540 : .infinity).frame(maxWidth: .infinity)
             }
             .jacSurface().navigationTitle("JAC Music").jacInlineTitle()
             .scrollDismissesKeyboard(.interactively).disabled(store.busy)
