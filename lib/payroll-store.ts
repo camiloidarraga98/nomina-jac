@@ -25,10 +25,10 @@ export async function writePayroll(data:PayrollState,version:number,actor:string
  return {data,version:version+1};
 }
 
-export async function deletePayrollPeriod(data:PayrollState,version:number,periodId:string,actor:string){
+export async function deletePayrollPeriod(data:PayrollState,version:number,periodId:string,actor:string,guard?:{sql:string;bindings:(string|number)[]}){
  const next={...data,periods:data.periods.filter(p=>p.id!==periodId)};
  return writePayroll(next,version,actor,(db,nonce)=>[
   db.prepare('DELETE FROM payroll_mail_jobs WHERE batch_id IN (SELECT id FROM payroll_mail_batches WHERE period_id=?) AND EXISTS (SELECT 1 FROM payroll_state WHERE id=? AND write_nonce=?)').bind(periodId,'jac',nonce),
   db.prepare('DELETE FROM payroll_mail_batches WHERE period_id=? AND EXISTS (SELECT 1 FROM payroll_state WHERE id=? AND write_nonce=?)').bind(periodId,'jac',nonce),
- ],periodId);
+ ],periodId,guard);
 }

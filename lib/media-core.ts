@@ -1,4 +1,4 @@
-import type {AccessUser} from './payroll-permissions';
+import {hasSection,type AccessUser} from './payroll-permissions';
 import {validAgendaDate} from './calendar-core';
 
 export const MEDIA_ROOT_ID='1yH4pNYQxArfynzho-IPBtx5w4AWbQ-C5';
@@ -8,8 +8,8 @@ export const MEDIA_MAX_SIZE=20*1024*1024*1024;
 export const MEDIA_FOLDER_MIME='application/vnd.google-apps.folder';
 export class MediaFailure extends Error {constructor(message:string,public status=400){super(message);}}
 export function mediaOAuthMessage(reason:string|null){const messages:Record<string,string>={browser_guard_missing:'El navegador no conservó la autorización. Vuelve a conectar Drive desde esta misma pestaña de JAC.',browser_guard_mismatch:'Se inició otra conexión de Google en este navegador. Vuelve a conectar Drive y termina ese único intento.',web_session_missing:'Inicia sesión como Camilo en JAC y vuelve a conectar Drive desde la misma pestaña.',web_session_changed:'La sesión de JAC cambió durante la autorización. Vuelve a conectar Drive sin iniciar sesión en otra pestaña.',authorization_used:'Este intento ya se utilizó. Inicia una nueva conexión de Google Drive.',expired:'La autorización venció mientras se completaba Google. Pulsa Conectar Google Drive para intentarlo de nuevo.',session_revoked:'La sesión o los permisos cambiaron. Inicia sesión como Camilo y vuelve a conectar Drive.',google_denied:'Google no autorizó la conexión. Puedes volver a intentarlo con la cuenta de JAC.',missing_code:'Google no entregó la autorización. Vuelve a conectar Drive.',configuration_changed:'La configuración de Google cambió. Inicia otra conexión de Drive.',google_token:'Google no confirmó el permiso necesario para Drive. Vuelve a conectar y autoriza el acceso solicitado.',google_account:'Selecciona jacmusicestudios@gmail.com al conectar Google Drive.',folder_access:'La cuenta jacmusicestudios@gmail.com necesita permiso de edición en la carpeta de contenido de JAC.',connection_storage:'No se pudo guardar la conexión de Drive. Vuelve a conectar desde tu sesión actual.'};return reason&&Object.hasOwn(messages,reason)?messages[reason]:'La conexión de Drive no se completó. Vuelve a conectarla desde esta misma pestaña de JAC.';}
-export const canReadMedia=(user:AccessUser)=>!user.legacy&&(!!user.mediaOnly||user.isOwner&&!user.itinerariesOnly);
-export const canUploadMedia=(user:AccessUser)=>!user.legacy&&!!user.mediaOnly;
+export const canReadMedia=(user:AccessUser)=>!user.legacy&&hasSection(user,'media');
+export const canUploadMedia=(user:AccessUser)=>!user.legacy&&hasSection(user,'media')&&hasSection(user,'mediaUpload');
 export const canConnectMedia=(user:AccessUser)=>!user.legacy&&!user.mediaOnly&&!user.itinerariesOnly&&user.isOwner&&user.email==='camilo@mac2you.co';
 export const validMediaID=(id:unknown):id is string=>typeof id==='string'&&/^[A-Za-z0-9_-]{5,200}$/.test(id);
 export const validMediaRequestID=(id:unknown):id is string=>typeof id==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id);

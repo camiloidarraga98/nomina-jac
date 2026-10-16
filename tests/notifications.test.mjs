@@ -13,11 +13,11 @@ const sql=new DatabaseSync(':memory:');for(const f of (await readdir('drizzle'))
 class Query {
  constructor(text,args=[]){this.text=text;this.args=args;}bind(...args){return new Query(this.text,args);}
  execute(){const q=sql.prepare(this.text);if(q.columns().length)return {results:q.all(...this.args),meta:{changes:Number(sql.prepare('SELECT changes() n').get().n)}};return {results:[],meta:{changes:Number(q.run(...this.args).changes)}};}
- async run(){return this.execute();}async all(){return this.execute();}async first(){if(beforeFirst)await beforeFirst(this);return sql.prepare(this.text).get(...this.args)||null;}
+ async run(){return this.execute();}async all(){const result=this.execute();if(afterAll)await afterAll(this,result);return result;}async first(){if(beforeFirst)await beforeFirst(this);return sql.prepare(this.text).get(...this.args)||null;}
 }
-const bucket=new Map();let writes=0,waiting=[],beforeFirst,beforePut,beforeDelete;
-globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(beforePut)await beforePut(k);if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},delete:async k=>{const after=await beforeDelete?.(k);bucket.delete(k);if(after)await after();},get:async k=>bucket.has(k)?{body:new Response(bucket.get(k)).body}:null},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
-globalThis.__noticesHeaders=new Headers();globalThis.__noticesWait=p=>waiting.push(p);
+const bucket=new Map();let writes=0,scheduled=0,waiting=[],beforeFirst,beforePut,beforeDelete,beforeGet,afterAll;
+globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(beforePut)await beforePut(k);if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},delete:async k=>{const after=await beforeDelete?.(k);bucket.delete(k);if(after)await after();},get:async k=>{if(beforeGet)await beforeGet(k);return bucket.has(k)?{body:new Response(bucket.get(k)).body}:null;}},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
+globalThis.__noticesHeaders=new Headers();globalThis.__noticesWait=p=>{scheduled++;waiting.push(p);};
 const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as publish from './app/api/notices/publish/route';export * as attachment from './app/api/notices/file/route';export * as expensesApi from './app/api/expenses/route';export * as expenseFilesApi from './app/api/expenses/file/route';export * from './lib/travel-expenses';export * from './lib/payroll-store';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/notices-tests-')),file=dir+'/bundle.mjs';await writeFile(file,bundle.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const owner=await m.bootstrapOwner('notice-owner','1'),ownerToken=await m.makeSession(owner),luisa=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('info@jacmusic.co').id,paula=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('contabilidad@jacmusic.co').id;
@@ -492,4 +492,79 @@ test('API gastos exige sesión y origen, limita la revisión y entrega archivos 
  const item=feed.body.expenses.find(x=>x.id===id);globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+paulaToken,host:'notices.example.invalid'});const file=await m.expenseFilesApi.GET(new Request(base+'/api/expenses/file?id='+id+'&file='+item.attachments[0].id));assert.equal(file.status,404);
  globalThis.__noticesHeaders=new Headers({cookie:'__Host-jac_session='+luisaToken,host:'notices.example.invalid'});const review=await m.expensesApi.POST(new Request(base+'/api/expenses?review=1',{method:'POST',headers:{origin:base},body:JSON.stringify({id,version:1,decision:'approve',reason:'',employeeId:'fake',periodId:'fake'})}));assert.equal(review.status,403);
  const allowed=await m.expenseFilesApi.GET(new Request(base+'/api/expenses/file?id='+id+'&file='+item.attachments[0].id));assert.equal(allowed.status,200);assert.match(allowed.headers.get('cache-control'),/private, no-store/);
+});
+
+async function sectionFixture(sections){
+ const id=crypto.randomUUID(),stamp=new Date().toISOString();
+ sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,media_only,itineraries_only,section_access,created_at,updated_at) VALUES (?,?,?,?,?,?,1,1,?,?,?)').run(id,'sections-'+id,id+'@example.invalid','Secciones ficticias',m.hashPassword('fixture',globalThis.__noticesEnv.PAYROLL_AUTH_KEY),'[]',JSON.stringify(sections),stamp,stamp);
+ const token=await m.makeSession(id);return {id,token,user:await m.authenticatedSession(token)};
+}
+test('secciones independientes: híbrido de fotografía y alertas no hereda itinerarios ni pases',async()=>{
+ const alerts=await sectionFixture(['media','alerts']),itineraries=await sectionFixture(['media','itineraries']),boarding=await sectionFixture(['boarding']),photos=await sectionFixture(['media']);
+ assert.equal(alerts.user.mediaOnly,true,'El indicador compatible no bloquea las secciones modernas');
+ const a={...manualInput('alert',[upload()]),recipients:[alerts.id]};assert.equal((await manualAPI(ownerToken,a)).status,200);
+ const itinerary=manualInput('itinerary',[upload()]);assert.equal((await manualAPI(ownerToken,itinerary)).status,200);
+ const pass={...manualInput('boarding_pass',[upload('Pase.pdf')]),body:'',travelDate:'2090-10-10',recipients:[boarding.id]};assert.equal((await manualAPI(ownerToken,pass)).status,200);
+ const feed=await api(alerts.token);assert.equal(feed.status,200);assert.ok(feed.body.notices.some(n=>n.id===a.id));assert.ok(feed.body.notices.every(n=>n.kind==='alert'));
+ const itineraryFeed=await api(itineraries.token);assert.equal(itineraryFeed.status,200);const allItineraries=[...itineraryFeed.body.notices];let cursor=itineraryFeed.body.nextCursor;while(cursor){const page=await api(itineraries.token,undefined,'?cursor='+encodeURIComponent(cursor));assert.equal(page.status,200);allItineraries.push(...page.body.notices);cursor=page.body.nextCursor;}assert.ok(allItineraries.some(n=>n.id===itinerary.id));assert.ok(allItineraries.every(n=>n.kind==='itinerary'));
+ const item=await m.noticeItem(alerts.user,a.id);assert.equal((await readAttachment(alerts.token,a.id,item.attachments[0].id)).status,200);
+ const other=await m.noticeItem(itineraries.user,itinerary.id);assert.equal((await readAttachment(alerts.token,itinerary.id,other.attachments[0].id)).status,404);
+ assert.equal((await api(alerts.token,undefined,'?boarding=current')).status,403);assert.equal((await api(photos.token)).status,403);
+ assert.equal((await api(boarding.token,undefined,'?boarding=current')).body.notices.length,1);
+ assert.equal((await api(ownerToken,undefined,'?item='+pass.id)).status,404,'Administrar no concede lectura de pases ajenos');
+ await assert.rejects(()=>m.markNoticeRead(alerts.user,itinerary.id),e=>e.status===404);
+ await assert.rejects(()=>m.confirmNotice(alerts.user,itinerary.id,1,async()=>true),e=>e.status===404);
+});
+test('destinatarios y altas automáticas respetan la sección de cada aviso, no el perfil compatible',async()=>{
+ const alertOnly=await sectionFixture(['media','alerts']),travelOnly=await sectionFixture(['media','itineraries']),passOnly=await sectionFixture(['media','boarding']),calendarOnly=await sectionFixture(['calendar']),photoOnly=await sectionFixture(['media']);
+ const feed=await m.noticeFeed(await m.authenticatedSession(ownerToken));
+ assert.ok(feed.users.some(u=>u.id===alertOnly.id));assert.ok(!feed.users.some(u=>[travelOnly.id,passOnly.id,calendarOnly.id,photoOnly.id].includes(u.id)));
+ assert.ok(feed.boardingUsers.some(u=>u.id===passOnly.id));assert.ok(!feed.boardingUsers.some(u=>[travelOnly.id,alertOnly.id,calendarOnly.id,photoOnly.id].includes(u.id)));
+ const bad={...manualInput('alert'),recipients:[travelOnly.id]};assert.equal((await manualAPI(ownerToken,bad)).status,409);
+ const itinerary=manualInput('itinerary',[upload()]);assert.equal((await manualAPI(ownerToken,itinerary)).status,200);
+ const recipients=sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(itinerary.id).map(r=>r.user_id);
+ assert.ok(recipients.includes(travelOnly.id));for(const person of [alertOnly,passOnly,calendarOnly,photoOnly])assert.ok(!recipients.includes(person.id));
+ const previous=fileMeta;fileMeta={id:'FSECTIONPDF01',mimetype:'application/pdf',name:'Itinerario ficticio.pdf',size:pdfBytes.length,url_private_download:'https://files.slack.com/sections-fixture.pdf',channels:[m.ITINERARY_CHANNEL]};
+ try{await slack(event('FSECTIONPDF01'));const imported=sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:FSECTIONPDF01');assert.ok(imported);const automatic=sql.prepare('SELECT user_id FROM jac_notice_recipients WHERE notice_id=?').all(imported.id).map(r=>r.user_id);assert.ok(automatic.includes(travelOnly.id));for(const person of [alertOnly,passOnly,calendarOnly,photoOnly])assert.ok(!automatic.includes(person.id));}finally{fileMeta=previous;}
+});
+test('quitar una sección durante R2 o confirmación bloquea el AccessUser anterior y los adjuntos',async()=>{
+ const person=await sectionFixture(['media','alerts']),admin=await m.authenticatedSession(ownerToken),input={...manualInput('alert',[upload()]),recipients:[person.id]};
+ await m.publishManualNotice(admin,input,async()=>true);const item=await m.noticeItem(person.user,input.id);
+ beforeGet=async()=>{beforeGet=undefined;sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('["media"]',person.id);};
+ try{await assert.rejects(()=>m.noticeAttachment(person.user,input.id,item.attachments[0].id),e=>e.status===404);}finally{beforeGet=undefined;}
+ assert.ok(!(await m.noticeFeed(person.user)).notices.some(n=>n.id===input.id));
+ await assert.rejects(()=>m.markNoticeRead(person.user,input.id),e=>e.status===404);
+ sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('["media","alerts"]',person.id);
+ await assert.rejects(()=>m.confirmNotice(person.user,input.id,1,async()=>{sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('["media"]',person.id);return true;}),e=>e.status===409);
+ assert.equal(sql.prepare('SELECT confirmed_revision FROM jac_notice_recipients WHERE notice_id=? AND user_id=?').get(input.id,person.id).confirmed_revision,0);
+ assert.equal((await readAttachment(person.token,input.id,item.attachments[0].id)).status,403);
+});
+test('push se registra por secciones disponibles y revalida el tipo antes del proveedor simulado',async()=>{
+ const person=await sectionFixture(['media','alerts']),photo=await sectionFixture(['media']),device=crypto.randomUUID();
+ assert.equal((await api(person.token,{action:'register',id:device,platform:'ios',token:'ab'.repeat(32),environment:'sandbox'})).status,200);
+ assert.equal((await api(photo.token,{action:'register',id:crypto.randomUUID(),platform:'ios',token:'ab'.repeat(32),environment:'sandbox'})).status,403);
+ const travel=manualInput('itinerary',[upload()]);await m.publishManualNotice(await m.authenticatedSession(ownerToken),travel,async()=>true);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jac_push_deliveries WHERE notice_id=? AND device_id=?').get(travel.id,device).n,0);
+ const input=alert([person.id]);await m.saveManualNotice(await m.authenticatedSession(ownerToken),input,async()=>true);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jac_push_deliveries WHERE notice_id=? AND device_id=?').get(input.id,device).n,1);
+ let checks=0;beforeFirst=async query=>{if(query.text.includes("p.status='sending'")&&query.args[0]===input.id&&++checks===2)sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('["media"]',person.id);};calls=[];
+ try{await m.dispatchPush();}finally{beforeFirst=undefined;}
+ assert.equal(sql.prepare('SELECT status FROM jac_push_deliveries WHERE notice_id=? AND device_id=?').get(input.id,device).status,'disabled');
+ assert.ok(!calls.some(c=>c.url.hostname.includes('push.apple.com')&&JSON.parse(c.options.body).noticeId===input.id));
+});
+test('GET no serializa feed, detalle o pases si cambian permisos o sesión durante la lectura de adjuntos',async()=>{
+ const admin=await m.authenticatedSession(ownerToken);
+ for(const route of ['feed','item','boarding'])for(const change of ['sections','session']){
+  const person=await sectionFixture(['media',route==='boarding'?'boarding':'alerts']);
+  const input={...manualInput(route==='boarding'?'boarding_pass':'alert',[upload()]),recipients:[person.id],...(route==='boarding'?{travelDate:'2090-10-10'}:{})};
+  await m.publishManualNotice(admin,input,async()=>true);let changed=false;
+  // The SELECT already produced attachment metadata; invalidate access before
+  // the awaited noticeViews result reaches the route's response construction.
+  afterAll=async query=>{if(query.text.startsWith('SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments')&&query.args.includes(input.id)){afterAll=undefined;changed=true;if(change==='sections')sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run(JSON.stringify(['media',route==='boarding'?'alerts':'boarding']),person.id);else sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(person.token));}};
+  const beforeScheduled=scheduled;
+  try{
+   const query=route==='feed'?'':route==='item'?'?item='+input.id:'?boarding=current',result=await api(person.token,undefined,query);
+   assert.equal(changed,true,route+' must reach the awaited attachment read');assert.equal(result.status,403,route+' / '+change);assert.deepEqual(Object.keys(result.body),['error']);assert.equal(scheduled,beforeScheduled,'An invalidated read must not start background imports');
+  }finally{afterAll=undefined;}
+ }
 });

@@ -8,14 +8,14 @@ Fotografía muestra las carpetas y fotos/videos dentro de JAC. Conserva los mese
 
 Anderson (`andersonmejia0203@gmail.com`, usuario `anderson`) tiene exclusivamente Fotografía y Mi cuenta. Puede crear una carpeta con fecha y nombre del show/jornada y subir varias fotos/videos desde archivos o, en iPhone, Fotos. La web admite además arrastrarlos. Las carpetas nuevas usan `AAAA-MM-DD · nombre`; se conservan los nombres de los archivos originales. No hay funciones de borrar, mover ni compartir archivos de Drive en esta entrega.
 
-Camilo y la cuenta administradora `jac` consultan la galería. Solo el propietario Camilo conecta Google; Anderson no necesita acceso directo a Drive ni sus credenciales. Las cuentas generales de consulta de nómina/itinerarios no reciben acceso a Fotografía. El rol exclusivo se guarda en `media_only`; las respuestas lo acompañan de `itinerariesOnly:true` para impedir que clientes antiguos carguen nómina. Los editores antiguos de usuarios conservan el rol cuando lo omiten. Cambiar una cuenta mantiene revisión y cierre de sus sesiones anteriores.
+Desde el 16 de octubre, por petición de Camilo, él y la cuenta administradora `jac` también crean carpetas y suben fotos/videos. Solo el propietario Camilo conecta Google; Anderson no necesita acceso directo a Drive ni sus credenciales. Las cuentas generales no reciben Fotografía automáticamente: se concede desde Usuarios. La nueva selección independiente permite combinar Fotografía con otros módulos, sin dar nómina por defecto; ver [Accesos por sección](SECTION_ACCESS.md), migración aditiva 0023. El perfil exclusivo anterior y los indicadores de compatibilidad se conservan cuando un cliente antiguo omite la selección. Cambiar una cuenta mantiene revisión y cierre de sus sesiones anteriores.
 
 ## Activación real
 
 1. Publicar exclusivamente el Site `appgprj_6aa0260b82a88191a47960614238350a` con su migración aditiva `0021_photography_gallery.sql`.
 2. Camilo inicia sesión y abre `/fotografia` → Conectar Google Drive. Debe elegir `jacmusicestudios@gmail.com`. El callback existente verifica esa cuenta y que pueda añadir contenido a la raíz indicada antes de guardar la conexión.
 3. Google pide un permiso nuevo de Drive. El scope OAuth `drive` es amplio porque deben consultarse también las carpetas y archivos preexistentes, ajenos a la creación inicial de JAC. **La restricción a esta carpeta se aplica en las API de JAC; no es una restricción por carpeta del permiso de Google.** No se cambia la compartición de Drive ni se revocan Gmail, Agenda o Sheets. El token de esta conexión se cifra y almacena por separado.
-4. En Usuarios crear Anderson, correo indicado, rol **Solo fotos y videos**; generar su enlace de activación individual. No inventar una contraseña ni enviársela por correo como prueba. Verificar rol guardado antes de entregar el acceso. No crear con una versión antigua del servidor, que todavía no conoce este rol.
+4. Anderson ya está creado con el perfil inicial de Fotografía y subida. Para nuevas cuentas elegir explícitamente las secciones y la acción de subir, y generar su enlace de activación individual. No inventar una contraseña ni enviársela por correo como prueba. Verificar los accesos guardados antes de entregarlos. No modificar los permisos reales de Anderson durante las pruebas de la selección independiente.
 5. Actualizar el mismo proyecto iPhone con Run y la misma firma; la solicitud de permiso de Fotos aparece solo al elegir guardar en Fotos. Push permanece suspendido.
 
 La lectura de la carpeta por el conector de Codex solo comprueba el acceso del conector: no sustituye la autorización persistente del sitio. La activación y creación reales deben registrarse expresamente al completarse; no inferirlas de los fixtures.
@@ -36,7 +36,7 @@ Los originales se guardan directamente en Drive. D1 conserva conexión cifrada y
 
 Cada petición comprueba sesión vigente, versión de cuenta y rol. Revalida conexión y ancestros actuales en Drive antes y después de leer/guardar; bloquea archivos movidos fuera de la raíz, accesos directos, ciclos y carpetas ajenas. Las descargas transmiten contenido y rangos HTTP privados desde JAC. Miniaturas se obtienen mediante proxy autorizado; no se entregan tokens ni enlaces privados de Google al cliente. Fetch manual rechaza redirecciones; solo el 308 propio de la sesión de subida se admite como progreso. No cambia la compartición de ningún archivo.
 
-Fotógrafos quedan excluidos de los destinatarios automáticos de itinerarios, selección de Alertas/pases y entrega/registro push. Las API de nómina, CRM, Agenda, gastos y sus adjuntos rechazan su acceso. El workspace de sesión móvil entrega un sobre vacío sin datos financieros para permitir el inicio/restauración de la app.
+Las cuentas con únicamente Fotografía quedan excluidas de destinatarios y push de avisos; sus API financieras y de Agenda/gastos/avisos rechazan el acceso. Si se les conceden otros módulos explícitamente, solo reciben/consultan esos tipos y sus propios pases. Sin Nómina el workspace móvil entrega un sobre vacío de datos financieros para permitir el inicio/restauración de la app.
 
 ## Verificación local
 

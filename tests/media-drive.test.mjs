@@ -128,7 +128,7 @@ test('upload validates signatures, bounds, ownership, and Google progress withou
  for(const [offset,bytes,status] of [[0,new Uint8Array(m.MEDIA_CHUNK_SIZE),400],[1,chunk(),409],[0,new Uint8Array(13),409],[0,new Uint8Array(m.MEDIA_CHUNK_SIZE+1),409]])await assert.rejects(()=>m.appendMediaUpload(g,record.id,offset,bytes),fails(status));
  assert.equal(calls.slice(before).filter(c=>c.url.pathname.startsWith('/upload/')&&c.method==='PUT').length,0);
  hook=async(entry,next)=>entry.method==='PUT'?new Response(null,{status:308,headers:{Range:'bytes=0-99999999999999'}}):next();await assert.rejects(()=>m.mediaUploadStatus(g,record.id),fails(502));assert.equal(sql.prepare('SELECT offset FROM jac_media_operations WHERE id=?').get(record.id).offset,0);
- assert.throws(()=>m.mediaGuard(req(ownerToken),{id:ownerID,email:m.OWNER_EMAIL,isOwner:true,permissions:[]},'upload'),fails(403));
+ assert.ok(await m.mediaGuardActive(await guard(ownerToken,'upload')),'Administrators may upload photos and videos');
  assert.throws(()=>m.mediaGuard(req(readerToken),{id:readerID,isOwner:false,permissions:[]},'read'),fails(403));
 });
 test('parent traversal rejects external roots, shortcuts, cycles and files moved outside JAC',async()=>{

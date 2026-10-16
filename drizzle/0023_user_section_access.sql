@@ -1,0 +1,1 @@
+ALTER TABLE `payroll_users` ADD `section_access` text;

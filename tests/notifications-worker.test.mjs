@@ -182,3 +182,37 @@ test('Workerd/D1/R2 confirma revisiones y revisa gastos atómicamente sin servic
   const update={id:notice,requestId:crypto.randomUUID(),revision:1,title:'Itinerario actualizado',body:'',summary:'Cambió la hora de salida',files};assert.equal((await run({action:'update',input:update})).status,200);assert.equal((await run({action:'update',input:update})).status,200);assert.equal((await run({action:'confirm',id:notice,revision:1})).status,409);const current=await (await run({id:notice})).json();assert.equal(current.revision,2);assert.equal(current.confirmed,false);assert.equal(current.attachments.length,1);
  }finally{await mf.dispose();}
 });
+
+test('Workerd: secciones de avisos independientes, híbridos de fotografía y revocación actual en D1',async()=>{
+ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
+  import {env} from 'cloudflare:workers';
+  import {publishManualNotice,noticeFeed,boardingFeed,noticeItem,noticeAttachment,confirmNotice} from './lib/notifications';
+  const owner={id:'11111111-1111-4111-8111-111111111111',email:'fixture@example.invalid',username:'fixture',displayName:'Fixture',fullName:null,isOwner:true,permissions:[]};
+  export default {async fetch(req:Request){const b=await req.json(),actor=b.actor?{...owner,id:b.actor,isOwner:false,mediaOnly:true,itinerariesOnly:true,sections:b.sections}:owner;try{
+   if(b.action==='publish')return Response.json({id:await publishManualNotice(owner,b.input,async()=>true)});
+   if(b.action==='feed')return Response.json(await noticeFeed(actor));
+   if(b.action==='boarding')return Response.json(await boardingFeed(actor));
+   if(b.action==='item')return Response.json(await noticeItem(actor,b.id));
+   if(b.action==='file'){const f=await noticeAttachment(actor,b.id,b.file);return new Response(f.object.body);}
+   if(b.action==='confirm')return Response.json(await confirmNotice(actor,b.id,1,async()=>{if(b.revoke)await env.DB.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').bind('["media"]',actor.id).run();return true;}));
+  }catch(e){return Response.json({error:e.message},{status:e.status||502});}}};
+ `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*']});
+ let outbound=0;const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-notice-sections'},r2Buckets:['BUCKET'],outboundService:async()=>{outbound++;throw Error('No external traffic');}});
+ const {readFile,readdir}=await import('node:fs/promises');
+ try{
+  const db=await mf.getD1Database('DB');for(const name of(await readdir('drizzle')).filter(x=>x.endsWith('.sql')).sort())for(const statement of(await readFile('drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(x=>x.trim()).filter(Boolean))await db.prepare(statement).run();
+  const owner='11111111-1111-4111-8111-111111111111',alerts='22222222-2222-4222-8222-222222222222',travel='33333333-3333-4333-8333-333333333333',boarding='44444444-4444-4444-8444-444444444444';
+  for(const [id,sections] of [[owner,null],[alerts,['media','alerts']],[travel,['media','itineraries']],[boarding,['media','boarding']]])await db.prepare("INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,media_only,itineraries_only,section_access,created_at,updated_at) VALUES (?,?,?,?,'fixture','[]',?,?,?,'fixture','fixture')").bind(id,id,id+'@example.invalid','Fixture',id===owner?0:1,id===owner?0:1,sections?JSON.stringify(sections):null).run();
+  const run=body=>mf.dispatchFetch('https://sections.example.invalid/notices',{method:'POST',body:JSON.stringify(body)}),files=[{filename:'Ficticio.pdf',data:Buffer.from('%PDF-1.4 fixture').toString('base64')}],alert={id:crypto.randomUUID(),kind:'alert',title:'Aviso ficticio',body:'Sin envíos reales',recipients:[alerts],files},itinerary={...alert,id:crypto.randomUUID(),kind:'itinerary',recipients:[]},pass={...alert,id:crypto.randomUUID(),kind:'boarding_pass',travelDate:'2090-10-10',recipients:[boarding]};
+  for(const input of [alert,itinerary,pass])assert.equal((await run({action:'publish',input})).status,200);
+  const a={actor:alerts,sections:['media','alerts']},t={actor:travel,sections:['media','itineraries']},b={actor:boarding,sections:['media','boarding']};
+  assert.deepEqual((await(await run({action:'feed',...a})).json()).notices.map(n=>n.id),[alert.id]);
+  assert.deepEqual((await(await run({action:'feed',...t})).json()).notices.map(n=>n.id),[itinerary.id]);
+  assert.equal((await run({action:'boarding',...a})).status,403);assert.deepEqual((await(await run({action:'boarding',...b})).json()).notices.map(n=>n.id),[pass.id]);
+  assert.equal((await run({action:'item',id:pass.id})).status,404);
+  const item=await(await run({action:'item',id:alert.id,...a})).json();assert.equal((await run({action:'file',id:alert.id,file:item.attachments[0].id,...a})).status,200);
+  assert.equal((await run({action:'confirm',id:alert.id,...a,revoke:true})).status,409);
+  assert.equal((await run({action:'file',id:alert.id,file:item.attachments[0].id,...a})).status,404,'El objeto AccessUser previo no supera la revocación en D1');
+  assert.equal((await db.prepare('SELECT confirmed_revision FROM jac_notice_recipients WHERE notice_id=? AND user_id=?').bind(alert.id,alerts).first()).confirmed_revision,0);assert.equal(outbound,0);
+ }finally{await mf.dispose();}
+});

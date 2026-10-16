@@ -1,9 +1,9 @@
 import {env} from 'cloudflare:workers';
 import {database} from '@/db/raw';
 import {hashPassword,verifyPassword,tokenHash,randomToken,SESSION_SECONDS} from './payroll-auth-crypto';
-import {permissionKeys,defaultPermissionKeys,type AccessUser,type Permission} from './payroll-permissions';
+import {permissionKeys,defaultPermissionKeys,sectionKeys,type AccessUser,type Permission,type SectionKey} from './payroll-permissions';
 export const OWNER_EMAIL='camilo@mac2you.co';
-export type UserRow={id:string;username:string;email:string;name:string;password_hash:string;owner:number;active:number;itineraries_only?:number;media_only?:number;permissions:string;version:number;created_at:string;updated_at:string};
+export type UserRow={id:string;username:string;email:string;name:string;password_hash:string;owner:number;active:number;itineraries_only?:number;media_only?:number;section_access?:string|null;permissions:string;version:number;created_at:string;updated_at:string};
 export function authKey(){if(!env.PAYROLL_AUTH_KEY)throw new Error('El acceso propio todavía no está preparado.');return env.PAYROLL_AUTH_KEY;}
 export async function ownAuthReady(){return !!await database().prepare('SELECT id FROM payroll_users WHERE owner=1 LIMIT 1').first();}
 // Stored separately from ordinary permissions; old clients preserve the role
@@ -11,8 +11,15 @@ export async function ownAuthReady(){return !!await database().prepare('SELECT i
 export const ADMINISTRATOR_ROLE='administrator';
 export function accountAdministrator(row:Pick<UserRow,'owner'|'email'|'permissions'|'itineraries_only'|'media_only'>){return row.media_only!==1&&row.itineraries_only!==1&&((row.owner===1&&row.email===OWNER_EMAIL)||(JSON.parse(row.permissions) as string[]).includes(ADMINISTRATOR_ROLE));}
 const ordinaryPermissions=(row:UserRow)=>(JSON.parse(row.permissions) as string[]).filter((p):p is Permission=>permissionKeys.includes(p as Permission));
-export function accessUser(row:UserRow):AccessUser{return {id:row.id,username:row.username,email:row.email,displayName:row.name,fullName:row.name,isOwner:accountAdministrator(row),...(row.itineraries_only===1||row.media_only===1?{itinerariesOnly:true}:{}),...(row.media_only===1?{mediaOnly:true}:{}),permissions:row.media_only===1?[]:ordinaryPermissions(row)};}
-export function publicUser(row:UserRow){return {id:row.id,username:row.username,email:row.email,name:row.name,owner:row.owner===1,administrator:accountAdministrator(row),active:row.active===1,...(row.itineraries_only===1||row.media_only===1?{itinerariesOnly:true}:{}),...(row.media_only===1?{mediaOnly:true}:{}),permissions:row.media_only===1?[]:ordinaryPermissions(row),version:row.version,ready:!!row.password_hash};}
+export function storedSections(row:Pick<UserRow,'section_access'>):SectionKey[]|undefined{
+ if(row.section_access==null)return undefined;
+ try{const parsed:unknown=JSON.parse(row.section_access);if(!Array.isArray(parsed)||parsed.some(key=>!sectionKeys.includes(key as SectionKey)))return [];const keys=[...new Set(parsed)] as SectionKey[];return keys.filter(key=>key!=='mediaUpload'||keys.includes('media'));}catch{return [];}
+}
+export function accessUser(row:UserRow):AccessUser{
+ const sections=storedSections(row),isOwner=accountAdministrator(row),limited=!isOwner&&(sections? !sections.includes('payroll'):row.itineraries_only===1||row.media_only===1),mediaOnly=!isOwner&&(sections?limited&&sections.includes('media'):row.media_only===1);
+ return {id:row.id,username:row.username,email:row.email,displayName:row.name,fullName:row.name,isOwner,...(limited?{itinerariesOnly:true}:{}),...(mediaOnly?{mediaOnly:true}:{}),...(sections?{sections}:{}),permissions:limited?[]:ordinaryPermissions(row)};
+}
+export function publicUser(row:UserRow){const user=accessUser(row);return {id:row.id,username:row.username,email:row.email,name:row.name,owner:row.owner===1,administrator:user.isOwner,active:row.active===1,...(user.itinerariesOnly?{itinerariesOnly:true}:{}),...(user.mediaOnly?{mediaOnly:true}:{}),...(user.sections?{sections:user.sections}:{}),permissions:user.permissions,version:row.version,ready:!!row.password_hash};}
 async function sessionAccount(token:string){
  if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;
  return database().prepare('SELECT u.*,s.persistent AS session_persistent FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND (s.persistent=1 OR s.expires_at>?) AND u.active=1 AND u.password_hash<>?').bind(tokenHash(token),new Date().toISOString(),'').first<UserRow&{session_persistent:number}>();

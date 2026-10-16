@@ -84,10 +84,10 @@ test('Workerd/D1 resumes binary chunks through manual Google 308 and serves priv
   assert.equal(state.calls.filter(c=>c.method==='PUT'&&c.range==='bytes 0-1048575/'+record.size).length,1);assert.equal(state.calls.filter(c=>c.method==='PUT'&&c.range==='bytes 1048576-1048588/'+record.size).length,1);
  }finally{await mf.dispose();}
 });
-test('Workerd blocks readers, administrator uploads, wrong origin, redirects and revoked photo sessions',async()=>{
+test('Workerd blocks unauthorized readers, wrong origin, redirects and revoked photo sessions',async()=>{
  const {mf,db,state,call}=await fixture();try{
   const record={action:'start',id:crypto.randomUUID(),parentId:folderID,filename:'foto-ficticia.png',mimeType:'image/png',size:13},before=state.calls.length;
-  assert.equal((await call('/api/media',{role:'reader'})).status,403);assert.equal((await call('/api/media/upload',{role:'owner',method:'POST',body:JSON.stringify(record)})).status,403);assert.equal((await call('/api/media/upload',{method:'POST',headers:{origin:'https://untrusted.example.invalid'},body:JSON.stringify(record)})).status,403);assert.equal(state.calls.length,before);
+  assert.equal((await call('/api/media',{role:'reader'})).status,403);assert.equal((await call('/api/media/upload',{method:'POST',headers:{origin:'https://untrusted.example.invalid'},body:JSON.stringify(record)})).status,403);assert.equal(state.calls.length,before);
   assert.equal((await call('/api/media/upload',{method:'POST',body:JSON.stringify(record)})).status,200);const bytes=new Uint8Array(13);bytes.set([137,80,78,71,13,10,26,10]);state.revoke=async()=>{await db.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').bind(photoID).run();};
   const revoked=await call('/api/media/upload?id='+record.id+'&offset=0',{method:'PUT',body:bytes});assert.equal(revoked.status,403);assert.equal((await db.prepare('SELECT status FROM jac_media_operations WHERE id=?').bind(record.id).first()).status,'pending');
   state.redirect=true;const count=state.calls.length,response=await call('/api/media/file?id='+fileID,{role:'owner',headers:{range:'bytes=2-5'}});assert.equal(response.status,502);assert.ok(state.calls.slice(count).every(c=>!c.url.includes('untrusted')));
@@ -147,5 +147,13 @@ test('Workerd invalidates observed locations after the Google connection version
   await listReadyFile(context);await db.prepare("UPDATE jac_media_connection SET version=version+1 WHERE id='jac'").run();const before=state.calls.length;
   const response=await call('/api/media/file?id='+fileID,{role:'reader'});assert.equal(response.status,403);
   assert.equal(state.calls.slice(before).filter(c=>new URL(c.url).pathname==='/drive/v3/files'||new URL(c.url).searchParams.get('alt')==='media').length,0,'A hint from the previous connection cannot participate in a fresh location proof');
+ }finally{await mf.dispose();}
+});
+
+test('Workerd lets administrators upload photos with the same guarded binary flow',async()=>{
+ const {mf,state,call}=await fixture();try{
+  const id=crypto.randomUUID(),record={action:'start',id,parentId:folderID,filename:'admin-ficticio.png',mimeType:'image/png',size:13};
+  let response=await call('/api/media/upload',{role:'owner',method:'POST',body:JSON.stringify(record)});assert.equal(response.status,200);
+  const bytes=new Uint8Array(13);bytes.set([137,80,78,71,13,10,26,10]);response=await call('/api/media/upload?id='+id+'&offset=0',{role:'owner',method:'PUT',body:bytes});assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.equal(state.metadata.name,'admin-ficticio.png');
  }finally{await mf.dispose();}
 });

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import {build} from 'esbuild';
 import {renderToStaticMarkup} from 'react-dom/server';
-const result=await build({stdin:{contents:"export * from './lib/payroll-navigation';export {default as Page} from './app/payroll-page';export {default as Section} from './app/[...section]/page';export {default as worker} from './worker/index';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'local-navigation-fixtures',setup(b){b.onResolve({filter:/agenda-cache-context$|payroll-access$|payroll-store$|payroll-app$|next\/navigation$|vinext\/server\//},args=>({path:args.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path.endsWith('agenda-cache-context')?'export const agendaCacheContext=async()=>null;':path.endsWith('payroll-access')?'export const payrollUser=async()=>globalThis.__navUser;':path.endsWith('payroll-store')?'export const readPayroll=async()=>{globalThis.__navReads++;return {data:{periods:[]},version:1};};':path.endsWith('payroll-app')?'export default function App(){return null;}':path==='next/navigation'?'export function notFound(){throw new Error("NOT_FOUND");}export function redirect(url){throw new Error("REDIRECT:"+url);}':path.endsWith('image-optimization')?'export const DEFAULT_DEVICE_SIZES=[],DEFAULT_IMAGE_SIZES=[];export const handleImageOptimization=()=>new Response();':'export default {fetch:async()=>new Response("fixture",{headers:{"X-Fixture":"local"}})};',loader:'js'}));}}]});
+const result=await build({stdin:{contents:"export * from './lib/payroll-navigation';export {default as Page} from './app/payroll-page';export {default as Section} from './app/[...section]/page';export {default as worker} from './worker/index';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,packages:'external',plugins:[{name:'local-navigation-fixtures',setup(b){b.onResolve({filter:/agenda-cache-context$|payroll-access$|payroll-store$|payroll-app$|next\/navigation$|vinext\/server\//},args=>({path:args.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},({path})=>({contents:path.endsWith('agenda-cache-context')?'export const agendaCacheContext=async()=>null;':path.endsWith('payroll-access')?'export const payrollUser=async()=>globalThis.__navUser;':path.endsWith('payroll-store')?'export const readPayroll=async()=>{globalThis.__navReads++;if(globalThis.__navHook)await globalThis.__navHook();return {data:{periods:[]},version:1};};':path.endsWith('payroll-app')?'export default function App(){return null;}':path==='next/navigation'?'export function notFound(){throw new Error("NOT_FOUND");}export function redirect(url){throw new Error("REDIRECT:"+url);}':path.endsWith('image-optimization')?'export const DEFAULT_DEVICE_SIZES=[],DEFAULT_IMAGE_SIZES=[];export const handleImageOptimization=()=>new Response();':'export default {fetch:async()=>new Response("fixture",{headers:{"X-Fixture":"local"}})};',loader:'js'}));}}]});
 // File-based import keeps React package resolution local and avoids browser/network services.
 const {mkdtemp,writeFile,rm}=await import('node:fs/promises');const {resolve}=await import('node:path');
 const tmp=await mkdtemp(resolve('work/navigation-test-'));const file=resolve(tmp,'bundle.mjs');await writeFile(file,result.outputFiles[0].contents);const m=await import(file);await rm(tmp,{recursive:true});
@@ -46,4 +46,24 @@ test('fotógrafo entra a Fotografía y Cuenta sin leer nómina, Agenda o adminis
  for(const view of ['fotografia','cuenta']){const page=await m.Page({route:{view,tab:'shows'}});assert.deepEqual(page.props.initial.data.employees,[]);assert.deepEqual(page.props.initial.data.periods,[]);assert.equal(page.props.agendaCache,null);}
  assert.equal(globalThis.__navReads,0);
  globalThis.__navUser={...owner,isOwner:false};await assert.rejects(()=>m.Page({route:{view:'fotografia',tab:'shows'}}),/NOT_FOUND/);assert.equal(globalThis.__navReads,0);
+});
+
+test('secciones individuales y combinadas nunca renderizan datos de nómina no autorizados',async()=>{
+ for(const sections of [['calendar'],['alerts'],['boarding'],['media','mediaUpload','itineraries'],[]]){
+  const user={...owner,isOwner:false,itinerariesOnly:true,mediaOnly:sections.includes('media'),sections};globalThis.__navUser=user;globalThis.__navReads=0;
+  for(const view of Object.keys(m.sectionPaths)){
+   if(m.canViewSection(user,view)){const page=await m.Page({route:{view,tab:'shows'}});assert.deepEqual(page.props.initial.data.periods,[]);assert.deepEqual(page.props.initial.data.employees,[]);}
+   else await assert.rejects(()=>m.Page({route:{view,tab:'shows'}}),/REDIRECT:/);
+  }
+  assert.equal(globalThis.__navReads,0);
+ }
+ const alerts={...owner,isOwner:false,itinerariesOnly:true,sections:['alerts']};globalThis.__navUser=alerts;
+ await assert.rejects(()=>m.Page({route:{view:'quincena',tab:'shows'},noticeId:'11111111-1111-4111-8111-111111111111'}),/REDIRECT:\/alertas\?jac-notice=/);
+});
+
+test('SSR retira los datos si la sesión o el acceso cambia durante la lectura',async()=>{
+ for(const next of [null,{...owner,isOwner:false,itinerariesOnly:true,sections:['calendar']}]){
+  globalThis.__navUser=owner;globalThis.__navReads=0;globalThis.__navHook=async()=>{globalThis.__navUser=next;};
+  try{const page=await m.Page({route:{view:'quincena',tab:'shows'}});assert.equal(page.props.initial,undefined);assert.match(renderToStaticMarkup(page),/No pudimos cargar/);assert.equal(globalThis.__navReads,1);}finally{globalThis.__navHook=undefined;}
+ }
 });
