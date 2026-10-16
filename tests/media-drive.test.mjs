@@ -74,6 +74,13 @@ const input=(overrides={})=>({id:crypto.randomUUID(),parentId:folderID,filename:
 const chunk=()=>{const bytes=new Uint8Array(m.MEDIA_CHUNK_SIZE);bytes.set([137,80,78,71,13,10,26,10]);return bytes;};
 const fails=status=>e=>e instanceof m.MediaFailure&&e.status===status;
 
+test('Google permission revocation remains 403 so native caches cannot treat it as an outage',async()=>{
+ const g=await guard(ownerToken,'read');
+ for(const status of [401,403]){hook=async(entry,next)=>entry.url.pathname.includes('/drive/v3/files/')?Response.json({error:{errors:[{reason:'insufficientFilePermissions'}]}},{status}):next();await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(403));}
+ hook=async(entry,next)=>entry.url.origin==='https://oauth2.googleapis.com'?Response.json({error:'invalid_grant'},{status:400}):next();await assert.rejects(()=>m.mediaContext(g),fails(403));
+ hook=async(entry,next)=>entry.url.pathname.includes('/drive/v3/files/')?Response.json({error:{errors:[{reason:'userRateLimitExceeded'}]}},{status:403}):next();await assert.rejects(()=>m.mediaFile(g,imageID,false,null),fails(503));
+});
+
 test('folder creation recovers a lost Google response without duplicating its reserved ID',async()=>{
  const g=await guard(),record={id:crypto.randomUUID(),parentId:folderID,name:'Show ficticio',date:'2026-10-16'};let lost=true;
  hook=async(entry,next)=>{const response=await next();if(lost&&entry.url.pathname==='/drive/v3/files'&&entry.method==='POST'){lost=false;throw new Error('Simulated lost response after Google commit');}return response;};

@@ -55,3 +55,5 @@ Sites v64 publicada en el Site existente; fuente privada `d0d70362fb2fcfd0d90ca9
 La revisión automática bloqueó inicialmente la entrega de la credencial al terminal. Se conservó el trabajo local, se verificó el proceso oficial y Camilo autorizó explícitamente ese paso por entrada oculta; el flujo posterior fue aprobado y la credencial no se guardó en archivos ni se envió a GitHub. El primer empaquetado encontró npm fuera del PATH del helper; se corrigió únicamente la ruta al Node24 ya instalado y el empaquetado exacto finalizó correctamente.
 
 Autorizar Google y crear/activar Anderson siguen siendo pasos separados de la publicación; su estado real se registra al completarlos.
+
+Endurecimiento antes de activar la conexión: las denegaciones explícitas de Google (401/403 y OAuth invalid_grant) se entregan como 403 para retirar la caché de Fotografía; no se presentan como fallos temporales que puedan habilitar fallback. Los límites de cuota de Google conservan su carácter temporal (503) y no retiran la última copia. Una prueba adicional lo comprueba en `media-drive-permission-final.log` (13 pruebas Drive/OAuth aprobadas).
