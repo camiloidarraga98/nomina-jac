@@ -2,6 +2,10 @@
 
 Aplicación nativa de macOS en SwiftUI y AppKit, dentro de la misma carpeta del proyecto. Comparte modelos, formularios y API con el iPhone; no contiene un navegador incrustado ni crea una base de nómina distinta.
 
+## Fotografía: actualización inmediata — Mac 1.5.1 (7)
+
+Comparte la corrección del iPhone: copia guardada inmediata y consulta de Drive al abrir/volver, sin esperar el ciclo de 30 segundos. Precarga solo metadatos del listado raíz con sesión validada. Se conserva la copia offline, el Llavero, los permisos y los proyectos. Misma ruta `outputs/JAC Music.app`; ver [Fotografía: UX](../docs/PHOTOGRAPHY_UX.md).
+
 ## Fotografía principal — Mac 1.5.0 (6)
 
 Fotografía permanece en la barra principal; **Mi cuenta** pasa a **Configuración** y sigue disponible en perfiles restringidos. La galería muestra miniaturas ligeras, carpetas recientes primero y un flujo de subida con destino o nueva carpeta de evento en la ubicación actual.

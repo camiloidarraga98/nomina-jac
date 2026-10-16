@@ -1,6 +1,65 @@
 import XCTest
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testVisiblePhotoThumbnailsWakeWhenSlowSessionRestoresOnline() {
+        let app=XCUIApplication(),base=["--uitest-payroll","--uitest-media-only","--uitest-offline-content"]
+        app.launchArguments=base+["--uitest-reset-content","--uitest-reset-media"];app.launch()
+        let day=app.buttons["media.item.media-day"];XCTAssertTrue(day.waitForExistence(timeout:20));day.tap()
+        XCTAssertTrue(app.buttons["media.item.media-photo"].waitForExistence(timeout:10));app.terminate()
+        app.launchArguments=base+["--uitest-async-slow-workspace"]
+        let reopenedAt=Date();app.launch()
+        // The fixture returns media immediately while workspace validation
+        // remains pending for eight seconds, without blocking URLProtocol.
+        XCTAssertTrue(day.exists,"La carpeta descargada debe estar visible antes de validar la sesión.");day.tap()
+        XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
+        XCTAssertFalse(app.buttons["media.add"].exists,"Esta comprobación debe observar la sesión todavía en validación.")
+        let thumbnail=app.descendants(matching:.any).matching(identifier:"media.thumbnail.media-photo").firstMatch
+        XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"media.placeholder.media-photo").firstMatch.exists)
+        XCTAssertFalse(thumbnail.exists)
+        XCTAssertFalse(app.staticTexts["media.offline.status"].exists)
+        XCTAssertTrue(thumbnail.waitForExistence(timeout:max(0,15-Date().timeIntervalSince(reopenedAt))),"Al validar la sesión, la miniatura debe aparecer sin esperar treinta segundos ni abrir el original.")
+        XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout:max(0,15-Date().timeIntervalSince(reopenedAt))))
+        attachScreen(app,name:"fotografia-miniaturas-al-recuperar-sesion")
+    }
+    @MainActor func testPhotographerGalleryRestoresImmediatelyAndRevalidatesBeforePolling() {
+        verifyCachedGalleryRevalidation(photographer:true)
+    }
+    @MainActor func testAdministratorGalleryRevalidatesWhileVisibleDuringSlowSessionRestore() {
+        verifyCachedGalleryRevalidation(photographer:false)
+    }
+    @MainActor private func verifyCachedGalleryRevalidation(photographer:Bool) {
+        let app=XCUIApplication()
+        let base=["--uitest-payroll","--uitest-offline-content"]+(photographer ? ["--uitest-media-only"]:[])
+        app.launchArguments=base+["--uitest-reset-content","--uitest-reset-media"];app.launch()
+        if !photographer {
+            XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout:20));app.tabBars.buttons["Fotografía"].tap()
+        }
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:20))
+        XCTAssertFalse(app.buttons["media.item.media-other"].exists)
+        app.terminate()
+        // The network workspace takes eight seconds, and its gallery contains
+        // a new folder. A cached gallery must render first, then revalidate
+        // without a manual refresh or the thirty-second polling interval.
+        app.launchArguments=base+["--uitest-slow-content","--uitest-slow-media","--uitest-media-two-folders"]
+        let reopenedAt=Date();app.launch()
+        if !photographer {
+            XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout:3));app.tabBars.buttons["Fotografía"].tap()
+            XCTAssertTrue(app.tabBars.buttons["Quincena"].exists)
+        }
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:3),"La carpeta descargada debe aparecer mientras se revalida la sesión lenta.")
+        XCTAssertFalse(app.textFields["login.username"].exists)
+        XCTAssertFalse(app.staticTexts["media.offline.status"].exists,"Consultar la copia mientras llega la red no debe anunciar un fallo de conexión.")
+        XCTAssertFalse(app.buttons["media.item.media-other"].exists,"Primero debe mostrarse la copia guardada, que todavía no incluye BOGOTÁ.")
+        let revalidated=app.buttons["media.item.media-other"].waitForExistence(timeout:max(0,15-Date().timeIntervalSince(reopenedAt)))
+        if !revalidated {
+            attachScreen(app,name:"fotografia-revalidacion-no-completada")
+            let hierarchy=XCTAttachment(string:app.debugDescription);hierarchy.name="fotografia-revalidacion-jerarquia";hierarchy.lifetime = .keepAlways;add(hierarchy)
+        }
+        XCTAssertTrue(revalidated,"La galería visible debe actualizarse al validar la sesión, sin esperar los treinta segundos del sondeo.")
+        XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout:max(0,15-Date().timeIntervalSince(reopenedAt))));XCTAssertTrue(app.buttons["media.add"].isEnabled)
+        if photographer {XCTAssertFalse(app.tabBars.buttons["Quincena"].exists);XCTAssertFalse(app.tabBars.buttons["Agenda"].exists)}
+        attachScreen(app,name:photographer ? "fotografia-cache-revalidada-fotografo":"fotografia-cache-revalidada-administrador")
+    }
     @MainActor func testRootUploadChoosesExistingFolderAndContextMenuDownloadsOnlyItsTarget() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-two-folders"];app.launch()
         XCTAssertTrue(app.buttons["media.item.media-other"].waitForExistence(timeout:20));XCTAssertEqual(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","media.item.")).element(boundBy:0).identifier,"media.item.media-other")

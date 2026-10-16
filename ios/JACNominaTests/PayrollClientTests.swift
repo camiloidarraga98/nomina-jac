@@ -65,6 +65,22 @@ private final class CRMDelayedProtocol:URLProtocol {
     override func stopLoading(){}
 }
 
+private final class MediaDelayedProtocol: URLProtocol {
+    private static let lock = NSLock()
+    private static var reads: [MediaDelayedProtocol] = []
+    static func reset() { lock.lock(); defer { lock.unlock() }; reads = [] }
+    static func pending() -> [MediaDelayedProtocol] { lock.lock(); defer { lock.unlock() }; return reads }
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".invalid") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Self.lock.lock(); Self.reads.append(self); Self.lock.unlock() }
+    func respond(_ data: Data) {
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+}
+
 @MainActor private final class FakeMediaPhotosWriter: MediaPhotosWriting {
     var authorizations = 0
     var saved: [String] = []
@@ -77,6 +93,88 @@ private final class CRMDelayedProtocol:URLProtocol {
 }
 
 final class PayrollClientTests: XCTestCase {
+    @MainActor func testMediaRevalidatesImmediatelyWhileWorkspaceStillUsesItsRestoredCopy() async throws {
+        let vault=MemorySession();vault.token=token
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://media-startup.invalid")!,vault:vault,configuration:configuration,automaticallyDownloadOffline:false)
+        let root=MediaFolder(id:"root",name:"JAC ficticia")
+        func feed(_ id:String)->MediaFeed {MediaFeed(connected:true,canRead:true,canUpload:true,canConnect:false,root:root,folder:root,breadcrumbs:[root],items:[MediaItem(id:id,name:id,mimeType:"application/vnd.google-apps.folder",kind:"folder",size:0,modifiedAt:"",thumbnailAvailable:false)],nextPageToken:nil)}
+        var requests=0
+        MockProtocol.handler={request in
+            XCTAssertEqual(request.url?.path,"/api/media");requests += 1
+            if requests == 2 {XCTAssertEqual(request.timeoutInterval,30,"La consulta explícita no debe agotarse a los cinco segundos mientras la copia ya está visible")}
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,try JSONEncoder().encode(feed(requests == 1 ? "saved":"fresh")))
+        }
+        defer {MockProtocol.handler=nil;try? client.clearSession()}
+        _ = try await client.media();client.beginOfflineRestore()
+        XCTAssertEqual(client.cachedMedia()?.items.map(\.id),["saved"]);XCTAssertEqual(requests,1)
+        let saved=try await client.media();XCTAssertEqual(saved.items.map(\.id),["saved"])
+        let fresh=try await client.media(forceNetwork:true)
+        XCTAssertEqual(fresh.items.map(\.id),["fresh"]);XCTAssertTrue(fresh.canUpload);XCTAssertEqual(requests,2)
+        XCTAssertTrue(client.usingOfflineCopy,"Leer Drive no debe habilitar escrituras financieras antes de revalidar la sesión")
+        MockProtocol.handler={_ in throw URLError(.notConnectedToInternet)}
+        do {_ = try await client.media(forceNetwork:true);XCTFail("Una lectura forzada no debe presentar la copia como una respuesta de internet") }catch {XCTAssertTrue(AgendaOfflineCache.isUnavailable(error))}
+        XCTAssertEqual(client.cachedMedia()?.items.map(\.id),["fresh"])
+        MockProtocol.handler={request in (HTTPURLResponse(url:request.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"error\":\"Acceso retirado\"}".utf8))}
+        do {_ = try await client.media(forceNetwork:true);XCTFail("Una revocación nunca debe usar la copia") }catch {guard case APIError.forbidden = error else{return XCTFail(error.localizedDescription)}}
+        XCTAssertNil(client.cachedMedia());XCTAssertNotNil(vault.token)
+    }
+    @MainActor func testMediaRootPrefetchSharesItsReadAndCannotRestoreDataAfterLogout() async throws {
+        MediaDelayedProtocol.reset();defer{MediaDelayedProtocol.reset()}
+        let vault=MemorySession();vault.token=token
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MediaDelayedProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://media-prefetch.invalid")!,vault:vault,configuration:configuration,automaticallyDownloadOffline:false)
+        let root=MediaFolder(id:"root",name:"Solo prueba"),feed=MediaFeed(connected:true,canRead:true,canUpload:true,canConnect:false,root:root,folder:root,breadcrumbs:[root],items:[],nextPageToken:nil)
+        let first=Task{try await client.media(forceNetwork:true)},second=Task{try await client.media(forceNetwork:true)},cancelled=Task{try await client.media(forceNetwork:true)}
+        for _ in 0..<100 {if !MediaDelayedProtocol.pending().isEmpty {break};try await Task.sleep(for:.milliseconds(10))}
+        try await Task.sleep(for:.milliseconds(30))
+        XCTAssertEqual(MediaDelayedProtocol.pending().count,1,"Precarga y entrada simultánea comparten el GET de raíz")
+        cancelled.cancel()
+        try XCTUnwrap(MediaDelayedProtocol.pending().first).respond(JSONEncoder().encode(feed))
+        let a=try await first.value,b=try await second.value;XCTAssertEqual(a.folder?.id,b.folder?.id);XCTAssertNotNil(client.cachedMedia())
+        do {_ = try await cancelled.value;XCTFail("Una vista cancelada no debe recibir el resultado compartido") }catch {XCTAssertTrue(error is CancellationError)}
+        let late=Task{try await client.media(forceNetwork:true)}
+        for _ in 0..<100 {if MediaDelayedProtocol.pending().count == 2 {break};try await Task.sleep(for:.milliseconds(10))}
+        XCTAssertEqual(MediaDelayedProtocol.pending().count,2);try client.clearSession()
+        do {_ = try await late.value;XCTFail("No debe terminar una lectura de la sesión cerrada") }catch {}
+        XCTAssertNil(client.cachedMedia());XCTAssertNil(vault.token)
+    }
+    @MainActor func testAuthorizedStartupPrefetchesOnlyRootMetadataOnceAndRefreshCallersJoin() async throws {
+        let fixture=UITestBackend.client(),workspace=try await fixture.workspace()
+        let vault=MemorySession();vault.token=token
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://media-preload.invalid")!,vault:vault,configuration:configuration,automaticallyDownloadOffline:false)
+        client.rememberWorkspace(workspace)
+        var workspaces=0,roots=0
+        MockProtocol.handler={request in
+            let bytes:Data
+            if request.url?.path == "/api/mobile/payroll" {workspaces += 1;bytes=try JSONEncoder().encode(workspace)}
+            else {XCTAssertEqual(request.url?.path,"/api/media");XCTAssertNil(request.url?.query);roots += 1;let root=MediaFolder(id:"root",name:"Solo metadatos");bytes=try JSONEncoder().encode(MediaFeed(connected:true,canRead:true,canUpload:true,canConnect:false,root:root,folder:root,breadcrumbs:[root],items:[],nextPageToken:nil))}
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,bytes)
+        }
+        defer {MockProtocol.handler=nil;try? client.clearSession()}
+        let store=PayrollStore(client:client)
+        store.prefetchMediaRoot();await Task.yield();XCTAssertEqual(roots,0,"No precargar antes de validar la sesión")
+        async let first:Void=store.refreshAutomatically();async let second:Void=store.refreshAutomatically();_ = try await(first,second)
+        XCTAssertEqual(workspaces,1);XCTAssertFalse(store.isOffline)
+        store.prefetchMediaRoot();store.prefetchMediaRoot()
+        for _ in 0..<100 {if client.cachedMedia() != nil {break};try await Task.sleep(for:.milliseconds(10))}
+        XCTAssertEqual(roots,1);XCTAssertNotNil(client.cachedMedia());XCTAssertTrue(store.canWrite)
+    }
+    @MainActor func testAutomaticSessionRefreshCannotReinstallWorkspaceAfterManualLogout() async throws {
+        MediaDelayedProtocol.reset();defer{MediaDelayedProtocol.reset()}
+        let fixture=UITestBackend.client(),workspace=try await fixture.workspace()
+        let vault=MemorySession();vault.token=token
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MediaDelayedProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://session-revalidation.invalid")!,vault:vault,configuration:configuration,automaticallyDownloadOffline:false)
+        client.rememberWorkspace(workspace)
+        let store=PayrollStore(client:client),pending=Task{try await store.refreshAutomatically()}
+        for _ in 0..<100 {if !MediaDelayedProtocol.pending().isEmpty {break};try await Task.sleep(for:.milliseconds(10))}
+        XCTAssertEqual(MediaDelayedProtocol.pending().count,1);XCTAssertNotNil(store.workspace)
+        await store.signOut()
+        do {try await pending.value;XCTFail("La validación cancelada no debe restaurar una sesión cerrada") }catch {}
+        XCTAssertNil(vault.token);XCTAssertNil(store.workspace);XCTAssertNil(store.overview);XCTAssertFalse(store.hasSavedSession)
+    }
     func testMediaGalleryUsesCreationDateAndKeepsLegacyFoldersAtTheEnd() {
         func item(_ id:String,_ name:String,_ date:String?,_ kind:String="folder",modified:String="2099-12-31T12:00:00Z")->MediaItem {MediaItem(id:id,name:name,mimeType:kind == "folder" ? "application/vnd.google-apps.folder":"image/png",kind:kind,size:0,modifiedAt:modified,thumbnailAvailable:false,createdAt:date)}
         let old=item("old","A antiguo","2026-10-01T12:00:00Z"),new=item("new","Z nuevo","2026-10-16T12:00:00Z",modified:"2020-01-01T00:00:00Z"),legacy=item("legacy","A sin fecha",nil),file=item("file","Foto","2027-01-01T00:00:00Z","image")

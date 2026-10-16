@@ -28,6 +28,7 @@ private final class FixtureSession: SessionStoring {
     func clear() throws { token = nil }
 }
 private final class FixtureProtocol: URLProtocol {
+    private var delayedResponse:DispatchWorkItem?
     static let lock = NSRecursiveLock()
     static var state = initialState()
     static var revision = 1
@@ -43,7 +44,8 @@ private final class FixtureProtocol: URLProtocol {
     static var offline = false
     static var slowAgenda = false
     static var slowedWorkspace = false
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static var slowedMedia = false
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func seedOfflineContent() {
         lock.lock(); defer { lock.unlock() }
         var alert = itinerary
@@ -60,12 +62,27 @@ private final class FixtureProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if ProcessInfo.processInfo.arguments.contains("--uitest-async-slow-workspace"), request.url?.host == "ui-fixture.example.invalid", request.url?.path == "/api/mobile/payroll", request.url?.query?.contains("workspace=1") == true {
+            Self.lock.lock();let delay = !Self.slowedWorkspace;Self.slowedWorkspace=true;Self.lock.unlock()
+            if delay {
+                let work=DispatchWorkItem { [weak self] in self?.deliverResponse() };delayedResponse=work
+                DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+8,execute:work)
+                return
+            }
+        }
+        deliverResponse()
+    }
+    private func deliverResponse() {
         do {
             guard request.url?.host == "ui-fixture.example.invalid" else { throw URLError(.unsupportedURL) }
             if Self.offline { throw URLError(.notConnectedToInternet) }
             if ProcessInfo.processInfo.arguments.contains("--uitest-slow-content"), request.url?.path == "/api/mobile/payroll", request.url?.query?.contains("workspace=1") == true {
                 Self.lock.lock(); let delay = !Self.slowedWorkspace; Self.slowedWorkspace = true; Self.lock.unlock()
                 if delay { Thread.sleep(forTimeInterval: 8) }
+            }
+            if ProcessInfo.processInfo.arguments.contains("--uitest-slow-media"), request.url?.path == "/api/media", request.httpMethod == "GET" {
+                Self.lock.lock();let delay = !Self.slowedMedia;Self.slowedMedia = true;Self.lock.unlock()
+                if delay {Thread.sleep(forTimeInterval:2)}
             }
             if Self.slowAgenda, request.url?.path == "/api/calendar", request.httpMethod == "GET" { Thread.sleep(forTimeInterval: 3) }
             if Self.cancelRead(request) { throw URLError(.cancelled) }
@@ -105,7 +122,7 @@ private final class FixtureProtocol: URLProtocol {
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
-    override func stopLoading() {}
+    override func stopLoading() {delayedResponse?.cancel()}
     static func body(_ request: URLRequest) throws -> JSONValue {
         var bytes = request.httpBody ?? Data()
         if bytes.isEmpty, let stream = request.httpBodyStream {

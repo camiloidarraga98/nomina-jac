@@ -20,7 +20,7 @@ import AppKit
                 .frame(minWidth:1000,minHeight:700)
                 .background(MacPrivacyShield())
                 .task {
-                    guard !Self.testing else{return};await store.restore()
+                    guard !Self.testing else{return};await store.restore();store.prefetchMediaRoot()
                     #if DEBUG
                     if ProcessInfo.processInfo.arguments.contains("--uitest-payroll"),ProcessInfo.processInfo.arguments.contains("--uitest-compact-window") || ProcessInfo.processInfo.arguments.contains("--uitest-wide-window") {
                         await Task.yield()
@@ -35,6 +35,8 @@ import AppKit
                 }
                 .onChange(of:phase){_,value in if value == .active && store.hasSavedSession && !Self.testing {Task{try? await store.refreshAutomatically()}}}
                 .onChange(of:connectivity.connected){old,new in guard store.hasSavedSession && !Self.testing else{return};if new == false {store.client.beginOfflineRestore()};if old == false && new == true {Task{try? await store.refreshAutomatically()}}}
+                .onChange(of:store.isOffline){old,new in if old && !new && !Self.testing {store.prefetchMediaRoot()}}
+                .onChange(of:store.overview?.user.id){_,_ in if !Self.testing {store.prefetchMediaRoot()}}
         }.defaultSize(width:1240,height:850).windowResizability(.contentMinSize)
             .commands {
                 CommandGroup(replacing:.newItem) {}

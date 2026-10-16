@@ -43,6 +43,7 @@ struct JACNominaApp: App {
             .task {
                 guard !Self.isUnitTestHost else { return }
                 await store.restore()
+                store.prefetchMediaRoot()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(30)) } catch { return }
                     // Read the current scene state; a long-lived task must not
@@ -56,6 +57,8 @@ struct JACNominaApp: App {
                 if new == false { store.client.beginOfflineRestore() }
                 if old == false && new == true { Task { try? await store.refreshAutomatically() } }
             }
+            .onChange(of: store.isOffline) { old, new in if old && !new && !Self.isUnitTestHost { store.prefetchMediaRoot() } }
+            .onChange(of: store.overview?.user.id) { _, _ in if !Self.isUnitTestHost { store.prefetchMediaRoot() } }
         }
     }
     private static var isUnitTestHost: Bool {

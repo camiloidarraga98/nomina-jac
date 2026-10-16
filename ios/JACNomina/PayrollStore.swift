@@ -17,7 +17,9 @@ final class PayrollStore: ObservableObject {
     private var clientChanges: AnyCancellable?
     private var offlineChanges: AnyCancellable?
     @Published private(set) var offlineMode = false
-    private var automaticallyRefreshing = false
+    private var automaticRefresh: (id: UUID, task: Task<Void, Error>)?
+    private var mediaPrefetch: Task<Void, Never>?
+    private var prefetchedMediaScope: String?
     var isOffline: Bool { offlineMode || isAgendaOnly }
     var cacheRevision: Int { client.cacheRevision }
     let client: PayrollClient
@@ -32,6 +34,7 @@ final class PayrollStore: ObservableObject {
         }
         client.onSessionInvalidated = { [weak self] in
             guard let self else { return }
+            self.cancelAutomaticReads()
             self.forgetAgenda(); self.overview = nil; self.workspace = nil; self.pending = nil; self.notice = nil; self.hasSavedSession = false
         }
         offlineChanges = client.$usingOfflineCopy.removeDuplicates().sink { [weak self] value in self?.offlineMode = value }
@@ -94,14 +97,19 @@ final class PayrollStore: ObservableObject {
         catch { report(error) }
     }
     func refreshAutomatically() async throws {
-        guard !automaticallyRefreshing else { return }
-        automaticallyRefreshing = true; defer { automaticallyRefreshing = false }
-        try await refresh()
+        if let running = automaticRefresh { try await running.task.value; return }
+        let id = UUID(), task = Task { try await self.refresh() }
+        automaticRefresh = (id, task)
+        defer { if automaticRefresh?.id == id { automaticRefresh = nil } }
+        try await task.value
     }
     func refresh() async throws {
         guard pending == nil else { throw APIError.message("Conserva o descarta tus cambios pendientes antes de actualizar.") }
+        let sessionScope = try client.offlineScope()?.id
         do {
             let result = try await client.workspace(forceNetwork: true)
+            try Task.checkCancellation()
+            guard sessionScope != nil, sessionScope == (try client.offlineScope())?.id else { throw CancellationError() }
             // A refresh already in flight can finish after a save or conflict.
             guard pending == nil else { return }
             if install(result) { error = nil; client.synchronizeOfflineContent(result) }
@@ -110,6 +118,16 @@ final class PayrollStore: ObservableObject {
             if !AgendaOfflineCache.isUnavailable(error) { reportReadFailure(error) }
             throw error
         }
+    }
+    func prefetchMediaRoot() {
+        guard overview?.user.canReadMedia == true, !isOffline, let stamp = try? client.mediaAccessStamp(), stamp != prefetchedMediaScope else { return }
+        prefetchedMediaScope = stamp
+        mediaPrefetch?.cancel()
+        mediaPrefetch = Task { [client] in _ = try? await client.media(forceNetwork: true) }
+    }
+    private func cancelAutomaticReads() {
+        automaticRefresh?.task.cancel(); automaticRefresh = nil
+        mediaPrefetch?.cancel(); mediaPrefetch = nil; prefetchedMediaScope = nil
     }
     @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
         // A restricted control workspace deliberately uses revision zero and
@@ -121,6 +139,7 @@ final class PayrollStore: ObservableObject {
         workspace = result; overview = result.overview; hasSavedSession = true; client.rememberWorkspace(result); return true
     }
     func signOut() async {
+        cancelAutomaticReads()
         JACNotifications.shared.stop()
         forgetAgenda()
         busy = true

@@ -45,6 +45,7 @@ final class PayrollClient: ObservableObject {
     private var crmGeneration = 0
     private var cacheGeneration = 0
     private var permissionUser: PayrollUser?
+    private var mediaRootRead: (id: UUID, stamp: String, task: Task<MediaFeed, Error>)?
     var accessUser: PayrollUser? { permissionUser }
     private let automaticOfflineSync: Bool
     let agendaCache: AgendaOfflineCache
@@ -90,6 +91,7 @@ final class PayrollClient: ObservableObject {
         try agendaCache.save(record, scope: scope)
     }
     func clearSession() throws {
+        mediaRootRead?.task.cancel(); mediaRootRead = nil
         syncTask?.cancel(); syncTask = nil
         cacheGeneration += 1
         permissionUser = nil
@@ -191,7 +193,9 @@ final class PayrollClient: ObservableObject {
             throw APIError.invalid("Estás consultando una copia guardada. Conéctate antes de guardar cambios.")
         }
         var request = URLRequest(url: url)
-        if saved != nil { request.timeoutInterval = 5 }
+        // Cache-backed reads can fail over quickly. An explicit revalidation
+        // already displays that copy, so let a slow connection finish normally.
+        request.timeoutInterval = saved != nil && !forceNetwork ? 5 : session.configuration.timeoutIntervalForRequest
         request.httpShouldHandleCookies = false
         request.setValue(document ? "*/*" : "application/json", forHTTPHeaderField: "Accept")
         request.setValue("JACNomina-\(JACDevice.name)/1.0", forHTTPHeaderField: "User-Agent")
@@ -605,17 +609,41 @@ final class PayrollClient: ObservableObject {
     }
     // Drive credentials stay on the server. Native transfers only use JAC's
     // authenticated origin, reject redirects and revalidate the session after I/O.
-    func media(folder: String = "", pageToken: String = "") async throws -> MediaFeed {
+    func cachedMedia(folder: String = "") -> MediaFeed? {
+        guard permissionUser?.canReadMedia != false, let scope = try? mediaScope() else { return nil }
+        return mediaOffline.loadFeed(folder, scope: scope)
+    }
+    func media(folder: String = "", pageToken: String = "", forceNetwork: Bool = false) async throws -> MediaFeed {
+        // Startup prefetch and an already visible root gallery share one read.
+        // Its scope includes the permission generation, not just the account.
+        if forceNetwork, folder.isEmpty, pageToken.isEmpty, let stamp = try mediaAccessStamp() {
+            if let read = mediaRootRead, read.stamp == stamp {
+                let result = try await read.task.value
+                try Task.checkCancellation()
+                guard stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+                return result
+            }
+            let id = UUID(), task = Task { try await self.readMedia(folder: folder, pageToken: pageToken, forceNetwork: true) }
+            mediaRootRead = (id, stamp, task)
+            defer { if mediaRootRead?.id == id { mediaRootRead = nil } }
+            let result = try await task.value
+            try Task.checkCancellation()
+            guard stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+            return result
+        }
+        return try await readMedia(folder: folder, pageToken: pageToken, forceNetwork: forceNetwork)
+    }
+    private func readMedia(folder: String, pageToken: String, forceNetwork: Bool) async throws -> MediaFeed {
         guard permissionUser?.canReadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a Fotografía.")}
         var query: [URLQueryItem] = []
         if !folder.isEmpty { query.append(URLQueryItem(name: "folder", value: folder)) }
         if !pageToken.isEmpty { query.append(URLQueryItem(name: "pageToken", value: pageToken)) }
         guard let scope = try mediaScope() else { throw APIError.unauthorized }
         let generation = cacheGeneration
-        if usingOfflineCopy, let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
+        if !forceNetwork, usingOfflineCopy, let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
         do {
-            let (data, response) = try await request(path: "api/media", query: query)
-            if response.value(forHTTPHeaderField: "X-JAC-Offline") != nil, let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
+            let (data, response) = try await request(path: "api/media", query: query, forceNetwork: forceNetwork)
+            if !forceNetwork, response.value(forHTTPHeaderField: "X-JAC-Offline") != nil, let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
             let feed = try decoder.decode(MediaFeed.self, from: data)
             try Task.checkCancellation()
             guard generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
@@ -623,7 +651,7 @@ final class PayrollClient: ObservableObject {
             else { mediaOffline.clear(scope); TemporaryDocuments.clear() }
             return feed
         } catch {
-            if AgendaOfflineCache.isUnavailable(error), let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
+            if !forceNetwork, AgendaOfflineCache.isUnavailable(error), let saved = cachedMedia(folder: folder) { return saved }
             throw error
         }
     }

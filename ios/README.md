@@ -1,3 +1,7 @@
+## Fotografía: actualización inmediata — iPhone 0.18.1 (30)
+
+La galería muestra la última copia guardada mientras consulta Drive al entrar; ya no espera el ciclo de 30 segundos para conectarse. La app precarga el listado principal tras validar la sesión. Sin internet conserva lo descargado y la sesión, y una revocación real retira el contenido. Actualiza con **Run desde el mismo proyecto**, conservando firma y push suspendido. Ver [Fotografía: UX](../docs/PHOTOGRAPHY_UX.md).
+
 ## Fotografía principal — iPhone 0.18.0 (29)
 
 Fotografía tiene acceso en la barra principal para las cuentas autorizadas. **Mi cuenta** está dentro de **Gestión**, también en perfiles limitados a Fotografía u otra sección. Se conservan la sesión, el cierre manual y los permisos.

@@ -269,6 +269,8 @@ struct MediaGalleryView: View {
     @State private var folderID = ""
     @State private var loadedPages = 1
     @State private var loading = false
+    @State private var loadingFolder: String?
+    @State private var mediaIsOffline = false
     @State private var choosingDestination = false
     @State private var uploadDestination: MediaFolder?
     @State private var pickingFiles = false
@@ -313,7 +315,7 @@ struct MediaGalleryView: View {
                 }
                 #endif
                 if let error { InlineError(message: error) }
-                if store.isOffline { Label("Sin conexión · Puedes consultar los archivos descargados.", systemImage: "wifi.slash").font(.footnote).foregroundStyle(.secondary) }
+                if mediaIsOffline { Label("Sin conexión · Puedes consultar los archivos descargados.", systemImage: "wifi.slash").font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.offline.status") }
                 if loading && feed == nil { ProgressView("Cargando carpetas…").frame(maxWidth: .infinity) }
                 if let feed {
                     if !feed.connected {
@@ -333,7 +335,7 @@ struct MediaGalleryView: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 280), spacing: 14)], spacing: 14) {
                             ForEach(items) { item in
                                 VStack(alignment:.leading,spacing:0) {
-                                    Button { open(item) } label: { MediaTile(item: item, client: store.client, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
+                                    Button { open(item) } label: { MediaTile(item: item, client: store.client, offline: store.isOffline, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
                                         .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
                                     if item.kind == "folder" {
                                         HStack {Text("Carpeta del equipo").font(.caption).foregroundStyle(.secondary);Spacer(minLength:6)
@@ -364,6 +366,7 @@ struct MediaGalleryView: View {
                 }
             }
             .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
+            .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline { Task { await reload() } } }
             .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
             .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
             .sheet(item: $transferReview) { review in MediaTransferReviewSheet(review: review) { folderTransfer.start(client: store.client, plan: review.plan, photos: review.photos, writer: photosWriter) } }
@@ -373,7 +376,7 @@ struct MediaGalleryView: View {
             }
             .jacFileDrop(enabled: writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls);if uploadDestination == nil && !queue.isEmpty {if parentID == feed?.root?.id {choosingDestination=true}else{uploadDestination=feed?.folder}} } }
             .jacRefreshCommand { Task { await reload() } }
-            .onDisappear { uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); queue.forEach { $0.remove() }; clearPreview() }
+            .onDisappear { uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview() }
     }
     private var photosWriter: any MediaPhotosWriting {
         #if DEBUG
@@ -476,20 +479,33 @@ struct MediaGalleryView: View {
         }.padding(18).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18))
     }
     private func reload() async {
-        guard !uploading else { return }
+        guard !uploading, loadingFolder != folderID else { return }
         let expected = UUID(), requestedFolder = folderID; generation = expected
-        loading = true; defer { if generation == expected { loading = false } }
+        loading = true; loadingFolder=requestedFolder
+        defer { if generation == expected { loading = false;loadingFolder=nil } }
+        // A restored copy is available immediately; it does not prove the
+        // network is unavailable. Revalidate independently of workspace startup.
+        if feed == nil, let saved = store.client.cachedMedia(folder: requestedFolder) {
+            feed=saved;items=MediaGalleryOrder.sorted(saved.items)
+        }
         do {
-            var result = try await store.client.media(folder: requestedFolder), all = result.items
+            var result = try await store.client.media(folder: requestedFolder, forceNetwork: true), all = result.items
             var cursor = result.nextPageToken ?? "", visited = Set<String>()
             for _ in 1..<max(1, loadedPages) {
                 guard !cursor.isEmpty, visited.insert(cursor).inserted else { break }
-                result = try await store.client.media(folder: requestedFolder, pageToken: cursor); all += result.items; cursor = result.nextPageToken ?? ""
+                result = try await store.client.media(folder: requestedFolder, pageToken: cursor, forceNetwork: true); all += result.items; cursor = result.nextPageToken ?? ""
             }
             guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
-            feed = result; var seen = Set<String>(); items = MediaGalleryOrder.sorted(all.filter { seen.insert($0.id).inserted });thumbnailEpoch=UUID(); error = nil
+            feed = result; var seen = Set<String>(); items = MediaGalleryOrder.sorted(all.filter { seen.insert($0.id).inserted });thumbnailEpoch=UUID(); error = nil;mediaIsOffline=false
             if !result.canRead || !result.connected { items = []; clearPreview(); queue.forEach { $0.remove() }; queue = [] }
+            // A live gallery does not grant unrelated financial permissions.
+            // Join session revalidation before restoring write controls.
+            if store.isOffline { try? await store.refreshAutomatically() }
         } catch {
+            guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
+            if AgendaOfflineCache.isUnavailable(error), let saved = store.client.cachedMedia(folder: requestedFolder) {
+                feed=saved;items=MediaGalleryOrder.sorted(saved.items);mediaIsOffline=true;self.error=nil;return
+            }
             if let message = store.reportReadFailure(error) { self.error = message }
             if case APIError.forbidden = error { items = []; feed = nil; clearPreview() }
         }
@@ -558,6 +574,7 @@ struct MediaGalleryView: View {
 private struct MediaTile: View {
     let item: MediaItem
     let client: PayrollClient
+    let offline: Bool
     let opening: Bool
     let epoch:UUID
     let denied:(Error)->Void
@@ -582,8 +599,8 @@ private struct MediaTile: View {
             Text(item.name).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
             if item.kind != "folder" {Text((item.kind == "video" ? "Video · ":"Foto · ")+item.sizeLabel).font(.caption).foregroundStyle(.secondary)}
         }.padding(12).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18)).contentShape(Rectangle())
-            .task(id: item.id + item.modifiedAt + epoch.uuidString) {
-                guard item.kind != "folder",!client.usingOfflineCopy,loadedRevision != item.modifiedAt else{return}
+            .task(id: item.id + item.modifiedAt + epoch.uuidString + (offline ? "offline":"online")) {
+                guard item.kind != "folder",!offline,loadedRevision != item.modifiedAt else{return}
                 if loadedRevision != nil {image=nil;loadedRevision=nil}
                 do {let data=try await client.mediaThumbnail(item);try Task.checkCancellation();if let thumbnail=MediaThumbnail.image(data){image=thumbnail;loadedRevision=item.modifiedAt}}
                 catch {if case APIError.unauthorized = error {denied(error)}else if case APIError.forbidden = error {denied(error)}}
