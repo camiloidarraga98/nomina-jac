@@ -13,26 +13,26 @@ struct ManagementView: View {
     let user: PayrollUser
     @State private var destination: Destination?
     private enum Destination: String, Identifiable {
-        case expenses, alerts, crm, archive, employees, mail, notifications, concepts, users
+        case expenses, alerts, crm, media, archive, employees, mail, notifications, concepts, users
         var id:String { rawValue }
         var title:String {
             switch self {
             case .expenses:return "Gastos de viaje";case .alerts:return "Alertas";case .crm:return "CRM · Shows y abonos"
-            case .archive:return "Archivo";case .employees:return "Equipo";case .mail:return "Correos y Gmail"
+            case .media:return "Fotografía";case .archive:return "Archivo";case .employees:return "Equipo";case .mail:return "Correos y Gmail"
             case .notifications:return "Notificaciones";case .concepts:return "Conceptos y reglas";case .users:return "Usuarios y permisos"
             }
         }
         var subtitle:String {
             switch self {
             case .expenses:return "Facturas y reintegros";case .alerts:return "Avisos del equipo";case .crm:return "Ventas y preparación"
-            case .archive:return "Quincenas cerradas";case .employees:return "Personas y tarifas";case .mail:return "Documentos y envíos"
+            case .media:return "Fotos y videos del equipo";case .archive:return "Quincenas cerradas";case .employees:return "Personas y tarifas";case .mail:return "Documentos y envíos"
             default:return ""
             }
         }
         var symbol:String {
             switch self {
             case .expenses:return "receipt";case .alerts:return "bell.badge";case .crm:return "briefcase"
-            case .archive:return "archivebox";case .employees:return "person.2";case .mail:return "envelope"
+            case .media:return "photo.on.rectangle.angled";case .archive:return "archivebox";case .employees:return "person.2";case .mail:return "envelope"
             case .notifications:return "bell";case .concepts:return "list.bullet.rectangle";case .users:return "person.badge.key"
             }
         }
@@ -64,7 +64,7 @@ struct ManagementView: View {
                     }
                     JACFeatureBanner(eyebrow:"JAC · Tu equipo",title:"Todo en su lugar.",subtitle:"Herramientas para lo que pasa antes y después del show.",symbol:"slider.horizontal.3",tone:.violet)
                     Text("Tu día a día").font(.system(.headline,design:.rounded))
-                    cards([.expenses,.alerts])
+                    cards([.expenses,.alerts] + (user.canReadMedia ? [.media] : []))
                     if user.itinerariesOnly != true {
                         Text("Administración").font(.system(.headline,design:.rounded))
                         cards(administration)
@@ -82,6 +82,7 @@ struct ManagementView: View {
             }.jacSurface().navigationTitle("Gestión").jacInlineTitle()
                 .navigationDestination(item:$destination) { target in
                     switch target {
+                    case .media:if user.canReadMedia {MediaGalleryView(user:user)}
                     case .expenses:TravelExpensesView()
                     case .alerts:NoticesView(user:user,kind:"alert")
                     case .crm:if user.isOwner && user.itinerariesOnly != true {CRMHomeView(client:store.client)}

@@ -10,6 +10,16 @@ struct PayrollHomeView: View {
         self.overview = overview; _selected = State(initialValue: agendaOnly ? "agenda" : overview.user.itinerariesOnly == true ? "itineraries" : "payroll")
     }
     var body: some View {
+        Group {
+            if overview.user.mediaOnly == true {
+                TabView {
+                    NavigationStack { MediaGalleryView(user: overview.user) }.tabItem { Label("Fotografía", systemImage: "photo.on.rectangle.angled") }
+                    NavigationStack { AccountView(user: overview.user) }.tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }
+                }
+            } else { standardTabs }
+        }.tint(JACTheme.action)
+    }
+    private var standardTabs: some View {
         TabView(selection: $selected) {
             if overview.user.itinerariesOnly != true { Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Quincenas") } else { PeriodsView(overview: overview) } }.tabItem { Label("Quincena", systemImage: "wallet.pass") }.tag("payroll") }
             CalendarView(user: overview.user, initialMonth: store.preferredAgendaMonth).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }.tag("agenda")

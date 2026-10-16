@@ -51,7 +51,14 @@ import AppKit
                     Button("Actualizar información"){if let refreshAction {refreshAction()} else {Task{try? await store.refresh()}}}.keyboardShortcut("r",modifiers:.command).disabled(!store.hasSavedSession || store.busy)
                 }
             }
-        Settings {NotificationSettingsView().environmentObject(store).frame(width:680,height:500)}
+        Settings {
+            Group {
+                if let user = store.overview?.user {
+                    if user.mediaOnly == true { AccountView(user: user) }
+                    else { NotificationSettingsView() }
+                } else { ContentUnavailableView("Inicia sesión en JAC", systemImage: "person.crop.circle") }
+            }.environmentObject(store).frame(width:680,height:500).background(MacPrivacyShield())
+        }
     }
     private static var testing:Bool {Bundle.allBundles.contains{$0.bundleURL.lastPathComponent == "JACMacTests.xctest"}}
     private static func makeStore()->PayrollStore {
@@ -72,20 +79,23 @@ import AppKit
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication)->Bool{false}
 }
 enum MacSection:String,CaseIterable,Identifiable {
-    case payroll,agenda,itineraries,account,management,crm,alerts
+    case payroll,agenda,itineraries,account,management,crm,alerts,media
     var id:String{rawValue}
-    var title:String{switch self {case .payroll:"Quincena";case .agenda:"Agenda";case .itineraries:"Itinerarios";case .account:"Mi cuenta";case .management:"Configuración";case .crm:"CRM";case .alerts:"Alertas"}}
-    var icon:String{switch self {case .payroll:"wallet.pass";case .agenda:"calendar.badge.clock";case .itineraries:"airplane";case .account:"person.crop.circle";case .management:"slider.horizontal.3";case .crm:"briefcase";case .alerts:"bell.badge"}}
-    static let primary: [MacSection] = [.crm, .payroll, .agenda, .itineraries]
+    var title:String{switch self {case .payroll:"Quincena";case .agenda:"Agenda";case .itineraries:"Itinerarios";case .account:"Mi cuenta";case .management:"Configuración";case .crm:"CRM";case .alerts:"Alertas";case .media:"Fotografía"}}
+    var icon:String{switch self {case .payroll:"wallet.pass";case .agenda:"calendar.badge.clock";case .itineraries:"airplane";case .account:"person.crop.circle";case .management:"slider.horizontal.3";case .crm:"briefcase";case .alerts:"bell.badge";case .media:"photo.on.rectangle.angled"}}
+    static let primary: [MacSection] = [.crm, .payroll, .agenda, .itineraries, .media]
     static let personal: [MacSection] = [.account, .management]
     static func sidebar(for user:PayrollUser)->[MacSection] { (primary+personal).filter{$0.allowed(user)} }
-    func allowed(_ user:PayrollUser)->Bool {switch self{case .payroll:user.itinerariesOnly != true;case .crm:user.isOwner && user.itinerariesOnly != true;default:true}}
+    func allowed(_ user:PayrollUser)->Bool {
+        if user.mediaOnly == true { return self == .media || self == .account }
+        switch self {case .payroll:return user.itinerariesOnly != true;case .crm:return user.isOwner && user.itinerariesOnly != true;case .media:return user.canReadMedia;default:return true}
+    }
 }
 private struct MacWorkspace:View {
     @EnvironmentObject private var store:PayrollStore
     let overview:PayrollOverview
     @Binding var section:MacSection
-    private var selected:MacSection{section.allowed(overview.user) ? section:.itineraries}
+    private var selected:MacSection{section.allowed(overview.user) ? section:overview.user.mediaOnly == true ? .media:.itineraries}
     private var sidebarSelection: Binding<MacSection> {
         Binding(get:{section},set:{next in guard !NSApp.windows.contains(where:{$0.attachedSheet != nil}) else{return};section=next})
     }
@@ -98,7 +108,7 @@ private struct MacWorkspace:View {
                         ForEach(MacSection.primary.filter{$0.allowed(overview.user)}) { item in sidebarRow(item) }
                     }
                     Section("Personal") {
-                        ForEach(MacSection.personal) { item in sidebarRow(item) }
+                        ForEach(MacSection.personal.filter{$0.allowed(overview.user)}) { item in sidebarRow(item) }
                     }
                 }.listStyle(.sidebar)
                 Divider().padding(.horizontal,16)
@@ -126,15 +136,16 @@ private struct MacWorkspace:View {
                     case .account:NavigationStack{AccountView(user:overview.user)}
                     case .management:MacManagementView(user:overview.user)
                     case .crm:NavigationStack{MacCRMHomeView(client:store.client)}
+                    case .media:NavigationStack{MediaGalleryView(user:overview.user)}
                     case .alerts:NavigationStack{NoticesView(user:overview.user,kind:"alert")}
                     }
                 }
             }.id(selected).toolbar {
-                if selected != .crm && selected != .agenda {
+                if selected != .crm && selected != .agenda && selected != .media {
                     ToolbarItem { Button {Task{try? await store.refresh()}} label:{Image(systemName:"arrow.clockwise")}.help("Actualizar información (⌘R)").disabled(store.busy) }
                 }
             }
-        }.onAppear{if !section.allowed(overview.user){section = .itineraries}}
+        }.onAppear{if !section.allowed(overview.user){section = overview.user.mediaOnly == true ? .media:.itineraries}}
     }
     private func sidebarRow(_ item:MacSection)->some View {
         Label(item.title,systemImage:item.icon).font(.body.weight(.medium)).padding(.vertical,4).tag(item).accessibilityIdentifier("mac.nav."+item.rawValue)

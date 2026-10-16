@@ -2,6 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0"><dict>
 <key>NSCameraUsageDescription</key><string>Fotografiar comprobantes de gastos de viaje para enviarlos a revisión en JAC.</string>
+<key>NSPhotoLibraryAddUsageDescription</key><string>Guardar en Fotos las fotos y videos de las carpetas de JAC que tú selecciones.</string>
 <key>JACPushEnabled</key><string>$(JAC_PUSH_ENABLED)</string>
 <key>CFBundleURLTypes</key><array><dict>
 <key>CFBundleURLName</key><string>co.jacmusic.nomina.gmail</string>

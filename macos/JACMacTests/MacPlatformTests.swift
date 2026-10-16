@@ -31,11 +31,17 @@ final class MacPlatformTests:XCTestCase {
         let owner=PayrollUser(id:"owner",email:"owner@example.invalid",username:"owner",displayName:"Owner",isOwner:true,permissions:[])
         let reader=PayrollUser(id:"reader",email:"reader@example.invalid",username:"reader",displayName:"Reader",isOwner:false,permissions:[])
         var restricted=owner;restricted.itinerariesOnly=true
-        XCTAssertEqual(MacSection.sidebar(for:owner),[.crm,.payroll,.agenda,.itineraries,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:owner),[.crm,.payroll,.agenda,.itineraries,.media,.account,.management])
         XCTAssertEqual(MacSection.sidebar(for:reader),[.payroll,.agenda,.itineraries,.account,.management])
-        XCTAssertEqual(MacSection.sidebar(for:restricted),[.agenda,.itineraries,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:restricted),[.agenda,.itineraries,.media,.account,.management])
         XCTAssertFalse(MacSettingsRoute.users.allowed(reader));XCTAssertFalse(MacSettingsRoute.connections.allowed(reader))
         XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(restricted)},[.expenses,.alerts,.notifications])
+    }
+    func testPhotographerSidebarContainsOnlyGalleryAndAccountEvenWithOwnerFlag() {
+        let photographer = PayrollUser(id: "photo", email: "anderson@example.invalid", username: "anderson", displayName: "Anderson ficticio", isOwner: true, permissions: ["payroll"], itinerariesOnly: true, mediaOnly: true)
+        XCTAssertEqual(MacSection.sidebar(for: photographer), [.media, .account])
+        XCTAssertTrue(MacSettingsRoute.allCases.allSatisfy { !$0.allowed(photographer) })
+        XCTAssertFalse(MacSection.crm.allowed(photographer)); XCTAssertFalse(MacSection.agenda.allowed(photographer)); XCTAssertFalse(MacSection.alerts.allowed(photographer))
     }
     func testCRMTableFiltersDatesStatusAndSearchButUsesServerBalancesVerbatim() {
         let show:JSONValue = .object(["id":.string("show"),"title":.string("PEREIRA"),"showDate":.string("2026-10-17"),"entrepreneur":.string("José"),"status":.string("active"),"sale":.number(140000000),"paid":.number(50000000),"balance":.number(777)])

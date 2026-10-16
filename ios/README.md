@@ -2,6 +2,16 @@
 
 El proyecto compañero está en **`macos/JACMac.xcodeproj`**, esquema **JACMac → My Mac → Run**. Comparte las funciones nativas y las mismas cuentas/servicios con el iPhone. Consulta [`macos/README.md`](../macos/README.md) para abrir la app, documentos, copia sin conexión y comprobaciones. El proyecto y la firma personal del iPhone se conservan; sigue usando **JACNomina → tu iPhone → Run** para el teléfono.
 
+## Fotografía — iPhone 0.16.0 (27)
+
+En **Gestión → Fotografía**, Camilo y `jac` consultan las carpetas compartidas y abren fotos/videos dentro de JAC. Anderson ve únicamente **Fotografía** y **Mi cuenta**: puede crear carpetas por show o día y subir varios archivos desde Fotos o Archivos. La galería se actualiza al volver y cada 30 segundos mientras está visible; la conexión inicial de Drive se administra desde la web con Camilo.
+
+**Disponible sin conexión** descarga la carpeta completa y sus subcarpetas tras mostrar archivos, tamaño y espacio necesario. La copia permanece cifrada y separada por sesión/origen; cerrar sesión o una revocación comprobada la elimina. **Guardar carpeta en Fotos** agrega los archivos a la fototeca del iPhone y pide solamente permiso para agregar; no lee la biblioteca. Ambas operaciones muestran progreso, permiten detenerlas y señalan los archivos que no pudieron completarse. Las copias que guardes expresamente en Fotos quedan bajo tu control.
+
+Actualiza con **Run desde este mismo `ios/JACNomina.xcodeproj`**, esquema **JACNomina**, eligiendo tu iPhone. Conserva tu equipo/firma y `co.jacmusic.nomina`; push continúa suspendido. El respaldo ZIP es opcional y omite la configuración personal de firma; no sustituye tu proyecto de trabajo.
+
+Verificado localmente: **72 pruebas unitarias aprobadas, una comprobación física omitida en CoreSimulator y cero fallos**; cinco recorridos UI distintos aprobados, incluidos permisos y privacidad, y tres recorridos de Fotografía repetidos tras el acabado visual. Informes `work/local/ios-media-final.xcresult` y `ios-media-design-final.xcresult`; Release de simulador sin firma compilado en `ios-media-release-final.log`. Simulador nuevo con datos `.invalid`, foto/video ficticios y guardado en Fotos simulado: no se usó la fototeca real ni se instaló en un iPhone físico. Ver [guía de Fotografía](../docs/PHOTOGRAPHY.md).
+
 ## Nueva distribución y personalidad — iPhone 0.15.0 (26)
 
 Rediseño nativo con tarjetas de acceso en Gestión y Actividad, acciones principales visibles en Quincena/CRM/Alertas, pases tipo boleto y acceso/Mi cuenta renovados. Azul profundo y cian JAC, con acentos discretos por sección y soporte claro/oscuro. Agenda sigue mostrando primero el calendario, con Hoy/actualización/Nuevo evento bajo el mes. Las cinco pestañas, logo, funciones, permisos, datos, privacidad y copia offline se mantienen. Ver `docs/IPHONE_REDESIGN.md` para cambios y verificación.

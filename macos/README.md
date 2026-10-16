@@ -2,6 +2,16 @@
 
 Aplicación nativa de macOS en SwiftUI y AppKit, dentro de la misma carpeta del proyecto. Comparte modelos, formularios y API con el iPhone; no contiene un navegador incrustado ni crea una base de nómina distinta.
 
+## Fotografía — Mac 1.3.0 (4)
+
+La barra lateral incorpora **Fotografía** para Camilo y `jac`, con consulta de carpetas, fotos y videos dentro de JAC. La cuenta de Anderson muestra únicamente **Fotografía** y **Mi cuenta**: crea carpetas por show/día, elige varios archivos o los arrastra y los sube por partes con reintentos sin duplicados. Las imágenes usan vista previa nativa y los videos el reproductor AVKit del Mac. Se conservan el logo, los demás menús y todos los permisos existentes.
+
+**Disponible sin conexión** incluye los archivos y subcarpetas de la carpeta seleccionada; revisa antes cantidad/tamaño y espacio, muestra progreso y permite detenerse. La copia está cifrada por bloques, excluida de respaldos y vinculada a la sesión/origen; se elimina al cerrar sesión o comprobar una revocación. La galería se actualiza al regresar y cada 30 segundos mientras está visible. La conexión inicial de Drive se administra en la web; no hay claves de Google en el proyecto. **Guardar carpeta en Fotos** pertenece al iPhone.
+
+Continúa con **Run en este mismo `macos/JACMac.xcodeproj`**, esquema **JACMac → My Mac**. La entrega Release universal actualiza la misma ruta `outputs/JAC Music.app` a 1.3.0 (4); la versión anterior se conserva en `work/local/mac-media-previous`. Si la app anterior sigue abierta, ciérrala y abre la actualizada para cargar el nuevo binario. El ZIP es un respaldo opcional, no un proyecto de trabajo nuevo.
+
+Verificado en este Mac: **80 unitarias y dos recorridos UI distintos aprobados**, incluido fotógrafo con creación/subida por lote, lector y carpeta sin conexión. Informes `work/local/mac-media-unit-final.xcresult`, recorridos UI de `mac-media-delivery.xcresult` y acabado final en `mac-media-design-accepted.xcresult`; los informes intermedios se conservan con sus diagnósticos. Release universal arm64/x86_64 compilado, versión 1.3.0 (4) y firma local verificadas (`mac-media-release-final.log`). Todo con datos `.invalid`, imágenes y video ficticios, sin servicios reales ni fototecas. Ver [guía de Fotografía](../docs/PHOTOGRAPHY.md).
+
 ## Abrir y usar
 
 1. Abre `macos/JACMac.xcodeproj` en Xcode.

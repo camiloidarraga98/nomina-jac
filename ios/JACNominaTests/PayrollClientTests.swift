@@ -1,5 +1,6 @@
 import XCTest
 import UserNotifications
+import AVFoundation
 #if os(iOS)
 import UIKit
 @testable import JACNomina
@@ -59,10 +60,154 @@ private final class CRMDelayedProtocol:URLProtocol {
     }
     func respond(_ data:Data){let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!;client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:data);client?.urlProtocolDidFinishLoading(self)}
     static func pending()->CRMDelayedProtocol?{lock.lock();defer{lock.unlock()};return held}
+    static func resetPending(){lock.lock();defer{lock.unlock()};held=nil}
     override func stopLoading(){}
 }
 
+@MainActor private final class FakeMediaPhotosWriter: MediaPhotosWriting {
+    var authorizations = 0
+    var saved: [String] = []
+    func authorize() async throws { authorizations += 1 }
+    func save(_ document: ExportedDocument, item: MediaItem) async throws {
+        XCTAssertTrue(FileManager.default.fileExists(atPath: document.url.path))
+        if item.kind == "video" { throw APIError.invalid("Formato ficticio no admitido para probar fallo individual") }
+        saved.append(item.id)
+    }
+}
+
 final class PayrollClientTests: XCTestCase {
+    @MainActor func testMediaMovieIsPlayableAndBulkPhotosReportsIndividualFailuresWithoutRealLibrary() async throws {
+        let client = UITestBackend.client(), root = MediaFolder(id: "media-day", name: "Día ficticio")
+        let feed = try await client.media(folder: root.id), video = try XCTUnwrap(feed.items.first { $0.kind == "video" })
+        let document = try await client.mediaDocument(video); defer { TemporaryDocuments.remove(document) }
+        let tracks = try await AVURLAsset(url: document.url).loadTracks(withMediaType: .video)
+        XCTAssertFalse(tracks.isEmpty, "Fixture MOV must be genuinely playable by the native AVFoundation player")
+        XCTAssertThrowsError(try DeviceMediaPhotosWriter.validateCreatedAsset(false)); XCTAssertNoThrow(try DeviceMediaPhotosWriter.validateCreatedAsset(true))
+        let writer = FakeMediaPhotosWriter(), transfer = MediaFolderTransfer()
+        transfer.start(client: client, plan: MediaDownloadPlan(folder: root, files: feed.items), photos: true, writer: writer)
+        for _ in 0..<400 { if !transfer.running { break }; try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(transfer.running); XCTAssertEqual(writer.authorizations, 1); XCTAssertEqual(writer.saved, ["media-photo"])
+        XCTAssertEqual(transfer.completed, 1); XCTAssertEqual(transfer.total, 2); XCTAssertEqual(transfer.failures.count, 1)
+        XCTAssertTrue(transfer.failures[0].contains("Video ficticio.mov")); XCTAssertEqual(transfer.message, "1 de 2 archivos guardados en Fotos.")
+    }
+    func testLargeFolderStorageReviewCountsTemporarySpaceWithoutReadingVideoBytes() {
+        let files = (0..<5).map { MediaItem(id: String($0), name: "Video ficticio.mov", mimeType: "video/quicktime", kind: "video", size: 10 * 1024 * 1024 * 1024, modifiedAt: "fixture", thumbnailAvailable: false) }
+        let plan = MediaDownloadPlan(folder: MediaFolder(id: "root", name: "Ficticia"), files: files)
+        XCTAssertEqual(plan.totalBytes, 50 * 1024 * 1024 * 1024)
+        XCTAssertGreaterThan(MediaStorageReview.required(files), 60 * 1024 * 1024 * 1024)
+        XCTAssertEqual(MediaStorageReview.required([]), 0)
+    }
+    @MainActor func testMediaManualLogoutErasesCiphertextAndLateDownloadCannotRestoreIt() async throws {
+        let client = UITestBackend.client(), feed = try await client.media(folder: "media-day")
+        let item = try XCTUnwrap(feed.items.first)
+        try await client.saveMediaOffline(item); let scope = try XCTUnwrap(client.mediaScope())
+        XCTAssertTrue(client.mediaOffline.hasFile(item, scope: scope)); try client.clearSession()
+        XCTAssertFalse(client.mediaOffline.hasFile(item, scope: scope)); XCTAssertNil(client.mediaOffline.loadFeed("media-day", scope: scope)); XCTAssertNil(try client.mediaScope())
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [CRMDelayedProtocol.self]
+        let delayed = PayrollClient(baseURL: UITestBackend.base, vault: vault, configuration: config)
+        CRMDelayedProtocol.resetPending()
+        let request = Task { try await delayed.mediaDocument(item) }
+        for _ in 0..<100 { if CRMDelayedProtocol.pending() != nil { break }; try await Task.sleep(for: .milliseconds(10)) }
+        let held = try XCTUnwrap(CRMDelayedProtocol.pending()); XCTAssertEqual(held.request.url?.path, "/api/media/file"); try delayed.clearSession(); held.respond(MediaFixture.photo)
+        do { _ = try await request.value; XCTFail("Late media download must not return a document after logout") } catch { XCTAssertTrue(error is CancellationError, String(describing: error)) }
+    }
+    func testPhotographerRoleDoesNotInheritPayrollOrGeneralAccess() throws {
+        let user = try JSONDecoder().decode(PayrollUser.self, from: Data("{\"id\":\"photo\",\"email\":\"anderson@example.invalid\",\"username\":\"anderson\",\"displayName\":\"Anderson ficticio\",\"isOwner\":false,\"permissions\":[],\"itinerariesOnly\":true,\"mediaOnly\":true}".utf8))
+        XCTAssertTrue(user.canReadMedia); XCTAssertTrue(user.canUploadMedia); XCTAssertFalse(user.can("payroll")); XCTAssertFalse(user.can("users"))
+        var malicious = user; malicious = PayrollUser(id: user.id, email: user.email, username: user.username, displayName: user.displayName, isOwner: true, permissions: ["payroll"], mediaOnly: true)
+        XCTAssertFalse(malicious.can("payroll"), "The media restriction overrides an owner flag")
+        let historical = try JSONDecoder().decode(PayrollUser.self, from: Data("{\"id\":\"reader\",\"email\":\"reader@example.invalid\",\"username\":\"reader\",\"displayName\":\"Reader\",\"isOwner\":false,\"permissions\":[]}".utf8))
+        XCTAssertFalse(historical.canReadMedia); XCTAssertFalse(historical.canUploadMedia)
+    }
+    func testMediaCacheStreamsAuthenticatedBlocksAndRejectsCorruptionOtherSessionAndOldRevision() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), source = root.appendingPathComponent("source.mov")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }
+        let bytes = Data(repeating: 71, count: 2 * 1024 * 1024 + 333); try bytes.write(to: source)
+        let cache = MediaOfflineCache(root: root.appendingPathComponent("cache")), scope = AgendaCacheScope(origin: "https://fixture.invalid/media-offline-v1", token: String(repeating: "f", count: 43))
+        let item = MediaItem(id: "movie", name: "Ficticio.mov", mimeType: "video/quicktime", kind: "video", size: Int64(bytes.count), modifiedAt: "2026-10-16T12:00:00Z", thumbnailAvailable: false)
+        try cache.saveFile(source, item: item, scope: scope)
+        XCTAssertTrue(cache.hasFile(item, scope: scope)); XCTAssertFalse(try Data(contentsOf: cache.encryptedFile(item, scope: scope)).contains(Data(repeating: 71, count: 100)))
+        let opened = try XCTUnwrap(cache.document(item, scope: scope)); defer { TemporaryDocuments.remove(opened) }
+        XCTAssertEqual(try Data(contentsOf: opened.url), bytes)
+        let other = AgendaCacheScope(origin: "https://fixture.invalid/media-offline-v1", token: String(repeating: "x", count: 43))
+        XCTAssertNil(try cache.document(item, scope: other))
+        let updated = MediaItem(id: item.id, name: item.name, mimeType: item.mimeType, kind: item.kind, size: item.size, modifiedAt: "2026-10-17T12:00:00Z", thumbnailAvailable: false)
+        XCTAssertFalse(cache.hasFile(updated, scope: scope)); XCTAssertNil(try cache.document(updated, scope: scope))
+        #if os(macOS)
+        let attrs = try FileManager.default.attributesOfItem(atPath: cache.encryptedFile(item, scope: scope).path)
+        XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        #endif
+        XCTAssertEqual(try cache.root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup, true)
+        var broken = try Data(contentsOf: cache.encryptedFile(item, scope: scope)); broken[64] ^= 1; try broken.write(to: cache.encryptedFile(item, scope: scope))
+        XCTAssertThrowsError(try cache.document(item, scope: scope)); cache.clear(scope)
+        XCTAssertFalse(cache.hasFile(item, scope: scope)); XCTAssertFalse(FileManager.default.fileExists(atPath: cache.encryptedFile(item, scope: scope).path))
+    }
+    @MainActor func testMediaFolderPaginationRecursionOfflineReopenAndRevocation() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString); defer { try? FileManager.default.removeItem(at: root) }
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let mediaCache = MediaOfflineCache(root: root.appendingPathComponent("media")), content = OfflineResponseCache(root: root.appendingPathComponent("content"))
+        let client = PayrollClient(baseURL: URL(string: "https://mock.example.invalid")!, vault: vault, configuration: config, offlineCache: content, mediaOffline: mediaCache, automaticallyDownloadOffline: false)
+        let item = MediaItem(id: "photo", name: "Foto ficticia.png", mimeType: "image/png", kind: "image", size: Int64(MediaFixture.photo.count), modifiedAt: "2026-10-16T12:00:00Z", thumbnailAvailable: true)
+        let folder = MediaFolder(id: "root", name: "Ficticia"), day = MediaFolder(id: "day", name: "Día ficticio")
+        var reads: [String] = []
+        MockProtocol.handler = { req in
+            XCTAssertEqual(req.url?.host, "mock.example.invalid"); XCTAssertEqual(req.value(forHTTPHeaderField: "Cookie"), "__Host-jac_session=" + vault.token!)
+            let parts = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!, query = parts.queryItems ?? []
+            if parts.path == "/api/media/file" { return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!, MediaFixture.photo) }
+            let selected = query.first { $0.name == "folder" }?.value ?? "", page = query.first { $0.name == "pageToken" }?.value ?? ""; reads.append(selected + ":" + page)
+            let entries = selected == "day" ? [item] : page.isEmpty ? [MediaItem(id: "day", name: day.name, mimeType: "application/vnd.google-apps.folder", kind: "folder", size: 0, modifiedAt: "", thumbnailAvailable: false)] : []
+            let feed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: true, root: folder, folder: selected == "day" ? day : folder, breadcrumbs: selected == "day" ? [folder, day] : [folder], items: entries, nextPageToken: selected.isEmpty && page.isEmpty ? "page2" : nil)
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(feed))
+        }
+        let plan = try await client.mediaDownloadPlan(); XCTAssertEqual(plan.files.map(\.id), ["photo"]); XCTAssertEqual(Set(reads), Set([":", ":page2", "day:"]))
+        try await client.saveMediaOffline(item)
+        let workspace: PayrollWorkspace = try JSONDecoder().decode(PayrollWorkspace.self, from: Data("{\"data\":{\"employees\":[],\"periods\":[]},\"version\":1,\"user\":{\"id\":\"photographer\",\"email\":\"photo@example.invalid\",\"username\":\"anderson\",\"displayName\":\"Anderson ficticio\",\"isOwner\":false,\"permissions\":[],\"itinerariesOnly\":true,\"mediaOnly\":true},\"company\":\"JAC\",\"periods\":[],\"employees\":[]}".utf8))
+        client.rememberWorkspace(workspace)
+        let reopened = PayrollClient(baseURL: client.baseURL, vault: vault, configuration: config, offlineCache: content, mediaOffline: mediaCache, automaticallyDownloadOffline: false)
+        let store = PayrollStore(client: reopened); XCTAssertEqual(store.overview?.user.mediaOnly, true); XCTAssertTrue(store.isOffline)
+        MockProtocol.handler = { _ in throw URLError(.notConnectedToInternet) }
+        let offlinePlan = try await reopened.mediaDownloadPlan(); XCTAssertEqual(offlinePlan.files.map(\.id), ["photo"])
+        let local = try await reopened.mediaDocument(item); XCTAssertEqual(try Data(contentsOf: local.url), MediaFixture.photo); TemporaryDocuments.remove(local)
+        let scope = try XCTUnwrap(reopened.mediaScope())
+        let unavailable = PayrollClient(baseURL: client.baseURL, vault: vault, configuration: config, offlineCache: content, mediaOffline: mediaCache, automaticallyDownloadOffline: false)
+        MockProtocol.handler = { req in (HTTPURLResponse(url: req.url!, statusCode: 503, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Interrupción ficticia\"}".utf8)) }
+        let temporaryOutage = try await unavailable.media(folder: "day"); XCTAssertEqual(temporaryOutage.items.map(\.id), ["photo"]); XCTAssertTrue(unavailable.usingOfflineCopy)
+        let online = PayrollClient(baseURL: client.baseURL, vault: vault, configuration: config, offlineCache: content, mediaOffline: mediaCache, automaticallyDownloadOffline: false)
+        MockProtocol.handler = { req in (HTTPURLResponse(url: req.url!, statusCode: 403, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Acceso retirado\"}".utf8)) }
+        do { _ = try await online.media(); XCTFail("Debe respetar revocación") } catch { guard case APIError.forbidden = error else { return XCTFail("Error incorrecto: \(error)") } }
+        XCTAssertNil(mediaCache.loadFeed("", scope: scope)); XCTAssertFalse(mediaCache.hasFile(item, scope: scope)); XCTAssertNotNil(vault.token)
+        MockProtocol.handler = nil
+    }
+    @MainActor func testMediaUploadUsesPrivateChunksAndReconcilesAlreadyCommittedTimeout() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://mock.example.invalid")!, vault: vault, configuration: config)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4")
+        let bytes = Data(repeating: 71, count: 2 * 1024 * 1024 + 99); try bytes.write(to: source); defer { try? FileManager.default.removeItem(at: source) }
+        let file = try MediaLocalFile.stage(source); defer { file.remove() }
+        var offset = 0, starts = 0, status = 0, chunks: [Int] = [], received = Data(), failed = false
+        MockProtocol.handler = { req in
+            XCTAssertEqual(req.value(forHTTPHeaderField: "Cookie"), "__Host-jac_session=" + vault.token!); XCTAssertEqual(req.value(forHTTPHeaderField: "Origin"), client.baseURL.absoluteString)
+            if req.httpMethod == "PUT" {
+                let q = URLComponents(url: req.url!, resolvingAgainstBaseURL: false)!.queryItems!
+                XCTAssertEqual(q.first { $0.name == "id" }?.value, file.id); XCTAssertEqual(Int(q.first { $0.name == "offset" }!.value!), offset)
+                let chunk = try MockProtocol.requestBody(req); XCTAssertLessThanOrEqual(chunk.count, 1024 * 1024); chunks.append(chunk.count); received.append(chunk); offset += chunk.count
+                if !failed { failed = true; throw URLError(.timedOut) }
+            } else {
+                let command = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(req))
+                XCTAssertEqual(command["id"].text, file.id)
+                if command["action"].text == "start" { starts += 1 } else { XCTAssertEqual(command["action"].text, "status"); status += 1 }
+            }
+            let data = try JSONEncoder().encode(JSONValue.object(["id": .string(file.id), "offset": .number(Double(offset)), "chunkSize": .number(1024 * 1024), "complete": .bool(offset == bytes.count)]))
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, data)
+        }
+        var progress: Int64 = 0
+        try await client.uploadMedia(file, parentID: "day") { sent, total in XCTAssertEqual(total, file.size); progress = sent }
+        XCTAssertEqual(progress, file.size); XCTAssertEqual(starts, 1); XCTAssertEqual(status, 1); XCTAssertEqual(chunks, [1024 * 1024, 1024 * 1024, 99]); XCTAssertEqual(received, bytes)
+        MockProtocol.handler = nil
+    }
     @MainActor func testLateCRMReadCannotRestoreFinancialCopyAfterASave() async throws {
         let vault=MemorySession();vault.token=String(repeating:"f",count:43)
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[CRMDelayedProtocol.self]

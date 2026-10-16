@@ -15,8 +15,10 @@ enum UITestBackend {
         if persistent { FixtureProtocol.seedOfflineContent() }
         let content = OfflineResponseCache(root: persistent ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACContentUITest") : FileManager.default.temporaryDirectory.appendingPathComponent("content-fixture-" + UUID().uuidString))
         if arguments.contains("--uitest-reset-content") { try? FileManager.default.removeItem(at: content.root) }
+        let mediaRoot = persistent ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACMediaUITest") : FileManager.default.temporaryDirectory.appendingPathComponent("media-fixture-" + UUID().uuidString)
+        if arguments.contains("--uitest-reset-media") { try? FileManager.default.removeItem(at: mediaRoot) }
         let vault = FixtureSession(); if reader { vault.token = String(repeating: "r", count: 43) }
-        return PayrollClient(baseURL: base, vault: vault, configuration: configuration, agendaCache: cache, offlineCache: contentCache ?? content, automaticallyDownloadOffline: downloadOffline ?? persistent)
+        return PayrollClient(baseURL: base, vault: vault, configuration: configuration, agendaCache: cache, offlineCache: contentCache ?? content, mediaOffline: MediaOfflineCache(root: mediaRoot), automaticallyDownloadOffline: downloadOffline ?? persistent)
     }
 }
 private final class FixtureSession: SessionStoring {
@@ -41,7 +43,7 @@ private final class FixtureProtocol: URLProtocol {
     static var offline = false
     static var slowAgenda = false
     static var slowedWorkspace = false
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func seedOfflineContent() {
         lock.lock(); defer { lock.unlock() }
         var alert = itinerary
@@ -67,6 +69,11 @@ private final class FixtureProtocol: URLProtocol {
             }
             if Self.slowAgenda, request.url?.path == "/api/calendar", request.httpMethod == "GET" { Thread.sleep(forTimeInterval: 3) }
             if Self.cancelRead(request) { throw URLError(.cancelled) }
+            if request.url?.path == "/api/media/file" {
+                let result = try MediaFixture.file(request)
+                let response = HTTPURLResponse(url: request.url!, statusCode: result.0, httpVersion: nil, headerFields: ["Content-Type": result.1])!
+                client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed); client?.urlProtocol(self, didLoad: result.2); client?.urlProtocolDidFinishLoading(self); return
+            }
             if request.url?.path == "/api/crm/file" {
                 Self.lock.lock();defer {Self.lock.unlock()}
                 let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? [],id=q.first{$0.name=="file"}?.value ?? ""
@@ -107,12 +114,13 @@ private final class FixtureProtocol: URLProtocol {
         }
         return try JSONDecoder().decode(JSONValue.self, from: bytes)
     }
-    static var user: JSONValue { .object(["id": .string("fixture-user"), "username": .string("simulado"), "email": .string("test@example.invalid"), "displayName": .string("Cuenta simulada"), "itinerariesOnly":.bool(ProcessInfo.processInfo.arguments.contains("--uitest-itineraries-only")), "isOwner": .bool(!reader), "permissions": .array([])]) }
+    static var user: JSONValue { var user: JSONValue = .object(["id": .string("fixture-user"), "username": .string("simulado"), "email": .string("test@example.invalid"), "displayName": .string("Cuenta simulada"), "itinerariesOnly":.bool(ProcessInfo.processInfo.arguments.contains("--uitest-itineraries-only")), "isOwner": .bool(!reader), "permissions": .array([])]); if ProcessInfo.processInfo.arguments.contains("--uitest-media-only") { user["mediaOnly"] = .bool(true); user["itinerariesOnly"] = .bool(true); user["isOwner"] = .bool(false); user["displayName"] = .string("Anderson ficticio") }; return user }
     static func response(_ request: URLRequest) throws -> (Int, JSONValue) {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         let viewer = reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
         let visible = ([itinerary] + boardingFixtures + alerts).map { overrides[$0["id"].text] ?? $0 }.filter { !(ProcessInfo.processInfo.arguments.contains("--uitest-boarding-tomorrow") && ["boarding-fixture-0","boarding-fixture-1"].contains($0["id"].text)) && !deletedNotices.contains($0["id"].text) && ($0["kind"].text != "boarding_pass" || $0["recipients"].elements.contains(.string(viewer))) }
+        if parts.path == "/api/media" || parts.path == "/api/media/upload" { return try MediaFixture.response(request) }
         if parts.path == "/api/crm" {return try CRMFixture.response(request,reader:reader)}
         if parts.path == "/api/expenses" {
             if request.httpMethod == "POST" {
@@ -225,6 +233,7 @@ private final class FixtureProtocol: URLProtocol {
             }
         }
         if parts.path == "/api/mobile/payroll" {
+            if user["mediaOnly"].flag { return (200, .object(["data": .object(["employees": .array([]), "periods": .array([]), "settings": .object(["company": .string("JAC")])]), "version": .number(Double(revision)), "user": user, "company": .string("JAC"), "periods": .array([]), "employees": .array([])])) }
             if let id = parts.queryItems?.first(where: { $0.name == "period" })?.value { return (200, detail(state, id: id)) }
             let periods = state["periods"].elements.map { p in JSONValue.object(["id": p["id"], "start": p["start"], "end": p["end"], "status": p["status"], "ownerOnly": .bool(p["ownerOnly"].flag), "showCount": .number(Double(p["shows"].elements.count)), "closedAt": p["snapshot"]["closedAt"]]) }
             return (200, .object(["data": state, "version": .number(Double(revision)), "user": user, "company": state["settings"]["company"], "periods": .array(periods), "employees": state["employees"]]))
@@ -339,6 +348,74 @@ private enum CRMFixture {
         if action=="prepareDeleteShow"{var d=r;d["showId"] = .string(id);d["id"] = .string(UUID().uuidString.lowercased());d["revision"] = .number(1);d["etag"] = .string("fixture-etag");return(200,.object(["record":d,"event":.object(["title":shows.first{$0["id"].text==id}?["title"] ?? .string("Ficticio")])]))}
         if action=="deleteShow",let i=shows.firstIndex(where:{$0["id"]==r["showId"]}){shows[i]["sourceState"] = .string("deleted");return(200,.object(["ok":.bool(true)]))}
         return(400,.object(["error":.string("Acción ficticia no admitida")]))
+    }
+}
+
+// Opt-in gallery fixtures never access Drive, a photo library, or production.
+struct FixtureMediaPhotosWriter: MediaPhotosWriting {
+    @MainActor func authorize() async throws {}
+    @MainActor func save(_ document: ExportedDocument, item: MediaItem) async throws {
+        guard FileManager.default.fileExists(atPath: document.url.path) else { throw APIError.invalid("Falta el archivo ficticio.") }
+    }
+}
+enum MediaFixture {
+    static let lock = NSRecursiveLock()
+    static let photo = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=")!
+    static let video = Data(base64Encoded: "AAAAFGZ0eXBxdCAgAAAAAHF0ICAAAAAId2lkZQAADGVtZGF0AAAANQYFLUdWStxcTEM/lO/FETzRQ6gBAAADAAEDAAADAAECAAB9AAsAAAMAAAMAABMkDAORKwGAAAAAjSW4IAM/GOpHdiZqCDyOERQQN/zf/nxOi3oJeJ+b1RUmQ5GjkHpw7T2mcALWx9etjXDhEtJvijj0HDvr3Ot/X97TmkwtmglwDGYILxhnqhJLBisFDDuunnGhlqKT3K5XwoLPbu7Og+MwRMlpkfkYqW13wuAgYHhFLTtzeUuR00/CElg58HHjoUEdvFdKsAAAAIoh4RBFf57gKbVMQo3mssVq81vTJeZqKNPPqGKwN9nRoMYLLsNwY92buUTRprRiuGKgJzU/QYUIWzeduMlNggzNBJCZP99yUcLKQ32nmsxI7aTgrPD9mRx18BjA78oA1MH/5swB4otD3GDNJAa/GRuzYjKiZEHMh+eqs2vnbonNU6pKnI0CIcFafioAAAByIaiChEfaSOEhh6RggduyJQA1trq11P+4X6jCVkKMhBBzNpSFDh7nBk0pw2mUluKwufmnlplg0RASDmJSPM/zsf+fWcHhYSPQByZdHnEgDeY3QxfX/e1Fhf6SX8AWBRpuPRSnCgjZLOMtNH1zOS+yYIDgAAAAiAGowYjP34h64hsnubPyjk93XsJpUWfeAIAByI6yMiAGZ5HKrWpJ6EynlUEXK4vWMCemV3wIVUPX1U8b8ApregGuKUmoKbTn3sms5IURFAK51d3Fy0GfK8xAOEPlVjYw3BM4tznvyrqy91IcoOxxUGwu6qhCMTR/zNwYFBYkn/zFyOq7dozOVGAAAACqAajDiK/jN7dqFA2eXX18o7MmIXuwbna/2o2+gAR253mrdiDMWke6HqHKDPnEkkujXqY6R8c02xB3ZDKtiVcQHMNRFvyWq9AwhbVxyoUSyFVlfRoWo+YT+8KbzGLpHFRWu7blg+1QoSClZ46cDj6wl6yZFC+sn5pV/OuDuMxwkEpLB6MBH2wQqT4yO6i27HhXqjJex4h3a1TmUKWXbSHMyeOw56mxpNvA8tgAAACCIeMhoiT/yXPeD3gr2k6kki53IyrVuT6BWbXZCfLVZscYTaSFQdc2Gsvgue0kWSAz6CCuJJfWgf0GlTnybFTX/tTIA9rb7iQ6aX99PVOk4FPWPYC8+XV1gZMdW75Wef6FkcGgEPS1yE3WGqQNZFdA2P+9iImSru28925daj+rCnW+wAAAAGYhqQaFf/U8qSzmFxuaILmtD3Dy8VZwkFb+UuOMzcEhIvzjgBojQ5rQ1fm0YVN2y4tyBp0W7DR3qiP1AuGLoRDaEJZedenJxAusDFtRXS3NZ1VDpxE8KgjaQCdb4wGTGWIK3Ys/kGAAAABbAalFiK/4l+x4hcXOmX7L423KJ+z/iLYAziftYZEwSbzB3QsVco9ds8nizS2j5+4aJf2CuOkWb8eDpqX/Gb2Ia9pO9BZPQSqnDsfdlENWvjZjO/kejiXoVGzOHAAAAGEBqUeIj/eH7jiFyjYasn8ZVPceeC9/ElgK2NDxTl9EA9MDlBkFm1lMP8ngrfROYcWuVc7FrEtqYBVgkR5Q+lBByxKJPBhAnQcZiJJ9VEHaNBOHoklCVV7E7Cr7uwp6wRPVAAAAGgYFFUdWStxcTEM/lO/FETzRQ6gDAAADAAGAAAABQSW4EAf/5ghNwKMs/4LcuXGt6w6BtPgAkeBJfolEV8s/wJkQ9Q4swG8OLbKBRCilYh//JmjEuxLHwKSS0qRwjdp484oCjivFFbBf++hqqHsRjEjcuRMBFhAhjijfTlu9aPIL5sbxQRK+GZpoDDTNFT37NXL4pQOkmaQICNXwGQ91RTCOrx4g9lvyFDc2iKbjrTwJhact5LAEnECDCvPC8sHU9A9aWfMy0ACh3oEFbgCW3tt3pwOjMTaPa0h4ONmiiDWAGLgST68wVl+4G22QjCOQSKXdgAWlytpTsAV6PFiQCvhl2Nzv2Fltlve3QgB6yl0zukFy51uBKOHSjH2voEE2VrYRZ4CFNpGHFCzWPjgOj5wrP8F7deD4uDgRbIerexahec9cxlRLRCC6wZTFuYiEZMACl9pOgX7BwdGJFB8iQAAAAJEh4Qh/qsIswUUWGH3KYSEdvLR8Gr/obUPz8T3ebHqBes5WOwH2EU+SLB97ODfPcvn7TYkZx770KQpImwCJnFNK26T0L8vl/49k5V/Xb70rND23ipo6PPKEJ4y34GjuEjaIKFHakz4cgPx4iCHRhdt1+CgtdgYWDgtZivoZtYwMYXmSVmyETRYbr4T04vj5YXawAAAAZwGogYiP/NGyPUPJ6hQMz+7p8bbgl9HeaRo2YI8nkfzy20osjcwUClXnghs1AC0btbZdGjHbXNE4iykPH26dogVARELfYiV3VlyShKiTAQkUNlOiT8KbCIJXG2IF55cd8dldluHKCMMAAACqIeIQf/hhd1gYHyOgcWmkFZBWl/cSA59f5q5Vzsqp73tWv0eA7TWi0PlRJmn+Da+cNLQwBdJXIoaNTv4Q5scwg6XLgoPqQADBcvpxW7Kc6GJEhCUdUqqI4fQyuGTmLCAf8hCdNeO5IiRgOsXZdrgihmNeyDoOKlaT5juCUBak3J537MY2LD/RxOMtHLfidu8W+9kcgueHrMfFLonyBjIyEjh5E0m6482NCXkAAABZAajDiI/exelb6imRPL6kJgrbHiC6rg1iDpb1PSGOUzVMeQHZUN8TXcGf5DJvVtFs9vubRRysPIqtJQc9/f/9ZWGOc1l2IQrTQmOj2YdaRtu95e5IKfmKp1AAAACAIeMYf+3yJuDB3XFlgiEfqFIMs1TeZ8Tv53AoMtkSUjwI2doFebODwLZjhXWwvkqcl1HejneSiqsRfzKkj3w1CHMdn96PbDEfqpC4YcOyU5USrBvKY8jGWSPfxnYcaABuue4v8QFJFMyvnLIH08spIDDC+q7ekK/RWmUqC0jW+mAAAABpAakFiI+8I1hqFAz2rhGnTl49352azjyM3MPGka/y9dXnKj5ETTNPq2sUeEfXlaMCs3XrIcoqEBFFjEdgvRP/JTxZXx/pkRhkI+EjZ0dK9MUWyUPoHitm77jmCoj8t0LcdryHdoXK4h8hAAAAayHkIF+f4PemEK/+gu0z3DGP3WB5ADuuVkwt685upg8Sec2VZQURQ1tLwN2XDSCPFEPLpApxvGoCi0rnca5/UxgnRGSppK4qF4TVdmJWuOv9B5V7QFy9bYawlwZaJzRY1ylP35eMtcVj5jVeAAAATwGpR4m/9MSfeQe+AXDOEBZ/LmR7MAWKMB2SoAJBUkupXQbcfHeNwU8I8h87VjtngAN7yxvbx5y+gOuobZuTOxLT4a/84mhGXX+cDN3gihAAAAAaBgUVR1ZK3FxMQz+U78URPNFDqAMAAAMAAYAAAAGOJbggB//xpN+E2DZ/5ogGHUhuxCUpEfX8lX6hviFJeeMBpHE3eev9qhCjGVVhRRjPcIc2Xbuk9FdkDUVqBpU8/MBYWkjbniO/ul32GFnC0N+dHXcPVN45h1CWt5QntxRVcR4+88QzqzO1cG7OVbx7yI48cH+n02HhkMMV1wEWLlW4R3xmHibi+FaKDKGbeoa9mRnxpjgqKzeU99esIEBIz8160qbk0iQBQh4mmmDTlxoz0KnSKprimsrpjEXQQ19WSkaLI1YqfgHiZLkZjqiArQ3w4hpTG+xbIgwpXh2QI+KNiOSxRUrmqEEJhusiGNpRFfb0QooQLvv5UACFKM9tjJWU4oaO5QguZRO2J+oVSJwRJfySJkUcRLP5rGqR1u4wgBJiCdc2zMthpAAASbY+J90ZtbuqRlAp1UyxrWCm2lYa7Fqm0TGARYJThwsbHflf17Ug4IeCtDqXmt88yAQJytHj9vAQEOcDeSgOBoPsoTUhZE21Wk0v8hRQKODeTPu9VPt4IIq4cssYHwRknk0AAADMIeEET//ZAvRiSHSgaPGlroQblszErbEIXZ6pvnHc+PSZfzwWhMCkw/tGZ9vGaHOH7pInwbv0WaWyO+g8/h0a4uW7qqSdjVCFeo9TpjX9ZkxIQRuS4J2ttVI+KwoPNuQolzWzr8POP3Fpvhi6fT7GwYp4No6uYHxhgiIjrS3YobchtYwpDhNrcr4Z3mhtZzwSBGm3/ROgyKlOYCnHDeK3WfTqcLo+jobP/pzBjQaaWtIW5N65cVUJQepi+w5vo/alU26y+ke8legqZcuAAAAEXW1vb3YAAABsbXZoZAAAAADm9+wD5vfsAwAAAlgAAASwAAEAAAEAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAIAAAPpdHJhawAAAFx0a2hkAAAAD+b37APm9+wDAAAAAQAAAAAAAASwAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAAAAAAAQAAAAAAAAAAAAAAAAAAQAAAAACAAAAAYAAAAAAARHRhcHQAAAAUY2xlZgAAAAAAgAAAAGAAAAAAABRwcm9mAAAAAACAAAAAYAAAAAAAFGVub2YAAAAAAIAAAABgAAAAAAAkZWR0cwAAABxlbHN0AAAAAAAAAAEAAASwAAAAAAABAAAAAAMdbWRpYQAAACBtZGhkAAAAAOb37APm9+wDAAACWAAABLBVxAAAAAAAMWhkbHIAAAAAbWhscnZpZGVhcHBsAAAAAAAAAAAQQ29yZSBNZWRpYSBWaWRlbwAAAsRtaW5mAAAAFHZtaGQAAAABAECAAIAAgAAAAAA4aGRscgAAAABkaGxyYWxpc2FwcGwAAAAAAAAAABdDb3JlIE1lZGlhIERhdGEgSGFuZGxlcgAAACRkaW5mAAAAHGRyZWYAAAAAAAAAAQAAAAxhbGlzAAAAAQAAAkxzdGJsAAAAkHN0c2QAAAAAAAAAAQAAAIBhdmMxAAAAAAAAAAEAAAAAAAAAAAAAAgAAAAIAAIAAYABIAAAASAAAAAAAAAABBUguMjY0AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGP//AAAAJmF2Y0MBZAAL/+EACydkAAusVlDDeCHQAQAEKO48sP34+AAAAAAAAAAAGHN0dHMAAAAAAAAAAQAAABQAAAA8AAAAqGN0dHMAAAAAAAAAEwAAAAEAAAAAAAAAAQAAALQAAAABAAAAAAAAAAH///+IAAAAAf///8QAAAABAAAAtAAAAAEAAAAAAAAAAf///4gAAAAB////xAAAAAEAAAAAAAAAAQAAADwAAAAB////xAAAAAEAAAA8AAAAAf///8QAAAABAAAAPAAAAAH////EAAAAAQAAADwAAAAB////xAAAAAIAAAAAAAAAIGNzbGcAAAAAAAAAeP///4gAAAC0AAAAAAAABLAAAAAcc3RzcwAAAAAAAAADAAAAAQAAAAoAAAATAAAAIHNkdHAAAAAAIBAQGBgQEBgYIBAYEBgQGBAYIBAAAAAcc3RzYwAAAAAAAAABAAAAAQAAAAoAAAABAAAAZHN0c3oAAAAAAAAAAAAAABQAAADKAAAAjgAAAHYAAACMAAAArgAAAIYAAABqAAAAXwAAAGUAAAFjAAAAlQAAAGsAAACuAAAAXQAAAIQAAABtAAAAbwAAAFMAAAGwAAAA0AAAABhzdGNvAAAAAAAAAAIAAAAkAAAGQw==")!
+    static var items: [String: [JSONValue]] = [:]
+    static var files: [String: Data] = [:]
+    static var uploads: [String: (JSONValue, Data)] = [:]
+    static let folder: JSONValue = .object(["id": .string("media-root"), "name": .string("Fotografía ficticia")])
+    static func reset() {
+        lock.lock(); defer { lock.unlock() }
+        files = ["media-photo": photo, "media-video": video]; uploads = [:]
+        items = ["media-root": [item(id: "media-day", name: "2026-10-16 · PEREIRA", mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)], "media-day": [item(id: "media-photo", name: "Foto ficticia.png", mime: "image/png", kind: "image", size: photo.count), item(id: "media-video", name: "Video ficticio.mov", mime: "video/quicktime", kind: "video", size: video.count)]]
+    }
+    static func item(id: String, name: String, mime: String, kind: String, size: Int) -> JSONValue { .object(["id": .string(id), "name": .string(name), "mimeType": .string(mime), "kind": .string(kind), "size": .number(Double(size)), "modifiedAt": .string("2026-10-16T12:00:00Z"), "thumbnailAvailable": .bool(kind == "image")]) }
+    static func bytes(_ request: URLRequest) throws -> Data {
+        if let data = request.httpBody { return data }
+        guard let stream = request.httpBodyStream else { return Data() }; stream.open(); defer { stream.close() }
+        var result = Data(), buffer = [UInt8](repeating: 0, count: 4096)
+        while true { let count = stream.read(&buffer, maxLength: buffer.count); if count < 0 { throw stream.streamError ?? URLError(.badServerResponse) }; if count == 0 { break }; result.append(contentsOf: buffer.prefix(count)) }
+        return result
+    }
+    static func file(_ request: URLRequest) throws -> (Int, String, Data) {
+        lock.lock(); defer { lock.unlock() }
+        let q = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems ?? [], id = q.first { $0.name == "id" }?.value ?? ""
+        guard let bytes = files[id] else { return (404, "application/json", Data("{\"error\":\"Archivo ficticio no encontrado\"}".utf8)) }
+        let mime = items.values.flatMap { $0 }.first { $0["id"].text == id }?["mimeType"].text ?? "image/png"
+        return (200, q.contains { $0.name == "thumbnail" } ? "image/png" : mime, q.contains { $0.name == "thumbnail" } ? photo : bytes)
+    }
+    static func response(_ request: URLRequest) throws -> (Int, JSONValue) {
+        lock.lock(); defer { lock.unlock() }
+        let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!, q = parts.queryItems ?? []
+        let photographer = ProcessInfo.processInfo.arguments.contains("--uitest-media-only")
+        if parts.path == "/api/media", request.httpMethod == "GET" {
+            let id = q.first { $0.name == "folder" }?.value ?? "media-root", selected: JSONValue = id == "media-root" ? folder : .object(["id": .string(id), "name": .string(id == "media-day" ? "2026-10-16 · PEREIRA" : "Carpeta ficticia")])
+            return (200, .object(["connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(photographer), "canConnect": .bool(!photographer), "root": folder, "folder": selected, "breadcrumbs": .array(id == "media-root" ? [folder] : [folder, selected]), "items": .array(items[id] ?? []), "nextPageToken": .string("")]))
+        }
+        guard photographer || request.url?.host == "mock.example.invalid" else { return (403, .object(["error": .string("Solo el fotógrafo puede subir archivos.")])) }
+        if parts.path == "/api/media", request.httpMethod == "POST" {
+            let input = try JSONDecoder().decode(JSONValue.self, from: bytes(request)), id = "media-" + input["id"].text
+            let name = input["date"].text + " · " + input["name"].text
+            if items[id] == nil { items[id] = []; items[input["parentId"].text, default: []].append(item(id: id, name: name, mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)) }
+            return (200, .object(["folder": .object(["id": .string(id), "name": .string(name)])]))
+        }
+        if parts.path == "/api/media/upload" {
+            var id = ""
+            if request.httpMethod == "PUT" {
+                id = q.first { $0.name == "id" }?.value ?? ""
+                guard var upload = uploads[id], Int(q.first { $0.name == "offset" }?.value ?? "") == upload.1.count else { return (409, .object(["error": .string("Desfase ficticio")])) }
+                upload.1.append(try bytes(request)); uploads[id] = upload
+                if upload.1.count == Int(upload.0["size"].number), files[id] == nil { files[id] = upload.1; items[upload.0["parentId"].text, default: []].append(item(id: id, name: upload.0["filename"].text, mime: upload.0["mimeType"].text, kind: upload.0["mimeType"].text.hasPrefix("video/") ? "video" : "image", size: upload.1.count)) }
+            } else {
+                let input = try JSONDecoder().decode(JSONValue.self, from: bytes(request)); id = input["id"].text
+                if input["action"].text == "start", uploads[id] == nil { uploads[id] = (input, Data()) }
+            }
+            guard let upload = uploads[id] else { return (404, .object(["error": .string("Subida ficticia no encontrada")])) }
+            return (200, .object(["id": .string(id), "offset": .number(Double(upload.1.count)), "chunkSize": .number(1024 * 1024), "complete": .bool(upload.1.count == Int(upload.0["size"].number))]))
+        }
+        return (404, .object(["error": .string("Ruta ficticia no prevista")]))
     }
 }
 

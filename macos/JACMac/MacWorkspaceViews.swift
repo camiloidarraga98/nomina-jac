@@ -62,7 +62,8 @@ enum MacSettingsRoute: String, CaseIterable, Identifiable {
         }
     }
     func allowed(_ user: PayrollUser) -> Bool {
-        switch self {
+        guard user.mediaOnly != true else { return false }
+        return switch self {
         case .expenses, .alerts, .notifications: true
         case .connections, .users: user.isOwner && user.itinerariesOnly != true
         default: user.itinerariesOnly != true

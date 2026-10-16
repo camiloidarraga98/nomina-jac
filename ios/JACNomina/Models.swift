@@ -8,8 +8,11 @@ struct PayrollUser: Codable, Equatable {
     let isOwner: Bool
     let permissions: [String]
     var itinerariesOnly: Bool? = nil
+    var mediaOnly: Bool? = nil
 
-    func can(_ permission: String) -> Bool { itinerariesOnly != true && (isOwner || permissions.contains(permission)) }
+    var canReadMedia: Bool { mediaOnly == true || isOwner }
+    var canUploadMedia: Bool { mediaOnly == true }
+    func can(_ permission: String) -> Bool { mediaOnly != true && itinerariesOnly != true && (isOwner || permissions.contains(permission)) }
 }
 
 struct PayrollOverview: Codable {

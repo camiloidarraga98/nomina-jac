@@ -1,6 +1,25 @@
 import XCTest
 
 final class MacLaunchTests:XCTestCase {
+    @MainActor func testPhotographerOnlyGalleryCreatesFolderUploadsAndPreviewsPhotoAndMovie() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "-ApplePersistenceIgnoreState", "YES"]; app.launch(); app.activate()
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
+        for section in ["crm", "payroll", "agenda", "itineraries", "management"] { XCTAssertFalse(app.descendants(matching: .any)["mac.nav." + section].exists) }
+        XCTAssertTrue(app.descendants(matching: .any)["mac.nav.media"].exists); XCTAssertTrue(app.descendants(matching: .any)["mac.nav.account"].exists)
+        click(app, "media.item.media-day"); click(app, "media.item.media-photo"); click(app, "media.preview.close")
+        click(app, "media.item.media-video"); if !app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15) { print(app.debugDescription) }; XCTAssertTrue(app.descendants(matching: .any)["media.video"].exists); shot(app, "mac-fotografia-video-nativo"); click(app, "media.preview.close")
+        click(app, "media.createFolder"); let name = app.textFields["media.folder.name"]; XCTAssertTrue(name.waitForExistence(timeout: 10)); name.click(); name.typeText("Ensayo ficticio")
+        click(app, "media.folder.save"); click(app, "media.fixture"); click(app, "media.upload")
+        let uploaded = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Foto de prueba.png")).firstMatch
+        XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15)); shot(app, "mac-fotografia-fotografo")
+    }
+    @MainActor func testAdministratorGalleryIsReadOnlyAndDownloadsWholeFolder() {
+        let app = fixture(); click(app, "mac.nav.media")
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["media.createFolder"].exists); XCTAssertFalse(app.buttons["media.files"].exists)
+        click(app, "media.item.media-day"); click(app, "media.offline"); click(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
+        click(app, "media.item.media-photo"); click(app, "media.preview.close"); shot(app, "mac-fotografia-lectura")
+    }
     override func setUpWithError() throws {continueAfterFailure=false}
     @MainActor private func fixture(_ extra:[String]=[])->XCUIApplication {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll"]+extra;app.launch()
@@ -13,6 +32,7 @@ final class MacLaunchTests:XCTestCase {
         app.typeKey(name,modifierFlags:.command)
     }
     @MainActor private func click(_ app:XCUIApplication,_ id:String) {
+        app.activate()
         let element=app.descendants(matching:.any).matching(identifier:id).firstMatch
         XCTAssertTrue(element.waitForExistence(timeout:15),id);element.click()
     }

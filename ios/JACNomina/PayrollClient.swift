@@ -31,8 +31,10 @@ final class PayrollClient: ObservableObject {
     let baseURL: URL
     private let vault: SessionStoring
     private let session: URLSession
+    private let mediaSession: URLSession
     private let decoder = JSONDecoder()
     let offlineCache: OfflineResponseCache
+    let mediaOffline: MediaOfflineCache
     @Published private(set) var usingOfflineCopy = false
     @Published private(set) var cacheRevision = 0
     @Published private(set) var offlineSyncMessage: String?
@@ -47,13 +49,14 @@ final class PayrollClient: ObservableObject {
     private var cookieName: String { "__Host-jac_session" }
     private var origin: String { baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
 
-    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil, offlineCache: OfflineResponseCache? = nil, automaticallyDownloadOffline: Bool? = nil) {
+    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil, offlineCache: OfflineResponseCache? = nil, mediaOffline: MediaOfflineCache? = nil, automaticallyDownloadOffline: Bool? = nil) {
         precondition(baseURL.scheme == "https" && baseURL.host != nil && baseURL.path.isEmpty && baseURL.user == nil && baseURL.query == nil)
         self.baseURL = baseURL
         self.vault = vault ?? KeychainSessionStore(account: baseURL.host!)
         self.agendaCache = agendaCache ?? AgendaOfflineCache()
         self.automaticOfflineSync = automaticallyDownloadOffline ?? !baseURL.host!.hasSuffix(".invalid")
         self.offlineCache = offlineCache ?? OfflineResponseCache(root: baseURL.host!.hasSuffix(".invalid") ? FileManager.default.temporaryDirectory.appendingPathComponent("offline-fixture-" + UUID().uuidString) : nil)
+        self.mediaOffline = mediaOffline ?? MediaOfflineCache(root: baseURL.host!.hasSuffix(".invalid") ? FileManager.default.temporaryDirectory.appendingPathComponent("media-fixture-" + UUID().uuidString) : nil)
         configuration.httpCookieStorage = nil
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
@@ -61,7 +64,11 @@ final class PayrollClient: ObservableObject {
         configuration.timeoutIntervalForRequest = 30
         configuration.timeoutIntervalForResource = 60
         session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
-        if let token = try? self.vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { self.offlineCache.removeOtherSessions(OfflineResponseCache.scope(origin: baseURL.absoluteString, token: token)) }
+        let mediaConfiguration = configuration.copy() as! URLSessionConfiguration
+        mediaConfiguration.timeoutIntervalForRequest = 120
+        mediaConfiguration.timeoutIntervalForResource = 2 * 60 * 60
+        mediaSession = URLSession(configuration: mediaConfiguration, delegate: NoRedirects(), delegateQueue: nil)
+        if let token = try? self.vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { self.offlineCache.removeOtherSessions(OfflineResponseCache.scope(origin: baseURL.absoluteString, token: token)); self.mediaOffline.removeOtherSessions(AgendaCacheScope(origin: origin + "/media-offline-v1", token: token)) }
     }
 
     func hasSession() throws -> Bool { try vault.load() != nil }
@@ -82,6 +89,7 @@ final class PayrollClient: ObservableObject {
         syncTask?.cancel(); syncTask = nil
         cacheGeneration += 1
         if let scope = try offlineScope() { offlineCache.clear(scope) }
+        if let scope = try mediaScope() { mediaOffline.clear(scope) }
         clearCachedAgenda(); try vault.clear(); TemporaryDocuments.clear()
         usingOfflineCopy = false; syncingOffline = false; offlineSyncMessage = nil; cacheRevision += 1; onSessionInvalidated?()
     }
@@ -89,6 +97,11 @@ final class PayrollClient: ObservableObject {
         guard let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { return nil }
         return OfflineResponseCache.scope(origin: origin, token: token)
     }
+    func mediaScope() throws -> AgendaCacheScope? {
+        guard let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { return nil }
+        return AgendaCacheScope(origin: origin + "/media-offline-v1", token: token)
+    }
+    func mediaAccessStamp() throws -> String? { try mediaScope().map { $0.id + ":" + String(cacheGeneration) } }
     func beginOfflineRestore() { usingOfflineCopy = true }
     private func resourceURL(path: String, query: [URLQueryItem]) -> URL {
         var parts = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
@@ -136,7 +149,7 @@ final class PayrollClient: ObservableObject {
     }
     private func cacheable(_ path: String, query: [URLQueryItem]) -> Bool {
         if path == "api/calendar" { return !query.contains { $0.name == "action" } }
-        return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file"].contains(path)
+        return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file", "api/media"].contains(path)
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0) async throws -> (Data, HTTPURLResponse) {
@@ -191,6 +204,7 @@ final class PayrollClient: ObservableObject {
             usingOfflineCopy = true; return (saved.data, result)
         }
         guard (200..<300).contains(response.statusCode) else {
+            if path.hasPrefix("api/media"), response.statusCode == 403, let mediaScope = try mediaScope() { cacheGeneration += 1; mediaOffline.clear(mediaScope); TemporaryDocuments.clear() }
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }
             if let scope, (body == nil || path == "api/crm"), [403, 404, 410].contains(response.statusCode) {
                 if path.hasPrefix("api/notices"), let id = query.first(where: { ["id", "item"].contains($0.name) })?.value { removeCachedNotice(id, scope: scope) }
@@ -210,7 +224,7 @@ final class PayrollClient: ObservableObject {
             let fields = Dictionary(uniqueKeysWithValues: response.allHeaderFields.map { (String(describing: $0.key), String(describing: $0.value)) })
             if let cookie = HTTPCookie.cookies(withResponseHeaderFields: fields, for: baseURL).first(where: { $0.name == cookieName }) {
                 if cookie.value.isEmpty { try clearSession() }
-                else if cookie.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { if cookie.value != sentToken { if let scope { offlineCache.clear(scope) }; clearCachedAgenda(); TemporaryDocuments.clear() }; try vault.save(cookie.value); if let currentScope = try offlineScope() { offlineCache.removeOtherSessions(currentScope) } }
+                else if cookie.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { if cookie.value != sentToken { if let scope { offlineCache.clear(scope) }; if let mediaScope = try mediaScope() { mediaOffline.clear(mediaScope) }; clearCachedAgenda(); TemporaryDocuments.clear() }; try vault.save(cookie.value); if let currentScope = try offlineScope() { offlineCache.removeOtherSessions(currentScope) }; if let mediaScope = try mediaScope() { mediaOffline.removeOtherSessions(mediaScope) } }
             }
         }
         if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), body == nil { usingOfflineCopy = false }
@@ -275,6 +289,7 @@ final class PayrollClient: ObservableObject {
         cacheRevision += 1
     }
     func rememberWorkspace(_ workspace: PayrollWorkspace) {
+        if !workspace.user.canReadMedia, let mediaScope = try? mediaScope() { mediaOffline.clear(mediaScope) }
         guard let scope = try? offlineScope() else { return }
         let url = resourceURL(path: "api/mobile/payroll", query: [URLQueryItem(name: "workspace", value: "1")])
         offlineCache.remove(scope) { URL(string: $0.url)?.path == "/api/payroll/export" && $0.revision != workspace.version }
@@ -282,7 +297,7 @@ final class PayrollClient: ObservableObject {
         catch { storageFailures += 1; offlineSyncMessage = "No se pudo guardar la copia local: " + error.localizedDescription }
     }
     func synchronizeOfflineContent(_ workspace: PayrollWorkspace) {
-        guard automaticOfflineSync, syncTask == nil, !usingOfflineCopy else { return }
+        guard automaticOfflineSync, workspace.user.mediaOnly != true, syncTask == nil, !usingOfflineCopy else { return }
         syncTask = Task { [weak self] in
             guard let self, let token = try? self.vault.load() else { return }
             let generation = self.cacheGeneration, failures = self.storageFailures
@@ -548,6 +563,179 @@ final class PayrollClient: ObservableObject {
         }
         return start
     }
+    // Drive credentials stay on the server. Native transfers only use JAC's
+    // authenticated origin, reject redirects and revalidate the session after I/O.
+    func media(folder: String = "", pageToken: String = "") async throws -> MediaFeed {
+        var query: [URLQueryItem] = []
+        if !folder.isEmpty { query.append(URLQueryItem(name: "folder", value: folder)) }
+        if !pageToken.isEmpty { query.append(URLQueryItem(name: "pageToken", value: pageToken)) }
+        guard let scope = try mediaScope() else { throw APIError.unauthorized }
+        let generation = cacheGeneration
+        if usingOfflineCopy, let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
+        do {
+            let (data, response) = try await request(path: "api/media", query: query)
+            if response.value(forHTTPHeaderField: "X-JAC-Offline") != nil, let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
+            let feed = try decoder.decode(MediaFeed.self, from: data)
+            try Task.checkCancellation()
+            guard generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
+            if feed.connected && feed.canRead { mediaOffline.allow(scope); try mediaOffline.saveFeed(feed, key: folder, append: !pageToken.isEmpty, scope: scope) }
+            else { mediaOffline.clear(scope); TemporaryDocuments.clear() }
+            return feed
+        } catch {
+            if AgendaOfflineCache.isUnavailable(error), let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
+            throw error
+        }
+    }
+    func createMediaFolder(id: String, parentID: String, name: String, date: String) async throws -> MediaFolder {
+        let (data, _) = try await request(path: "api/media", body: .object(["action": .string("createFolder"), "id": .string(id), "parentId": .string(parentID), "name": .string(name), "date": .string(date)]))
+        struct Result: Decodable { let folder: MediaFolder }
+        return try decoder.decode(Result.self, from: data).folder
+    }
+    private func mediaUploadCommand(_ fields: [String: JSONValue]) async throws -> MediaUploadState {
+        let (data, _) = try await request(path: "api/media/upload", body: .object(fields), forceNetwork: true)
+        return try decoder.decode(MediaUploadState.self, from: data)
+    }
+    private func mediaRequest(path: String, query: [URLQueryItem], method: String = "GET") throws -> (URLRequest, String, Int) {
+        guard let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw APIError.unauthorized }
+        var req = URLRequest(url: resourceURL(path: path, query: query))
+        req.httpMethod = method; req.httpShouldHandleCookies = false
+        req.setValue("\(cookieName)=\(token)", forHTTPHeaderField: "Cookie")
+        req.setValue(origin, forHTTPHeaderField: "Origin")
+        req.setValue("no-store", forHTTPHeaderField: "Cache-Control")
+        if method == "PUT" { req.setValue("application/octet-stream", forHTTPHeaderField: "Content-Type") }
+        return (req, token, cacheGeneration)
+    }
+    private func validateMediaResponse(_ raw: URLResponse, data: Data, token: String, generation: Int) throws -> HTTPURLResponse {
+        guard token == (try vault.load()), generation == cacheGeneration else { throw CancellationError() }
+        guard let response = raw as? HTTPURLResponse else { throw APIError.message("No se recibió una respuesta válida.") }
+        if response.statusCode == 401 || (300..<400).contains(response.statusCode) { try clearSession(); throw APIError.unauthorized }
+        guard (200..<300).contains(response.statusCode) else {
+            let error = (try? decoder.decode(JSONValue.self, from: data))?["error"].text
+            let message = error?.isEmpty == false ? error! : "No se pudo completar la transferencia. Intenta de nuevo."
+            if response.statusCode == 403 { cacheGeneration += 1; if let scope = try mediaScope() { mediaOffline.clear(scope); TemporaryDocuments.clear() }; throw APIError.forbidden(message) }
+            if [400, 413, 415, 422].contains(response.statusCode) { throw APIError.invalid(message) }
+            if response.statusCode == 409 { throw APIError.conflict(message) }
+            throw APIError.message(message)
+        }
+        return response
+    }
+    func uploadMedia(_ file: MediaLocalFile, parentID: String, progress: @escaping (Int64, Int64) -> Void) async throws {
+        guard !usingOfflineCopy else { throw APIError.invalid("Conéctate para subir fotos y videos.") }
+        var plan = try await mediaUploadCommand(["action": .string("start"), "id": .string(file.id), "parentId": .string(parentID), "filename": .string(file.name), "mimeType": .string(file.mimeType), "size": .number(Double(file.size))])
+        try plan.validate(for: file); progress(plan.offset, file.size)
+        let handle = try FileHandle(forReadingFrom: file.url); defer { try? handle.close() }
+        while !plan.complete {
+            try Task.checkCancellation()
+            try handle.seek(toOffset: UInt64(plan.offset))
+            let count = min(plan.chunkSize, Int(file.size - plan.offset))
+            guard count > 0, let chunk = try handle.read(upToCount: count), chunk.count == count else { throw APIError.invalid("El archivo local cambió. Vuelve a seleccionarlo.") }
+            let (req, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "id", value: file.id), URLQueryItem(name: "offset", value: String(plan.offset))], method: "PUT")
+            let previous = plan.offset
+            do {
+                let (data, raw) = try await mediaSession.upload(for: req, from: chunk)
+                _ = try validateMediaResponse(raw, data: data, token: token, generation: generation)
+                plan = try decoder.decode(MediaUploadState.self, from: data)
+            } catch {
+                if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
+                if case APIError.unauthorized = error { throw error }
+                if case APIError.forbidden = error { throw error }
+                if case APIError.invalid = error { throw error }
+                // A timed-out chunk may already be in Drive. Ask JAC for the
+                // committed offset before retrying; never create a second file.
+                plan = try await mediaUploadCommand(["action": .string("status"), "id": .string(file.id)])
+                try plan.validate(for: file)
+                guard plan.offset > previous else { throw error }
+            }
+            try plan.validate(for: file)
+            guard plan.offset > previous else { throw APIError.message("La subida no avanzó. Reintenta el mismo archivo.") }
+            progress(plan.offset, file.size)
+        }
+    }
+    func mediaThumbnail(_ item: MediaItem) async throws -> Data {
+        let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "thumbnail", value: "1")], document: true, forceNetwork: true)
+        guard data.count <= 4 * 1024 * 1024, ["image/jpeg", "image/png", "image/webp"].contains(response.mimeType ?? "") else { throw APIError.invalid("No se recibió una miniatura válida.") }
+        return data
+    }
+    private func restoredMediaDocument(_ item: MediaItem, scope: AgendaCacheScope) async throws -> ExportedDocument? {
+        let generation = cacheGeneration
+        let cache = mediaOffline, work = Task.detached(priority: .userInitiated) { try cache.document(item, scope: scope) }
+        let document = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+        guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { if let document { TemporaryDocuments.remove(document) }; throw CancellationError() }
+        return document
+    }
+    func mediaDocument(_ item: MediaItem) async throws -> ExportedDocument {
+        guard let scope = try mediaScope() else { throw APIError.unauthorized }
+        if usingOfflineCopy {
+            guard let saved = try await restoredMediaDocument(item, scope: scope) else { throw APIError.message("Este archivo todavía no está descargado. Conéctate y elige Disponible sin conexión.") }
+            return saved
+        }
+        let generation = cacheGeneration
+        do {
+            let document = try await downloadMediaDocument(item)
+            guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { TemporaryDocuments.remove(document); throw CancellationError() }
+            return document
+        }
+        catch {
+            if AgendaOfflineCache.isUnavailable(error), let saved = try await restoredMediaDocument(item, scope: scope) { return saved }
+            throw error
+        }
+    }
+    private func downloadMediaDocument(_ item: MediaItem) async throws -> ExportedDocument {
+        guard item.kind != "folder", item.size > 0, item.size <= MediaLocalFile.maximumSize else { throw APIError.invalid("El archivo no está disponible para abrirse.") }
+        let free = (try? FileManager.default.attributesOfFileSystem(forPath: TemporaryDocuments.root.deletingLastPathComponent().path)[.systemFreeSize] as? NSNumber)?.int64Value ?? Int64.max
+        guard free > item.size + 64 * 1024 * 1024 else { throw APIError.invalid("No hay espacio suficiente para abrir este archivo en el dispositivo.") }
+        let (req, token, generation) = try mediaRequest(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id)])
+        let (temporary, raw) = try await mediaSession.download(for: req)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: temporary.path)
+        let handle = try FileHandle(forReadingFrom: temporary); defer { try? handle.close() }
+        let prefix = try handle.read(upToCount: 64 * 1024) ?? Data()
+        let response = try validateMediaResponse(raw, data: prefix, token: token, generation: generation)
+        let count = (try temporary.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
+        guard count > 0, Int64(count) <= MediaLocalFile.maximumSize, response.mimeType == item.mimeType else { throw APIError.invalid("No se recibió una foto o video válido.") }
+        try Task.checkCancellation()
+        return try TemporaryDocuments.move(temporary, filename: MediaLocalFile.safeName(item.name))
+    }
+
+    func mediaDownloadPlan(folder: String = "") async throws -> MediaDownloadPlan {
+        var pending = [folder], seenFolders = Set<String>(), seenFiles = Set<String>(), files: [MediaItem] = [], root: MediaFolder?
+        while !pending.isEmpty {
+            try Task.checkCancellation()
+            let current = pending.removeFirst(); guard seenFolders.insert(current).inserted else { continue }
+            var cursor = "", seenPages = Set<String>(), folderItems: [MediaItem] = [], lastFeed: MediaFeed?
+            repeat {
+                let feed = try await media(folder: current, pageToken: cursor)
+                guard feed.connected, feed.canRead else { throw APIError.forbidden("La carpeta ya no está disponible para tu cuenta.") }
+                if root == nil { root = feed.folder ?? feed.root }
+                folderItems += feed.items; lastFeed = feed
+                for item in feed.items {
+                    if item.kind == "folder" { if !seenFolders.contains(item.id) { pending.append(item.id) } }
+                    else if seenFiles.insert(item.id).inserted { files.append(item) }
+                }
+                cursor = feed.nextPageToken ?? ""
+                guard cursor.isEmpty || seenPages.insert(cursor).inserted else { throw APIError.message("No se pudo completar el listado. Actualiza la carpeta.") }
+            } while !cursor.isEmpty
+            if let feed = lastFeed, let scope = try mediaScope() {
+                let complete = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: folderItems, nextPageToken: nil)
+                try mediaOffline.pinFeed(complete, key: current, scope: scope)
+            }
+        }
+        guard let root else { throw APIError.invalid("No se encontró la carpeta.") }
+        return MediaDownloadPlan(folder: root, files: files)
+    }
+    func saveMediaOffline(_ item: MediaItem) async throws {
+        guard let scope = try mediaScope() else { throw APIError.unauthorized }
+        if mediaOffline.hasFile(item, scope: scope) { return }
+        let generation = cacheGeneration
+        guard MediaStorageReview.freeBytes > item.size * 2 + 64 * 1024 * 1024 else { throw APIError.invalid("No hay espacio suficiente para descargar y cifrar este archivo. Libera espacio e inténtalo de nuevo.") }
+        let document = try await downloadMediaDocument(item); defer { TemporaryDocuments.remove(document) }
+        guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
+        let cache = mediaOffline, work = Task.detached(priority: .utility) { try cache.saveFile(document.url, item: item, scope: scope) }
+        do { try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() } }
+        catch { if scope.id != (try mediaScope())?.id { cache.clear(scope) }; throw error }
+        guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { cache.clear(scope); throw CancellationError() }
+    }
+
     func startGmail() async throws -> GmailStart {
         let (data, _) = try await request(path: "api/mobile/gmail", body: .object([:]))
         let start = try decoder.decode(GmailStart.self, from: data)
@@ -588,6 +776,19 @@ enum TemporaryDocuments {
         try data.write(to: url, options: JACFileSecurity.writeOptions)
         try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: url.path)
         return ExportedDocument(id: id, url: url)
+    }
+    static func move(_ source: URL, filename: String) throws -> ExportedDocument {
+        let id = UUID()
+        // Use the document UUID for deterministic cleanup on dismiss/logout.
+        let targetFolder = root.appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: targetFolder, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        try FileManager.default.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: root.path)
+        let url = targetFolder.appendingPathComponent(filename)
+        do {
+            try FileManager.default.moveItem(at: source, to: url)
+            try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: url.path)
+            return ExportedDocument(id: id, url: url)
+        } catch { try? FileManager.default.removeItem(at: targetFolder); throw error }
     }
     static func remove(_ document: ExportedDocument) { try? FileManager.default.removeItem(at: root.appendingPathComponent(document.id.uuidString)) }
     static func clear() { try? FileManager.default.removeItem(at: root) }

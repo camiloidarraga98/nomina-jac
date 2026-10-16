@@ -6,7 +6,7 @@
 
 Fotografía muestra las carpetas y fotos/videos dentro de JAC. Conserva los meses y carpetas existentes de `Contenido 2026 Jhon Alex`, raíz `1yH4pNYQxArfynzho-IPBtx5w4AWbQ-C5`. Los cambios se consultan al entrar, volver a la ventana y cada 30 segundos mientras la vista está activa. Se puede actualizar manualmente. Las listas se paginan y la navegación incluye la ruta de carpetas.
 
-Anderson (`andersonmejia0203@gmail.com`, usuario previsto `anderson`) tiene exclusivamente Fotografía y Mi cuenta. Puede crear una carpeta con fecha y nombre del show/jornada y subir varias fotos/videos desde archivos o, en iPhone, Fotos. La web admite además arrastrarlos. Las carpetas nuevas usan `AAAA-MM-DD · nombre`; se conservan los nombres de los archivos originales. No hay funciones de borrar, mover ni compartir archivos de Drive en esta entrega.
+Anderson (`andersonmejia0203@gmail.com`, usuario `anderson`) tiene exclusivamente Fotografía y Mi cuenta. Puede crear una carpeta con fecha y nombre del show/jornada y subir varias fotos/videos desde archivos o, en iPhone, Fotos. La web admite además arrastrarlos. Las carpetas nuevas usan `AAAA-MM-DD · nombre`; se conservan los nombres de los archivos originales. No hay funciones de borrar, mover ni compartir archivos de Drive en esta entrega.
 
 Camilo y la cuenta administradora `jac` consultan la galería. Solo el propietario Camilo conecta Google; Anderson no necesita acceso directo a Drive ni sus credenciales. Las cuentas generales de consulta de nómina/itinerarios no reciben acceso a Fotografía. El rol exclusivo se guarda en `media_only`; las respuestas lo acompañan de `itinerariesOnly:true` para impedir que clientes antiguos carguen nómina. Los editores antiguos de usuarios conservan el rol cuando lo omiten. Cambiar una cuenta mantiene revisión y cierre de sus sesiones anteriores.
 
@@ -46,7 +46,13 @@ Las pruebas nuevas cubren rol exclusivo y clientes antiguos, callbacks OAuth/cue
 
 Vista web en localhost con servicios reales bloqueados: se creó una carpeta ficticia y se abrió automáticamente; selector múltiple guardó una foto y un video (2 de 2). Foto y clip H.264 local de dos segundos se abren dentro del diálogo de JAC. Capturas `outputs/fotografia-web-*.png`. La comprobación real de arrastrar se diferencia del selector, que sí se operó; los manejadores de arrastre se revisan en código.
 
-La verificación definitiva de iPhone/Mac, compilaciones de entrega y estado de publicación/activación se agregan al finalizar. Los informes intermedios se conservan y ninguna prueba envía fotos, avisos, correos o datos ficticios a servicios reales.
+iPhone: 72 unitarias aprobadas, una comprobación física omitida y cinco UI aprobadas en `work/local/ios-media-final.xcresult` (77 pasadas, una omitida, cero fallos). Tres recorridos de galería repetidos después del acabado visual en `ios-media-design-final.xcresult`, también correctos. Simulador nuevo `BC3888C5-9692-42BF-91F2-1AC2A8BAB9E8`, ahora apagado. Se conserva el aviso preexistente «Invalid frame dimension» en el resultado; no se declara corregido por esta entrega.
+
+Mac: 80 unitarias aprobadas en `mac-media-unit-final.xcresult`; dos recorridos UI distintos aprobados entre ejecuciones y presentación/reproducción final aprobadas en `mac-media-design-accepted.xcresult` (`TEST EXECUTE SUCCEEDED`). Se mantienen los informes intermedios: un fallo anterior del reproductor SwiftUI en macOS 27 se diagnosticó y se sustituyó por AVKit de plataforma conservando las comprobaciones; se repitió y pasó. También se conservan el fallo intermedio de manejo 503 y las ejecuciones afectadas por foco/restauración de ventanas, con resultados finales correctos.
+
+Release iPhone sin firma y Mac universal arm64/x86_64 compiladas (`ios-media-release-final.log`, `mac-media-release-final.log`). Versión iPhone 0.16.0(27), Mac 1.3.0(4), firma estricta Mac verificada. Misma app `outputs/JAC Music.app` actualizada sin cerrar la instancia anterior; requiere reabrirla para ejecutar el binario nuevo. Mismo proyecto iPhone y firma/esquema personales intactos, salvo cuatro valores de versión/build previstos. Para instalar en el teléfono: Run con el esquema JACNomina y el dispositivo conectado. Push continúa NO. No se declara probado un iPhone físico ni una fototeca real; PhotoKit se simula en las pruebas.
+
+La vista local rechazó el acceso tras una revocación 403 sin conservar miniaturas. La comprobación del ancho móvil del navegador quedó limitada: el control de viewport seguía informando 1440 px después de pedir 390 px. No se declara verificada visualmente a 390 px; la revisión estática de sus reglas no encontró desbordamientos evidentes. Las pruebas nativas sí se ejecutaron en el simulador iPhone. Los informes intermedios se conservan y ninguna prueba envía fotos, avisos, correos o datos ficticios a servicios reales.
 
 ## Publicación web verificada
 
@@ -57,3 +63,16 @@ La revisión automática bloqueó inicialmente la entrega de la credencial al te
 Autorizar Google y crear/activar Anderson siguen siendo pasos separados de la publicación; su estado real se registra al completarlos.
 
 Endurecimiento antes de activar la conexión: las denegaciones explícitas de Google (401/403 y OAuth invalid_grant) se entregan como 403 para retirar la caché de Fotografía; no se presentan como fallos temporales que puedan habilitar fallback. Los límites de cuota de Google conservan su carácter temporal (503) y no retiran la última copia. Una prueba adicional lo comprueba en `media-drive-permission-final.log` (13 pruebas Drive/OAuth aprobadas).
+
+
+## Cierre real de publicación y activación — 16 de octubre
+
+La continuación v65 publicó la revocación de permisos Google frente a fallos de cuota. v66 añade mensajes de diagnóstico OAuth con razones cerradas y sin registrar cookies, tokens, códigos ni respuestas externas; conserva los diez minutos, PKCE, nonce, cookie de navegador, sesión, revisión y consumo único. Las 14 pruebas Drive/OAuth y TypeScript pasaron (`media-oauth-reasons-verified.log`, `media-oauth-reasons-types.log`), y build local/archivo exacto aprobado. El primer retorno había fallado en etapa authorization sin razón específica disponible; no se atribuye una causa concreta sin evidencia. El nuevo intento terminó correctamente sin retirar comprobaciones.
+
+v66 publicada **succeeded** en el mismo Site, fuente `4d4e670a6c6d07603d3bfc6fa20a29190032d3cc`, versión `appgprj_6aa0260b82a88191a47960614238350a~appgver_950538fbc5e88191bc1a6acd66fbbd11`, despliegue `appgdep_6ad2432fa1108191a5e923953658d2f2`, env_set_revision 2. Archivo 83 entradas, SHA256 `eef3aee6ab6c83c54ab22c535048433f1dc6e0b14e3a365936253b835c7fa102`. Permanecen dominio, audiencia, DB/BUCKET, hosting y secretos existentes. La conexión nueva es independiente y cifrada; no se modifican las otras conexiones.
+
+Camilo completó personalmente la autorización de Google con `jacmusicestudios@gmail.com`. Se verificó en producción `/fotografia?drive=connected`, y el listado dentro de JAC mostró **60 carpetas preexistentes** de la raíz solicitada, con acceso de lectura para Camilo. Captura `outputs/fotografia-drive-conectado.png`. No se subieron ni borraron archivos reales como prueba ni se cambió su compartición.
+
+Con confirmación explícita de Camilo al guardar el acceso, se creó la cuenta **Anderson**, usuario `anderson`, correo indicado, rol **Fotografía · subir y consultar**, activa y pendiente de establecer contraseña. Se verificó la fila guardada; captura `outputs/anderson-cuenta-creada.png`. Su enlace privado de activación quedó abierto en Usuarios para Camilo, válido 24 horas y una sola vez. No se copió a archivos, al repositorio o al chat ni se envió correo; Camilo debe compartirlo de forma privada y Anderson establecer su contraseña. Camilo y jac conservan consulta a la galería mediante su rol administrador.
+
+Fuente nativa guardada localmente; respaldos opcionales `outputs/JAC-Mac-1.3.0.zip` y `outputs/JAC-iPhone-0.16.0-Mac-1.3.0-fuente-nativa.zip`, sin claves, datos locales ni ajustes personales de firma. Se continúa en los mismos proyectos abiertos en esta carpeta; no hay que descargar o sustituir el proyecto.

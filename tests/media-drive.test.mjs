@@ -148,15 +148,45 @@ test('session revocation during Google prevents folder commits and content deliv
 async function beginOauth(){const request=req(ownerToken),owner=await m.authenticatedSession(ownerToken),start=await m.startMediaOauth(request,owner),url=new URL(start.url),browserCookie=start.cookie.split(';')[0];return {start,url,callback:()=>new Request('https://jhonalexcastano.com/api/payroll/gmail/callback?state='+url.searchParams.get('state')+'&code=fixture-code',{headers:{cookie:'__Host-jac_session='+ownerToken+'; '+browserCookie}})};}
 test('OAuth uses PKCE and dedicated account, binds browser/session, consumes once, and preserves other Google connections',async()=>{
  const oldGmail=sql.prepare("SELECT * FROM payroll_gmail WHERE id='jac'").get(),begun=await beginOauth();assert.equal(begun.url.searchParams.get('login_hint'),'jacmusicestudios@gmail.com');assert.equal(begun.url.searchParams.get('code_challenge_method'),'S256');assert.ok(begun.url.searchParams.get('scope').includes(m.MEDIA_SCOPE));
- account={email:'wrong@example.invalid',email_verified:true};const bad=await m.finishMediaOauth(begun.callback());assert.match(bad.url,/drive=error$/);assert.deepEqual(sql.prepare("SELECT * FROM payroll_gmail WHERE id='jac'").get(),oldGmail);assert.equal(await m.finishMediaOauth(begun.callback()),null);
+ account={email:'wrong@example.invalid',email_verified:true};const bad=await m.finishMediaOauth(begun.callback());assert.match(bad.url,/drive=error(?:&|$)/);assert.deepEqual(sql.prepare("SELECT * FROM payroll_gmail WHERE id='jac'").get(),oldGmail);assert.equal(await m.finishMediaOauth(begun.callback()),null);
  account={email:'jacmusicestudios@gmail.com',email_verified:true};const good=await beginOauth(),revision=(await m.mediaConfig()).version,result=await m.finishMediaOauth(good.callback());assert.match(result.url,/drive=connected$/);assert.equal((await m.mediaConfig()).version,revision+1);assert.equal(await m.finishMediaOauth(good.callback()),null);assert.deepEqual(sql.prepare("SELECT * FROM payroll_gmail WHERE id='jac'").get(),oldGmail);
  const secret=await m.decryptMail((await m.mediaConfig()).credentials,globalThis.__mediaDriveEnv.PAYROLL_MAIL_KEY);assert.equal(secret.refreshToken,'fixture-refresh');assert.ok(!JSON.stringify(result).includes('fixture-refresh'));
 });
 test('OAuth rejects missing browser proof, incomplete scope, concurrent replay and revoked sessions',async()=>{
  let begun=await beginOauth(),before=calls.length,revision=(await m.mediaConfig()).version;
- const forged=new Request(begun.callback().url,{headers:{cookie:'__Host-jac_session='+ownerToken}});assert.match((await m.finishMediaOauth(forged)).url,/drive=error$/);assert.equal(calls.length,before);assert.equal((await m.mediaConfig()).version,revision);
+ const forged=new Request(begun.callback().url,{headers:{cookie:'__Host-jac_session='+ownerToken}});assert.match((await m.finishMediaOauth(forged)).url,/drive=error(?:&|$)/);assert.equal(calls.length,before);assert.equal((await m.mediaConfig()).version,revision);
  const valid=await m.finishMediaOauth(begun.callback());assert.match(valid.url,/drive=connected$/);
- begun=await beginOauth();revision=(await m.mediaConfig()).version;hook=async(entry,next)=>entry.url.origin==='https://oauth2.googleapis.com'?Response.json({access_token:'fixture-access',refresh_token:'fixture-refresh',scope:'openid email'}):next();assert.match((await m.finishMediaOauth(begun.callback())).url,/drive=error$/);assert.equal((await m.mediaConfig()).version,revision);
+ begun=await beginOauth();revision=(await m.mediaConfig()).version;hook=async(entry,next)=>entry.url.origin==='https://oauth2.googleapis.com'?Response.json({access_token:'fixture-access',refresh_token:'fixture-refresh',scope:'openid email'}):next();assert.match((await m.finishMediaOauth(begun.callback())).url,/drive=error(?:&|$)/);assert.equal((await m.mediaConfig()).version,revision);
  hook=undefined;begun=await beginOauth();before=calls.filter(c=>c.url.origin==='https://oauth2.googleapis.com').length;const concurrent=await Promise.all([m.finishMediaOauth(begun.callback()),m.finishMediaOauth(begun.callback())]);assert.equal(concurrent.filter(v=>v?.url.endsWith('drive=connected')).length,1);assert.equal(calls.filter(c=>c.url.origin==='https://oauth2.googleapis.com').length,before+1);
- begun=await beginOauth();before=calls.length;sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(ownerToken));assert.match((await m.finishMediaOauth(begun.callback())).url,/drive=error$/);assert.equal(calls.length,before);
+ begun=await beginOauth();before=calls.length;sql.prepare('DELETE FROM payroll_sessions WHERE id=?').run(m.tokenHash(ownerToken));assert.match((await m.finishMediaOauth(begun.callback())).url,/drive=error(?:&|$)/);assert.equal(calls.length,before);
+});
+test('OAuth diagnostics distinguish each authorization failure with only allowlisted reasons',async()=>{
+ const expected=['browser_guard_missing','browser_guard_mismatch','web_session_missing','web_session_changed','authorization_used','expired','session_revoked','google_denied','missing_code','configuration_changed','google_token','google_account','folder_access','connection_storage'];
+ const oldLog=console.error,logs=[],tag='untrusted-provider-body-cookie-or-secret';console.error=(...args)=>logs.push(args);
+ try{
+  for(const reason of expected){
+   const begun=await beginOauth();let callback=begun.callback(),cleanup=async()=>{};
+   const cookie=callback.headers.get('cookie'),browser=cookie.split(';').map(v=>v.trim()).find(v=>v.startsWith('__Host-jac_media_oauth='));
+   assert.match(begun.start.cookie,/Path=\/; HttpOnly; Secure; SameSite=Lax; Max-Age=600$/,'The protected browser cookie keeps its ten-minute lifetime');
+   if(reason==='browser_guard_missing')callback=new Request(callback.url,{headers:{cookie:'__Host-jac_session='+ownerToken}});
+   if(reason==='browser_guard_mismatch')callback=new Request(callback.url,{headers:{cookie:'__Host-jac_session='+ownerToken+'; __Host-jac_media_oauth='+'x'.repeat(43)}});
+   if(reason==='web_session_missing')callback=new Request(callback.url,{headers:{cookie:browser}});
+   if(reason==='web_session_changed')callback=new Request(callback.url,{headers:{cookie:'__Host-jac_session='+await m.makeSession(ownerID)+'; '+browser}});
+   if(reason==='authorization_used')beforeQuery=async q=>{if(q.text.startsWith('DELETE FROM payroll_oauth WHERE id=? AND payload=?'))sql.prepare('DELETE FROM payroll_oauth WHERE id=?').run(q.args[0]);};
+   if(reason==='expired')sql.prepare('UPDATE payroll_oauth SET expires_at=? WHERE id=?').run('2000-01-01T00:00:00Z','jac-media:'+begun.url.searchParams.get('state'));
+   if(reason==='session_revoked'){sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(ownerID);cleanup=async()=>sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(ownerID);}
+   if(reason==='google_denied'){const url=new URL(callback.url);url.searchParams.set('error','access_denied');url.searchParams.set('error_description',tag);callback=new Request(url,{headers:callback.headers});}
+   if(reason==='missing_code'){const url=new URL(callback.url);url.searchParams.delete('code');callback=new Request(url,{headers:callback.headers});}
+   if(reason==='configuration_changed')sql.prepare("UPDATE jac_media_connection SET version=version+1 WHERE id='jac'").run();
+   if(reason==='google_token')hook=async(entry,next)=>entry.url.origin==='https://oauth2.googleapis.com'?Response.json({access_token:tag,scope:'openid email'}):next();
+   if(reason==='google_account'){account={email:tag+'@example.invalid',email_verified:true};cleanup=async()=>{account={email:'jacmusicestudios@gmail.com',email_verified:true};};}
+   if(reason==='folder_access'){files.get(m.MEDIA_ROOT_ID).capabilities.canAddChildren=false;cleanup=async()=>{files.get(m.MEDIA_ROOT_ID).capabilities.canAddChildren=true;};}
+   if(reason==='connection_storage'){sql.exec("CREATE TRIGGER media_fixture_deny_storage BEFORE UPDATE ON jac_media_connection BEGIN SELECT RAISE(ABORT,'"+tag+"'); END");cleanup=async()=>sql.exec('DROP TRIGGER media_fixture_deny_storage');}
+   const result=await m.finishMediaOauth(callback),url=new URL(result.url);
+   assert.equal(url.searchParams.get('drive'),'error');assert.equal(url.searchParams.get('reason'),reason);assert.deepEqual([...url.searchParams.keys()].sort(),['drive','reason']);assert.ok(!JSON.stringify(result).includes(tag));
+   assert.deepEqual(logs.at(-1),['Media Drive authorization failed',{reason}]);assert.deepEqual(Object.keys(logs.at(-1)[1]),['reason']);
+   await cleanup();beforeQuery=undefined;hook=undefined;
+  }
+  assert.equal(logs.length,expected.length);assert.ok(!JSON.stringify(logs).includes(tag));
+ }finally{console.error=oldLog;beforeQuery=undefined;hook=undefined;sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(ownerID);sql.exec('DROP TRIGGER IF EXISTS media_fixture_deny_storage');}
 });

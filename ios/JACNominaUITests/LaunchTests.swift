@@ -1,6 +1,38 @@
 import XCTest
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only"]; app.launch()
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.tabBars.buttons["Fotografía"].exists); XCTAssertTrue(app.tabBars.buttons["Mi cuenta"].exists)
+        for forbidden in ["Quincena", "Agenda", "Itinerarios", "Gestión"] { XCTAssertFalse(app.tabBars.buttons[forbidden].exists) }
+        tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
+        tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-video-nativo"); tap(app, "media.preview.close")
+        tap(app, "media.createFolder"); let field = app.textFields["media.folder.name"]; XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("Ensayo ficticio")
+        tap(app, "media.folder.save"); XCTAssertTrue(app.buttons["media.fixture"].waitForExistence(timeout: 15)); tap(app, "media.fixture"); tap(app, "media.upload")
+        let uploaded = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Foto de prueba.png")).firstMatch
+        XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-subida-multiple-nativa")
+        app.tabBars.buttons["Mi cuenta"].tap(); XCTAssertTrue(app.staticTexts["Fotografía JAC"].waitForExistence(timeout: 10)); XCTAssertFalse(app.staticTexts["Administrador de JAC"].exists)
+    }
+    @MainActor func testPhotographerDownloadsFolderOfflineAndSavesPhotosThroughFakeWriter() {
+        let app = XCUIApplication(); let base = ["--uitest-payroll", "--uitest-media-only", "--uitest-offline-content"]
+        app.launchArguments = base + ["--uitest-reset-content", "--uitest-reset-media"]; app.launch()
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20)); tap(app, "media.item.media-day")
+        tap(app, "media.offline"); tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
+        tap(app, "media.savePhotos"); tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20)); attachScreen(app, name: "carpeta-guardada-fotos-sin-biblioteca-real")
+        app.terminate(); app.launchArguments = base + ["--uitest-offline"]; app.launch()
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20)); tap(app, "media.item.media-day")
+        tap(app, "media.item.media-photo"); XCTAssertTrue(app.buttons["media.preview.close"].waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-reapertura-sin-internet"); tap(app, "media.preview.close")
+        tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
+        XCTAssertFalse(app.buttons["media.upload"].exists); XCTAssertFalse(app.buttons["media.createFolder"].exists)
+    }
+    @MainActor func testAdministratorReadsGalleryWithoutUploadButtons() {
+        let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app, "management.media")
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["media.createFolder"].exists); XCTAssertFalse(app.buttons["media.files"].exists)
+        tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close"); attachScreen(app, name: "fotografia-administrador-lectura")
+    }
     @MainActor func testAgendaDayEdgesSelectTheWholeVisibleCell() {
         let app=fixture();app.tabBars.buttons["Agenda"].tap()
         var c=Calendar(identifier:.gregorian);c.timeZone=TimeZone(identifier:"America/Bogota")!
