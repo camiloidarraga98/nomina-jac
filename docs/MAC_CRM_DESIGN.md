@@ -36,3 +36,7 @@ Los informes de intentos intermedios se conservan. La consulta del saldo se mant
 Capturas finales con datos ficticios: `outputs/mac-crm12-fichas.png`, `mac-crm12-tabla.png`, `mac-crm12-selector-fechas.png`, `mac-crm12-agenda-dia.png` y `mac-ux-crm-compacto-oscuro.png`. Huellas de fuente en `work/local/mac-crm12-source-sha256.txt`. La entrega actualiza `outputs/JAC Music.app` y deja ZIP de app y fuente como respaldos opcionales; no requiere descargar otro proyecto.
 
 Las pruebas usan `.invalid`, datos ficticios y salidas externas interceptadas. No se crean eventos, abonos, alertas, correos ni comprobantes reales para probar; no se alteran datos de producción.
+
+## Apertura de la entrega en este Mac
+
+App actualizada en su misma ubicación, firma local verificada, binario universal y ZIP de app/fuente comprobados. Al abrir la entrega, el control de ventana agotó su tiempo. Una muestra del proceso propio confirmó espera en `KeychainSessionStore.load → SecItemCopyMatching → SecurityServer::ClientSession::decrypt` durante la inicialización; no hay un cierre nuevo de JAC en DiagnosticReports. SecurityAgent estaba activo. El control de Mac rechaza acceder a `com.apple.SecurityAgent` por seguridad; se solicitó a Camilo resolver personalmente el aviso del Llavero y avisar para comprobar la ventana. No se lee la contraseña, no se retiran las protecciones del Llavero y no se borra ni se sustituye la sesión/caché. La apertura con su sesión queda pendiente de esa intervención; no se declara comprobada mientras el proceso espere allí.
