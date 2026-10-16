@@ -28,18 +28,18 @@ struct MacPageHeader: View {
 }
 
 enum MacSettingsRoute: String, CaseIterable, Identifiable {
-    case expenses, alerts, notifications, connections, employees, concepts, archive, mail, users
+    case account, expenses, alerts, notifications, connections, employees, concepts, archive, mail, users
     var id: String { rawValue }
     var title: String {
         switch self {
-        case .expenses: "Gastos de viaje"; case .alerts: "Alertas"; case .notifications: "Notificaciones"
+        case .account: "Mi cuenta";case .expenses: "Gastos de viaje"; case .alerts: "Alertas"; case .notifications: "Notificaciones"
         case .connections: "Servicios conectados"; case .employees: "Personal"; case .concepts: "Conceptos y reglas"
         case .archive: "Archivo"; case .mail: "Correos"; case .users: "Usuarios y permisos"
         }
     }
     var subtitle: String {
         switch self {
-        case .expenses: "Facturas, borradores y reintegros"; case .alerts: "Avisos y publicaciones del equipo"
+        case .account: "Sesión, acceso y copia guardada";case .expenses: "Facturas, borradores y reintegros"; case .alerts: "Avisos y publicaciones del equipo"
         case .notifications: "Preferencias de este Mac"; case .connections: "Calendar, Slack y Google Sheets"
         case .employees: "Personas, condiciones y tarifas"; case .concepts: "Parámetros de la liquidación"
         case .archive: "Quincenas cerradas y documentos"; case .mail: "Gmail y desprendibles de pago"
@@ -48,7 +48,7 @@ enum MacSettingsRoute: String, CaseIterable, Identifiable {
     }
     var symbol: String {
         switch self {
-        case .expenses: "receipt"; case .alerts: "bell.badge"; case .notifications: "bell"
+        case .account: "person.crop.circle";case .expenses: "receipt"; case .alerts: "bell.badge"; case .notifications: "bell"
         case .connections: "point.3.connected.trianglepath.dotted"; case .employees: "person.2"
         case .concepts: "slider.horizontal.3"; case .archive: "archivebox"; case .mail: "envelope"
         case .users: "person.badge.key"
@@ -63,6 +63,7 @@ enum MacSettingsRoute: String, CaseIterable, Identifiable {
     }
     func allowed(_ user: PayrollUser) -> Bool {
         return switch self {
+        case .account: true
         case .expenses: user.hasSection(.itineraries)
         case .alerts: user.hasSection(.alerts)
         case .notifications: user.hasNotices
@@ -84,6 +85,7 @@ struct MacManagementView: View {
                     if store.error != nil || store.pending != nil || store.notice != nil || store.isOffline {
                         VStack(alignment: .leading, spacing: 10) { OperationStatusSection() }
                     }
+                    settingsGroup("Tu cuenta",items:[.account])
                     settingsGroup("Trabajo diario", items: [.expenses, .alerts])
                     settingsGroup("Administración", items: [.employees, .concepts, .archive, .mail])
                     settingsGroup("Preferencias y acceso", items: [.notifications, .connections, .users])
@@ -92,6 +94,7 @@ struct MacManagementView: View {
                 .navigationDestination(item: $route) { item in
                     if item.allowed(user) {
                         switch item {
+                        case .account: AccountView(user:user)
                         case .expenses: TravelExpensesView()
                         case .alerts: NoticesView(user: user, kind: "alert")
                         case .notifications: NotificationSettingsView()

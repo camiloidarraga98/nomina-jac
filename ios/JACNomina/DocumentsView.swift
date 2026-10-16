@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import AVKit
 import CoreTransferable
 import CryptoKit
+import ImageIO
 #if os(iOS)
 import Photos
 #endif
@@ -162,7 +163,29 @@ struct MediaItem: Codable, Identifiable, Equatable {
     let size: Int64
     let modifiedAt: String
     let thumbnailAvailable: Bool
+    var createdAt: String? = nil
     var sizeLabel: String { ByteCountFormatter.string(fromByteCount: size, countStyle: .file) }
+}
+enum MediaGalleryOrder {
+    static func sorted(_ items:[MediaItem]) -> [MediaItem] {
+        items.sorted { left,right in
+            if (left.kind == "folder") != (right.kind == "folder") {return left.kind == "folder"}
+            let first=left.createdAt.flatMap(CalendarClock.instant),second=right.createdAt.flatMap(CalendarClock.instant)
+            if first != second {if let first,let second {return first > second};return first != nil}
+            let order=left.name.localizedStandardCompare(right.name)
+            return order == .orderedSame ? left.id < right.id : order == .orderedAscending
+        }
+    }
+}
+enum MediaThumbnail {
+    static func image(_ data:Data) -> JACPlatformImage? {
+        guard data.count <= 512*1024,let source=CGImageSourceCreateWithData(data as CFData,nil),let thumbnail=CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:360,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceShouldCacheImmediately:false] as CFDictionary) else{return nil}
+        #if os(iOS)
+        return UIImage(cgImage:thumbnail)
+        #else
+        return NSImage(cgImage:thumbnail,size:NSSize(width:thumbnail.width,height:thumbnail.height))
+        #endif
+    }
 }
 struct MediaFeed: Codable {
     let connected: Bool
@@ -246,7 +269,8 @@ struct MediaGalleryView: View {
     @State private var folderID = ""
     @State private var loadedPages = 1
     @State private var loading = false
-    @State private var creating = false
+    @State private var choosingDestination = false
+    @State private var uploadDestination: MediaFolder?
     @State private var pickingFiles = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
     @State private var queue: [MediaLocalFile] = []
@@ -260,6 +284,7 @@ struct MediaGalleryView: View {
     @State private var uploadTask: Task<Void, Never>?
     @State private var error: String?
     @State private var generation = UUID()
+    @State private var thumbnailEpoch = UUID()
     @State private var preview: MediaPreview?
     @State private var previewDocument: ExportedDocument?
     @State private var openingTask: Task<Void, Never>?
@@ -269,9 +294,26 @@ struct MediaGalleryView: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
-                JACFeatureBanner(eyebrow: "JAC · Fotografía", title: "Cada show, en imágenes.", subtitle: "Fotos y videos del equipo, organizados por día.", symbol: "photo.on.rectangle.angled", tone: .blue)
+                #if os(iOS)
+                VStack(alignment:.leading,spacing:12) {
+                    Text(feed?.folder?.id == feed?.root?.id ? "Cada show, en imágenes." : feed?.folder?.name ?? "Fotos y videos de JAC").font(.system(.title2,design:.rounded,weight:.bold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading).accessibilityIdentifier("media.heading")
+                    HStack(alignment:.top,spacing:16) {
+                        Text("Tu archivo de fotos y videos, organizado por día.").font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading)
+                        if writable {Button {beginUpload()} label:{Label("Subir",systemImage:"plus")}.buttonStyle(.borderedProminent).fixedSize().accessibilityIdentifier("media.add")}
+                    }
+                }
+                #else
+                HStack(alignment:.top,spacing:16) {
+                    VStack(alignment:.leading,spacing:6) {
+                        Text(feed?.folder?.id == feed?.root?.id ? "Cada show, en imágenes." : feed?.folder?.name ?? "Fotos y videos de JAC").font(.system(.title2,design:.rounded,weight:.bold)).foregroundStyle(JACTheme.ink)
+                        Text("Tu archivo de fotos y videos, organizado por día.").font(.subheadline).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength:0)
+                    if writable {Button {beginUpload()} label:{Label("Subir",systemImage:"plus")}.buttonStyle(.borderedProminent).accessibilityIdentifier("media.add")}
+                }
+                #endif
                 if let error { InlineError(message: error) }
-                if store.isOffline { Label("Conéctate para actualizar las carpetas y abrir archivos.", systemImage: "wifi.slash").font(.footnote).foregroundStyle(.secondary) }
+                if store.isOffline { Label("Sin conexión · Puedes consultar los archivos descargados.", systemImage: "wifi.slash").font(.footnote).foregroundStyle(.secondary) }
                 if loading && feed == nil { ProgressView("Cargando carpetas…").frame(maxWidth: .infinity) }
                 if let feed {
                     if !feed.connected {
@@ -280,8 +322,8 @@ struct MediaGalleryView: View {
                         ContentUnavailableView("Sin acceso a Fotografía", systemImage: "lock", description: Text("Tu cuenta no tiene acceso a estas fotos y videos."))
                     } else {
                         breadcrumbs(feed)
-                        folderActions
-                        if writable { uploadActions }
+                        transferStatus
+                        if writable && uploadDestination?.id == parentID { uploadActions }
                         if importing { HStack { ProgressView("Preparando archivos…"); Spacer(); Button("Cancelar preparación") { importTask?.cancel() } } }
                         if let uploadNotice { Label(uploadNotice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.upload.status") }
                         if !queue.isEmpty { pendingUploads }
@@ -290,8 +332,16 @@ struct MediaGalleryView: View {
                         }
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 280), spacing: 14)], spacing: 14) {
                             ForEach(items) { item in
-                                Button { open(item) } label: { MediaTile(item: item, client: store.client, opening: opening == item.id) }
-                                    .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
+                                VStack(alignment:.leading,spacing:0) {
+                                    Button { open(item) } label: { MediaTile(item: item, client: store.client, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
+                                        .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
+                                    if item.kind == "folder" {
+                                        HStack {Text("Carpeta del equipo").font(.caption).foregroundStyle(.secondary);Spacer(minLength:6)
+                                            Menu {folderCommands(MediaFolder(id:item.id,name:item.name))} label:{Image(systemName:"ellipsis.circle").font(.title3).padding(4)}.buttonStyle(.plain).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.options."+item.id)
+                                        }.padding(.horizontal,12).padding(.bottom,10)
+                                    }
+                                }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:18))
+                                    .contextMenu {if item.kind == "folder" {folderCommands(MediaFolder(id:item.id,name:item.name))}}
                             }
                         }
                         if !(feed.nextPageToken ?? "").isEmpty {
@@ -302,23 +352,26 @@ struct MediaGalleryView: View {
             }.padding(18).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
         }.jacSurface().navigationTitle("Fotografía").jacInlineTitle()
             .refreshable { await reload() }
-            .toolbar { ToolbarItem { Button { Task { await reload() } } label: { Image(systemName: "arrow.clockwise") }.accessibilityLabel("Actualizar fotografías").accessibilityIdentifier("media.refresh").disabled(loading || uploading) } }
+            .toolbar {
+                ToolbarItem {Button {Task {await reload()}} label:{Image(systemName:"arrow.clockwise")}.accessibilityLabel("Actualizar fotografías").accessibilityIdentifier("media.refresh").disabled(loading || uploading)}
+                ToolbarItem {if let folder=feed?.folder,feed?.canRead == true {Menu {folderCommands(folder)} label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel("Opciones de esta carpeta").accessibilityIdentifier("media.current.options")}}
+            }
             .task(id: folderID) {
                 await reload()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(30)) } catch { return }
-                    if phase == .active && !uploading && preview == nil && !creating && opening == nil { await reload() }
+                    if phase == .active && !uploading && preview == nil && !choosingDestination && opening == nil { await reload() }
                 }
             }
             .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
             .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
-            .sheet(isPresented: $creating) { MediaFolderEditor(parentID: parentID) { folder in folderID = folder.id; loadedPages = 1 } }
+            .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
             .sheet(item: $transferReview) { review in MediaTransferReviewSheet(review: review) { folderTransfer.start(client: store.client, plan: review.plan, photos: review.photos, writer: photosWriter) } }
             .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document) }
             .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.image, .movie, .video], allowsMultipleSelection: true) { result in
                 switch result { case .success(let urls): importTask?.cancel(); importTask = Task { await readFiles(urls) }; case .failure(let failure): if (failure as? CocoaError)?.code != .userCancelled { error = failure.localizedDescription } }
             }
-            .jacFileDrop(enabled: writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls) } }
+            .jacFileDrop(enabled: writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls);if uploadDestination == nil && !queue.isEmpty {if parentID == feed?.root?.id {choosingDestination=true}else{uploadDestination=feed?.folder}} } }
             .jacRefreshCommand { Task { await reload() } }
             .onDisappear { uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); queue.forEach { $0.remove() }; clearPreview() }
     }
@@ -328,40 +381,44 @@ struct MediaGalleryView: View {
         #endif
         return DeviceMediaPhotosWriter()
     }
-    private var folderActions: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 10) { offlineButton; photosButton }
-                VStack(alignment: .leading, spacing: 10) { offlineButton; photosButton }
-            }.disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
-            if preparingTransfer { ProgressView("Revisando todos los archivos de la carpeta…") }
+    private var transferStatus: some View {
+        VStack(alignment:.leading,spacing:12) {
+            if preparingTransfer {ProgressView("Revisando todos los archivos de la carpeta…")}
             if folderTransfer.running {
-                ProgressView(value: Double(folderTransfer.completed), total: Double(max(1, folderTransfer.total)))
-                HStack { Text("\(folderTransfer.completed) de \(folderTransfer.total) archivos completados").font(.footnote); Spacer(); Button("Detener") { folderTransfer.cancel() } }
+                ProgressView(value:Double(folderTransfer.completed),total:Double(max(1,folderTransfer.total)))
+                HStack {Text("\(folderTransfer.completed) de \(folderTransfer.total) archivos completados").font(.footnote);Spacer();Button("Detener") {folderTransfer.cancel()}}
             }
-            if let message = folderTransfer.message { Text(message).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.transfer.status") }
-            if !folderTransfer.failures.isEmpty {
-                DisclosureGroup("\(folderTransfer.failures.count) archivos con problemas") {
-                    ForEach(Array(folderTransfer.failures.enumerated()), id: \.offset) { _, message in Text(message).font(.footnote).foregroundStyle(.red).frame(maxWidth: .infinity, alignment: .leading) }
-                }
-            }
+            if let message=folderTransfer.message {Text(message).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.transfer.status")}
+            if !folderTransfer.failures.isEmpty {DisclosureGroup("\(folderTransfer.failures.count) archivos con problemas") {ForEach(Array(folderTransfer.failures.enumerated()),id:\.offset) {_,message in Text(message).font(.footnote).foregroundStyle(.red).frame(maxWidth:.infinity,alignment:.leading)}}}
         }
     }
-    private var offlineButton: some View { Button { Task { await prepareTransfer(photos: false) } } label: { Label("Disponible sin conexión", systemImage: "arrow.down.circle") }.buttonStyle(.bordered).accessibilityIdentifier("media.offline") }
-    @ViewBuilder private var photosButton: some View {
+    @ViewBuilder private func folderCommands(_ folder:MediaFolder) -> some View {
+        Button {Task {await prepareTransfer(folder:folder.id,photos:false)}} label:{Label("Disponible sin conexión",systemImage:"arrow.down.circle")}.accessibilityIdentifier("media.offline")
+            .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
         #if os(iOS)
-        Button { Task { await prepareTransfer(photos: true) } } label: { Label("Guardar carpeta en Fotos", systemImage: "square.and.arrow.down") }.buttonStyle(.bordered).accessibilityIdentifier("media.savePhotos")
+        Button {Task {await prepareTransfer(folder:folder.id,photos:true)}} label:{Label("Guardar carpeta en Fotos",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.savePhotos")
+            .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
         #endif
     }
-    private func prepareTransfer(photos: Bool) async {
-        guard !preparingTransfer else { return }; preparingTransfer = true; defer { preparingTransfer = false }
+    private func prepareTransfer(folder:String,photos:Bool) async {
+        guard !preparingTransfer,!folderTransfer.running else {return};preparingTransfer=true;defer{preparingTransfer=false}
         do {
-            let plan = try await store.client.mediaDownloadPlan(folder: folderID)
-            let scope = try store.client.mediaScope(), cache = store.client.mediaOffline
-            let pending = photos ? plan.files : plan.files.filter { item in scope.map { !cache.hasFile(item, scope: $0) } ?? true }
-            transferReview = MediaTransferReview(plan: plan, photos: photos, requiredBytes: MediaStorageReview.required(pending))
-        }
-        catch { if let message = store.reportReadFailure(error) { self.error = message } }
+            let stamp=try store.client.mediaAccessStamp(),plan=try await store.client.mediaDownloadPlan(folder:folder)
+            guard !Task.isCancelled,stamp == (try store.client.mediaAccessStamp()) else {throw CancellationError()}
+            let scope=try store.client.mediaScope(),cache=store.client.mediaOffline
+            let pending=photos ? plan.files:plan.files.filter{item in scope.map{!cache.hasFile(item,scope:$0)} ?? true}
+            transferReview=MediaTransferReview(plan:plan,photos:photos,requiredBytes:MediaStorageReview.required(pending))
+        } catch {if let message=store.reportReadFailure(error){self.error=message}}
+    }
+    private func beginUpload() {
+        guard writable,!uploading else{return}
+        if let target=uploadDestination,target.id == parentID {return}
+        choosingDestination=true
+    }
+    private func selectDestination(_ folder:MediaFolder) {
+        guard uploadDestination == nil || queue.isEmpty else{return}
+        uploadDestination=folder;choosingDestination=false;generation=UUID();folderID=folder.id;loadedPages=1;feed=nil;items=[]
+        Task {await reload()}
     }
     @ViewBuilder private func breadcrumbs(_ feed: MediaFeed) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -375,9 +432,10 @@ struct MediaGalleryView: View {
     }
     private var uploadActions: some View {
         VStack(alignment: .leading, spacing: 12) {
+            HStack {Label(uploadDestination?.name ?? "Carpeta elegida",systemImage:"folder.fill").font(.subheadline.weight(.semibold));Spacer();if queue.isEmpty {Button("Listo") {uploadDestination=nil}}}
             ViewThatFits(in: .horizontal) {
-                HStack(spacing: 12) { folderButton; libraryButton; fileButton }
-                VStack(alignment: .leading, spacing: 10) { folderButton; HStack { libraryButton; fileButton } }
+                HStack(spacing: 12) { libraryButton; fileButton }
+                VStack(alignment: .leading, spacing: 10) { libraryButton; fileButton }
             }
             #if DEBUG
             if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar foto ficticia") { Task {
@@ -391,7 +449,7 @@ struct MediaGalleryView: View {
             Text("Las carpetas y archivos se guardan en la carpeta compartida de JAC. Los videos se suben por partes para poder reintentar sin duplicarlos.").font(.footnote).foregroundStyle(.secondary)
         }.disabled(uploading || importing || parentID.isEmpty)
     }
-    private var folderButton: some View { Button { creating = true } label: { Label("Nueva carpeta", systemImage: "folder.badge.plus") }.buttonStyle(.bordered).accessibilityIdentifier("media.createFolder").disabled(queue.contains(where: { !completed.contains($0.id) })) }
+
     private var libraryButton: some View { PhotosPicker(selection: $selectedPhotos, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current) { Label("Fotos y videos", systemImage: "photo.on.rectangle") }.buttonStyle(.bordered).accessibilityIdentifier("media.library") }
     private var fileButton: some View { Button { pickingFiles = true } label: { Label("Archivos", systemImage: "folder") }.buttonStyle(.bordered).accessibilityIdentifier("media.files") }
     private var pendingUploads: some View {
@@ -410,6 +468,8 @@ struct MediaGalleryView: View {
             }
             if uploading {
                 Button("Detener subida") { uploadTask?.cancel() }.buttonStyle(.bordered)
+            } else if uploadDestination == nil {
+                Button("Elegir carpeta de destino") {choosingDestination=true}.buttonStyle(.borderedProminent).accessibilityIdentifier("media.destination.choose")
             } else if queue.contains(where: { !completed.contains($0.id) }) {
                 Button { uploadTask = Task { await uploadAll() } } label: { Label(uploadErrors.isEmpty ? "Subir archivos seleccionados" : "Reintentar pendientes", systemImage: "arrow.up.circle.fill").frame(maxWidth: .infinity) }.buttonStyle(JACPrimaryButtonStyle()).disabled(!writable || importing).accessibilityIdentifier("media.upload")
             }
@@ -427,7 +487,7 @@ struct MediaGalleryView: View {
                 result = try await store.client.media(folder: requestedFolder, pageToken: cursor); all += result.items; cursor = result.nextPageToken ?? ""
             }
             guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
-            feed = result; var seen = Set<String>(); items = all.filter { seen.insert($0.id).inserted }; error = nil
+            feed = result; var seen = Set<String>(); items = MediaGalleryOrder.sorted(all.filter { seen.insert($0.id).inserted });thumbnailEpoch=UUID(); error = nil
             if !result.canRead || !result.connected { items = []; clearPreview(); queue.forEach { $0.remove() }; queue = [] }
         } catch {
             if let message = store.reportReadFailure(error) { self.error = message }
@@ -445,9 +505,12 @@ struct MediaGalleryView: View {
     }
     private func navigate(to id: String) {
         guard !queue.contains(where: { !completed.contains($0.id) }) else { error = "Sube o quita los archivos seleccionados antes de cambiar de carpeta."; return }
-        queue = []; completed = []; generation = UUID(); folderID = id; loadedPages = 1; feed = nil; items = []
+        queue = []; completed = [];uploadDestination=nil; generation = UUID(); folderID = id; loadedPages = 1; feed = nil; items = []
     }
     private func clearPreview() { if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil }
+    private func thumbnailDenied(_ failure:Error) {
+        items=[];feed=nil;queue.forEach{$0.remove()};queue=[];uploadDestination=nil;clearPreview();error=store.reportReadFailure(failure)
+    }
     private func readFiles(_ urls: [URL]) async {
         guard writable, !uploading, !importing, let stamp = try? store.client.mediaAccessStamp() else { return }; importing = true; defer { importing = false; importTask = nil }
         for url in urls {
@@ -471,10 +534,10 @@ struct MediaGalleryView: View {
         }
     }
     private func uploadAll() async {
-        guard writable, !uploading else { return }; uploading = true; error = nil; uploadNotice = nil
+        guard writable,!uploading,uploadDestination?.id == parentID else {error="Elige la carpeta del show antes de subir los archivos.";return};uploading = true; error = nil; uploadNotice = nil
         defer {
             if !completed.isEmpty { uploadNotice = "\(completed.count) archivos subidos." }
-            queue.removeAll { completed.contains($0.id) }; completed = []
+            queue.removeAll { completed.contains($0.id) }; completed = [];if queue.isEmpty {uploadDestination=nil}
             uploading = false; uploadTask = nil; Task { await reload() }
         }
         let destination = parentID
@@ -496,33 +559,88 @@ private struct MediaTile: View {
     let item: MediaItem
     let client: PayrollClient
     let opening: Bool
+    let epoch:UUID
+    let denied:(Error)->Void
     @State private var image: JACPlatformImage?
+    @State private var loadedRevision:String?
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack {
-                RoundedRectangle(cornerRadius: 12).fill(JACTheme.action.opacity(0.08))
-                if let image {
+                RoundedRectangle(cornerRadius: 12).fill(JACTheme.action.opacity(0.08)).overlay {
+                    if let image {
                     #if os(iOS)
                     Image(uiImage: image).resizable().scaledToFill()
                     #else
                     Image(nsImage: image).resizable().scaledToFill()
                     #endif
-                } else { Image(systemName: item.kind == "folder" ? "folder.fill" : item.kind == "video" ? "video.fill" : "photo").font(.system(size: 36)).foregroundStyle(JACTheme.action) }
+                    }
+                }
+                if image == nil { Image(systemName: item.kind == "folder" ? "folder.fill" : item.kind == "video" ? "video.fill" : "photo").font(.system(size: 36)).foregroundStyle(JACTheme.action) }
                 if item.kind == "video" { Image(systemName: "play.circle.fill").font(.system(size: 36)).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.45)) }
                 if opening { ProgressView().padding(12).background(.regularMaterial, in: Capsule()) }
-            }.frame(height: 136).frame(maxWidth: .infinity).clipped().clipShape(RoundedRectangle(cornerRadius: 12))
+            }.frame(height:item.kind == "folder" ? 84:140).frame(maxWidth:.infinity).clipped().clipShape(RoundedRectangle(cornerRadius:12)).accessibilityIdentifier(image == nil ? "media.placeholder."+item.id:"media.thumbnail."+item.id)
             Text(item.name).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
-            Text(item.kind == "folder" ? "Carpeta" : (item.kind == "video" ? "Video · " : "Foto · ") + item.sizeLabel).font(.caption).foregroundStyle(.secondary)
+            if item.kind != "folder" {Text((item.kind == "video" ? "Video · ":"Foto · ")+item.sizeLabel).font(.caption).foregroundStyle(.secondary)}
         }.padding(12).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18)).contentShape(Rectangle())
-            .task(id: item.id + item.modifiedAt) {
-                image = nil
-                guard item.thumbnailAvailable, item.kind != "folder", let data = try? await client.mediaThumbnail(item), !Task.isCancelled else { return }
-                image = JACPlatformImage(data: data)
-            }
+            .task(id: item.id + item.modifiedAt + epoch.uuidString) {
+                guard item.kind != "folder",!client.usingOfflineCopy,loadedRevision != item.modifiedAt else{return}
+                if loadedRevision != nil {image=nil;loadedRevision=nil}
+                do {let data=try await client.mediaThumbnail(item);try Task.checkCancellation();if let thumbnail=MediaThumbnail.image(data){image=thumbnail;loadedRevision=item.modifiedAt}}
+                catch {if case APIError.unauthorized = error {denied(error)}else if case APIError.forbidden = error {denied(error)}}
+            }.onDisappear {image=nil;loadedRevision=nil}
+    }
+}
+private struct MediaUploadDestinationPicker: View {
+    let root:MediaFolder
+    let isRoot:Bool
+    let selected:(MediaFolder)->Void
+    @EnvironmentObject private var store:PayrollStore
+    @Environment(\.dismiss) private var dismiss
+    @State private var folders:[MediaItem]=[]
+    @State private var cursor=""
+    @State private var search=""
+    @State private var loading=false
+    @State private var creating=false
+    @State private var error:String?
+    var body:some View {
+        NavigationStack {
+            List {
+                Section {
+                    LabeledContent("Ubicación",value:root.name)
+                    Text("Elige el show o día de trabajo antes de seleccionar tus fotos y videos.").font(.subheadline).foregroundStyle(.secondary)
+                    Button {selected(root);dismiss()} label:{Label(isRoot ? "Archivo JAC (general)":"Subir en esta carpeta",systemImage:"folder.fill")}.accessibilityIdentifier("media.destination.current")
+                    Button {creating=true} label:{Label("Crear carpeta de evento",systemImage:"folder.badge.plus")}.accessibilityIdentifier("media.createFolder").disabled(loading || store.isOffline)
+                }
+                if let error {Section {InlineError(message:error);Button("Reintentar") {Task{await load()}}}}
+                Section("Carpetas existentes") {
+                    ForEach(folders.filter{search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)}) {folder in
+                        Button {selected(MediaFolder(id:folder.id,name:folder.name));dismiss()} label:{Label(folder.name,systemImage:"folder.fill").frame(maxWidth:.infinity,alignment:.leading).contentShape(Rectangle())}.accessibilityIdentifier("media.destination."+folder.id)
+                    }
+                    if folders.isEmpty && !loading {Text("Crea una carpeta para el primer show o día de trabajo.").foregroundStyle(.secondary)}
+                    if !cursor.isEmpty {Button("Cargar más carpetas") {Task {await load(cursor)}}.disabled(loading).accessibilityIdentifier("media.destination.more")}
+                    if loading {ProgressView("Consultando carpetas…")}
+                }
+            }.jacSurface().navigationTitle("¿Dónde quieres subir?").jacInlineTitle().searchable(text:$search,prompt:"Buscar show o fecha")
+                .toolbar {ToolbarItem(placement:.cancellationAction) {Button("Cancelar") {dismiss()}}}
+                .task {await load()}
+                .sheet(isPresented:$creating) {MediaFolderEditor(parentID:root.id,parentName:root.name) {folder in selected(folder);dismiss()}}
+        }
+        #if os(macOS)
+        .frame(minWidth:560,minHeight:560)
+        #endif
+    }
+    private func load(_ page:String="") async {
+        guard !loading else{return};loading=true;defer{loading=false}
+        do {
+            let feed=try await store.client.media(folder:root.id,pageToken:page);try Task.checkCancellation()
+            guard feed.connected,feed.canUpload,store.overview?.user.canUploadMedia == true else {throw APIError.forbidden("Tu cuenta no puede subir archivos en esta carpeta.")}
+            var seen=Set<String>();folders=MediaGalleryOrder.sorted((page.isEmpty ? []:folders)+feed.items.filter{$0.kind == "folder"}).filter{seen.insert($0.id).inserted};cursor=feed.nextPageToken ?? "";error=nil
+        } catch {if let message=store.reportReadFailure(error){self.error=message}}
     }
 }
 private struct MediaFolderEditor: View {
     let parentID: String
+    var parentName:String=""
     let saved: (MediaFolder) -> Void
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.dismiss) private var dismiss
@@ -536,6 +654,7 @@ private struct MediaFolderEditor: View {
         NavigationStack {
             Form {
                 Section("Show o día de trabajo") {
+                    if !parentName.isEmpty {LabeledContent("Ubicación",value:parentName)}
                     TextField("Nombre del show o lugar", text: $name).accessibilityIdentifier("media.folder.name")
                     JACDatePicker("Día", selection: $date, displayedComponents: .date).environment(\.timeZone, CalendarClock.calendar.timeZone)
                     Text("Se guardará con la fecha y este nombre dentro de la carpeta actual.").font(.footnote).foregroundStyle(.secondary)

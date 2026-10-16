@@ -697,7 +697,7 @@ final class PayrollClient: ObservableObject {
     }
     func mediaThumbnail(_ item: MediaItem) async throws -> Data {
         let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "thumbnail", value: "1")], document: true, forceNetwork: true)
-        guard data.count <= 4 * 1024 * 1024, ["image/jpeg", "image/png", "image/webp"].contains(response.mimeType ?? "") else { throw APIError.invalid("No se recibió una miniatura válida.") }
+        guard data.count <= 512 * 1024, ["image/jpeg", "image/png", "image/webp", "image/gif"].contains(response.mimeType ?? "") else { throw APIError.invalid("No se recibió una miniatura válida.") }
         return data
     }
     private func restoredMediaDocument(_ item: MediaItem, scope: AgendaCacheScope) async throws -> ExportedDocument? {

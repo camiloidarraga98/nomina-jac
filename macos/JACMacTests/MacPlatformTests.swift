@@ -3,12 +3,17 @@ import AppKit
 @testable import JACMac
 
 final class MacPlatformTests:XCTestCase {
+    func testEmptyProfileAlwaysKeepsConfigurationAndAccountWithoutPrincipalAccountEntry() {
+        let user=PayrollUser(id:"empty",email:"empty@example.invalid",username:"empty",displayName:"Vacío ficticio",isOwner:false,permissions:[],sections:[])
+        XCTAssertEqual(MacSection.sidebar(for:user),[.management]);XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(user)},[.account]);XCTAssertEqual(user.firstDestination,"management")
+        XCTAssertFalse(MacSection.personal.contains(.account))
+    }
     func testModernSectionsOverrideCompatibilityFlagsInSidebarAndSettings() {
         var hybrid=PayrollUser(id:"hybrid",email:"hybrid@example.invalid",username:"hybrid",displayName:"Híbrido",isOwner:false,permissions:["payroll"],itinerariesOnly:true,mediaOnly:true,sections:["media","itineraries","alerts"])
-        XCTAssertEqual(MacSection.sidebar(for:hybrid),[.itineraries,.alerts,.media,.account,.management]);XCTAssertFalse(MacSettingsRoute.archive.allowed(hybrid));XCTAssertTrue(MacSettingsRoute.expenses.allowed(hybrid));XCTAssertFalse(hybrid.canUploadMedia)
-        hybrid.sections=["calendar"];XCTAssertEqual(MacSection.sidebar(for:hybrid),[.agenda,.account]);XCTAssertTrue(MacSettingsRoute.allCases.allSatisfy{!$0.allowed(hybrid)})
-        hybrid.sections=["alerts"];XCTAssertEqual(MacSection.sidebar(for:hybrid),[.alerts,.account,.management]);XCTAssertFalse(MacSettingsRoute.expenses.allowed(hybrid))
-        hybrid.sections=["media","mediaUpload"];XCTAssertTrue(hybrid.canUploadMedia);XCTAssertEqual(MacSection.sidebar(for:hybrid),[.media,.account])
+        XCTAssertEqual(MacSection.sidebar(for:hybrid),[.itineraries,.alerts,.media,.management]);XCTAssertFalse(MacSettingsRoute.archive.allowed(hybrid));XCTAssertTrue(MacSettingsRoute.expenses.allowed(hybrid));XCTAssertFalse(hybrid.canUploadMedia)
+        hybrid.sections=["calendar"];XCTAssertEqual(MacSection.sidebar(for:hybrid),[.agenda,.management]);XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(hybrid)},[.account])
+        hybrid.sections=["alerts"];XCTAssertEqual(MacSection.sidebar(for:hybrid),[.alerts,.management]);XCTAssertFalse(MacSettingsRoute.expenses.allowed(hybrid))
+        hybrid.sections=["media","mediaUpload"];XCTAssertTrue(hybrid.canUploadMedia);XCTAssertEqual(MacSection.sidebar(for:hybrid),[.media,.management])
     }
     func testDateCalendarLimitsAndPreservesTimeInColombia() throws {
         let c=CalendarClock.calendar
@@ -38,16 +43,16 @@ final class MacPlatformTests:XCTestCase {
         let owner=PayrollUser(id:"owner",email:"owner@example.invalid",username:"owner",displayName:"Owner",isOwner:true,permissions:[])
         let reader=PayrollUser(id:"reader",email:"reader@example.invalid",username:"reader",displayName:"Reader",isOwner:false,permissions:[])
         var restricted=owner;restricted.itinerariesOnly=true
-        XCTAssertEqual(MacSection.sidebar(for:owner),[.crm,.payroll,.agenda,.itineraries,.alerts,.media,.account,.management])
-        XCTAssertEqual(MacSection.sidebar(for:reader),[.payroll,.agenda,.itineraries,.alerts,.account,.management])
-        XCTAssertEqual(MacSection.sidebar(for:restricted),[.agenda,.itineraries,.alerts,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:owner),[.crm,.payroll,.agenda,.itineraries,.alerts,.media,.management])
+        XCTAssertEqual(MacSection.sidebar(for:reader),[.payroll,.agenda,.itineraries,.alerts,.management])
+        XCTAssertEqual(MacSection.sidebar(for:restricted),[.agenda,.itineraries,.alerts,.management])
         XCTAssertFalse(MacSettingsRoute.users.allowed(reader));XCTAssertFalse(MacSettingsRoute.connections.allowed(reader))
-        XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(restricted)},[.expenses,.alerts,.notifications])
+        XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(restricted)},[.account,.expenses,.alerts,.notifications])
     }
-    func testPhotographerSidebarContainsOnlyGalleryAndAccountEvenWithOwnerFlag() {
+    func testPhotographerSidebarContainsGalleryAndConfigurationWithAccountEvenWithOwnerFlag() {
         let photographer = PayrollUser(id: "photo", email: "anderson@example.invalid", username: "anderson", displayName: "Anderson ficticio", isOwner: true, permissions: ["payroll"], itinerariesOnly: true, mediaOnly: true)
-        XCTAssertEqual(MacSection.sidebar(for: photographer), [.media, .account])
-        XCTAssertTrue(MacSettingsRoute.allCases.allSatisfy { !$0.allowed(photographer) })
+        XCTAssertEqual(MacSection.sidebar(for: photographer), [.media, .management])
+        XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(photographer)},[.account])
         XCTAssertFalse(MacSection.crm.allowed(photographer)); XCTAssertFalse(MacSection.agenda.allowed(photographer)); XCTAssertFalse(MacSection.alerts.allowed(photographer))
     }
     func testCRMTableFiltersDatesStatusAndSearchButUsesServerBalancesVerbatim() {

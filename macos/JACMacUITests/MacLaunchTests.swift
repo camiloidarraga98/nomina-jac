@@ -1,6 +1,16 @@
 import XCTest
 
 final class MacLaunchTests:XCTestCase {
+    @MainActor func testRootUploadAndFolderMenuKeepSeparateDestinationsAndAccountInConfiguration() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-two-folders","--uitest-wide-window","-ApplePersistenceIgnoreState","YES"];app.terminate();app.launch();app.activate()
+        XCTAssertTrue(app.buttons["media.item.media-other"].waitForExistence(timeout:20));XCTAssertFalse(app.buttons["media.offline"].exists);XCTAssertFalse(app.descendants(matching:.any)["mac.nav.account"].exists)
+        click(app,"media.options.media-other");click(app,"media.offline");XCTAssertTrue(app.staticTexts["2026-10-17 · BOGOTÁ"].waitForExistence(timeout:10));click(app,"media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["1 de 1 archivos disponibles sin conexión."].waitForExistence(timeout:20))
+        click(app,"media.add");click(app,"media.destination.media-day");click(app,"media.fixture");click(app,"media.upload")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:20))
+        click(app,"media.folder.media-root");click(app,"media.item.media-other");XCTAssertTrue(app.buttons["media.item.media-other-photo"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.exists)
+        shot(app,"mac-galeria-destinos-contextuales");click(app,"mac.nav.management");click(app,"management.account");XCTAssertTrue(app.buttons["Cerrar sesión"].waitForExistence(timeout:10))
+    }
     @MainActor func testModernHybridSidebarOpensMediaAndItinerariesWithoutFinancialOrBoardingAccess() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=media,itineraries,alerts","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
         XCTAssertTrue(app.descendants(matching:.any)["mac.nav.itineraries"].waitForExistence(timeout:20));XCTAssertTrue(app.descendants(matching:.any)["mac.nav.media"].exists)
@@ -11,7 +21,7 @@ final class MacLaunchTests:XCTestCase {
     @MainActor func testModernCalendarOnlyAndAlertsOnlySidebarRemainIsolated() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=calendar","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
         XCTAssertTrue(app.descendants(matching:.any)["mac.nav.agenda"].waitForExistence(timeout:20));XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:15))
-        for section in ["crm","payroll","itineraries","alerts","media","management"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
+        for section in ["crm","payroll","itineraries","alerts","media","account"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
         app.terminate();app.launchArguments=["--uitest-payroll","--uitest-sections=alerts","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
         XCTAssertTrue(app.descendants(matching:.any)["mac.nav.alerts"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts["Lo importante, cerca."].waitForExistence(timeout:15))
         for section in ["crm","payroll","agenda","itineraries","media"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
@@ -20,29 +30,30 @@ final class MacLaunchTests:XCTestCase {
     @MainActor func testPhotographerOnlyGalleryCreatesFolderUploadsAndPreviewsPhotoAndMovie() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "-ApplePersistenceIgnoreState", "YES"]; app.launch(); app.activate()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
-        for section in ["crm", "payroll", "agenda", "itineraries", "management"] { XCTAssertFalse(app.descendants(matching: .any)["mac.nav." + section].exists) }
-        XCTAssertTrue(app.descendants(matching: .any)["mac.nav.media"].exists); XCTAssertTrue(app.descendants(matching: .any)["mac.nav.account"].exists)
+        for section in ["crm", "payroll", "agenda", "itineraries", "account"] { XCTAssertFalse(app.descendants(matching: .any)["mac.nav." + section].exists) }
+        XCTAssertTrue(app.descendants(matching: .any)["mac.nav.media"].exists);XCTAssertTrue(app.descendants(matching:.any)["mac.nav.management"].exists);XCTAssertFalse(app.descendants(matching:.any)["mac.nav.account"].exists)
         click(app, "media.item.media-day"); click(app, "media.item.media-photo"); click(app, "media.preview.close")
         click(app, "media.item.media-video"); if !app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15) { print(app.debugDescription) }; XCTAssertTrue(app.descendants(matching: .any)["media.video"].exists); shot(app, "mac-fotografia-video-nativo"); click(app, "media.preview.close")
-        click(app, "media.createFolder"); let name = app.textFields["media.folder.name"]; XCTAssertTrue(name.waitForExistence(timeout: 10)); name.click(); name.typeText("Ensayo ficticio")
+        click(app,"media.folder.media-root");click(app,"media.add");click(app, "media.createFolder"); let name = app.textFields["media.folder.name"]; XCTAssertTrue(name.waitForExistence(timeout: 10)); name.click(); name.typeText("Ensayo ficticio")
         click(app, "media.folder.save"); click(app, "media.fixture"); click(app, "media.upload")
         let uploaded = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Foto de prueba.png")).firstMatch
-        XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15)); shot(app, "mac-fotografia-fotografo")
+        XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15))
+        XCTAssertGreaterThanOrEqual(uploaded.frame.minX,app.buttons["media.folder.media-root"].frame.minX-2,"La primera tarjeta debe conservar el margen de la galería.");shot(app, "mac-fotografia-fotografo")
     }
     @MainActor func testAdministratorGalleryAllowsUploadAndDownloadsWholeFolder() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-wide-window","-ApplePersistenceIgnoreState","YES"];app.terminate();app.launch();app.activate()
         let ready=app.buttons["period.fixture-period"].waitForExistence(timeout:20);if !ready {print(app.debugDescription)};XCTAssertTrue(ready);click(app,"mac.nav.media")
-        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons["media.createFolder"].exists); XCTAssertTrue(app.buttons["media.files"].exists)
-        click(app, "media.item.media-day"); click(app, "media.offline"); click(app, "media.transfer.begin")
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons["media.add"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
+        click(app,"media.options.media-day");click(app, "media.offline"); click(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
-        click(app, "media.item.media-photo"); click(app, "media.preview.close")
-        click(app,"media.fixture");click(app,"media.upload")
+        click(app,"media.item.media-day");click(app, "media.item.media-photo"); click(app, "media.preview.close")
+        click(app,"media.add");click(app,"media.destination.current");click(app,"media.fixture");click(app,"media.upload")
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:15))
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mov")).firstMatch.waitForExistence(timeout:15));shot(app,"mac-fotografia-administrador-sube")
     }
     override func setUpWithError() throws {continueAfterFailure=false}
     @MainActor private func fixture(_ extra:[String]=[])->XCUIApplication {
-        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","-ApplePersistenceIgnoreState","YES"]+extra;app.launch();app.activate()
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-wide-window","-ApplePersistenceIgnoreState","YES"]+extra;app.terminate();app.launch();app.activate()
         let ready=app.buttons["period.fixture-period"].waitForExistence(timeout:20)
         if !ready {print(app.debugDescription)}
         XCTAssertTrue(ready)

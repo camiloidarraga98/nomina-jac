@@ -2,6 +2,14 @@
 
 Aplicación nativa de macOS en SwiftUI y AppKit, dentro de la misma carpeta del proyecto. Comparte modelos, formularios y API con el iPhone; no contiene un navegador incrustado ni crea una base de nómina distinta.
 
+## Fotografía principal — Mac 1.5.0 (6)
+
+Fotografía permanece en la barra principal; **Mi cuenta** pasa a **Configuración** y sigue disponible en perfiles restringidos. La galería muestra miniaturas ligeras, carpetas recientes primero y un flujo de subida con destino o nueva carpeta de evento en la ubicación actual.
+
+Para **Disponible sin conexión**, usa clic derecho sobre una carpeta o su menú de puntos. La acción opera sobre la carpeta seleccionada, con revisión de tamaño, progreso y cancelación; no hay botones permanentes de descarga ocupando la galería. Se conservan permisos, copia cifrada y privacidad. **Guardar carpeta en Fotos** pertenece al iPhone.
+
+Mismo proyecto **JACMac → My Mac → Run** y misma ruta `outputs/JAC Music.app`. Ver [Fotografía: UX](../docs/PHOTOGRAPHY_UX.md) para pruebas y entrega; no hace falta reemplazar el proyecto.
+
 ## Accesos por sección — Mac 1.4.0 (5)
 
 En **Configuración → Usuarios → Editar** se eligen módulos de forma independiente. Fotografía y subida se conceden por separado; Camilo y `jac` pueden crear carpetas y subir fotos/videos por su rol administrador. La barra lateral y los demás menús muestran únicamente las secciones autorizadas. CRM conserva su restricción administrativa y los pases siguen siendo privados.

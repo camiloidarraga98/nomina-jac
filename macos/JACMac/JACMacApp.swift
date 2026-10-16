@@ -84,7 +84,7 @@ enum MacSection:String,CaseIterable,Identifiable {
     var title:String{switch self {case .payroll:"Quincena";case .agenda:"Agenda";case .itineraries:"Itinerarios";case .account:"Mi cuenta";case .management:"Configuración";case .crm:"CRM";case .alerts:"Alertas";case .media:"Fotografía"}}
     var icon:String{switch self {case .payroll:"wallet.pass";case .agenda:"calendar.badge.clock";case .itineraries:"airplane";case .account:"person.crop.circle";case .management:"slider.horizontal.3";case .crm:"briefcase";case .alerts:"bell.badge";case .media:"photo.on.rectangle.angled"}}
     static let primary: [MacSection] = [.crm, .payroll, .agenda, .itineraries, .alerts, .media]
-    static let personal: [MacSection] = [.account, .management]
+    static let personal: [MacSection] = [.management]
     static func sidebar(for user:PayrollUser)->[MacSection] { (primary+personal).filter{$0.allowed(user)} }
     func allowed(_ user:PayrollUser)->Bool {
         switch self {
@@ -94,7 +94,7 @@ enum MacSection:String,CaseIterable,Identifiable {
         case .crm:return user.hasSection(.crm)
         case .media:return user.canReadMedia
         case .alerts:return user.hasSection(.alerts)
-        case .management:return !user.onlyMedia && (user.hasSection(.payroll) || user.hasNotices || user.hasSection(.crm))
+        case .management:return true
         case .account:return true
         }
     }
@@ -131,7 +131,7 @@ private struct MacWorkspace:View {
             }.navigationSplitViewColumnWidth(min:210,ideal:235,max:290)
         } detail: {
             Group {
-                if store.isAgendaOnly && selected != .agenda && selected != .account {
+                if store.isAgendaOnly && selected != .agenda && selected != .account && selected != .management {
                     VStack(spacing:16) {
                         ContentUnavailableView("Esta sección todavía no está descargada",systemImage:"wifi.slash",description:Text("Puedes consultar tu Agenda guardada. Conéctate para descargar el resto de JAC."))
                         Button("Reintentar conexión"){Task{try? await store.refresh()}}.buttonStyle(.borderedProminent)

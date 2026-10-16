@@ -13,25 +13,25 @@ struct ManagementView: View {
     let user: PayrollUser
     @State private var destination: Destination?
     private enum Destination: String, Identifiable {
-        case expenses, alerts, crm, media, archive, employees, mail, notifications, concepts, users
+        case account, expenses, alerts, crm, media, archive, employees, mail, notifications, concepts, users
         var id:String { rawValue }
         var title:String {
             switch self {
-            case .expenses:return "Gastos de viaje";case .alerts:return "Alertas";case .crm:return "CRM · Shows y abonos"
+            case .account:return "Mi cuenta";case .expenses:return "Gastos de viaje";case .alerts:return "Alertas";case .crm:return "CRM · Shows y abonos"
             case .media:return "Fotografía";case .archive:return "Archivo";case .employees:return "Equipo";case .mail:return "Correos y Gmail"
             case .notifications:return "Notificaciones";case .concepts:return "Conceptos y reglas";case .users:return "Usuarios y permisos"
             }
         }
         var subtitle:String {
             switch self {
-            case .expenses:return "Facturas y reintegros";case .alerts:return "Avisos del equipo";case .crm:return "Ventas y preparación"
+            case .account:return "Sesión y acceso";case .expenses:return "Facturas y reintegros";case .alerts:return "Avisos del equipo";case .crm:return "Ventas y preparación"
             case .media:return "Fotos y videos del equipo";case .archive:return "Quincenas cerradas";case .employees:return "Personas y tarifas";case .mail:return "Documentos y envíos"
             default:return ""
             }
         }
         var symbol:String {
             switch self {
-            case .expenses:return "receipt";case .alerts:return "bell.badge";case .crm:return "briefcase"
+            case .account:return "person.crop.circle";case .expenses:return "receipt";case .alerts:return "bell.badge";case .crm:return "briefcase"
             case .media:return "photo.on.rectangle.angled";case .archive:return "archivebox";case .employees:return "person.2";case .mail:return "envelope"
             case .notifications:return "bell";case .concepts:return "list.bullet.rectangle";case .users:return "person.badge.key"
             }
@@ -63,13 +63,13 @@ struct ManagementView: View {
                         VStack(alignment:.leading,spacing:12) { OperationStatusSection() }.padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:20))
                     }
                     JACFeatureBanner(eyebrow:"JAC · Tu equipo",title:"Todo en su lugar.",subtitle:"Herramientas para lo que pasa antes y después del show.",symbol:"slider.horizontal.3",tone:.violet)
-                    Text("Tu día a día").font(.system(.headline,design:.rounded))
-                    cards((user.hasSection(.itineraries) ? [.expenses] : []) + (user.hasSection(.alerts) ? [.alerts] : []) + (user.canReadMedia ? [.media] : []))
+                    Button {destination = .account} label:{HStack(spacing:14) {JACIcon(symbol:"person.crop.circle",tone:.blue);VStack(alignment:.leading,spacing:4) {Text("Mi cuenta").font(.headline);Text(user.displayName).font(.subheadline).foregroundStyle(.secondary)};Spacer();Image(systemName:"chevron.right").font(.caption.weight(.semibold))}.foregroundStyle(JACTheme.ink).padding(16).contentShape(Rectangle()).background(JACTheme.card,in:RoundedRectangle(cornerRadius:20))}.buttonStyle(.plain).accessibilityIdentifier("management.account")
+                    if user.hasSection(.itineraries) || user.hasSection(.alerts) {Text("Tu día a día").font(.system(.headline,design:.rounded));cards((user.hasSection(.itineraries) ? [.expenses] : []) + (user.hasSection(.alerts) ? [.alerts] : []))}
                     if !administration.isEmpty {
                         Text("Administración").font(.system(.headline,design:.rounded))
                         cards(administration)
                     }
-                    Text("Preferencias y acceso").font(.system(.headline,design:.rounded))
+                    if !preferences.isEmpty {Text("Preferencias y acceso").font(.system(.headline,design:.rounded))
                     VStack(spacing:0) {
                         ForEach(preferences) { target in
                             Button { destination=target } label: {
@@ -77,11 +77,12 @@ struct ManagementView: View {
                             }.buttonStyle(.plain).accessibilityLabel(target.title).accessibilityIdentifier(target.identifier)
                             if target != preferences.last { Divider().padding(.leading,76) }
                         }
-                    }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
+                    }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))}
                 }.padding(18)
             }.jacSurface().navigationTitle("Gestión").jacInlineTitle()
                 .navigationDestination(item:$destination) { target in
                     switch target {
+                    case .account:AccountView(user:user)
                     case .media:if user.canReadMedia {MediaGalleryView(user:user)}
                     case .expenses:if user.hasSection(.itineraries) {TravelExpensesView()}
                     case .alerts:if user.hasSection(.alerts) {NoticesView(user:user,kind:"alert")}

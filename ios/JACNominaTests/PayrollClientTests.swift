@@ -1,6 +1,7 @@
 import XCTest
 import UserNotifications
 import AVFoundation
+import ImageIO
 #if os(iOS)
 import UIKit
 @testable import JACNomina
@@ -76,6 +77,28 @@ private final class CRMDelayedProtocol:URLProtocol {
 }
 
 final class PayrollClientTests: XCTestCase {
+    func testMediaGalleryUsesCreationDateAndKeepsLegacyFoldersAtTheEnd() {
+        func item(_ id:String,_ name:String,_ date:String?,_ kind:String="folder",modified:String="2099-12-31T12:00:00Z")->MediaItem {MediaItem(id:id,name:name,mimeType:kind == "folder" ? "application/vnd.google-apps.folder":"image/png",kind:kind,size:0,modifiedAt:modified,thumbnailAvailable:false,createdAt:date)}
+        let old=item("old","A antiguo","2026-10-01T12:00:00Z"),new=item("new","Z nuevo","2026-10-16T12:00:00Z",modified:"2020-01-01T00:00:00Z"),legacy=item("legacy","A sin fecha",nil),file=item("file","Foto","2027-01-01T00:00:00Z","image")
+        XCTAssertEqual(MediaGalleryOrder.sorted([legacy,old,file,new]).map(\.id),["new","old","legacy","file"])
+        XCTAssertEqual(MediaGalleryOrder.sorted([item("b","Igual",nil),item("a","Igual",nil)]).map(\.id),["a","b"])
+    }
+    @MainActor func testGalleryThumbnailUsesOnlyAuthenticatedThumbnailEndpointAndBoundsItsPixels() async throws {
+        let vault=MemorySession();vault.token=String(repeating:"f",count:43)
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://thumbnails.example.invalid")!,vault:vault,configuration:configuration,automaticallyDownloadOffline:false)
+        var count=0
+        MockProtocol.handler={request in
+            count += 1;let parts=try XCTUnwrap(URLComponents(url:try XCTUnwrap(request.url),resolvingAgainstBaseURL:false));XCTAssertEqual(parts.path,"/api/media/file");XCTAssertEqual(parts.queryItems?.first{$0.name == "id"}?.value,"photo_exact-ID");XCTAssertEqual(parts.queryItems?.first{$0.name == "thumbnail"}?.value,"1");XCTAssertEqual(request.value(forHTTPHeaderField:"Cookie"),"__Host-jac_session="+String(repeating:"f",count:43))
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"image/png"])!,MediaFixture.photo)
+        };defer{MockProtocol.handler=nil}
+        let item=MediaItem(id:"photo_exact-ID",name:"No descargar original.png",mimeType:"image/png",kind:"image",size:20*1024*1024*1024,modifiedAt:"fixture",thumbnailAvailable:false)
+        let bytes=try await client.mediaThumbnail(item);XCTAssertNotNil(MediaThumbnail.image(bytes));XCTAssertEqual(count,1)
+        let context=try XCTUnwrap(CGContext(data:nil,width:1600,height:1000,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)),image=try XCTUnwrap(context.makeImage()),output=NSMutableData()
+        let destination=try XCTUnwrap(CGImageDestinationCreateWithData(output,"public.png" as CFString,1,nil));CGImageDestinationAddImage(destination,image,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let bounded=try XCTUnwrap(MediaThumbnail.image(output as Data));XCTAssertLessThanOrEqual(bounded.size.width,360);XCTAssertLessThanOrEqual(bounded.size.height,360)
+        XCTAssertNil(MediaThumbnail.image(Data(repeating:0,count:512*1024+1)))
+    }
     @MainActor func testControlWorkspaceRevocationReplacesHigherPayrollRevisionWithoutLosingSession() async throws {
         let original=try await UITestBackend.client().workspace()
         var payload=try JSONDecoder().decode(JSONValue.self,from:JSONEncoder().encode(original));payload["version"] = .number(14)
@@ -107,7 +130,7 @@ final class PayrollClientTests: XCTestCase {
         user.sections=["mediaUpload"];XCTAssertFalse(user.canUploadMedia)
         user.sections=["media","crm"];XCTAssertFalse(user.hasSection(.crm))
         user.sections=["media","unknown"];XCTAssertTrue(JACSection.allCases.allSatisfy{!user.hasSection($0)})
-        user.sections=[];XCTAssertEqual(user.firstDestination,"account")
+        user.sections=[];XCTAssertEqual(user.firstDestination,"management")
         let administrator=PayrollUser(id:"admin",email:"admin@example.invalid",username:"admin",displayName:"Administrador ficticio",isOwner:true,permissions:[],sections:[])
         XCTAssertTrue(JACSection.allCases.allSatisfy{administrator.hasSection($0)});XCTAssertTrue(administrator.canUploadMedia)
         let legacy=PayrollUser(id:"legacy",email:"legacy@example.invalid",username:"legacy",displayName:"Legado",isOwner:false,permissions:[],itinerariesOnly:true)

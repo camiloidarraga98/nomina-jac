@@ -1,3 +1,11 @@
+## Fotografía principal — iPhone 0.18.0 (29)
+
+Fotografía tiene acceso en la barra principal para las cuentas autorizadas. **Mi cuenta** está dentro de **Gestión**, también en perfiles limitados a Fotografía u otra sección. Se conservan la sesión, el cierre manual y los permisos.
+
+La galería muestra miniaturas ligeras y carpetas por fecha de creación, recientes primero. **Subir** permite elegir carpeta o crear la del evento con nombre/fecha en la ubicación actual y luego enviar el lote. No crea eventos de Calendar/CRM. Para **Disponible sin conexión** o **Guardar carpeta en Fotos**, mantén presionada la carpeta o abre sus puntos; las acciones se aplican a la carpeta elegida. La confirmación de transferencia, progreso y cancelación permanecen.
+
+Se continúa con **Run en este mismo `ios/JACNomina.xcodeproj`**, esquema **JACNomina → tu iPhone**, conservando firma, bundle ID y push suspendido. Ver [Fotografía: UX](../docs/PHOTOGRAPHY_UX.md) para comprobaciones y entrega.
+
 ## App nativa de Mac en esta misma carpeta
 
 El proyecto compañero está en **`macos/JACMac.xcodeproj`**, esquema **JACMac → My Mac → Run**. Comparte las funciones nativas y las mismas cuentas/servicios con el iPhone. Consulta [`macos/README.md`](../macos/README.md) para abrir la app, documentos, copia sin conexión y comprobaciones. El proyecto y la firma personal del iPhone se conservan; sigue usando **JACNomina → tu iPhone → Run** para el teléfono.

@@ -10,8 +10,7 @@ struct PayrollHomeView: View {
         self.overview = overview; _selected = State(initialValue: agendaOnly && overview.user.hasSection(.calendar) ? "agenda" : overview.user.firstDestination)
     }
     private var user: PayrollUser { overview.user }
-    private var showsMediaTab: Bool { user.canReadMedia && !user.hasSection(.payroll) }
-    private var showsManagement: Bool { user.hasSection(.payroll) || user.isOwner || user.hasNotices }
+    private var showsMediaTab: Bool { user.canReadMedia }
     var body: some View {
         TabView(selection: $selected) {
             if user.hasSection(.payroll) { Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Quincenas") } else { PeriodsView(overview: overview) } }.tabItem { Label("Quincena", systemImage: "wallet.pass") }.tag("payroll") }
@@ -22,8 +21,7 @@ struct PayrollHomeView: View {
                 NavigationStack { NoticesView(user: user, kind: "alert") }.tabItem { Label("Alertas", systemImage: "bell.badge") }.tag("alerts")
             }
             if showsMediaTab { NavigationStack { MediaGalleryView(user: user) }.tabItem { Label("Fotografía", systemImage: "photo.on.rectangle.angled") }.tag("media") }
-            NavigationStack { AccountView(user: user) }.tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }.tag("account")
-            if showsManagement && !user.onlyMedia { Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Gestión") } else { ManagementView(user: user) } }.tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }.tag("management") }
+            ManagementView(user:user).tabItem { Label("Gestión",systemImage:"slider.horizontal.3") }.tag("management")
         }.tint(JACTheme.action)
             .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.hasNotices { await push.bind(store.client) } }
             .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.hasNotices { Task { await push.bind(store.client) } } }
