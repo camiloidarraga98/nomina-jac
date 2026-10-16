@@ -1,3 +1,5 @@
+> Carpetas de Fotografía: los administradores pueden eliminarlas desde su menú, con confirmación y limpieza retomable de contenido/caché. Ver [guía de eliminación](../docs/PHOTOGRAPHY_FOLDER_DELETE.md). Mismo proyecto; usa Run para actualizar.
+
 > Fotografía (16 octubre): visor anterior/siguiente y calidad de imágenes 2/4/6 MB u original desde Gestión/Configuración y el menú de Fotografía. Preferencia por dispositivo; videos intactos. Ver [guía de visor y calidad](../docs/PHOTOGRAPHY_VIEWER_QUALITY.md). Actualiza con Run sobre este mismo proyecto; no hace falta descargar otro.
 
 ## App universal iPhone/iPad — 0.20.0 (32)

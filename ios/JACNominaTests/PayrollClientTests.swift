@@ -347,6 +347,27 @@ final class PayrollClientTests: XCTestCase {
         let historical = try JSONDecoder().decode(PayrollUser.self, from: Data("{\"id\":\"reader\",\"email\":\"reader@example.invalid\",\"username\":\"reader\",\"displayName\":\"Reader\",\"isOwner\":false,\"permissions\":[]}".utf8))
         XCTAssertFalse(historical.canReadMedia); XCTAssertFalse(historical.canUploadMedia)
     }
+    func testDeletedFolderPrunesOnlyItsOfflineSubtreeAndLateCopiesCannotRestoreIt() throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString);defer{try? FileManager.default.removeItem(at:root)}
+        let cache=MediaOfflineCache(root:root),scope=AgendaCacheScope(origin:"https://delete.example.invalid/media-offline-v1",token:String(repeating:"f",count:43)),base=MediaFolder(id:"jac_r2_root",name:"Fotografía"),target=MediaFolder(id:"r2_"+UUID().uuidString.lowercased(),name:"Borrar"),child=MediaFolder(id:"r2_"+UUID().uuidString.lowercased(),name:"Dentro"),other=MediaFolder(id:"r2_"+UUID().uuidString.lowercased(),name:"Conservar")
+        func file(_ name:String)->MediaItem {MediaItem(id:"r2_"+UUID().uuidString.lowercased(),name:name+".png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"fixture",thumbnailAvailable:true)}
+        func folderItem(_ folder:MediaFolder)->MediaItem {MediaItem(id:folder.id,name:folder.name,mimeType:"application/vnd.google-apps.folder",kind:"folder",size:0,modifiedAt:"fixture",thumbnailAvailable:false)}
+        func feed(_ folder:MediaFolder,_ breadcrumbs:[MediaFolder],_ items:[MediaItem])->MediaFeed {MediaFeed(connected:true,canRead:true,canUpload:true,canConnect:false,root:base,folder:folder,breadcrumbs:breadcrumbs,items:items,nextPageToken:nil,provider:"r2",collectionID:"jac-r2-test")}
+        let one=file("Uno"),two=file("Dos"),kept=file("Conservar"),feeds=[feed(base,[base],[folderItem(target),folderItem(other)]),feed(target,[base,target],[one,folderItem(child)]),feed(child,[base,target,child],[two]),feed(other,[base,other],[kept])]
+        for item in feeds {try cache.saveFeed(item,key:item.folder!.id,append:false,scope:scope);try cache.pinFeed(item,key:item.folder!.id,scope:scope)}
+        let source=try TemporaryDocuments.save(MediaFixture.photo,filename:"Fixture.png");defer{TemporaryDocuments.remove(source)}
+        for item in [one,two,kept] {try cache.saveFile(source.url,item:item,scope:scope)}
+        try cache.removeFolders([target.id],scope:scope)
+        let reopened=MediaOfflineCache(root:root)
+        XCTAssertNil(reopened.loadFeed(target.id,scope:scope));XCTAssertNil(reopened.loadFeed(child.id,scope:scope));XCTAssertEqual(reopened.loadFeed(base.id,scope:scope)?.items.map(\.id),[other.id]);XCTAssertTrue(reopened.hasFile(kept,scope:scope));XCTAssertFalse(reopened.hasFile(one,scope:scope));XCTAssertFalse(reopened.hasFile(two,scope:scope))
+        XCTAssertThrowsError(try reopened.saveFile(source.url,item:one,scope:scope));XCTAssertThrowsError(try reopened.saveFeed(feeds[1],key:target.id,append:false,scope:scope));XCTAssertThrowsError(try reopened.pinFeed(feeds[1],key:target.id,scope:scope))
+        try reopened.saveFeed(feeds[0],key:base.id,append:false,scope:scope);XCTAssertEqual(reopened.loadFeed(base.id,scope:scope)?.items.map(\.id),[other.id]);let document=try XCTUnwrap(reopened.document(kept,scope:scope));defer{TemporaryDocuments.remove(document)};XCTAssertEqual(try Data(contentsOf:document.url),MediaFixture.photo)
+    }
+    @MainActor func testNativeFolderDeletionUsesJACAndKeepsSessionAndOtherModules() async throws {
+        let client=UITestBackend.client();_ = try await client.workspace();let root=try await client.media(),folder=try XCTUnwrap(root.items.first{$0.kind=="folder"});_ = try await client.media(folder:folder.id)
+        let result=try await client.deleteMediaFolderStep(MediaFolder(id:folder.id,name:folder.name));XCTAssertEqual(result.id,folder.id);XCTAssertEqual(result.complete,true);XCTAssertNil(client.cachedMedia(folder:folder.id));XCTAssertFalse(client.cachedMedia()?.items.contains{$0.id==folder.id} ?? true)
+        let after=try await client.workspace();XCTAssertTrue(after.user.canReadMedia);XCTAssertTrue(after.user.hasSection(.payroll));XCTAssertNotNil(client.cachedWorkspace())
+    }
     func testMediaCacheStreamsAuthenticatedBlocksAndRejectsCorruptionOtherSessionAndOldRevision() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), source = root.appendingPathComponent("source.mov")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }

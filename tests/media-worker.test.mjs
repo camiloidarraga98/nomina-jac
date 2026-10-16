@@ -38,6 +38,9 @@ async function fixture({readyFile=false,omitFileParents=false,readerPermissions=
    assert.match(req.headers.get('authorization'),/^AWS4-HMAC-SHA256 Credential=/);assert.equal(req.headers.get('cookie'),null);
    if(state.r2Redirect)return new Response(null,{status:307,headers:{location:'https://untrusted.example.invalid/collect'}});
    state.s3 ??= {parts:new Map(),objects:new Map()};const s3=state.s3,key=url.pathname.slice('/jac-fotografia/'.length),uploadID=url.searchParams.get('uploadId');
+   if(url.searchParams.has('delete')&&req.method==='POST'){
+    assert.equal(req.headers.get('content-md5'),createHash('md5').update(entry.bytes).digest('base64'));const keys=[...new TextDecoder().decode(entry.bytes).matchAll(/<Key>([^<]+)<\/Key>/g)].map(m=>m[1]);for(const key of keys)state.s3?.objects.delete(key);return new Response('<DeleteResult>'+keys.map(k=>'<Deleted><Key>'+k+'</Key></Deleted>').join('')+'</DeleteResult>');
+   }
    if(url.pathname==='/jac-fotografia'){assert.equal(req.method,'HEAD');return new Response(null);}
    if(req.method==='POST'&&url.searchParams.has('uploads')){s3.key=key;s3.mime=req.headers.get('content-type');s3.id=req.headers.get('x-amz-meta-jac-request');return new Response('<InitiateMultipartUploadResult><UploadId>worker-r2-fixture</UploadId></InitiateMultipartUploadResult>');}
    if(uploadID&&req.method==='GET')return new Response('<ListPartsResult><IsTruncated>false</IsTruncated>'+[...s3.parts].map(([n,b])=>'<Part><PartNumber>'+n+'</PartNumber><Size>'+b.length+'</Size><ETag>"'+'a'.repeat(32)+'"</ETag></Part>').join('')+'</ListPartsResult>');
@@ -250,5 +253,16 @@ test('Workerd starts a fresh R2-only gallery, publishes direct bytes, serves pri
   response=await call('/api/media/file?id='+done.fileId+'&thumbnail=1',{role:'owner'});assert.equal(response.status,200);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),jpeg);
   assert.ok(state.calls.every(c=>new URL(c.url).hostname.endsWith('.r2.cloudflarestorage.com')),'No Google/Drive request is allowed after or during R2 activation');
   state.afterR2Read=async()=>{await db.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').bind(ownerID).run();};response=await call('/api/media/file?id='+done.fileId,{role:'owner'});assert.equal(response.status,403);
+ }finally{await mf.dispose();}
+});
+
+test('Workerd deletes only an administrator-selected R2 subtree and refuses root or photographer deletion',async()=>{
+ const {mf,db,state,call}=await fixture();try{
+  await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0})});await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({action:'activateNewCollection',version:1})});
+  const result=await call('/api/media',{role:'photo',method:'POST',body:JSON.stringify({action:'createFolder',id:crypto.randomUUID(),parentId:'jac_r2_root',name:'Borrar ficticia',date:'2026-10-16'})});assert.equal(result.status,200);const folder=(await result.json()).folder.id,id=crypto.randomUUID(),key='originals/'+id;
+  await db.prepare('INSERT INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,actor_id,payload_hash,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?)').bind('r2_'+id,folder,'Foto.jpg','image/jpeg',17,key,photoID,'fixture','2026-10-16','2026-10-16').run();state.s3={parts:new Map(),objects:new Map([[key,{bytes:new Uint8Array(17),mime:'image/jpeg'}]])};
+  assert.equal((await call('/api/media',{role:'photo',method:'POST',body:JSON.stringify({action:'deleteFolder',id:folder})})).status,403);assert.equal((await call('/api/media',{role:'owner',method:'POST',body:JSON.stringify({action:'deleteFolder',id:'jac_r2_root'})})).status,400);
+  const response=await call('/api/media',{role:'owner',method:'POST',body:JSON.stringify({action:'deleteFolder',id:folder})});assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.equal(state.s3.objects.size,0);assert.equal((await call('/api/media?folder='+folder,{role:'photo'})).status,410);assert.equal((await (await call('/api/media',{role:'owner'})).json()).items.length,0);
+  assert.ok(state.calls.every(c=>new URL(c.url).hostname.endsWith('.r2.cloudflarestorage.com')));
  }finally{await mf.dispose();}
 });

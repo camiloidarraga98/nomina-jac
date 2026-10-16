@@ -403,10 +403,11 @@ enum MediaFixture {
     static var items: [String: [JSONValue]] = [:]
     static var files: [String: Data] = [:]
     static var uploads: [String: (JSONValue, Data)] = [:]
+    static var deletedFolders=Set<String>()
     static let folder: JSONValue = .object(["id": .string("media-root"), "name": .string("Fotografía ficticia")])
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        files = ["media-photo": photo, "media-video": video]; uploads = [:]
+        files = ["media-photo": photo, "media-video": video]; uploads = [:];deletedFolders=[]
         items = ["media-root": [item(id: "media-day", name: "2026-10-16 · PEREIRA", mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)], "media-day": [item(id: "media-photo", name: "Foto ficticia.png", mime: "image/png", kind: "image", size: photo.count), item(id: "media-video", name: "Video ficticio.mov", mime: "video/quicktime", kind: "video", size: video.count)]]
         if ProcessInfo.processInfo.arguments.contains("--uitest-media-slideshow") {
             items["media-day",default:[]].append(item(id:"media-photo-2",name:"Segunda foto ficticia.png",mime:"image/png",kind:"image",size:photo.count));files["media-photo-2"]=photo
@@ -444,9 +445,21 @@ enum MediaFixture {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!, q = parts.queryItems ?? []
         let photographer = (try? FixtureProtocol.user.decoded(PayrollUser.self).canUploadMedia) == true
+        let administrator = (try? FixtureProtocol.user.decoded(PayrollUser.self).canDeleteMedia) == true
         if parts.path == "/api/media", request.httpMethod == "GET" {
             let id = q.first { $0.name == "folder" }?.value ?? "media-root", selected: JSONValue = id == "media-root" ? folder : .object(["id": .string(id), "name": .string(id == "media-day" ? "2026-10-16 · PEREIRA" : id == "media-other" ? "2026-10-17 · BOGOTÁ" : "Carpeta ficticia")])
-            return (200, .object(["connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(photographer), "canConnect": .bool(!photographer), "root": folder, "folder": selected, "breadcrumbs": .array(id == "media-root" ? [folder] : [folder, selected]), "items": .array(items[id] ?? []), "nextPageToken": .string("")]))
+            if deletedFolders.contains(id){return (410,.object(["error":.string("Carpeta eliminada")]))}
+            return (200, .object(["canDelete":.bool(administrator),"deletedFolders":.array(deletedFolders.map{.string($0)}),"pendingDeletions":.array([]),"connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(photographer), "canConnect": .bool(!photographer), "root": folder, "folder": selected, "breadcrumbs": .array(id == "media-root" ? [folder] : [folder, selected]), "items": .array(items[id] ?? []), "nextPageToken": .string("")]))
+        }
+        if parts.path=="/api/media",request.httpMethod=="POST",let input=try? JSONDecoder().decode(JSONValue.self,from:bytes(request)),input["action"].text=="deleteFolder" {
+            guard administrator else{return(403,.object(["error":.string("Solo administradores")]))}
+            let target=input["id"].text;guard target != "media-root" else{return(400,.object(["error":.string("No eliminar raíz")]))}
+            let parent=items.first(where:{$0.value.contains{$0["id"].text==target}})?.key ?? "media-root"
+            var subtree=Set([target]);var changed=true
+            while changed {changed=false;for id in Array(subtree){for child in items[id] ?? [] where child["kind"].text=="folder" {if subtree.insert(child["id"].text).inserted {changed=true}}}}
+            for id in subtree {for file in items[id] ?? [] {files.removeValue(forKey:file["id"].text)};items.removeValue(forKey:id);deletedFolders.insert(id)}
+            for key in Array(items.keys) {items[key]?.removeAll{subtree.contains($0["id"].text)}}
+            return(200,.object(["id":.string(target),"parentId":.string(parent),"name":.string("Carpeta ficticia"),"removed":.number(2),"complete":.bool(true),"waiting":.bool(false)]))
         }
         guard photographer || request.url?.host == "mock.example.invalid" else { return (403, .object(["error": .string("Solo el fotógrafo puede subir archivos.")])) }
         if parts.path == "/api/media", request.httpMethod == "POST" {

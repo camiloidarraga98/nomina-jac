@@ -203,6 +203,15 @@ enum MediaThumbnail {
         #endif
     }
 }
+struct MediaFolderRemoved: LocalizedError {var errorDescription:String? {"Esta carpeta se eliminó de Fotografía."}}
+struct MediaFolderDeletion: Codable, Identifiable {
+    let id:String
+    let parentId:String
+    let name:String
+    let removed:Int
+    var complete:Bool?=nil
+    var waiting:Bool?=nil
+}
 struct MediaFeed: Codable {
     let connected: Bool
     let canRead: Bool
@@ -215,6 +224,9 @@ struct MediaFeed: Codable {
     let nextPageToken: String?
     var provider: String? = nil
     var collectionID: String? = nil
+    var canDelete: Bool? = nil
+    var pendingDeletions: [MediaFolderDeletion]? = nil
+    var deletedFolders: [String]? = nil
 }
 struct MediaUploadState: Decodable {
     let id: String
@@ -360,6 +372,12 @@ struct MediaGalleryView: View {
     @State private var mediaIsOffline = false
     @State private var choosingDestination = false
     @State private var imageQualitySettings = false
+    @State private var deletingFolder:MediaFolder?
+    @State private var deletionConfirmed=false
+    @State private var deletionConfirmation=false
+    @State private var deleting=false
+    @State private var deletionError:String?
+    @State private var deletionTask:Task<Void,Never>?
     @State private var uploadDestination: MediaFolder?
     @State private var pickingFiles = false
     @State private var selectedPhotos: [PhotosPickerItem] = []
@@ -413,6 +431,9 @@ struct MediaGalleryView: View {
                     } else {
                         breadcrumbs(feed)
                         transferStatus
+                        if user.canDeleteMedia,let pending=feed.pendingDeletions,!pending.isEmpty {
+                            VStack(alignment:.leading,spacing:12) {ForEach(pending) {job in HStack {Text("Eliminación pendiente: "+job.name).font(.footnote);Spacer();Button("Continuar eliminación") {deletingFolder=MediaFolder(id:job.id,name:job.name);deletionConfirmed=true;beginFolderDeletion()}.disabled(deleting).accessibilityIdentifier("media.delete.resume."+job.id)}}}.padding(14).background(.orange.opacity(0.08),in:RoundedRectangle(cornerRadius:14))
+                        }
                         if writable && uploadDestination?.id == parentID { uploadActions }
                         if importing { HStack { ProgressView("Preparando archivos…"); Spacer(); Button("Cancelar preparación") { importTask?.cancel() } } }
                         if let uploadNotice { Label(uploadNotice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.upload.status") }
@@ -456,6 +477,11 @@ struct MediaGalleryView: View {
             .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
             .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline { Task { await reload() } } }
             .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
+            .alert("Eliminar carpeta",isPresented:$deletionConfirmation) {
+                Button("Cancelar",role:.cancel){deletingFolder=nil}
+                Button("Eliminar",role:.destructive){deletionConfirmed=true;beginFolderDeletion()}.accessibilityIdentifier("media.delete.confirm")
+            } message:{Text("¿Estás seguro de eliminar esta carpeta y todo su contenido?")}
+            .overlay(alignment:.bottom) {if deleting {HStack(spacing:12){ProgressView();Text("Eliminando carpeta…").font(.subheadline)}.padding(18).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20).accessibilityIdentifier("media.delete.progress")}else if let deletionError {HStack {Text(deletionError).font(.footnote);Button("Reintentar"){beginFolderDeletion()};Button("Cerrar"){self.deletionError=nil;deletingFolder=nil;deletionConfirmed=false}}.padding(16).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20)}}
             .sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
             .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
             .sheet(item: $transferReview) { review in MediaTransferReviewSheet(review: review) { folderTransfer.start(client: store.client, plan: review.plan, photos: review.photos, writer: photosWriter) } }
@@ -465,7 +491,7 @@ struct MediaGalleryView: View {
             }
             .jacFileDrop(enabled: writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls);if uploadDestination == nil && !queue.isEmpty {if parentID == feed?.root?.id {choosingDestination=true}else{uploadDestination=feed?.folder}} } }
             .jacRefreshCommand { Task { await reload() } }
-            .onDisappear { uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview() }
+            .onDisappear { deletionTask?.cancel();uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview() }
     }
     private var photosWriter: any MediaPhotosWriting {
         #if DEBUG
@@ -491,6 +517,24 @@ struct MediaGalleryView: View {
         Button {Task {await prepareTransfer(folder:folder.id,photos:true)}} label:{Label("Guardar carpeta en Fotos",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.savePhotos")
             .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
         #endif
+        if user.canDeleteMedia,feed?.canDelete == true,folder.id != feed?.root?.id {
+            Divider()
+            Button(role:.destructive) {deletionError=nil;deletionConfirmed=false;deletingFolder=folder;deletionConfirmation=true} label:{Label("Eliminar carpeta",systemImage:"trash")}.accessibilityIdentifier("media.delete.folder")
+                .disabled(deleting || uploading || importing || preparingTransfer || folderTransfer.running || queue.contains(where:{!completed.contains($0.id)}) || store.isOffline)
+        }
+    }
+    private func beginFolderDeletion() {
+        guard let target=deletingFolder,!deleting,user.canDeleteMedia,!store.isOffline else{return}
+        deletionTask?.cancel();deleting=true;deletionError=nil;generation=UUID();openingTask?.cancel();clearPreview();folderTransfer.cancel()
+        deletionTask=Task {
+            defer {deleting=false;deletionTask=nil}
+            do {
+                var result:MediaFolderDeletion
+                repeat {result=try await store.client.deleteMediaFolderStep(target);try Task.checkCancellation();if result.complete != true {try await Task.sleep(for:.milliseconds(result.waiting == true ? 1000:100))}}while result.complete != true
+                deletingFolder=nil;deletionConfirmed=false;uploadNotice="Carpeta eliminada.";items.removeAll{$0.id==target.id}
+                if parentID==target.id {navigate(to:result.parentId==feed?.root?.id ? "" : result.parentId)}else{await reload()}
+            }catch{if let message=store.reportReadFailure(error){deletionError=message};if !Task.isCancelled {await reload()}}
+        }
     }
     private func prepareTransfer(folder:String,photos:Bool) async {
         guard !preparingTransfer,!folderTransfer.running else {return};preparingTransfer=true;defer{preparingTransfer=false}
@@ -597,6 +641,7 @@ struct MediaGalleryView: View {
             }
             if let message = store.reportReadFailure(error) { self.error = message }
             if case APIError.forbidden = error { items = []; feed = nil; clearPreview() }
+            if error is MediaFolderRemoved {clearPreview();navigate(to:"")}
         }
     }
     private func open(_ item: MediaItem) {
@@ -622,6 +667,7 @@ struct MediaGalleryView: View {
     }
     private func clearPreview() { preview?.stream?.cancel(); if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil }
     private func thumbnailDenied(_ failure:Error) {
+        if failure is MediaFolderRemoved {clearPreview();navigate(to:"");return}
         items=[];feed=nil;queue.forEach{$0.remove()};queue=[];uploadDestination=nil;clearPreview();error=store.reportReadFailure(failure)
     }
     private func readFiles(_ urls: [URL]) async {
@@ -829,7 +875,8 @@ final class MediaPhotoViewer: ObservableObject {
             document=next;ownedDocument=true;selected=photo
         } catch {
             guard active,!Task.isCancelled else{return}
-            switch error {case APIError.unauthorized,APIError.forbidden:stop();denied(error)
+            switch error {case is MediaFolderRemoved:stop();denied(error)
+            case APIError.unauthorized,APIError.forbidden:stop();denied(error)
             default:if !(error is CancellationError) && (error as? URLError)?.code != .cancelled {self.error=error.localizedDescription}}
         }
     }
@@ -981,6 +1028,8 @@ final class MediaOfflineCache: @unchecked Sendable {
         var downloads: [String: MediaFeed] = [:]
         var previewAccess: [String: Double]?
         var collectionID: String?
+        var deletedFolders: [String]?
+        var deletedFiles: [String]?
     }
     let root: URL
     private let lock = NSRecursiveLock()
@@ -1029,11 +1078,32 @@ final class MediaOfflineCache: @unchecked Sendable {
         }
         if let previous = index.feeds[key], append {
             var seen = Set<String>()
-            result = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: (previous.items + feed.items).filter { seen.insert($0.id).inserted }, nextPageToken: feed.nextPageToken, provider: feed.provider, collectionID: feed.collectionID)
+            result = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: (previous.items + feed.items).filter { seen.insert($0.id).inserted }, nextPageToken: feed.nextPageToken, provider: feed.provider, collectionID: feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders)
         }
+        let removed=Set(index.deletedFolders ?? []).union(feed.deletedFolders ?? [])
+        if !removed.isEmpty {pruneFolders(removed,index:&index,scope:scope)}
+        if result.breadcrumbs.contains(where:{removed.contains($0.id)}) {try writeIndex(index,scope:scope);throw MediaFolderRemoved()}
+        result=filteredFeed(result,removed:removed)
         index.feeds[key] = result
         if let id = feed.folder?.id { index.feeds[id] = result }
         try writeIndex(index, scope: scope)
+    }
+    private func filteredFeed(_ feed:MediaFeed,removed:Set<String>)->MediaFeed {
+        MediaFeed(connected:feed.connected,canRead:feed.canRead,canUpload:feed.canUpload,canConnect:feed.canConnect,root:feed.root,folder:feed.folder,breadcrumbs:feed.breadcrumbs,items:feed.items.filter{!removed.contains($0.id)},nextPageToken:feed.nextPageToken,provider:feed.provider,collectionID:feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:Array(removed))
+    }
+    private func pruneFolders(_ removed:Set<String>,index:inout Index,scope:AgendaCacheScope) {
+        let feeds=Array(index.feeds.values)+Array(index.downloads.values)
+        let affected=feeds.filter {feed in removed.contains(feed.folder?.id ?? "") || feed.breadcrumbs.contains{removed.contains($0.id)}}
+        let fileIDs=Set(index.deletedFiles ?? []).union(affected.flatMap{$0.items.filter{$0.kind != "folder"}.map(\.id)})
+        for id in fileIDs {if let item=index.files.removeValue(forKey:id){try? FileManager.default.removeItem(at:encryptedFile(item,scope:scope))};index.previewAccess?.removeValue(forKey:id)}
+        func keep(_ feed:MediaFeed)->Bool {!removed.contains(feed.folder?.id ?? "") && !feed.breadcrumbs.contains{removed.contains($0.id)}}
+        index.feeds=index.feeds.filter{keep($0.value)}.mapValues{filteredFeed($0,removed:removed)}
+        index.downloads=index.downloads.filter{keep($0.value)}.mapValues{filteredFeed($0,removed:removed)}
+        index.deletedFolders=Array(removed);index.deletedFiles=Array(fileIDs)
+    }
+    func removeFolders(_ ids:[String],scope:AgendaCacheScope) throws {
+        lock.lock();defer{lock.unlock()};var index=readIndex(scope);pruneFolders(Set(index.deletedFolders ?? []).union(ids),index:&index,scope:scope)
+        do{try writeIndex(index,scope:scope)}catch{clear(scope);throw error}
     }
     func loadFeed(_ key: String, scope: AgendaCacheScope) -> MediaFeed? {
         lock.lock(); defer { lock.unlock() }
@@ -1045,8 +1115,11 @@ final class MediaOfflineCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         var index = readIndex(scope)
         guard index.collectionID == feed.collectionID else { throw CancellationError() }
-        index.downloads[key] = feed
-        if let id = feed.folder?.id { index.downloads[id] = feed }
+        let removed=Set(index.deletedFolders ?? [])
+        guard !feed.breadcrumbs.contains(where:{removed.contains($0.id)}) else{throw MediaFolderRemoved()}
+        let clean=filteredFeed(feed,removed:removed)
+        index.downloads[key] = clean
+        if let id = feed.folder?.id { index.downloads[id] = clean }
         try writeIndex(index, scope: scope)
     }
     func hasFile(_ item: MediaItem, scope: AgendaCacheScope) -> Bool {
@@ -1087,6 +1160,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard !revoked.contains(scope.id) else { throw CancellationError() }
         let current = readIndex(scope)
+        guard !(current.deletedFiles ?? []).contains(item.id) else {throw MediaFolderRemoved()}
         guard current.collectionID?.hasPrefix("jac-r2-") != true || item.id.hasPrefix("r2_") else { throw CancellationError() }
         if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
         try FileManager.default.moveItem(at: partial, to: destination)

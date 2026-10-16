@@ -708,9 +708,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.8.0</string>
+				<string>1.9.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>10</string>
+				<string>11</string>
 				<key>INFOPLIST_FILE</key>
 				<string>JACMac/Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
@@ -766,9 +766,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.8.0</string>
+				<string>1.9.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>10</string>
+				<string>11</string>
 				<key>INFOPLIST_FILE</key>
 				<string>JACMac/Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>

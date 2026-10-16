@@ -3,7 +3,7 @@ import {mailKey} from './payroll-mail';
 import {encryptMail,decryptMail} from './payroll-mail-core';
 import {calendarGooglePost,CalendarFailure} from './calendar';
 import {sessionToken,tokenHash} from './payroll-auth-crypto';
-import {canReadMedia,canUploadMedia,canConnectMedia,MediaFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_SCOPE,MEDIA_CHUNK_SIZE,MEDIA_DIRECT_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,validMediaID,validMediaRequestID,mediaFolderName,mediaUploadInput,mediaKind,mediaSignature,mediaRange,mediaItemOrder,mediaThumbnailURL,type MediaItem} from './media-core';
+import {canReadMedia,canUploadMedia,canDeleteMedia,canConnectMedia,MediaFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_SCOPE,MEDIA_CHUNK_SIZE,MEDIA_DIRECT_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,validMediaID,validMediaRequestID,mediaFolderName,mediaUploadInput,mediaKind,mediaSignature,mediaRange,mediaItemOrder,mediaThumbnailURL,type MediaItem} from './media-core';
 import {sectionSql,type AccessUser} from './payroll-permissions';
 
 export type MediaConnection={id:string;credentials:string;email:string;version:number};
@@ -14,11 +14,11 @@ type DriveFile={id:string;name:string;mimeType:string;parents?:string[];trashed?
 type Operation={id:string;actor_id:string;parent_id:string;payload_hash:string;kind:string;drive_id:string;name:string;mime_type:string;size:number;offset:number;status:string;session_payload:string;connection_version:number;claim:string;claim_at:string;expires_at:string};
 const fields='id,name,mimeType,parents,trashed,size,createdTime,modifiedTime,thumbnailLink,capabilities(canAddChildren,canDownload),shortcutDetails,appProperties';
 const safeID=(id:unknown)=>{if(!validMediaID(id))throw new MediaFailure('El archivo o carpeta no es válido.');return id;};
-export function mediaStoredGuard(sessionID:string,actorID:string,mode:'read'|'upload'|'connect'='read'):MediaGuard {
- const role=mode==='upload'?`(${sectionSql('mu','media')} AND ${sectionSql('mu','mediaUpload')})`:mode==='connect'?"mu.media_only=0 AND mu.itineraries_only=0 AND mu.owner=1 AND mu.email='camilo@mac2you.co'":sectionSql('mu','media');
+export function mediaStoredGuard(sessionID:string,actorID:string,mode:'read'|'upload'|'delete'|'connect'='read'):MediaGuard {
+ const role=mode==='delete'?`(${sectionSql('mu','media')} AND ${sectionSql('mu','crm')})`:mode==='upload'?`(${sectionSql('mu','media')} AND ${sectionSql('mu','mediaUpload')})`:mode==='connect'?"mu.media_only=0 AND mu.itineraries_only=0 AND mu.owner=1 AND mu.email='camilo@mac2you.co'":sectionSql('mu','media');
  return {actorID,sql:`EXISTS(SELECT 1 FROM payroll_sessions ms JOIN payroll_users mu ON mu.id=ms.user_id AND mu.version=ms.user_version WHERE ms.id=? AND mu.id=? AND (ms.persistent=1 OR ms.expires_at>?) AND mu.active=1 AND mu.password_hash<>'' AND ${role})`,bindings:[sessionID,actorID,new Date().toISOString()]};
 }
-export function mediaGuard(req:Request,user:AccessUser,mode:'read'|'upload'|'connect'='read') {if(!(mode==='upload'?canUploadMedia(user):mode==='connect'?canConnectMedia(user):canReadMedia(user)))throw new MediaFailure('Tu cuenta no tiene permiso para esta operación de Fotografía.',403);const secure=!/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname),token=sessionToken(req.headers.get('cookie')||'',secure);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new MediaFailure('Inicia sesión de nuevo.',401);return mediaStoredGuard(tokenHash(token),user.id,mode);}
+export function mediaGuard(req:Request,user:AccessUser,mode:'read'|'upload'|'delete'|'connect'='read') {if(!(mode==='delete'?canDeleteMedia(user):mode==='upload'?canUploadMedia(user):mode==='connect'?canConnectMedia(user):canReadMedia(user)))throw new MediaFailure('Tu cuenta no tiene permiso para esta operación de Fotografía.',403);const secure=!/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname),token=sessionToken(req.headers.get('cookie')||'',secure);if(!/^[A-Za-z0-9_-]{43}$/.test(token))throw new MediaFailure('Inicia sesión de nuevo.',401);return mediaStoredGuard(tokenHash(token),user.id,mode);}
 export async function mediaGuardActive(g:MediaGuard){return !!await database().prepare('SELECT 1 WHERE '+g.sql).bind(...g.bindings).first();}
 export async function mediaConfig(){return database().prepare('SELECT id,credentials,email,version FROM jac_media_connection WHERE id=?').bind('jac').first<MediaConnection>();}
 export async function ensureMediaConfig(){await database().prepare('INSERT OR IGNORE INTO jac_media_connection(id,updated_at) VALUES (?,?)').bind('jac',new Date().toISOString()).run();return (await mediaConfig())!;}

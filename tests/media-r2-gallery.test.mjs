@@ -27,15 +27,18 @@ const ownerID=await m.bootstrapOwner('independent-new-gallery-owner','fixture'),
 sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,media_only,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(photographer,'new-photo','photo@example.invalid','Fotógrafo ficticio','fixture','[]',1,stamp,stamp);
 const input={accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0},origin='https://r2.example.invalid',host=input.accountId+'.r2.cloudflarestorage.com';
 const jpeg=new Uint8Array([255,216,255,192,0,11,8,0,16,0,16,1,1,17,0,255,217]);
-let token,photoToken,calls,objects,multiparts,hook,loseComplete;
+let token,photoToken,calls,objects,multiparts,hook,loseComplete,loseDelete;
 beforeEach(async()=>{
- beforeQuery=undefined;hook=undefined;loseComplete=false;calls=[];objects=new Map();multiparts=new Map();sql.exec('DELETE FROM jac_media_r2_entries;DELETE FROM jac_media_operations;DELETE FROM jac_media_r2_connection;UPDATE payroll_users SET active=1');token=await m.makeSession(ownerID);photoToken=await m.makeSession(photographer);
+ beforeQuery=undefined;hook=undefined;loseComplete=false;loseDelete=false;calls=[];objects=new Map();multiparts=new Map();sql.exec('DELETE FROM jac_media_r2_entries;DELETE FROM jac_media_operations;DELETE FROM jac_media_r2_connection;UPDATE payroll_users SET active=1');token=await m.makeSession(ownerID);photoToken=await m.makeSession(photographer);
  sql.prepare("INSERT OR REPLACE INTO jac_media_connection(id,credentials,email,version,updated_at) VALUES('jac','previous-photo-drive','jacmusicestudios@gmail.com',7,?)").run(stamp);
  globalThis.fetch=async(request,options={})=>{
   const r=request instanceof Request?request:new Request(request,options),url=new URL(r.url);assert.equal(url.hostname,host,'No Google, Drive, redirect or other network destination is allowed');assert.ok(url.pathname.startsWith('/jac-fotografia'));assert.equal(r.headers.has('cookie'),false);assert.equal(r.headers.has('origin'),false);
   const direct=url.searchParams.has('X-Amz-Signature');if(direct){assert.equal(r.method,'PUT');assert.equal(r.headers.has('authorization'),false);assert.equal(r.headers.has('content-range'),false);assert.equal(options.credentials,'omit');assert.equal(options.referrerPolicy,'no-referrer');}else{assert.equal(r.redirect,'manual');assert.match(r.headers.get('authorization'),/^AWS4-HMAC-SHA256 Credential=/);}
   calls.push({url,method:r.method,direct});if(hook){const response=await hook(r);if(response)return response;}
   const key=url.pathname.slice('/jac-fotografia/'.length),uploadId=url.searchParams.get('uploadId');
+  if(url.searchParams.has('delete')&&r.method==='POST'){
+   const body=await r.text();assert.equal(r.headers.get('content-md5'),createHash('md5').update(body).digest('base64'));const keys=[...body.matchAll(/<Key>([^<]+)<\/Key>/g)].map(m=>m[1]);assert.ok(keys.length<=200);for(const key of keys){assert.match(key,/^(originals|thumbnails)\/[a-f0-9-]{36}(\.jpg)?$/);objects.delete(key);}if(loseDelete){loseDelete=false;throw new Error('lost delete response');}return new Response('<DeleteResult>'+keys.map(k=>'<Deleted><Key>'+k+'</Key></Deleted>').join('')+'</DeleteResult>');
+  }
   if(url.pathname==='/jac-fotografia'&&r.method==='HEAD')return new Response(null);
   if(r.method==='POST'&&url.searchParams.has('uploads')){const id='fixture-'+crypto.randomUUID();multiparts.set(id,{key,mime:r.headers.get('content-type'),request:r.headers.get('x-amz-meta-jac-request'),parts:new Map()});return new Response('<InitiateMultipartUploadResult><UploadId>'+id+'</UploadId></InitiateMultipartUploadResult>');}
   const upload=multiparts.get(uploadId);
@@ -142,4 +145,60 @@ test('image quality accepts 2/4/6 MB or original, is immutable on retries and do
  assert.equal((await command({action:'start',transport:'direct',id:crypto.randomUUID(),parentId:m.R2_ROOT,filename:'Video.mov',mimeType:'video/quicktime',size:15_000_000,imageLimit:2_000_000})).status,200);
  assert.equal((await command({action:'start',transport:'direct',id:crypto.randomUUID(),parentId:m.R2_ROOT,filename:'Foto.jpg',mimeType:'image/jpeg',size:17,imageLimit:123})).status,400);
  const bytes=new Uint8Array(3_000_000);bytes.set(jpeg);const upload=await start(bytes);assert.equal((await send(upload)).status,200,'Older/native original uploads remain supported without an imposed 2 MB cap');
+});
+
+test('only administrators may delete folders; root, files, Drive IDs and foreign origins are refused',async()=>{
+ await activate();const id=await folder(),before=calls.length;
+ const ownerFeed=await (await feed('',token)).json(),photoFeed=await (await feed()).json();assert.equal(ownerFeed.canDelete,true);assert.equal(photoFeed.canDelete,false);
+ assert.equal((await api({action:'deleteFolder',id})).status,403);assert.equal(calls.length,before);assert.equal(sql.prepare("SELECT 1 FROM jac_media_operations WHERE kind='r2-delete-folder'").get(),undefined);
+ for(const target of [m.R2_ROOT,m.MEDIA_ROOT_ID])assert.equal((await api({action:'deleteFolder',id:target},token)).status,400);
+ assert.equal((await api({action:'deleteFolder',id:'legacy_drive_id'},token)).status,410);
+ assert.equal((await m.gallery.POST(req('/api/media',{action:'deleteFolder',id},token,'POST',{origin:'https://other.invalid'}))).status,403);
+ const done=await (await send(await start())).json();assert.equal((await api({action:'deleteFolder',id:done.fileId},token)).status,400);
+});
+test('empty folder deletion is durable and idempotent without touching S3 or recreating its identifier',async()=>{
+ await activate();const body={action:'createFolder',id:crypto.randomUUID(),parentId:m.R2_ROOT,name:'Carpeta de prueba',date:'2026-10-16'},created=await (await api(body)).json(),id=created.folder.id,before=calls.length;
+ const r=await api({action:'deleteFolder',id},token);assert.equal(r.status,200);const result=await r.json();assert.equal(result.complete,true);assert.equal(result.parentId,m.R2_ROOT);assert.equal(calls.length,before);assert.deepEqual(await (await api({action:'deleteFolder',id},token)).json(),result);
+ assert.equal((await feed(id)).status,410);assert.equal((await api(body)).status,410);const f=await (await feed()).json();assert.equal(f.items.length,0);assert.deepEqual(f.deletedFolders,[id]);
+});
+test('recursive deletion removes originals and variants but preserves another identically named folder',async()=>{
+ await activate();const target=await folder(),other=await folder(),child=await (await api({action:'createFolder',id:crypto.randomUUID(),parentId:target,name:'Dentro',date:'2026-10-16'})).json();
+ const one=await start(jpeg,target),oneDone=await (await send(one)).json();await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+one.data.id,jpeg,photoToken,'PUT'));
+ const two=await (await send(await start(jpeg,child.folder.id))).json(),outside=await (await send(await start(jpeg,other))).json();
+ const r=await api({action:'deleteFolder',id:target},token);assert.equal(r.status,200);assert.equal((await r.json()).complete,true);assert.equal(objects.size,1);
+ for(const id of [target,child.folder.id])assert.equal((await feed(id)).status,410);
+ for(const file of [oneDone,two])assert.equal((await m.files.GET(req('/api/media/file?id='+file.fileId,undefined,token,'GET'))).status,404);
+ assert.equal((await (await feed(other)).json()).items[0].id,outside.fileId);assert.equal((await m.files.GET(req('/api/media/file?id='+outside.fileId,undefined,token,'GET'))).status,200);
+});
+test('lost deletion responses and partial S3 failures remain resumable and never hide failed cleanup as success',async()=>{
+ await activate();const target=await folder(),done=await (await send(await start(jpeg,target))).json();loseDelete=true;
+ assert.equal((await api({action:'deleteFolder',id:target},token)).status,502);assert.equal((await feed(target)).status,410);assert.equal((await (await feed('',token)).json()).pendingDeletions[0].id,target);
+ hook=r=>new URL(r.url).searchParams.has('delete')?new Response('<DeleteResult><Error><Key>not-confirmed</Key></Error></DeleteResult>'):undefined;
+ assert.equal((await api({action:'deleteFolder',id:target},token)).status,502);assert.ok(sql.prepare('SELECT 1 FROM jac_media_r2_entries WHERE id=?').get(done.fileId));
+ hook=undefined;const r=await api({action:'deleteFolder',id:target},token);assert.equal(r.status,200);assert.equal((await r.json()).complete,true);assert.deepEqual((await (await feed('',token)).json()).pendingDeletions,[]);
+});
+test('deletion blocks a finalization paused immediately before SQL, then cancels and cleans that pending multipart',async()=>{
+ await activate();const target=await folder(),upload=await start(jpeg,target);let paused=false;
+ beforeQuery=async q=>{if(!paused&&q.text.startsWith('INSERT OR IGNORE INTO jac_media_r2_entries')&&q.text.includes('EXISTS(SELECT 1 FROM jac_media_operations')){paused=true;beforeQuery=undefined;const r=await api({action:'deleteFolder',id:target},token);assert.equal(r.status,200);assert.equal((await r.json()).waiting,true);}};
+ assert.equal((await send(upload)).status,409);assert.equal(paused,true);assert.equal((await command({action:'start',transport:'direct',id:crypto.randomUUID(),parentId:target,filename:'Late.jpg',mimeType:'image/jpeg',size:17})).status,410);
+ const result=await api({action:'deleteFolder',id:target},token);assert.equal(result.status,200);assert.equal((await result.json()).complete,true);assert.equal(objects.size,0);assert.equal((await command({action:'status',id:upload.data.id})).status,410);
+});
+test('deletion waits for an in-flight thumbnail and also removes a variant that could not be attached',async()=>{
+ await activate();const target=await folder(),upload=await start(jpeg,target);await send(upload);let waited=false;
+ hook=async r=>{if(r.method==='PUT'&&new URL(r.url).pathname.includes('/thumbnails/')){const old=hook;hook=undefined;const result=await api({action:'deleteFolder',id:target},token);assert.equal((await result.json()).waiting,true);waited=true;hook=old;}};
+ assert.equal((await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'))).status,410);assert.equal(waited,true);hook=undefined;
+ assert.equal((await (await api({action:'deleteFolder',id:target},token)).json()).complete,true);assert.equal(objects.size,0);
+});
+test('large folder deletion is bounded and a second administrator can resume the same operation',async()=>{
+ await activate();const target=await folder(),second=crypto.randomUUID();sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(second,'jac-admin','admin@example.invalid','Admin ficticio','fixture',JSON.stringify(['administrator']),stamp,stamp);const secondToken=await m.makeSession(second);
+ for(let i=0;i<101;i++){const id=crypto.randomUUID(),key='originals/'+id;sql.prepare('INSERT INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,actor_id,payload_hash,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run('r2_'+id,target,'Photo.jpg','image/jpeg',jpeg.length,key,photographer,'fixture',stamp,stamp);objects.set(key,{bytes:jpeg,mime:'image/jpeg'});}
+ const first=await api({action:'deleteFolder',id:target},token);assert.equal(first.status,200);const pending=await first.json();assert.equal(pending.complete,false);assert.equal(pending.removed,100);assert.equal(objects.size,1);
+ const final=await api({action:'deleteFolder',id:target},secondToken);assert.equal(final.status,200);const ready=await final.json();assert.equal(ready.complete,true);assert.equal(ready.removed,101);assert.equal(objects.size,0);
+});
+test('permission/configuration changes during deletion stop further actions and keys outside the folder cannot be supplied',async()=>{
+ await activate();const target=await folder(),done=await (await send(await start(jpeg,target))).json();sql.prepare('UPDATE jac_media_r2_entries SET object_key=? WHERE id=?').run('originals/'+crypto.randomUUID(),done.fileId);const before=calls.length;
+ assert.equal((await api({action:'deleteFolder',id:target},token)).status,409);assert.equal(calls.length,before);
+ sql.prepare('UPDATE jac_media_r2_entries SET object_key=? WHERE id=?').run('originals/'+done.id,done.fileId);
+ hook=r=>{if(new URL(r.url).searchParams.has('delete')){sql.exec("UPDATE jac_media_r2_connection SET version=version+1 WHERE id='jac'");return new Response('<DeleteResult/>');}};
+ assert.equal((await api({action:'deleteFolder',id:target},token)).status,403);hook=undefined;const seen=calls.length;assert.equal((await api({action:'deleteFolder',id:target},token)).status,409);assert.equal(calls.length,seen);
 });

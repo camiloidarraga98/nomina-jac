@@ -99,6 +99,17 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Gestión"].tap();XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.media"].exists)
         attachScreen(app,name:"solo-alertas-sin-modulos-adicionales")
     }
+    @MainActor func testAdministratorCanCancelThenDeleteFolderFromItsMenu() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll"];app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout:20));app.tabBars.buttons["Fotografía"].tap()
+        tap(app,"media.options.media-day");tap(app,"media.delete.folder");XCTAssertTrue(app.alerts["Eliminar carpeta"].waitForExistence(timeout:10));app.alerts.buttons["Cancelar"].tap();XCTAssertTrue(app.buttons["media.item.media-day"].exists)
+        tap(app,"media.options.media-day");tap(app,"media.delete.folder");let confirm=app.alerts["Eliminar carpeta"].buttons.matching(identifier:"media.delete.confirm").firstMatch;XCTAssertTrue(confirm.waitForExistence(timeout:10));confirm.tap()
+        expectation(for:NSPredicate(format:"exists == false"),evaluatedWith:app.buttons["media.item.media-day"]);waitForExpectations(timeout:20)
+        XCTAssertTrue(app.staticTexts["Carpeta eliminada."].exists)
+    }
+    @MainActor func testPhotographerCannotDeleteFolders() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch();tap(app,"media.item.media-day");tap(app,"media.current.options");XCTAssertFalse(app.buttons["media.delete.folder"].exists)
+    }
     @MainActor func testImageQualityPreferenceCanBeSelectedAndPersistsAcrossRelaunch() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch()
         tap(app,"media.current.options");tap(app,"media.quality")
@@ -840,6 +851,18 @@ final class LaunchTests: XCTestCase {
 // Tablet-specific flows use the same intercepted backend and account contracts.
 // Existing iPhone checks remain unchanged; these run only on a real iPad idiom.
 final class IPadTests: XCTestCase {
+    @MainActor func testAdministratorCanCancelThenDeleteFolderFromItsMenu() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll"];app.launch()
+        tap(app,"ipad.section.media")
+        tap(app,"media.options.media-day");tap(app,"media.delete.folder");XCTAssertTrue(app.alerts["Eliminar carpeta"].waitForExistence(timeout:10));app.alerts.buttons["Cancelar"].tap();XCTAssertTrue(app.buttons["media.item.media-day"].exists)
+        tap(app,"media.options.media-day");tap(app,"media.delete.folder");let confirm=app.alerts["Eliminar carpeta"].buttons.matching(identifier:"media.delete.confirm").firstMatch;XCTAssertTrue(confirm.waitForExistence(timeout:10));confirm.tap()
+        expectation(for:NSPredicate(format:"exists == false"),evaluatedWith:app.buttons["media.item.media-day"]);waitForExpectations(timeout:20)
+        XCTAssertTrue(app.staticTexts["Carpeta eliminada."].exists)
+    }
+    @MainActor func testPhotographerCannotDeleteFolders() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch();tap(app,"media.item.media-day");tap(app,"media.current.options");XCTAssertFalse(app.buttons["media.delete.folder"].exists)
+    }
+
     @MainActor func testImageQualityPreferenceCanBeSelectedAndPersistsAcrossRelaunch() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch()
         tap(app,"media.current.options");tap(app,"media.quality")

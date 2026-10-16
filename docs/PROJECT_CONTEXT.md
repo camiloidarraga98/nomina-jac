@@ -1,3 +1,7 @@
+## Eliminar carpetas de Fotografía — 16 de octubre de 2026
+
+Preparado el borrado administrativo en web/iPhone/iPad/Mac con confirmación breve, subcarpetas/contenido, trabajos retomables, raíz protegida, exclusión del fotógrafo y marcadores contra subidas tardías. Sin migraciones, dependencias ni conexiones nuevas; se reutiliza el registro de operaciones R2 y se conservan exclusivamente metadatos de carpeta para evitar recreación por reintentos. Caché cifrada retira solo el subárbol al confirmar/conocer el borrado, sin logout ni perder otras carpetas. Ver docs/PHOTOGRAPHY_FOLDER_DELETE.md para protocolo, pruebas, límites y resultados. iPhone/iPad0.23.0(35), Mac1.9.0(11), mismos proyectos/firma/pushNO. La carpeta real de prueba no se borra durante la implementación. El cierre de publicación y entrega se añade al verificarlo.
+
 ## Cierre Fotografía: visor y calidad publicados — 16 de octubre de 2026
 
 Publicación v75 succeeded en appgprj_6aa0260b82a88191a47960614238350a, fuente privada 075213ef0c1b51f319dd361475172d7290280824, versión appgprj_6aa0260b82a88191a47960614238350a~appgver_11c7233d4d74819193a38e19fbd46b92 y despliegue appgdep_6ad2abf7ce788191bd91ef3ad74fc049, env_set_revision2. Acceso propietario y audiencia pública preservados; mismo dominio jhonalexcastano.com/DB/BUCKET/R2 y conexiones. Comprobado por lectura en la web real el selector 2/4/6/original; no se cambió la preferencia ni se crearon/subieron archivos o carpetas de prueba reales. Las carpetas anteriores conservan sus nombres, incluido cualquier prefijo previo.

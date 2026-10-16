@@ -235,6 +235,7 @@ final class PayrollClient: ObservableObject {
             usingOfflineCopy = true; return (try authorizedNoticeData(saved.data,path:path), result)
         }
         guard (200..<300).contains(response.statusCode) else {
+            if path=="api/media",body==nil,response.statusCode==410,let folder=query.first(where:{$0.name=="folder"})?.value,let mediaScope=try mediaScope() {try mediaOffline.removeFolders([folder],scope:mediaScope);throw MediaFolderRemoved()}
             if path.hasPrefix("api/media"), response.statusCode == 403, let mediaScope = try mediaScope() { cacheGeneration += 1; mediaOffline.clear(mediaScope); TemporaryDocuments.clear() }
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }
             if let scope, (body == nil || path == "api/crm"), [403, 404, 410].contains(response.statusCode) {
@@ -654,6 +655,15 @@ final class PayrollClient: ObservableObject {
             if !forceNetwork, AgendaOfflineCache.isUnavailable(error), let saved = cachedMedia(folder: folder) { return saved }
             throw error
         }
+    }
+    func deleteMediaFolderStep(_ folder:MediaFolder) async throws -> MediaFolderDeletion {
+        guard permissionUser?.canDeleteMedia != false else{throw APIError.forbidden("Solo un administrador puede eliminar carpetas.")}
+        guard !usingOfflineCopy else{throw APIError.invalid("Conéctate para eliminar una carpeta.")}
+        let (data,_)=try await request(path:"api/media",body:.object(["action":.string("deleteFolder"),"id":.string(folder.id)]))
+        let result=try decoder.decode(MediaFolderDeletion.self,from:data)
+        guard result.id==folder.id,result.complete != nil,result.removed>=0,!result.parentId.isEmpty else{throw APIError.invalid("No se pudo confirmar la carpeta eliminada.")}
+        if let scope=try mediaScope(){try mediaOffline.removeFolders([folder.id],scope:scope)}
+        return result
     }
     func createMediaFolder(id: String, parentID: String, name: String, date: String) async throws -> MediaFolder {
         guard permissionUser?.canUploadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene permiso para subir contenido.")}
