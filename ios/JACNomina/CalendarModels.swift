@@ -106,13 +106,13 @@ final class AgendaOfflineCache {
         guard bytes.count <= Self.maximumBytes else { throw APIError.message("La agenda supera el tamaño de la copia local.") }
         let sealed = try AES.GCM.seal(bytes, using: scope.key).combined!
         let manager = FileManager.default
-        try manager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
-        try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: root.path)
+        try manager.createDirectory(at: root, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: root.path)
         var folder = root, values = URLResourceValues(); values.isExcludedFromBackup = true
         try folder.setResourceValues(values)
         let target = file(scope)
-        try sealed.write(to: target, options: [.atomic, .completeFileProtection])
-        try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: target.path)
+        try sealed.write(to: target, options: JACFileSecurity.writeOptions)
+        try manager.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: target.path)
     }
     func remove(_ scope: AgendaCacheScope) { try? FileManager.default.removeItem(at: file(scope)) }
     static func isUnavailable(_ error: Error) -> Bool {
@@ -207,11 +207,13 @@ final class OfflineResponseCache {
     }
     private func write<T: Encodable>(_ value: T, scope: AgendaCacheScope, key: String) throws {
         let manager = FileManager.default, directory = folder(scope)
-        try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
-        try manager.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: directory.path)
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: directory.path)
+        try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: root.path)
         var excluded = root, values = URLResourceValues(); values.isExcludedFromBackup = true; try excluded.setResourceValues(values)
         let bytes = try AES.GCM.seal(JSONEncoder().encode(value), using: scope.key, authenticating: Data(key.utf8)).combined!
-        try bytes.write(to: file(scope, key: key), options: [.atomic, .completeFileProtection])
+        try bytes.write(to: file(scope, key: key), options: JACFileSecurity.writeOptions)
+        try manager.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath:file(scope,key:key).path)
     }
     func entries(_ scope: AgendaCacheScope) -> [Entry] { read([Entry].self, scope: scope, key: "index-v1") ?? [] }
     func load(_ scope: AgendaCacheScope, key: String) -> OfflineResponse? {

@@ -1,5 +1,9 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import UserNotifications
 
 @MainActor
@@ -40,12 +44,12 @@ final class JACNotifications: ObservableObject {
     private var token: String?
     private let defaults: UserDefaults
     private let permission: any NotificationPermissionProviding
-    private let registerRemote: () -> Void
-    private let unregisterRemote: () -> Void
+    private let registerRemote: @MainActor () -> Void
+    private let unregisterRemote: @MainActor () -> Void
     private let allowsFixture: Bool
     private var generation = 0
     private var registration: Task<Void, Never>?
-    init(defaults: UserDefaults = .standard, permission: (any NotificationPermissionProviding)? = nil, allowsFixture: Bool = false, pushAvailable: Bool = JACNotifications.buildSupportsPush, registerRemote: @escaping () -> Void = { UIApplication.shared.registerForRemoteNotifications() }, unregisterRemote: @escaping () -> Void = { UIApplication.shared.unregisterForRemoteNotifications() }) {
+    init(defaults: UserDefaults = .standard, permission: (any NotificationPermissionProviding)? = nil, allowsFixture: Bool = false, pushAvailable: Bool = JACNotifications.buildSupportsPush, registerRemote: @escaping @MainActor () -> Void = { JACRemoteNotifications.register() }, unregisterRemote: @escaping @MainActor () -> Void = { JACRemoteNotifications.unregister() }) {
         self.pushAvailable = pushAvailable
         self.defaults = defaults; self.permission = permission ?? SystemNotificationPermission(); self.allowsFixture = allowsFixture; self.registerRemote = registerRemote; self.unregisterRemote = unregisterRemote
         enabled = pushAvailable && (defaults.object(forKey: "jac.push.enabled") as? Bool != false)
@@ -53,6 +57,13 @@ final class JACNotifications: ObservableObject {
     static var deviceID: String {
         if let id = UserDefaults.standard.string(forKey: "jac.push.device") { return id }
         let id = UUID().uuidString.lowercased(); UserDefaults.standard.set(id, forKey: "jac.push.device"); return id
+    }
+    private static func isAuthorized(_ status:UNAuthorizationStatus)->Bool {
+        #if os(iOS)
+        status == .authorized || status == .provisional || status == .ephemeral
+        #else
+        status == .authorized || status == .provisional
+        #endif
     }
     func bind(_ client: PayrollClient) async {
         guard pushAvailable else { return }
@@ -64,12 +75,12 @@ final class JACNotifications: ObservableObject {
         guard current == generation, (try? client.agendaScope())?.id == scope.id else { return }
         if status == .notDetermined {
             do { status = try await permission.request() ? .authorized : .denied }
-            catch { message = "No se pudo solicitar el permiso. Revisa los ajustes del iPhone."; return }
+            catch { message = "No se pudo solicitar el permiso. Revisa los ajustes del \(JACDevice.name)."; return }
         }
         guard current == generation, enabled, (try? client.agendaScope())?.id == scope.id else { return }
-        if status == .authorized || status == .provisional || status == .ephemeral {
+        if Self.isAuthorized(status) {
             registerRemote(); if let token { await register(token) }
-        } else { message = "Permiso desactivado. Puedes permitir las notificaciones de JAC en Ajustes del iPhone." }
+        } else { message = "Permiso desactivado. Puedes permitir las notificaciones de JAC en Ajustes del \(JACDevice.name)." }
     }
     func enable(_ client: PayrollClient) async {
         guard pushAvailable else { return }
@@ -89,7 +100,7 @@ final class JACNotifications: ObservableObject {
         let task = Task { @MainActor in
             await previous?.value
             guard current == self.generation, self.enabled, (try? client.agendaScope())?.id == scope.id else { return }
-            do { try await client.noticeCommand(.object(["action": .string("register"), "id": .string(Self.deviceID), "platform": .string("ios"), "token": .string(token), "environment": .string(environment)])); if current == self.generation { self.message = "Notificaciones activadas en este iPhone." } }
+            do { try await client.noticeCommand(.object(["action": .string("register"), "id": .string(Self.deviceID), "platform": .string("ios"), "token": .string(token), "environment": .string(environment)])); if current == self.generation { self.message = "Notificaciones activadas en este \(JACDevice.name)." } }
             catch { if current == self.generation { self.message = error.localizedDescription } }
         }
         registration = task; await task.value
@@ -99,7 +110,7 @@ final class JACNotifications: ObservableObject {
         guard !busy else { return }; busy = true; defer { busy = false }
         defaults.set(false, forKey: "jac.push.enabled"); enabled = false; generation += 1
         unregisterRemote(); await registration?.value
-        do { try await client.noticeCommand(.object(["action": .string("unregister"), "id": .string(Self.deviceID)])); stop(); message = "Notificaciones desactivadas en este iPhone." }
+        do { try await client.noticeCommand(.object(["action": .string("unregister"), "id": .string(Self.deviceID)])); stop(); message = "Notificaciones desactivadas en este \(JACDevice.name)." }
         catch { message = error.localizedDescription }
     }
     func stop() { generation += 1; client = nil; token = nil; noticeID = nil; if pushAvailable { unregisterRemote() } }
@@ -111,22 +122,23 @@ struct NotificationSettingsView: View {
     @ObservedObject private var push = JACNotifications.shared
     var body: some View {
         List {
-            Section("Avisos en este iPhone") {
+            Section("Avisos en este \(JACDevice.name)") {
                 if push.pushAvailable {
                     Text("Recibe los itinerarios nuevos y las alertas dirigidas a ti. Las alertas muestran su título y mensaje.")
-                    Text(push.enabled ? "Los avisos están permitidos en JAC; también requieren autorización en Ajustes del iPhone." : "Notificaciones desactivadas en este iPhone.").font(.footnote).foregroundStyle(.secondary)
+                    Text(push.enabled ? "Los avisos están permitidos en JAC; también requieren autorización en Ajustes del \(JACDevice.name)." : "Notificaciones desactivadas en este \(JACDevice.name).").font(.footnote).foregroundStyle(.secondary)
                     if let message = push.message { Text(message).font(.footnote).accessibilityIdentifier("notifications.status") }
                     Button("Permitir notificaciones") { Task { await push.enable(store.client) } }.accessibilityIdentifier("notices.enable").disabled(push.busy)
-                    Button("Desactivar en este iPhone", role: .destructive) { Task { await push.disable(store.client) } }.accessibilityIdentifier("notices.disable").disabled(push.busy)
-                    Button("Abrir Ajustes del iPhone") { if let url = URL(string: UIApplication.openSettingsURLString) { UIApplication.shared.open(url) } }
+                    Button("Desactivar en este \(JACDevice.name)", role: .destructive) { Task { await push.disable(store.client) } }.accessibilityIdentifier("notices.disable").disabled(push.busy)
+                    Button("Abrir Ajustes del \(JACDevice.name)") { JACRemoteNotifications.openSettings() }
                 } else {
                     Text(JACNotifications.suspensionMessage).accessibilityIdentifier("notifications.suspended")
                 }
             }
-        }.jacSurface().navigationTitle("Notificaciones").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Notificaciones").jacInlineTitle()
     }
 }
 
+#if os(iOS)
 @MainActor
 final class JACPushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool { if JACNotifications.shared.pushAvailable { UNUserNotificationCenter.current().delegate = self }; return true }
@@ -134,4 +146,26 @@ final class JACPushDelegate: NSObject, UIApplicationDelegate, UNUserNotification
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) { guard JACNotifications.shared.pushAvailable else { return }; JACNotifications.shared.message = "No se pudo registrar el iPhone. Revisa Push Notifications y la firma de Apple Developer en Xcode." }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) { completionHandler([.banner, .sound]) }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse, withCompletionHandler completionHandler: @escaping () -> Void) { let value = response.notification.request.content.userInfo["noticeId"] as? String; Task { @MainActor in JACNotifications.shared.received(value) }; completionHandler() }
+}
+
+#endif
+
+enum JACRemoteNotifications {
+ @MainActor static func register() {
+ #if os(iOS)
+ UIApplication.shared.registerForRemoteNotifications()
+ #endif
+ }
+ @MainActor static func unregister() {
+ #if os(iOS)
+ UIApplication.shared.unregisterForRemoteNotifications()
+ #endif
+ }
+ @MainActor static func openSettings() {
+ #if os(iOS)
+ if let url=URL(string:UIApplication.openSettingsURLString) {UIApplication.shared.open(url)}
+ #else
+ if let url=URL(string:"x-apple.systempreferences:com.apple.Notifications-Settings.extension") {NSWorkspace.shared.open(url)}
+ #endif
+ }
 }

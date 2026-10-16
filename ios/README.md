@@ -1,3 +1,7 @@
+## App nativa de Mac en esta misma carpeta
+
+El proyecto compañero está en **`macos/JACMac.xcodeproj`**, esquema **JACMac → My Mac → Run**. Comparte las funciones nativas y las mismas cuentas/servicios con el iPhone. Consulta [`macos/README.md`](../macos/README.md) para abrir la app, documentos, copia sin conexión y comprobaciones. El proyecto y la firma personal del iPhone se conservan; sigue usando **JACNomina → tu iPhone → Run** para el teléfono.
+
 ## Nueva distribución y personalidad — iPhone 0.15.0 (26)
 
 Rediseño nativo con tarjetas de acceso en Gestión y Actividad, acciones principales visibles en Quincena/CRM/Alertas, pases tipo boleto y acceso/Mi cuenta renovados. Azul profundo y cian JAC, con acentos discretos por sección y soporte claro/oscuro. Agenda sigue mostrando primero el calendario, con Hoy/actualización/Nuevo evento bajo el mes. Las cinco pestañas, logo, funciones, permisos, datos, privacidad y copia offline se mantienen. Ver `docs/IPHONE_REDESIGN.md` para cambios y verificación.

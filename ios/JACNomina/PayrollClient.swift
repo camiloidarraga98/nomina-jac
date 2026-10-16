@@ -146,7 +146,7 @@ final class PayrollClient: ObservableObject {
         let canCache = body == nil && cacheable(path, query: query)
         let saved = canCache ? scope.flatMap { offlineCache.load($0, key: key) } : nil
         if let saved, let response = saved.response, !forceNetwork, usingOfflineCopy { return (saved.data, response) }
-        if usingOfflineCopy, body == nil, !forceNetwork, saved == nil { throw APIError.message("Este contenido todavía no está descargado. Conéctate para guardarlo en este iPhone.") }
+        if usingOfflineCopy, body == nil, !forceNetwork, saved == nil { throw APIError.message("Este contenido todavía no está descargado. Conéctate para guardarlo en este \(JACDevice.name).") }
         if let body, usingOfflineCopy, path != "api/auth" || !["logout", "login", "activate"].contains(body["action"].text) {
             throw APIError.invalid("Estás consultando una copia guardada. Conéctate antes de guardar cambios.")
         }
@@ -154,7 +154,7 @@ final class PayrollClient: ObservableObject {
         if saved != nil { request.timeoutInterval = 5 }
         request.httpShouldHandleCookies = false
         request.setValue(document ? "*/*" : "application/json", forHTTPHeaderField: "Accept")
-        request.setValue("JACNomina-iPhone/1.0", forHTTPHeaderField: "User-Agent")
+        request.setValue("JACNomina-\(JACDevice.name)/1.0", forHTTPHeaderField: "User-Agent")
         let sentToken = try vault.load()
         if let token = sentToken {
             guard token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { try clearSession(); throw APIError.unauthorized }
@@ -355,7 +355,7 @@ final class PayrollClient: ObservableObject {
                     for period in workspace.periods { try await optionalRead { _ = try await self.mail(periodID: period.id) } }
                 }
                 try validate()
-                self.offlineSyncMessage = partial || failures != self.storageFailures ? "Se conserva lo descargado. Quedan datos o adjuntos por actualizar." : "La última información y sus adjuntos están guardados en este iPhone."
+                self.offlineSyncMessage = partial || failures != self.storageFailures ? "Se conserva lo descargado. Quedan datos o adjuntos por actualizar." : "La última información y sus adjuntos están guardados en este \(JACDevice.name)."
             } catch { if generation == self.cacheGeneration { self.offlineSyncMessage = "Se conserva lo descargado. Quedan datos o adjuntos por actualizar." } }
         }
     }
@@ -582,10 +582,11 @@ enum TemporaryDocuments {
     static func save(_ data: Data, filename: String) throws -> ExportedDocument {
         let id = UUID()
         let folder = root.appendingPathComponent(id.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        try FileManager.default.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: root.path)
         let url = folder.appendingPathComponent(filename)
-        try data.write(to: url, options: [.atomic, .completeFileProtection])
-        try FileManager.default.setAttributes([.protectionKey: FileProtectionType.complete], ofItemAtPath: url.path)
+        try data.write(to: url, options: JACFileSecurity.writeOptions)
+        try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: url.path)
         return ExportedDocument(id: id, url: url)
     }
     static func remove(_ document: ExportedDocument) { try? FileManager.default.removeItem(at: root.appendingPathComponent(document.id.uuidString)) }

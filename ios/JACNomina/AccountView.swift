@@ -44,8 +44,8 @@ struct AccountView: View {
                     Text("La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .jacSurface().navigationTitle("Mi cuenta").navigationBarTitleDisplayMode(.inline)
-            .confirmationDialog("¿Cerrar sesión en este iPhone? Los cambios pendientes sin guardar se descartarán.", isPresented: $confirmLogout, titleVisibility: .visible) {
+            .jacSurface().navigationTitle("Mi cuenta").jacInlineTitle()
+            .confirmationDialog("¿Cerrar sesión en este \(JACDevice.name)? Los cambios pendientes sin guardar se descartarán.", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("Cerrar sesión", role: .destructive) { Task { await store.signOut() } }
             }
     }

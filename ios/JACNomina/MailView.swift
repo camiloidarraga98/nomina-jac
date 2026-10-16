@@ -75,7 +75,7 @@ struct MailView: View {
             }
             if busy { Section { ProgressView("Consultando correo…") } }
             Button("Actualizar estados") { Task { await load() } }.disabled(busy || store.isOffline)
-        }.jacSurface().navigationTitle("Correos y Gmail").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Correos y Gmail").jacInlineTitle()
             .task { selectedPeriod = initialPeriodID ?? store.overview?.periods.sorted { $0.start > $1.start }.first?.id ?? ""; await load() }
             .refreshable { await load() }
             .onChange(of: store.workspace?.version) { _, _ in Task { await load() } }
@@ -139,10 +139,10 @@ struct GmailConfigurationView: View {
                     LabeledContent("URI de redirección", value: callback).textSelection(.enabled).font(.footnote)
                 } footer: { Text("Utiliza las credenciales del proyecto de Google. Los valores se guardan cifrados en el servidor; este formulario no los conserva al cerrarse.") }
                 if let error { Section { InlineError(message: error) } }
-            }.jacSurface().navigationTitle("Configurar Gmail").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle("Configurar Gmail").jacInlineTitle()
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("Cancelar") { secret = ""; clientID = ""; dismiss() }.disabled(busy) }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .jacLeading) { Button("Cancelar") { secret = ""; clientID = ""; dismiss() }.disabled(busy) }
+                    ToolbarItem(placement: .jacTrailing) {
                         Button("Guardar") {
                             busy = true; error = nil
                             Task {

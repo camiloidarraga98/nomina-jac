@@ -1,7 +1,12 @@
 import XCTest
 import UserNotifications
+#if os(iOS)
 import UIKit
 @testable import JACNomina
+#else
+import AppKit
+@testable import JACMac
+#endif
 
 @MainActor
 private final class FakeNotificationPermission: NotificationPermissionProviding {
@@ -153,8 +158,12 @@ final class PayrollClientTests: XCTestCase {
         let value = ReceiptParser.parse(lines)
         XCTAssertEqual(value.amount, 47600, lines.description); XCTAssertEqual(value.date, "2026-10-08", lines.description)
         XCTAssertEqual(value.kind, .food); XCTAssertEqual(value.concept, "RESTAURANTE FICTICIO JAC"); XCTAssertEqual(value.time,"13:45:20")
+        #if os(iOS)
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         let blank = UIGraphicsImageRenderer(size: CGSize(width: 1000, height: 1000), format: format).image { context in UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1000, height: 1000)) }
+        #else
+        let blank=NSImage(size:NSSize(width:1000,height:1000),flipped:false){rect in NSColor.white.setFill();rect.fill();return true}
+        #endif
         let emptyLines = try await ReceiptOCR.recognize(ReceiptOCR.photograph(blank))
         XCTAssertTrue(emptyLines.isEmpty)
     }
@@ -282,7 +291,7 @@ final class PayrollClientTests: XCTestCase {
 
     @MainActor private func waitForOfflineCopy(_ client: PayrollClient) async throws {
         for _ in 0..<200 {
-            if client.offlineSyncMessage == "La última información y sus adjuntos están guardados en este iPhone." { return }
+            if client.offlineSyncMessage == "La última información y sus adjuntos están guardados en este \(JACDevice.name)." { return }
             try await Task.sleep(for: .milliseconds(50))
         }
         XCTFail(client.offlineSyncMessage ?? "No terminó la descarga ficticia")
@@ -1010,7 +1019,16 @@ final class PayrollClientTests: XCTestCase {
     }
 
     @MainActor func testTemporaryDocumentProtectionOnPhysicaliPhone() throws {
-        #if targetEnvironment(simulator)
+        #if os(macOS)
+        let document=try TemporaryDocuments.save(Data("%PDF-1.4 fixture".utf8),filename:"Proteccion.pdf")
+        defer{TemporaryDocuments.remove(document)}
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath:document.url.path)[.posixPermissions] as? NSNumber)?.intValue,0o600)
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer{try? FileManager.default.removeItem(at:cache.root)}
+        let scope=OfflineResponseCache.scope(origin:base.absoluteString,token:token)
+        try cache.save(OfflineResponse(key:"test",url:base.absoluteString,headers:[:],data:Data("fixture".utf8),receivedAt:Date(),revision:1),scope:scope)
+        XCTAssertEqual((try FileManager.default.attributesOfItem(atPath:cache.file(scope,key:"test").path)[.posixPermissions] as? NSNumber)?.intValue,0o600)
+        #elseif targetEnvironment(simulator)
         throw XCTSkip("CoreSimulator no expone NSFileProtectionKey ni reproduce el cifrado del iPhone. Esta comprobación se conserva para un dispositivo físico.")
         #else
         let document = try TemporaryDocuments.save(Data("%PDF-1.4 fixture".utf8), filename:"Proteccion.pdf")

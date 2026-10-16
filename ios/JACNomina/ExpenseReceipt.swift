@@ -1,6 +1,10 @@
 import Foundation
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 import PhotosUI
 import Vision
 import ImageIO
@@ -300,7 +304,8 @@ enum ReceiptOCR {
             return value
         }.value
     }
-    @MainActor static func photograph(_ image: UIImage) throws -> Data {
+    @MainActor static func photograph(_ image: JACPlatformImage) throws -> Data {
+        #if os(iOS)
         // Bound camera resolution and normalize orientation before text recognition.
         let scale = min(1, 4096 / max(image.size.width, image.size.height))
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
@@ -308,9 +313,13 @@ enum ReceiptOCR {
         let picture = UIGraphicsImageRenderer(size: size, format: format).image { _ in image.draw(in: CGRect(origin: .zero, size: size)) }
         guard let data = picture.jpegData(compressionQuality: 0.9), data.count <= 10 * 1024 * 1024 else { throw APIError.invalid("La foto supera los 10 MB. Intenta acercarte a la factura.") }
         return data
+        #else
+        return try MacReceiptImages.photograph(image)
+        #endif
     }
     #if DEBUG
-    @MainActor static func fixture(logo: Bool = false) -> UIImage {
+    @MainActor static func fixture(logo: Bool = false) -> JACPlatformImage {
+        #if os(iOS)
         let format = UIGraphicsImageRendererFormat(); format.scale = 1
         return UIGraphicsImageRenderer(size: CGSize(width: 1100, height: 1350), format: format).image { context in
             UIColor.white.setFill(); context.fill(CGRect(x: 0, y: 0, width: 1100, height: 1350))
@@ -321,6 +330,9 @@ enum ReceiptOCR {
                 } else { (line as NSString).draw(at: CGPoint(x: 60, y: 60 + index * 125), withAttributes: [.font: UIFont.monospacedSystemFont(ofSize: 44, weight: .medium), .foregroundColor: UIColor.black]) }
             }
         }
+        #else
+        return MacReceiptImages.fixture(logo:logo)
+        #endif
     }
     #endif
 }
@@ -330,6 +342,7 @@ struct ReceiptScannerView: View {
     @Environment(\.dismiss) private var dismiss
     let onApply: (ReceiptSuggestion, NoticeUpload) -> Void
     @State private var camera = false
+    @State private var pickingFile=false
     @State private var photo: PhotosPickerItem?
     @State private var imageData: Data?
     @State private var suggestion: ReceiptSuggestion?
@@ -340,8 +353,11 @@ struct ReceiptScannerView: View {
         NavigationStack {
             Form {
                 Section {
-                    Text("Fotografía la factura completa, bien iluminada. La lectura se hace en este iPhone; revisa los datos antes de usarlos.").font(.subheadline).foregroundStyle(.secondary)
-                    if UIImagePickerController.isSourceTypeAvailable(.camera) { Button { camera = true } label: { Label("Tomar foto de la factura", systemImage: "camera") } }
+                    Text("Fotografía la factura completa, bien iluminada. La lectura se hace en este \(JACDevice.name); revisa los datos antes de usarlos.").font(.subheadline).foregroundStyle(.secondary)
+                    if JACCameraAvailable { Button { camera = true } label: { Label("Tomar foto de la factura", systemImage: "camera") } }
+                    #if os(macOS)
+                    Button("Leer una imagen o PDF de Archivos") {pickingFile=true}.accessibilityIdentifier("receipt.file")
+                    #endif
                     PhotosPicker(selection: $photo, matching: .images) { Label("Leer una foto guardada", systemImage: "photo") }.accessibilityIdentifier("receipt.photos")
                     #if DEBUG
                     if store.client.baseURL.host?.hasSuffix(".invalid") == true {
@@ -368,13 +384,18 @@ struct ReceiptScannerView: View {
                         }.accessibilityIdentifier("receipt.apply")
                     }
                 }
-                if let imageData, let image = UIImage(data: imageData) { Section("Comprobante") { Image(uiImage: image).resizable().scaledToFit().frame(maxHeight: 260).accessibilityLabel("Foto de la factura") } }
-            }.jacSurface().navigationTitle("Escanear factura").navigationBarTitleDisplayMode(.inline)
+                if let imageData, let image = JACPlatformImage(data: imageData) { Section("Comprobante") { Image(jacImage: image).resizable().scaledToFit().frame(maxHeight: 260).accessibilityLabel("Foto de la factura") } }
+            }.jacSurface().navigationTitle("Escanear factura").jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } } }
                 .sheet(isPresented: $camera) { TravelReceiptCamera { image in camera = false; if let image { Task { await read(image) } } } }
+                #if os(macOS)
+                .fileImporter(isPresented:$pickingFile,allowedContentTypes:[.pdf,.jpeg,.png]) {result in
+                    do{let url=try result.get();let image=try MacReceiptImages.file(url);Task{await read(image)}}catch{if (error as? CocoaError)?.code != .userCancelled{self.error=error.localizedDescription}}
+                }
+                #endif
                 .onChange(of: photo) { _, value in Task {
                     guard let value else { return }; reading = true
-                    do { guard let data = try await value.loadTransferable(type: Data.self), data.count <= 20 * 1024 * 1024, let image = UIImage(data: data) else { throw APIError.invalid("No se pudo abrir esa foto.") }; await read(image) }
+                    do { guard let data = try await value.loadTransferable(type: Data.self), data.count <= 20 * 1024 * 1024, let image = JACPlatformImage(data: data) else { throw APIError.invalid("No se pudo abrir esa foto.") }; await read(image) }
                     catch { if active { self.error = error.localizedDescription; reading = false } }
                     photo = nil
                 } }
@@ -382,7 +403,7 @@ struct ReceiptScannerView: View {
                 .onDisappear { active = false }
         }.privacySensitive()
     }
-    @MainActor private func read(_ image: UIImage) async {
+    @MainActor private func read(_ image: JACPlatformImage) async {
         guard active else { return }; reading = true; error = nil; suggestion = nil
         defer { reading = false }
         do {

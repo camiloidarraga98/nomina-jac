@@ -75,7 +75,7 @@ struct PeriodDetailView: View {
                 } else { DocumentsSection(detail: d, user: user) }
                 operations(d)
             } else if period.loading { Section { ProgressView("Consultando quincena…") } }
-        }.jacSurface().navigationTitle(period.detail?.period.title ?? "Quincena").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle(period.detail?.period.title ?? "Quincena").jacInlineTitle()
             .task { await load() }
             .onChange(of: store.workspace?.version) { _, _ in Task { await load() } }
             .refreshable { await load() }

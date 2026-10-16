@@ -1,6 +1,10 @@
 import SwiftUI
 import QuickLook
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 struct DocumentsSection: View {
     @EnvironmentObject private var store: PayrollStore
@@ -67,7 +71,7 @@ struct PaymentDetailView: View {
                     Section { ExportButton(periodID: period.id, format: .pdf, employeeID: first.employeeId, title: "Desprendible PDF") }
                 }
             }
-        }.jacSurface().navigationTitle("Detalle del pago").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Detalle del pago").jacInlineTitle()
     }
 }
 
@@ -101,13 +105,13 @@ struct ExportButton: View {
         }) { file in
             NavigationStack {
                 DocumentPreview(url: file.url).ignoresSafeArea(edges: .bottom)
-                    .jacSurface().navigationTitle(title ?? format.title).navigationBarTitleDisplayMode(.inline)
+                    .jacSurface().navigationTitle(title ?? format.title).jacInlineTitle()
                     .toolbar {
-                        ToolbarItem(placement: .topBarLeading) { Button("Listo") { document = nil } }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            if file.url.pathExtension.lowercased() == "pdf" { Button { let printer = UIPrintInteractionController.shared; printer.printingItem = file.url; printer.present(animated: true, completionHandler: nil) } label: { Image(systemName: "printer") }.accessibilityLabel("Imprimir documento") }
+                        ToolbarItem(placement: .jacLeading) { Button("Listo") { document = nil } }
+                        ToolbarItem(placement: .jacTrailing) {
+                            if file.url.pathExtension.lowercased() == "pdf" { Button { JACPlatform.printDocument(file.url) } label: { Image(systemName: "printer") }.accessibilityLabel("Imprimir documento") }
                         }
-                        ToolbarItem(placement: .topBarTrailing) { ShareLink(item: file.url) { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("Compartir documento") }
+                        ToolbarItem(placement: .jacTrailing) { ShareLink(item: file.url) { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("Compartir documento") }
                     }
             }
         }
@@ -117,6 +121,7 @@ struct ExportButton: View {
     }
 }
 
+#if os(iOS)
 struct DocumentPreview: UIViewControllerRepresentable {
     let url: URL
     func makeCoordinator() -> Coordinator { Coordinator(url: url) }
@@ -133,3 +138,5 @@ struct DocumentPreview: UIViewControllerRepresentable {
         func previewController(_ controller: QLPreviewController, previewItemAt index: Int) -> QLPreviewItem { url as NSURL }
     }
 }
+
+#endif

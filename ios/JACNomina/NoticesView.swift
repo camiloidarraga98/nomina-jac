@@ -1,7 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import PhotosUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 struct JACNotice: Decodable, Identifiable {
     let id: String; let kind: String; let title: String; let body: String; let filename: String; let size: Int; let createdAt: String; let read: Bool
@@ -22,6 +26,20 @@ struct NoticeAttachment: Decodable, Identifiable {
 }
 struct NoticeUpload: Identifiable {
     let id = UUID(); let filename: String; let data: Data
+    static func readLocalFiles(_ urls:[URL]) throws -> [NoticeUpload] {
+        guard !urls.isEmpty,urls.count<=5 else{throw APIError.invalid("Elige hasta 5 archivos.")}
+        var result:[NoticeUpload]=[],total=0
+        for url in urls {
+            guard url.isFileURL else{throw APIError.invalid("Arrastra archivos de este Mac, no enlaces web.")}
+            let access=url.startAccessingSecurityScopedResource();defer{if access{url.stopAccessingSecurityScopedResource()}}
+            let values=try url.resourceValues(forKeys:[.fileSizeKey,.isRegularFileKey])
+            guard values.isRegularFile == true,(values.fileSize ?? 0)<=10*1024*1024 else{throw APIError.invalid("Elige un PDF, JPG o PNG de hasta 10 MB.")}
+            let bytes=try Data(contentsOf:url);total += bytes.count
+            guard total<=10*1024*1024 else{throw APIError.invalid("Los archivos superan los 10 MB en total.")}
+            _ = try mime(bytes);result.append(NoticeUpload(filename:url.lastPathComponent,data:bytes))
+        }
+        return result
+    }
     static func mime(_ data: Data) throws -> String {
         if data.starts(with: Data("%PDF-".utf8)) { return "application/pdf" }
         if data.count > 8 && data.starts(with: Data([137,80,78,71,13,10,26,10])) { return "image/png" }
@@ -109,14 +127,14 @@ struct NoticesView: View {
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             } }
 
-        }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").navigationBarTitleDisplayMode(.inline).refreshable { await refresh() }
+        }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().refreshable { await refresh() }
             .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
             .onChange(of: store.cacheRevision) { _, _ in restoreCached() }
             .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }
             .onChange(of:historyOpen) { _,open in if open { Task { await loadHistory() } } }
             .onChange(of: scenePhase) { _, value in if value == .active { Task { await refresh() } } }
             .sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
-                NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Pase de abordar PDF" : "Pase de abordar").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Listo") { boardingDocument=nil }.accessibilityIdentifier("notices.pdf.close") }; ToolbarItem(placement:.confirmationAction) { ShareLink(item:file.url) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("Compartir archivo") } } }
+                NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Pase de abordar PDF" : "Pase de abordar").jacInlineTitle().toolbar { ToolbarItem(placement:.cancellationAction) { Button("Listo") { boardingDocument=nil }.accessibilityIdentifier("notices.pdf.close") }; ToolbarItem(placement:.confirmationAction) { ShareLink(item:file.url) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("Compartir archivo") } } }
             }
             .alert("Eliminar " + (pendingDelete?.kind == "boarding_pass" ? "pase de abordar" : "itinerario"),isPresented:$confirmingListDelete) {
                 Button("Cancelar",role:.cancel) { pendingDelete=nil }.accessibilityIdentifier("notices.list.delete.cancel")
@@ -229,7 +247,7 @@ struct NoticeDetail: View {
                 } }
                 if owner && shown.kind == "itinerary" { Section { Button("Actualizar itinerario") { updating=true }.disabled(store.isOffline).accessibilityIdentifier("notices.update") } }
                 if owner && shown.kind != "boarding_pass" { Section { Button("Eliminar " + (shown.kind == "itinerary" ? "itinerario" : "alerta"), role: .destructive) { confirmingDelete = true }.disabled(deleting || downloading || store.isOffline).accessibilityIdentifier("notices.delete") } }
-            }.jacSurface().navigationTitle(shown.kind == "boarding_pass" ? "Pase de abordar" : shown.kind == "itinerary" ? "Itinerario" : "Alerta").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(shown.kind == "boarding_pass" ? "Pase de abordar" : shown.kind == "itinerary" ? "Itinerario" : "Alerta").jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() }.disabled(deleting).accessibilityIdentifier("notices.detail.close") } }
                 // Closing the detail also cancels its best-effort read receipt.
                 // Do not leave that cancellation in unrelated menus.
@@ -241,7 +259,7 @@ struct NoticeDetail: View {
                 } message: { Text("¿Eliminar “\(shown.title)”? Se retirará para todos sus destinatarios, junto con sus archivos de JAC y entregas pendientes. El original de Slack se conserva. Los avisos ya recibidos no se pueden retirar. Esta acción no se puede deshacer.") }
                 .sheet(isPresented:$updating) { ItineraryUpdateView(item:shown) { do { current=try await store.client.notice(id:shown.id) } catch { self.error=store.reportReadFailure(error) } } }
                 .sheet(item: $document, onDismiss: { if let previousDocument { TemporaryDocuments.remove(previousDocument); self.previousDocument = nil } }) { file in
-                    NavigationStack { DocumentPreview(url: file.url).privacySensitive().ignoresSafeArea(edges: .bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Itinerario PDF" : "Imagen adjunta").navigationBarTitleDisplayMode(.inline)
+                    NavigationStack { DocumentPreview(url: file.url).privacySensitive().ignoresSafeArea(edges: .bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Itinerario PDF" : "Imagen adjunta").jacInlineTitle()
                         .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { document = nil }.accessibilityIdentifier("notices.pdf.close") }; ToolbarItem(placement: .confirmationAction) { ShareLink(item: file.url) { Image(systemName: "square.and.arrow.up") }.accessibilityLabel("Compartir archivo") } }
                     }
                 }
@@ -295,7 +313,7 @@ struct NoticeComposer: View {
                         ForEach(files) { file in HStack { Text(file.filename); Spacer(); Button(role: .destructive) { files.removeAll { $0.id == file.id } } label: { Image(systemName: "xmark.circle") }.accessibilityLabel("Quitar " + file.filename) } }
                         Text("Hasta 5 archivos PDF, JPG o PNG; 10 MB en total.").font(.footnote).foregroundStyle(.secondary)
                         #if DEBUG
-                        if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar PDF ficticio") { let data = UIGraphicsPDFRenderer(bounds: CGRect(x:0,y:0,width:200,height:200)).pdfData { context in context.beginPage(); ("PRUEBA JAC" as NSString).draw(at: CGPoint(x:20,y:20), withAttributes:nil) }; add([NoticeUpload(filename:"Prueba.pdf",data:data)]) }.accessibilityIdentifier("notices.editor.fixture") }
+                        if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar PDF ficticio") { let data = JACPlatform.fixturePDF(); add([NoticeUpload(filename:"Prueba.pdf",data:data)]) }.accessibilityIdentifier("notices.editor.fixture") }
                         #endif
                     }
                     if kind == "alert" { Section("Destinatarios") { ForEach(users) { user in Toggle(user.name + (user.ready == false ? " · Pendiente de activación" : ""), isOn: Binding(get: { recipients.contains(user.id) }, set: { value in if value { recipients.insert(user.id) } else { recipients.remove(user.id) } })).accessibilityIdentifier("notices.recipient.\(user.id)") } } }
@@ -304,19 +322,20 @@ struct NoticeComposer: View {
                 }.disabled(busy || attempted || importing)
                 if attempted && !busy && error != nil { Section { Text("Reintenta con estos mismos datos. Para cambiar el contenido, cierra y abre un formulario nuevo.").font(.footnote) } }
                 Section { Button(busy ? "Guardando…" : kind == "boarding_pass" ? "Publicar pase y notificar" : kind == "itinerary" ? "Publicar itinerario y notificar" : "Crear alerta y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("notices.editor.save") }
-            }.jacSurface().navigationTitle("Crear alerta o itinerario").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
+            }.jacSurface().navigationTitle("Crear alerta o itinerario").jacInlineTitle().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
                 .fileImporter(isPresented: $picking, allowedContentTypes: [.pdf,.jpeg,.png], allowsMultipleSelection: true) { result in
                     do { let urls = try result.get(); var incoming: [NoticeUpload] = []
                         for url in urls { let access = url.startAccessingSecurityScopedResource(); defer { if access { url.stopAccessingSecurityScopedResource() } }; let size = try url.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0; guard size <= 10*1024*1024 else { throw APIError.message("El archivo supera los 10 MB.") }; let data = try Data(contentsOf:url); _ = try NoticeUpload.mime(data); incoming.append(NoticeUpload(filename:url.lastPathComponent,data:data)) }; add(incoming)
                     } catch { self.error = error.localizedDescription }
                 }
+                .jacFileDrop(enabled:!busy && !attempted && !importing) {urls in do{add(try NoticeUpload.readLocalFiles(urls))}catch{self.error=error.localizedDescription}}
                 .onChange(of: photos) { _, selected in Task { await readPhotos(selected) } }
         }.interactiveDismissDisabled(busy)
     }
     private func add(_ incoming: [NoticeUpload]) { guard !attempted, !busy else { return }; let combined = files + incoming; guard combined.count <= 5, combined.reduce(0, { $0 + $1.data.count }) <= 10*1024*1024 else { error = "Elige hasta 5 archivos que sumen como máximo 10 MB."; return }; files = combined; if let name=incoming.first?.filename,let parsed=BoardingClock.filenameDate(name) { travelDate=parsed }; error = nil }
     private func readPhotos(_ selected: [PhotosPickerItem]) async {
         guard !selected.isEmpty else { return }; importing = true; defer { importing = false }
-        do { var incoming: [NoticeUpload] = []; for (index, photo) in selected.enumerated() { guard let data = try await photo.loadTransferable(type:Data.self), data.count <= 10*1024*1024, let image = UIImage(data:data), let jpeg = image.jpegData(compressionQuality:0.9) else { throw APIError.message("No se pudo leer la foto o supera los 10 MB.") }; incoming.append(NoticeUpload(filename:"Foto-\(index+1).jpg",data:jpeg)) }; add(incoming); photos = [] }
+        do { var incoming: [NoticeUpload] = []; for (index, photo) in selected.enumerated() { guard let data = try await photo.loadTransferable(type:Data.self), data.count <= 10*1024*1024, let image = JACPlatformImage(data:data), let jpeg = image.jpegData(compressionQuality:0.9) else { throw APIError.message("No se pudo leer la foto o supera los 10 MB.") }; incoming.append(NoticeUpload(filename:"Foto-\(index+1).jpg",data:jpeg)) }; add(incoming); photos = [] }
         catch { self.error = error.localizedDescription; photos = [] }
     }
     private func save() async {

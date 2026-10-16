@@ -82,7 +82,7 @@ struct PeriodsView: View {
                         }
                     }
                 }
-            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").jacInlineTitle()
                 .searchable(text: $search, prompt: "Buscar mes o estado")
                 .refreshable { try? await store.refresh() }
                 .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }

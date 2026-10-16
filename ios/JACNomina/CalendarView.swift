@@ -105,9 +105,9 @@ struct CalendarView: View {
                         Section { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
                     }
                 }
-            }.jacSurface().navigationTitle("Agenda").navigationBarTitleDisplayMode(.inline).refreshable { await refresh() }
+            }.jacSurface().navigationTitle("Agenda").jacInlineTitle().refreshable { await refresh() }
                 .toolbar {
-                    if user.isOwner { ToolbarItem(placement:.topBarTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) } }
+                    if user.isOwner { ToolbarItem(placement:.jacTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) } }
                 }
                 .task(id: month) {
                     await refresh()
@@ -196,7 +196,7 @@ struct AgendaEventDetail: View {
                 if !event.description.isEmpty { Section("Descripción") { Text(event.description).textSelection(.enabled) } }
                 if let onEdit { Section { Button("Editar evento", action: onEdit).buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("agenda.edit") } }
                 if let url = event.googleURL { Section { Link("Ver en Google Calendar", destination: url) } }
-            }.jacSurface().navigationTitle("Evento").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() } } }
+            }.jacSurface().navigationTitle("Evento").jacInlineTitle().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() } } }
         }
     }
 }
@@ -238,7 +238,7 @@ struct CalendarConnectionView: View {
                         Section { Button("Desconectar Agenda", role: .destructive) { confirmDisconnect = true }.disabled(loading) }
                     }
                 }
-            }.jacSurface().navigationTitle("Conexión de Agenda").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle("Conexión de Agenda").jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() } } }
                 .task { await loadCalendars() }
                 .confirmationDialog("El equipo dejará de consultar este calendario desde JAC. Los eventos continúan en Google Calendar.", isPresented: $confirmDisconnect, titleVisibility: .visible) { Button("Desconectar Agenda", role: .destructive) { Task { await disconnect() } } }
@@ -319,7 +319,7 @@ struct AgendaEventEditor: View {
                     TextField("Descripción", text: $description, axis: .vertical).lineLimit(4...10).accessibilityIdentifier("agenda.editor.description")
                 }
                 Section { Button(session.event == nil ? "Crear evento" : "Guardar evento") { Task { await save() } }.frame(maxWidth: .infinity).buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("agenda.editor.save") }
-            }.jacSurface().navigationTitle(session.event == nil ? "Crear evento" : "Editar evento").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(session.event == nil ? "Crear evento" : "Editar evento").jacInlineTitle()
                 .environment(\.timeZone, CalendarClock.calendar.timeZone).environment(\.locale, Locale(identifier: "es_CO"))
                 .disabled(busy).scrollDismissesKeyboard(.interactively)
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) }; ToolbarItem(placement: .confirmationAction) { if busy { ProgressView() } } }

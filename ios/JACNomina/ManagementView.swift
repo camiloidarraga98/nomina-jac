@@ -1,7 +1,11 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import PhotosUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 struct ManagementView: View {
     @EnvironmentObject private var store: PayrollStore
@@ -75,7 +79,7 @@ struct ManagementView: View {
                         }
                     }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
                 }.padding(18)
-            }.jacSurface().navigationTitle("Gestión").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle("Gestión").jacInlineTitle()
                 .navigationDestination(item:$destination) { target in
                     switch target {
                     case .expenses:TravelExpensesView()
@@ -135,7 +139,7 @@ struct ConceptsRulesView: View {
                     if user.can("rules") { Button("Agregar concepto") { editor = PayrollEditorSession(kind: .concept, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.concept, workspace: w)) }.disabled(!store.canWrite).accessibilityIdentifier("concept.create") }
                 }
             }
-        }.jacSurface().navigationTitle("Conceptos y reglas").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Conceptos y reglas").jacInlineTitle()
             .refreshable { try? await store.refresh() }.sheet(item: $editor) { PayrollEditorView(session: $0) }
     }
 }
@@ -160,7 +164,7 @@ struct TravelExpensesView: View {
             Section { Text("Adjunta tus comprobantes. Un administrador revisará el gasto antes de incorporarlo como reintegro.").font(.footnote).foregroundStyle(.secondary)
                 Button { editor=true } label: { Label(hasDraft ? "Continuar borrador" : "Registrar gasto",systemImage:hasDraft ? "square.and.pencil" : "plus.viewfinder").frame(maxWidth:.infinity) }.buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("expenses.create")
                 if hasDraft { Button("Eliminar borrador",role:.destructive) { deleteDraft=true }.accessibilityIdentifier("expenses.deleteDraft") }
-                if store.isOffline { Text("Puedes escanear y guardar un borrador en este iPhone. El envío necesita conexión.").font(.footnote).foregroundStyle(.secondary) } }
+                if store.isOffline { Text("Puedes escanear y guardar un borrador en este \(JACDevice.name). El envío necesita conexión.").font(.footnote).foregroundStyle(.secondary) } }
             Section("Gastos de viaje") {
                 ForEach(records) { item in Button { detail=item } label: { VStack(alignment:.leading,spacing:8) {
                     Text(item.concept).font(.headline);Text(PayrollFormat.money(item.amount));Text(item.name+" · "+item.expenseDate).font(.caption).foregroundStyle(.secondary);Text(item.statusLabel).font(.caption)
@@ -168,12 +172,12 @@ struct TravelExpensesView: View {
                 if records.isEmpty { Text(feed == nil ? "Consultando…" : "Todavía no hay gastos registrados.").foregroundStyle(.secondary) }
                 if let cursor=feed?.nextCursor,!cursor.isEmpty { Button("Ver anteriores") { Task { await load(cursor) } } }
             }
-        }.jacSurface().navigationTitle("Gastos de viaje").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Gastos de viaje").jacInlineTitle()
             .task { await load() }.refreshable { await load() }
             .onChange(of: store.cacheRevision) { _, _ in if let saved = store.client.cachedExpenses() { feed = saved; if store.isOffline || records.isEmpty { records = saved.expenses } } }
             .sheet(isPresented:$editor,onDismiss:{ Task { await load() } }) { ExpenseComposer { await load() } }
             .sheet(item:$detail,onDismiss:{ Task { await load() } }) { item in ExpenseDetailView(item:item,feed:feed) }
-            .confirmationDialog("¿Eliminar el borrador de este iPhone?",isPresented:$deleteDraft,titleVisibility:.visible) {
+            .confirmationDialog("¿Eliminar el borrador de este \(JACDevice.name)?",isPresented:$deleteDraft,titleVisibility:.visible) {
                 Button("Eliminar borrador",role:.destructive) { do { if let scope=try store.client.offlineScope() { try store.client.removeExpenseDraft(scope:scope);hasDraft=false } } catch { self.error=error.localizedDescription } }
             }
     }
@@ -211,10 +215,10 @@ struct ExpenseDetailView:View {
                         Button("Rechazar con motivo",role:.destructive) { Task { await review(false) } }.disabled(busy || reason.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || store.isOffline).accessibilityIdentifier("expenses.reject")
                     }.disabled(busy)
                 }
-            }.jacSurface().navigationTitle("Gasto de viaje").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle("Gasto de viaje").jacInlineTitle()
                 .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Listo") { dismiss() }.disabled(busy) } }
                 .sheet(item:$document,onDismiss:{ if let previousDocument { TemporaryDocuments.remove(previousDocument);self.previousDocument=nil } }) { file in
-                    NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Comprobante").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.confirmationAction) { Button("Listo") { document=nil } } } }
+                    NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Comprobante").jacInlineTitle().toolbar { ToolbarItem(placement:.confirmationAction) { Button("Listo") { document=nil } } } }
                 }
         }.interactiveDismissDisabled(busy)
     }
@@ -268,7 +272,7 @@ struct ExpenseComposer:View {
                     Button("Guardar borrador y cerrar") { if persist() { dismiss() } }.disabled(busy || importing || snapshot.isEmpty).accessibilityIdentifier("expenses.saveDraft")
                     Button(busy ? "Enviando…" : "Enviar a revisión") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("expenses.submit")
                 }
-            }.jacSurface().navigationTitle("Registrar gasto").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle("Registrar gasto").jacInlineTitle()
                 .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cerrar") { if persist() { dismiss() } }.disabled(busy || importing) } }
                 .onAppear {
                     guard !loaded else { return };loaded=true
@@ -293,7 +297,7 @@ struct ExpenseComposer:View {
     }
     @discardableResult private func persist() -> Bool {
         guard !finished,let scope else { error="No se pudo abrir el almacenamiento de la sesión.";return false }
-        do { if snapshot.isEmpty { try store.client.removeExpenseDraft(scope:scope);message=nil } else { try store.client.saveExpenseDraft(snapshot,scope:scope);message="Borrador guardado en este iPhone." };return true }
+        do { if snapshot.isEmpty { try store.client.removeExpenseDraft(scope:scope);message=nil } else { try store.client.saveExpenseDraft(snapshot,scope:scope);message="Borrador guardado en este \(JACDevice.name)." };return true }
         catch { self.error=error.localizedDescription;return false }
     }
     private func save() async {
@@ -331,7 +335,7 @@ struct ItineraryUpdateView:View {
                 TravelAttachmentsPicker(files:$files,importing:$importing).disabled(busy || attempted)
                 if attempted && error != nil { Text("Reintenta con los mismos datos. Si el itinerario cambió, vuelve a abrir su versión actual.").font(.footnote) }
                 Section { Button(busy ? "Guardando…" : "Actualizar y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("itinerary.update.save") }
-            }.jacSurface().navigationTitle("Actualizar itinerario").navigationBarTitleDisplayMode(.inline).toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
+            }.jacSurface().navigationTitle("Actualizar itinerario").jacInlineTitle().toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
                 .onAppear { if !attempted { title=item.title;message=item.body } }
         }.interactiveDismissDisabled(busy)
     }
@@ -342,6 +346,7 @@ struct ItineraryUpdateView:View {
     }
 }
 struct TravelAttachmentsPicker:View {
+    @Environment(\.isEnabled) private var enabled
     @EnvironmentObject private var store:PayrollStore
     @Binding var files:[NoticeUpload]
     @Binding var importing:Bool
@@ -354,25 +359,27 @@ struct TravelAttachmentsPicker:View {
             if let error { InlineError(message:error) }
             Button("Elegir PDF o imágenes de Archivos") { picking=true }
             PhotosPicker(selection:$photos,maxSelectionCount:5,matching:.images) { Label("Elegir fotos",systemImage:"photo") }
-            if UIImagePickerController.isSourceTypeAvailable(.camera) { Button("Fotografiar comprobante") { camera=true } }
+            if JACCameraAvailable { Button("Fotografiar comprobante") { camera=true } }
             ForEach(files) { file in HStack { Text(file.filename);Spacer();Button(role:.destructive) { files.removeAll { $0.id == file.id } } label: { Image(systemName:"xmark.circle") }.accessibilityLabel("Quitar "+file.filename) } }
             Text("De 1 a 5 archivos PDF, JPG o PNG. 10 MB en total.").font(.footnote).foregroundStyle(.secondary)
             #if DEBUG
-            if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar comprobante ficticio") { add([NoticeUpload(filename:"Comprobante ficticio.pdf",data:UIGraphicsPDFRenderer(bounds:CGRect(x:0,y:0,width:200,height:200)).pdfData { c in c.beginPage();("PRUEBA SIN DATOS REALES" as NSString).draw(at:CGPoint(x:10,y:10),withAttributes:nil) })]) }.accessibilityIdentifier("travel.fixture") }
+            if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar comprobante ficticio") { add([NoticeUpload(filename:"Comprobante ficticio.pdf",data:JACPlatform.fixturePDF())]) }.accessibilityIdentifier("travel.fixture") }
             #endif
         }.disabled(importing)
             .fileImporter(isPresented:$picking,allowedContentTypes:[.pdf,.jpeg,.png],allowsMultipleSelection:true) { result in
                 do { var incoming:[NoticeUpload]=[];for url in try result.get() { let access=url.startAccessingSecurityScopedResource();defer { if access { url.stopAccessingSecurityScopedResource() } };guard (try url.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0) <= 10*1024*1024 else { throw APIError.message("El archivo supera los 10 MB.") };let data=try Data(contentsOf:url);_ = try NoticeUpload.mime(data);incoming.append(NoticeUpload(filename:url.lastPathComponent,data:data)) };add(incoming) } catch { if (error as? CocoaError)?.code != .userCancelled { self.error=error.localizedDescription } }
             }
+            .jacFileDrop(enabled:enabled && !importing) {urls in do{add(try NoticeUpload.readLocalFiles(urls))}catch{self.error=error.localizedDescription}}
             .onChange(of:photos) { _,selected in Task { await readPhotos(selected) } }
             .sheet(isPresented:$camera) { TravelReceiptCamera { image in camera=false;if let image,let bytes=image.jpegData(compressionQuality:0.85) { add([NoticeUpload(filename:"Comprobante.jpg",data:bytes)]) } } }
     }
     private func add(_ incoming:[NoticeUpload]) { guard files.count+incoming.count <= 5,(files+incoming).reduce(0, { $0+$1.data.count }) <= 10*1024*1024 else { error="Elige hasta 5 archivos que sumen como máximo 10 MB.";return };files += incoming;error=nil }
     private func readPhotos(_ selected:[PhotosPickerItem]) async {
         guard !selected.isEmpty else { return };importing=true;defer { importing=false;photos=[] }
-        do { var incoming:[NoticeUpload]=[];for (i,p) in selected.enumerated() { guard let bytes=try await p.loadTransferable(type:Data.self),bytes.count <= 10*1024*1024,let image=UIImage(data:bytes),let jpeg=image.jpegData(compressionQuality:0.85) else { throw APIError.message("No se pudo leer la foto o supera los 10 MB.") };incoming.append(NoticeUpload(filename:"Comprobante-\(i+1).jpg",data:jpeg)) };add(incoming) } catch { self.error=error.localizedDescription }
+        do { var incoming:[NoticeUpload]=[];for (i,p) in selected.enumerated() { guard let bytes=try await p.loadTransferable(type:Data.self),bytes.count <= 10*1024*1024,let image=JACPlatformImage(data:bytes),let jpeg=image.jpegData(compressionQuality:0.85) else { throw APIError.message("No se pudo leer la foto o supera los 10 MB.") };incoming.append(NoticeUpload(filename:"Comprobante-\(i+1).jpg",data:jpeg)) };add(incoming) } catch { self.error=error.localizedDescription }
     }
 }
+#if os(iOS)
 struct TravelReceiptCamera:UIViewControllerRepresentable {
     let onImage:(UIImage?) -> Void
     func makeCoordinator() -> Coordinator { Coordinator(onImage) }
@@ -385,3 +392,5 @@ struct TravelReceiptCamera:UIViewControllerRepresentable {
         func imagePickerController(_ picker:UIImagePickerController,didFinishPickingMediaWithInfo info:[UIImagePickerController.InfoKey:Any]) { callback(info[.originalImage] as? UIImage) }
     }
 }
+
+#endif

@@ -36,7 +36,7 @@ struct LoginView: View {
                                 .padding(15).background(JACTheme.canvas,in:RoundedRectangle(cornerRadius:14))
                         }
                         Toggle("Mantener la sesión iniciada", isOn: $keepSignedIn).font(.subheadline).accessibilityIdentifier("login.keepSignedIn")
-                        Text("Si la activas, permanecerás conectado en este iPhone hasta que cierres sesión.").font(.caption).foregroundStyle(.secondary)
+                        Text("Si la activas, permanecerás conectado en este \(JACDevice.name) hasta que cierres sesión.").font(.caption).foregroundStyle(.secondary)
                         if let error = store.error { InlineError(message: error) }
                         Button(action: signIn) {
                             HStack { Spacer(); if store.busy { ProgressView().tint(.white) }; Text("Iniciar sesión"); Image(systemName: "arrow.right"); Spacer() }
@@ -47,7 +47,7 @@ struct LoginView: View {
                     Text("Usa la misma cuenta que en la web. Acceso exclusivo del equipo autorizado.").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity).multilineTextAlignment(.center)
                 }.padding(20)
             }
-            .jacSurface().navigationTitle("JAC Music").navigationBarTitleDisplayMode(.inline)
+            .jacSurface().navigationTitle("JAC Music").jacInlineTitle()
             .scrollDismissesKeyboard(.interactively).disabled(store.busy)
         }
     }

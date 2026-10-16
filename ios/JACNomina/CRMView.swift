@@ -1,6 +1,10 @@
 import SwiftUI
 import Combine
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 struct CRMItem: Identifiable { let value:JSONValue;var id:String { value["id"].text } }
 extension JSONValue { var crmItems:[CRMItem] { elements.map { CRMItem(value:$0) } }; var isNull:Bool { self == .null } }
@@ -52,7 +56,7 @@ struct CRMHomeView:View {
                 if section == "shows" { showList }
                 else if section == "weekly" { CRMWeeklyView() }
                 else { CRMContactsView() }
-            }.jacSurface().navigationTitle("CRM").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle("CRM").jacInlineTitle()
                 .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60) } catch { break } } }
                 .refreshable { await load(sync:!store.isOffline) }
                 .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
@@ -139,7 +143,7 @@ struct CRMShowView:View {
                 else { CRMPlanView(id:id,show:detail["show"],tab:tab,data:$planData,draft:$planDraft) }
             }.scrollContentBackground(.hidden).refreshable { await load() }
         }.jacSurface()
-            .navigationTitle(detail["show"]["title"].text.isEmpty ? "Show":detail["show"]["title"].text).navigationBarTitleDisplayMode(.inline)
+            .navigationTitle(detail["show"]["title"].text.isEmpty ? "Show":detail["show"]["title"].text).jacInlineTitle()
             .task { tab=initialTab;await load();while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30));await load()}catch{break}} }
             .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             .onChange(of:crm.denied) {_,denied in if denied {editor=nil;detail = .null;planData = .null;planDraft = .null;confirmDelete=false}}
@@ -233,8 +237,12 @@ struct CRMEditor:View {
                 if attempt != nil { Text("Se conservan los datos enviados. Reintenta la misma solicitud para evitar duplicados.").font(.footnote) }
                 fields
                 Section { Button(busy ? "Guardando…":attempt != nil ? "Reintentar guardado":"Guardar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("crm.editor.save") }
-            }.scrollDismissesKeyboard(.never).onChange(of:contactFocused){_,focused in if focused {withAnimation{proxy.scrollTo("crm.contact.row",anchor:.top)}}}.onReceive(NotificationCenter.default.publisher(for:UIResponder.keyboardDidShowNotification)){_ in if contactFocused{withAnimation{proxy.scrollTo("crm.contact.row",anchor:.top)}}}.jacSurface().navigationTitle(request.title).navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cerrar") { dismiss() }.disabled(busy || importing) };ToolbarItemGroup(placement:.keyboard){Spacer();Button("Listo"){UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),to:nil,from:nil,for:nil)}.accessibilityIdentifier("crm.keyboard.done")} }
+            }.scrollDismissesKeyboard(.never).onChange(of:contactFocused){_,focused in if focused {withAnimation{proxy.scrollTo("crm.contact.row",anchor:.top)}}}.onReceive(NotificationCenter.default.publisher(for:JACPlatform.keyboardShown)){_ in if contactFocused{withAnimation{proxy.scrollTo("crm.contact.row",anchor:.top)}}}.jacSurface().navigationTitle(request.title).jacInlineTitle()
+                .toolbar { ToolbarItem(placement:.cancellationAction) { Button("Cerrar") { dismiss() }.disabled(busy || importing) }
+#if os(iOS)
+ToolbarItemGroup(placement:.keyboard){Spacer();Button("Listo"){JACPlatform.endEditing()}.accessibilityIdentifier("crm.keyboard.done")}
+#endif
+ }
                 .onAppear { setup() }
             }
         }.interactiveDismissDisabled(busy || importing || attempt != nil)
@@ -322,7 +330,7 @@ struct CRMFilesView:View {
     var body:some View { Group {
         if let error { InlineError(message:error) }
         ForEach(files.crmItems) { item in Button { Task { busy=true;defer {busy=false};do {let file=try item.value.decoded(NoticeAttachment.self);let result=try await store.client.crmFile(owner:owner,file:file,version:version,contact:contact);previous=result;document=result} catch {crm.reject(error);self.error=store.reportReadFailure(error)} } } label:{ Label(item.value["filename"].text,systemImage:"doc.text") }.disabled(busy).accessibilityIdentifier("crm.file."+item.id) }
-    }.onChange(of:crm.denied){_,denied in if denied {document=nil}}.sheet(item:$document,onDismiss:{if let previous {TemporaryDocuments.remove(previous);self.previous=nil}}) { file in NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Documento").navigationBarTitleDisplayMode(.inline).toolbar {ToolbarItem(placement:.confirmationAction){Button("Listo"){document=nil}}} } } }
+    }.onChange(of:crm.denied){_,denied in if denied {document=nil}}.sheet(item:$document,onDismiss:{if let previous {TemporaryDocuments.remove(previous);self.previous=nil}}) { file in NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Documento").jacInlineTitle().toolbar {ToolbarItem(placement:.confirmationAction){Button("Listo"){document=nil}}} } } }
 }
 struct CRMPlanView:View {
     @EnvironmentObject private var store:PayrollStore
@@ -426,6 +434,6 @@ struct CRMContactView:View {
         Section("Empresario") {ForEach([("company","Empresa"),("phone","Teléfono"),("email","Correo"),("city","Ciudad")],id:\.0){k,t in LabeledContent(t,value:data["contact"][k].text.isEmpty ? "Sin registrar":data["contact"][k].text)};if !data["contact"]["note"].text.isEmpty{Text(data["contact"]["note"].text)};Button("Editar empresario"){editor=CRMEditorRequest(kind:.contact,record:data["contact"])}.disabled(store.isOffline || data.isNull).accessibilityIdentifier("crm.contact.edit")}
         Section("Shows y cuentas") {ForEach(data["shows"].crmItems){s in NavigationLink{CRMShowView(id:s.id).environmentObject(crm)}label:{CRMShowRow(show:s.value)}}}
         Section("Contratos y documentos") {CRMFilesView(owner:id,files:data["files"],version:Int(data["contact"]["version"].number),contact:true);Button("Adjuntar documentos"){editor=CRMEditorRequest(kind:.contracts,record:data["contact"])}.disabled(store.isOffline || data.isNull).accessibilityIdentifier("crm.contact.files")}
-    }.onChange(of:crm.denied){_,denied in if denied {editor=nil;data = .null}}.jacSurface().navigationTitle(data["contact"]["name"].text.isEmpty ? "Empresario":data["contact"]["name"].text).navigationBarTitleDisplayMode(.inline).task{await load()}.refreshable{await load()}.sheet(item:$editor,onDismiss:{Task{await load()}}){CRMEditor(request:$0).environmentObject(crm)} }
+    }.onChange(of:crm.denied){_,denied in if denied {editor=nil;data = .null}}.jacSurface().navigationTitle(data["contact"]["name"].text.isEmpty ? "Empresario":data["contact"]["name"].text).jacInlineTitle().task{await load()}.refreshable{await load()}.sheet(item:$editor,onDismiss:{Task{await load()}}){CRMEditor(request:$0).environmentObject(crm)} }
     private func load() async {let q=["view":"contact","id":id];if data.isNull,let saved=crm.cached(q){data=saved};do{data=try await crm.read(q);error=nil}catch{self.error=store.reportReadFailure(error)}}
 }

@@ -22,10 +22,10 @@ struct ActivityView: View {
                 if d.period.isClosed { Section { Label("Consulta de un cierre", systemImage: "lock.fill") } }
                 switch kind { case .shows: shows(d); case .movements: movements(d); case .expenses: expenses(d); case .routes: routes(d); case .hours: hours(d) }
             }
-        }.jacSurface().navigationTitle(kind.title).navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle(kind.title).jacInlineTitle()
             .toolbar {
                 if let d = period.detail, canEdit(d), kind != .hours {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .jacTrailing) {
                         Button { edit(nil, detail: d) } label: { Image(systemName: "plus") }
                             .accessibilityLabel(kind == .routes ? "Agregar kilometraje extra" : "Agregar registro")
                             .accessibilityIdentifier("activity.add").disabled(!store.canWrite || (kind == .expenses && d.period.shows.isEmpty))

@@ -29,7 +29,7 @@ struct OperationStatusSection: View {
                         Text("Copia de tus cambios pendientes").font(.headline)
                         ShareLink("Guardar o compartir copia", item: file.url)
                     }.padding().jacSurface().navigationTitle("Copia de cambios")
-                        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Listo") { backup = nil } } }
+                        .toolbar { ToolbarItem(placement: .jacLeading) { Button("Listo") { backup = nil } } }
                 }
             }
         }

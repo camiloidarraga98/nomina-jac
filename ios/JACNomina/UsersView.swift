@@ -33,10 +33,10 @@ struct UsersView: View {
                 }
             }
             if busy { Section { ProgressView() } }
-        }.jacSurface().navigationTitle("Usuarios y permisos").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Usuarios y permisos").jacInlineTitle()
             .task { await load() }.refreshable { await load() }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .jacTrailing) {
                     Button {
                         editor = UserEditorSession(user: ManagedUser(id: "", username: "", email: "", name: "", owner: false, active: true, permissions: ["export"], version: 1, ready: false))
                     } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Crear usuario").disabled(busy || store.isOffline)
@@ -88,11 +88,11 @@ struct UserEditorView: View {
                 } header: { Text("Permisos") } footer: {
                     Text("Modificar cierres es un permiso independiente. Guardar cambios invalida las sesiones e invitaciones anteriores.")
                 }
-            }.jacSurface().navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").jacInlineTitle()
                 .disabled(busy || user.owner)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("Cancelar") { dismiss() }.disabled(busy) }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .jacLeading) { Button("Cancelar") { dismiss() }.disabled(busy) }
+                    ToolbarItem(placement: .jacTrailing) {
                         Button("Guardar") {
                             busy = true; error = nil
                             Task {

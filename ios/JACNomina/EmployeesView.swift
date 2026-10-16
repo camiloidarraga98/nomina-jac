@@ -41,7 +41,7 @@ struct EmployeesView: View {
                 .refreshable { try? await store.refresh() }
                 .toolbar {
                     if overview.user.can("staff") {
-                        ToolbarItem(placement: .topBarTrailing) {
+                        ToolbarItem(placement: .jacTrailing) {
                             Button {
                                 if let w = store.workspace { editor = PayrollEditorSession(kind: .employee, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.employee, workspace: w)) }
                             } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Agregar persona").accessibilityIdentifier("employee.create").disabled(!store.canWrite)
@@ -74,7 +74,7 @@ struct EmployeeDetailView: View {
                     }
                 }
             }
-        }.jacSurface().navigationTitle("Personal").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Personal").jacInlineTitle()
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
             .confirmationDialog("¿Eliminar esta persona del personal vigente?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Eliminar persona", role: .destructive) { Task { _ = await store.action("deleteEmployee", employeeID: employeeID) } }

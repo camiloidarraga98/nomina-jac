@@ -67,3 +67,8 @@ No borres el entorno Cloud ni el repositorio histórico hasta confirmar que Code
 - Codex local reconoce el mismo Site con la cuenta propietaria para futuras publicaciones.
 
 Hasta comprobar estos puntos en tu Mac, el paquete está preparado para el traslado, pero el entorno local aún no está verificado.
+
+
+## App nativa para Mac
+
+Abre `macos/JACMac.xcodeproj`, esquema **JACMac**, destino **My Mac**, y pulsa **Run**. También puedes abrir `outputs/JAC Music.app` después de ejecutar `bash scripts/build-mac-local.sh`. La compilación local usa firma ad hoc y no requiere el equipo Apple del iPhone. Se reutilizan las cuentas y el servicio existentes; iniciar sesión es una acción de Camilo. Ver `macos/README.md` y `docs/MAC_NATIVE.md`. El proyecto iPhone y sus ajustes personales permanecen en su lugar.

@@ -31,10 +31,10 @@ struct PayrollEditorView: View {
                 Section {
                     Text(session.kind == .periodEmployee || session.kind == .periodSettings ? "Los ajustes se aplican únicamente a esta quincena en corrección." : "Los cambios se guardan para todo el equipo autorizado.").font(.footnote).foregroundStyle(.secondary)
                 }
-            }.jacSurface().navigationTitle(session.kind.title).navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(session.kind.title).jacInlineTitle()
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("Cancelar") { dismiss() }.disabled(store.busy) }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .jacLeading) { Button("Cancelar") { dismiss() }.disabled(store.busy) }
+                    ToolbarItem(placement: .jacTrailing) {
                         Button {
                             endEditing()
                             Task {
@@ -47,7 +47,9 @@ struct PayrollEditorView: View {
                             .disabled(store.busy || !hasRequiredFields || store.workspace?.version != session.version || (store.pending != nil && store.pending?.editorID != session.id))
                             .accessibilityIdentifier("editor.save")
                     }
+                    #if os(iOS)
                     ToolbarItemGroup(placement: .keyboard) { Spacer(); Button("Listo", action: endEditing) }
+                    #endif
                 }
                 .interactiveDismissDisabled(store.busy)
                 .scrollDismissesKeyboard(.interactively)
@@ -109,7 +111,7 @@ struct PayrollEditorView: View {
         }
     }
     private func updatePeriodDates() { record = PayrollEditorSession.newPeriod(month: month, half: half, id: record["id"].text) }
-    private func endEditing() { UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder), to: nil, from: nil, for: nil) }
+    private func endEditing() { JACPlatform.endEditing() }
     private func updatePreview() async {
         guard session.periodID != nil || session.kind == .period else { return }
         guard hasRequiredFields else { preview = nil; previewError = nil; return }

@@ -1,6 +1,11 @@
 import SwiftUI
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
+ #if os(iOS)
 @main
 @MainActor
 struct JACNominaApp: App {
@@ -134,6 +139,8 @@ private final class PrivacyShieldAnchor: UIView {
     private func reveal() { cover?.removeFromSuperview(); cover = nil }
 }
 
+#endif
+
 struct OfflineStartView: View {
     @EnvironmentObject private var store: PayrollStore
     @State private var loading = false
@@ -141,7 +148,7 @@ struct OfflineStartView: View {
         NavigationStack {
             VStack(spacing: 24) {
                 BrandView().frame(width: 180)
-                ContentUnavailableView("Tu sesión sigue iniciada", systemImage: "wifi.slash", description: Text("Todavía no hay una copia descargada en este iPhone. Conéctate una vez para guardar tu información."))
+                ContentUnavailableView("Tu sesión sigue iniciada", systemImage: "wifi.slash", description: Text("Todavía no hay una copia descargada en este \(JACDevice.name). Conéctate una vez para guardar tu información."))
                 Button("Reintentar conexión") { Task { loading = true; defer { loading = false }; await store.restore() } }.disabled(loading).accessibilityIdentifier("offline.retry")
                 Button("Cerrar sesión", role: .destructive) { Task { await store.signOut() } }
             }.padding().jacSurface().navigationTitle("JAC")
@@ -168,6 +175,7 @@ enum JACTheme {
     static let navy = Color(red: 6/255, green: 47/255, blue: 70/255)
     static let highlight = Color(red: 98/255, green: 206/255, blue: 255/255)
     static let primary = Color(red: 0/255, green: 111/255, blue: 189/255)
+    #if os(iOS)
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
     static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 11/255, green: 24/255, blue: 35/255, alpha: 1) : UIColor(red: 243/255, green: 247/255, blue: 251/255, alpha: 1) })
     static let action = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 98/255, green: 206/255, blue: 255/255, alpha: 1) : UIColor(red: 0/255, green: 111/255, blue: 189/255, alpha: 1) })
@@ -181,6 +189,13 @@ enum JACTheme {
         }
         UITabBar.appearance().standardAppearance = tabs; UITabBar.appearance().scrollEdgeAppearance = tabs
     }
+    #else
+    static let card = Color(nsColor: .controlBackgroundColor)
+    static let canvas = JACAdaptiveColor(light: (0.953,0.969,0.984), dark: (0.043,0.094,0.137))
+    static let action = JACAdaptiveColor(light: (0,0.435,0.741), dark: (0.384,0.808,1))
+    static let ink = JACAdaptiveColor(light: (0.086,0.204,0.286), dark: (0.906,0.945,0.980))
+    @MainActor static func configure() {}
+    #endif
 }
 struct JACPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
@@ -197,7 +212,7 @@ extension View {
     // attach its UINavigationItem to a second bar while the keyboard resigns.
     func jacSurface() -> some View {
         scrollContentBackground(.hidden).background(JACCanvas()).foregroundStyle(JACTheme.ink)
-            .tint(JACTheme.action).listSectionSpacing(18).privacySensitive()
+            .tint(JACTheme.action).jacListSpacing().privacySensitive()
     }
     func jacStandaloneRow() -> some View {
         listRowBackground(Color.clear).listRowSeparator(.hidden)
@@ -212,9 +227,9 @@ enum JACTone {
     var color: Color {
         switch self {
         case .blue: return JACTheme.action
-        case .teal: return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.36, green: 0.86, blue: 0.79, alpha: 1) : UIColor(red: 0.02, green: 0.43, blue: 0.43, alpha: 1) })
-        case .violet: return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.74, green: 0.71, blue: 1, alpha: 1) : UIColor(red: 0.34, green: 0.30, blue: 0.66, alpha: 1) })
-        case .amber: return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.77, blue: 0.38, alpha: 1) : UIColor(red: 0.56, green: 0.34, blue: 0.08, alpha: 1) })
+        case .teal: return JACAdaptiveColor(light:(0.02,0.43,0.43),dark:(0.36,0.86,0.79))
+        case .violet: return JACAdaptiveColor(light:(0.34,0.30,0.66),dark:(0.74,0.71,1))
+        case .amber: return JACAdaptiveColor(light:(0.56,0.34,0.08),dark:(1,0.77,0.38))
         }
     }
     var deep: Color {
@@ -306,5 +321,120 @@ struct JACSecondaryButtonStyle: ButtonStyle {
         configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 15).padding(.vertical, 12)
             .foregroundStyle(tone.color).background(tone.color.opacity(configuration.isPressed ? 0.18 : 0.09), in: RoundedRectangle(cornerRadius: 15))
             .opacity(enabled ? 1 : 0.45)
+    }
+}
+
+// Platform presentation adapters. The domain model and all server commands are shared.
+#if os(iOS)
+typealias JACPlatformImage = UIImage
+#else
+typealias JACPlatformImage = NSImage
+#endif
+func JACAdaptiveColor(light:(Double,Double,Double),dark:(Double,Double,Double)) -> Color {
+    #if os(iOS)
+    return Color(UIColor { traits in let c = traits.userInterfaceStyle == .dark ? dark:light;return UIColor(red:c.0,green:c.1,blue:c.2,alpha:1) })
+    #else
+    return Color(nsColor:NSColor(name:nil) { appearance in let c = appearance.bestMatch(from:[.darkAqua,.aqua]) == .darkAqua ? dark:light;return NSColor(srgbRed:c.0,green:c.1,blue:c.2,alpha:1) })
+    #endif
+}
+extension View {
+    @ViewBuilder func jacInlineTitle() -> some View {
+        #if os(iOS)
+        navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+    @ViewBuilder func jacListSpacing() -> some View {
+        #if os(iOS)
+        listSectionSpacing(18)
+        #else
+        formStyle(.grouped).frame(minWidth:620,minHeight:440)
+        #endif
+    }
+}
+extension ToolbarItemPlacement {
+    static var jacLeading: Self {
+        #if os(iOS)
+        .topBarLeading
+        #else
+        .cancellationAction
+        #endif
+    }
+    static var jacTrailing: Self {
+        #if os(iOS)
+        .topBarTrailing
+        #else
+        .primaryAction
+        #endif
+    }
+}
+extension Image {
+    init(jacImage:JACPlatformImage) {
+        #if os(iOS)
+        self.init(uiImage:jacImage)
+        #else
+        self.init(nsImage:jacImage)
+        #endif
+    }
+}
+enum JACPlatform {
+    @MainActor static func endEditing() {
+        #if os(iOS)
+        UIApplication.shared.sendAction(#selector(UIResponder.resignFirstResponder),to:nil,from:nil,for:nil)
+        #else
+        NSApp.keyWindow?.makeFirstResponder(nil)
+        #endif
+    }
+    static var keyboardShown: Notification.Name {
+        #if os(iOS)
+        UIResponder.keyboardDidShowNotification
+        #else
+        Notification.Name("JACMacNoSoftwareKeyboard")
+        #endif
+    }
+    @MainActor static func printDocument(_ url:URL) {
+        #if os(iOS)
+        let printer=UIPrintInteractionController.shared;printer.printingItem=url;printer.present(animated:true,completionHandler:nil)
+        #else
+        MacDocumentActions.printDocument(url)
+        #endif
+    }
+    static func fixturePDF() -> Data {
+        #if os(iOS)
+        return UIGraphicsPDFRenderer(bounds:CGRect(x:0,y:0,width:300,height:300)).pdfData { c in c.beginPage();("PRUEBA JAC SIN DATOS REALES" as NSString).draw(at:CGPoint(x:20,y:20),withAttributes:nil) }
+        #else
+        let output=NSMutableData();var bounds=CGRect(x:0,y:0,width:300,height:300)
+        let consumer=CGDataConsumer(data:output as CFMutableData)!
+        let context=CGContext(consumer:consumer,mediaBox:&bounds,nil)!;context.beginPDFPage(nil);context.endPDFPage();context.closePDF();return output as Data
+        #endif
+    }
+}
+
+@MainActor var JACCameraAvailable:Bool {
+    #if os(iOS)
+    UIImagePickerController.isSourceTypeAvailable(.camera)
+    #else
+    true
+    #endif
+}
+
+enum JACDevice {
+    static var name:String {
+        #if os(iOS)
+        "iPhone"
+        #else
+        "Mac"
+        #endif
+    }
+}
+
+extension View {
+    @ViewBuilder func jacFileDrop(enabled:Bool=true, receive:@escaping ([URL])->Void) -> some View {
+        #if os(macOS)
+        dropDestination(for:URL.self) {urls,_ in guard enabled,!urls.isEmpty else{return false};receive(urls);return true}
+        #else
+        self
+        #endif
     }
 }

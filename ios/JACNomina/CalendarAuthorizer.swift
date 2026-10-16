@@ -1,5 +1,9 @@
 import AuthenticationServices
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 @MainActor
 final class CalendarAuthorizer: NSObject, ASWebAuthenticationPresentationContextProviding {
@@ -31,6 +35,10 @@ final class CalendarAuthorizer: NSObject, ASWebAuthenticationPresentationContext
         guard items.first(where: { $0.name == "result" })?.value == "connected" else { throw APIError.message("Agenda no quedó conectada. Elige jacmusicestudios@gmail.com y concede consultar calendarios y editar eventos.") }
     }
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        #if os(iOS)
         UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+        #else
+        NSApp.keyWindow ?? NSApp.mainWindow ?? ASPresentationAnchor()
+        #endif
     }
 }
