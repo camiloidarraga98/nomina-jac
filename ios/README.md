@@ -2,6 +2,16 @@
 
 El proyecto compañero está en **`macos/JACMac.xcodeproj`**, esquema **JACMac → My Mac → Run**. Comparte las funciones nativas y las mismas cuentas/servicios con el iPhone. Consulta [`macos/README.md`](../macos/README.md) para abrir la app, documentos, copia sin conexión y comprobaciones. El proyecto y la firma personal del iPhone se conservan; sigue usando **JACNomina → tu iPhone → Run** para el teléfono.
 
+## Accesos por sección — iPhone 0.17.0 (28)
+
+**Gestión → Usuarios → Editar** permite elegir cada módulo por separado. Consultar Fotografía y crear carpetas/subir archivos son permisos distintos; los administradores Camilo y `jac` pueden hacer ambas cosas. Los pases siguen siendo privados de su destinatario y CRM sigue siendo administrativo. La cuenta real de Anderson conserva Fotografía y subida hasta que Camilo guarde sus accesos elegidos.
+
+La navegación y la copia cifrada aplican las secciones concedidas; retirar un módulo elimina su información y documentos descargados. Falta de conexión conserva la última información permitida y la sesión. Se mantienen la cubierta de privacidad, el Llavero, los cálculos y la suspensión de push. Ver [Accesos por sección](../docs/SECTION_ACCESS.md) para servidor, compatibilidad y comprobaciones.
+
+Para instalar, pulsa **Run en este mismo `ios/JACNomina.xcodeproj`**, esquema **JACNomina → tu iPhone**. Tu equipo/firma y `co.jacmusic.nomina` se conservan; no descargues ni reemplaces otro proyecto.
+
+Verificado con simulador nuevo y fixtures `.invalid`: 75 unitarias más dos nuevas de revocación, cuatro recorridos UI de permisos/subida/privacidad y Release de dispositivo sin firma correctos; una comprobación requiere iPhone físico. Informes y límites en la guía de accesos. Run todavía corresponde al teléfono real.
+
 ## Fotografía — iPhone 0.16.0 (27)
 
 En **Gestión → Fotografía**, Camilo y `jac` consultan las carpetas compartidas y abren fotos/videos dentro de JAC. Anderson ve únicamente **Fotografía** y **Mi cuenta**: puede crear carpetas por show o día y subir varios archivos desde Fotos o Archivos. La galería se actualiza al volver y cada 30 segundos mientras está visible; la conexión inicial de Drive se administra desde la web con Camilo.

@@ -46,13 +46,13 @@ struct ManagementView: View {
     private var columnCount:Int { typeSize.isAccessibilitySize ? 1:2 }
     private var administration:[Destination] {
         var items:[Destination]=[]
-        if user.isOwner { items.append(.crm) }
-        if store.overview != nil { items += [.archive,.employees] }
-        return items + [.mail]
+        if user.hasSection(.crm) { items.append(.crm) }
+        if user.hasSection(.payroll) && store.overview != nil { items += [.archive,.employees,.mail] }
+        return items
     }
     private var preferences:[Destination] {
-        var items:[Destination]=[.notifications]
-        if user.itinerariesOnly != true { items.append(.concepts);if user.isOwner {items.append(.users)} }
+        var items:[Destination]=user.hasNotices ? [.notifications] : []
+        if user.hasSection(.payroll) { items.append(.concepts) };if user.isOwner && user.hasSection(.crm) {items.append(.users)}
         return items
     }
     var body: some View {
@@ -64,8 +64,8 @@ struct ManagementView: View {
                     }
                     JACFeatureBanner(eyebrow:"JAC · Tu equipo",title:"Todo en su lugar.",subtitle:"Herramientas para lo que pasa antes y después del show.",symbol:"slider.horizontal.3",tone:.violet)
                     Text("Tu día a día").font(.system(.headline,design:.rounded))
-                    cards([.expenses,.alerts] + (user.canReadMedia ? [.media] : []))
-                    if user.itinerariesOnly != true {
+                    cards((user.hasSection(.itineraries) ? [.expenses] : []) + (user.hasSection(.alerts) ? [.alerts] : []) + (user.canReadMedia ? [.media] : []))
+                    if !administration.isEmpty {
                         Text("Administración").font(.system(.headline,design:.rounded))
                         cards(administration)
                     }
@@ -83,15 +83,15 @@ struct ManagementView: View {
                 .navigationDestination(item:$destination) { target in
                     switch target {
                     case .media:if user.canReadMedia {MediaGalleryView(user:user)}
-                    case .expenses:TravelExpensesView()
-                    case .alerts:NoticesView(user:user,kind:"alert")
-                    case .crm:if user.isOwner && user.itinerariesOnly != true {CRMHomeView(client:store.client)}
-                    case .archive:if user.itinerariesOnly != true,let overview=store.overview {PeriodsView(overview:overview,archive:true,embedded:true)}
-                    case .employees:if user.itinerariesOnly != true,let overview=store.overview {EmployeesView(overview:overview,embedded:true)}
-                    case .mail:if user.itinerariesOnly != true {MailView(user:user)}
-                    case .notifications:NotificationSettingsView()
-                    case .concepts:if user.itinerariesOnly != true {ConceptsRulesView(user:user)}
-                    case .users:if user.isOwner && user.itinerariesOnly != true {UsersView()}
+                    case .expenses:if user.hasSection(.itineraries) {TravelExpensesView()}
+                    case .alerts:if user.hasSection(.alerts) {NoticesView(user:user,kind:"alert")}
+                    case .crm:if user.hasSection(.crm) {CRMHomeView(client:store.client)}
+                    case .archive:if user.hasSection(.payroll),let overview=store.overview {PeriodsView(overview:overview,archive:true,embedded:true)}
+                    case .employees:if user.hasSection(.payroll),let overview=store.overview {EmployeesView(overview:overview,embedded:true)}
+                    case .mail:if user.hasSection(.payroll) {MailView(user:user)}
+                    case .notifications:if user.hasNotices {NotificationSettingsView()}
+                    case .concepts:if user.hasSection(.payroll) {ConceptsRulesView(user:user)}
+                    case .users:if user.hasSection(.crm) {UsersView()}
                     }
                 }
         }

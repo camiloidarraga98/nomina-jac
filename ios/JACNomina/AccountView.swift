@@ -14,7 +14,7 @@ struct AccountView: View {
                             Spacer(); BrandView().frame(width:105)
                         }
                         Text(user.displayName).font(.system(.title2,design:.rounded,weight:.bold))
-                        Text(user.mediaOnly == true ? "Fotografía JAC" : user.isOwner ? "Administrador de JAC" : "Equipo JAC").font(.subheadline).foregroundStyle(JACTheme.highlight)
+                        Text(user.onlyMedia ? "Fotografía JAC" : user.isOwner ? "Administrador de JAC" : "Equipo JAC").font(.subheadline).foregroundStyle(JACTheme.highlight)
                     }.foregroundStyle(.white).padding(22).frame(maxWidth:.infinity,alignment:.leading)
                         .background(LinearGradient(colors:[JACTheme.navy,JACTone.violet.deep],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:24))
                 }.jacStandaloneRow()
@@ -23,10 +23,11 @@ struct AccountView: View {
                     LabeledContent("Correo", value: user.email).textSelection(.enabled)
                     if !store.isAgendaOnly { NavigationLink { ChangePasswordView() } label:{ Label("Cambiar contraseña",systemImage:"key") }.disabled(store.isOffline).accessibilityLabel("Cambiar contraseña") }
                 }
+                Section("Secciones de tu cuenta") { ForEach(JACSection.allCases.filter { user.hasSection($0) && $0 != .mediaUpload },id:\.self) { Text($0.title) } }
                 if user.canReadMedia { Section("Fotografía") {
                     Label(user.canUploadMedia ? "Consultar, crear carpetas y subir fotos o videos" : "Consultar fotos y videos", systemImage: "photo.on.rectangle.angled")
                 } }
-                if !store.isAgendaOnly && user.mediaOnly != true { Section("Permisos de tu cuenta") {
+                if !store.isAgendaOnly && user.hasSection(.payroll) { Section("Permisos de tu cuenta") {
                     ForEach(PayrollFormat.permissionNames.keys.sorted(), id: \.self) { permission in
                         LabeledContent(PayrollFormat.permissionNames[permission] ?? permission) {
                             Image(systemName: user.can(permission) ? "checkmark.circle.fill" : "minus.circle")
@@ -44,7 +45,7 @@ struct AccountView: View {
                 }
                 Section { Button("Cerrar sesión", role: .destructive) { confirmLogout = true }.disabled(store.busy) }
                 Section {
-                    Text(user.mediaOnly == true ? "Tu cuenta permite trabajar con las fotos y videos de JAC desde esta app." : "La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
+                    Text(user.onlyMedia ? "Tu cuenta permite trabajar con las fotos y videos de JAC desde esta app." : "La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
             .jacSurface().navigationTitle("Mi cuenta").jacInlineTitle()

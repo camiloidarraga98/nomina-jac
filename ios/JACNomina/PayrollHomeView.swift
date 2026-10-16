@@ -7,29 +7,28 @@ struct PayrollHomeView: View {
     @ObservedObject private var push = JACNotifications.shared
     @State private var selected: String
     init(overview: PayrollOverview, agendaOnly: Bool = false) {
-        self.overview = overview; _selected = State(initialValue: agendaOnly ? "agenda" : overview.user.itinerariesOnly == true ? "itineraries" : "payroll")
+        self.overview = overview; _selected = State(initialValue: agendaOnly && overview.user.hasSection(.calendar) ? "agenda" : overview.user.firstDestination)
     }
+    private var user: PayrollUser { overview.user }
+    private var showsMediaTab: Bool { user.canReadMedia && !user.hasSection(.payroll) }
+    private var showsManagement: Bool { user.hasSection(.payroll) || user.isOwner || user.hasNotices }
     var body: some View {
-        Group {
-            if overview.user.mediaOnly == true {
-                TabView {
-                    NavigationStack { MediaGalleryView(user: overview.user) }.tabItem { Label("Fotografía", systemImage: "photo.on.rectangle.angled") }
-                    NavigationStack { AccountView(user: overview.user) }.tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }
-                }
-            } else { standardTabs }
-        }.tint(JACTheme.action)
-    }
-    private var standardTabs: some View {
         TabView(selection: $selected) {
-            if overview.user.itinerariesOnly != true { Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Quincenas") } else { PeriodsView(overview: overview) } }.tabItem { Label("Quincena", systemImage: "wallet.pass") }.tag("payroll") }
-            CalendarView(user: overview.user, initialMonth: store.preferredAgendaMonth).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }.tag("agenda")
-            NavigationStack { if store.isAgendaOnly { ConnectionRequiredView(title: "Itinerarios") } else { NoticesView(user: overview.user) } }.tabItem { Label("Itinerarios", systemImage: "doc.text") }.tag("itineraries")
-            NavigationStack { AccountView(user: overview.user) }.tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }.tag("account")
-            Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Gestión") } else { ManagementView(user: overview.user) } }.tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }.tag("management")
+            if user.hasSection(.payroll) { Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Quincenas") } else { PeriodsView(overview: overview) } }.tabItem { Label("Quincena", systemImage: "wallet.pass") }.tag("payroll") }
+            if user.hasSection(.calendar) { CalendarView(user: user, initialMonth: store.preferredAgendaMonth).tabItem { Label("Agenda", systemImage: "calendar.badge.clock") }.tag("agenda") }
+            if user.hasSection(.itineraries) || user.hasSection(.boarding) {
+                NavigationStack { NoticesView(user: user, kind: user.hasSection(.itineraries) ? "itinerary" : "boarding_pass") }.tabItem { Label(user.hasSection(.itineraries) ? "Itinerarios" : "Pases", systemImage: "doc.text") }.tag("itineraries")
+            } else if user.hasSection(.alerts) {
+                NavigationStack { NoticesView(user: user, kind: "alert") }.tabItem { Label("Alertas", systemImage: "bell.badge") }.tag("alerts")
+            }
+            if showsMediaTab { NavigationStack { MediaGalleryView(user: user) }.tabItem { Label("Fotografía", systemImage: "photo.on.rectangle.angled") }.tag("media") }
+            NavigationStack { AccountView(user: user) }.tabItem { Label("Mi cuenta", systemImage: "person.crop.circle") }.tag("account")
+            if showsManagement && !user.onlyMedia { Group { if store.isAgendaOnly { ConnectionRequiredView(title: "Gestión") } else { ManagementView(user: user) } }.tabItem { Label("Gestión", systemImage: "slider.horizontal.3") }.tag("management") }
         }.tint(JACTheme.action)
-            .task(id: store.isAgendaOnly) { if !store.isAgendaOnly { await push.bind(store.client) } }
-            .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly { Task { await push.bind(store.client) } } }
-            .sheet(isPresented: Binding(get: { push.noticeID != nil }, set: { if !$0 { push.noticeID = nil } })) { NavigationStack { NoticesView(user: overview.user, initialNotice: push.noticeID).id(push.noticeID).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { push.noticeID = nil } } } } }
+            .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.hasNotices { await push.bind(store.client) } }
+            .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.hasNotices { Task { await push.bind(store.client) } } }
+            .onChange(of: user) { _, value in selected = value.firstDestination; if !value.hasNotices { push.stop() } }
+            .sheet(isPresented: Binding(get: { user.hasNotices && push.noticeID != nil }, set: { if !$0 { push.noticeID = nil } })) { NavigationStack { NoticesView(user: user, kind: user.hasSection(.itineraries) ? "itinerary" : user.hasSection(.alerts) ? "alert" : "boarding_pass", initialNotice: push.noticeID).id(push.noticeID).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { push.noticeID = nil } } } } }
     }
 }
 private struct ConnectionRequiredView: View {

@@ -66,6 +66,7 @@ final class JACNotifications: ObservableObject {
         #endif
     }
     func bind(_ client: PayrollClient) async {
+        guard client.accessUser?.hasNotices != false else {stop();return}
         guard pushAvailable else { return }
         guard allowsFixture || !client.baseURL.host!.hasSuffix(".invalid"), !busy, defaults.object(forKey: "jac.push.enabled") as? Bool != false, let scope = try? client.agendaScope() else { return }
         busy = true; defer { busy = false }

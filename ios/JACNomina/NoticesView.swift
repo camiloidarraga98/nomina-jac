@@ -90,7 +90,7 @@ struct NoticesView: View {
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
             if let notice { Section { Text(notice).foregroundStyle(JACTheme.action) } }
             if loading && feed == nil { ProgressView("Consultando…") }
-            if effectiveKind == "itinerary" {
+            if effectiveKind == "itinerary" && user.hasSection(.boarding) {
                 Section {
                     NavigationLink { NoticesView(user:user,kind:"boarding_pass") } label: {
                         JACFeatureBanner(eyebrow:"JAC · En ruta",title:"Pases de abordar",subtitle:boardingCount > 0 ? "Para hoy: \(boardingCount) · Mañana: \(tomorrowCount)" : "Para mañana: \(tomorrowCount) · Próximos días e historial",symbol:"airplane",tone:.teal)
@@ -208,9 +208,10 @@ struct NoticesView: View {
     }
     private func loadHistory(_ cursor:String = "") async { restoreCached(); do { let result=try await store.client.notices(cursor:cursor,boarding:"history"); history=result; let items=(store.isOffline ? store.client.cachedNotices(boarding:"history")?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { historyRecords=items } else { historyRecords += items.filter { item in !historyRecords.contains { $0.id == item.id } } } } catch { self.error=store.reportReadFailure(error) } }
     private func refresh(_ cursor: String = "") async {
+        guard user.permitsNotice(effectiveKind) else {records=[];return}
         guard !loading else { return }; loading = true; defer { loading = false }
         do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil); feed = result; let items=(store.isOffline ? store.client.cachedNotices(cursor: cursor, boarding: effectiveKind == "boarding_pass" ? "current" : nil)?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { records = items } else { records += items.filter { item in !records.contains { $0.id == item.id } } }; error = nil
-            if effectiveKind == "itinerary" { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
+            if effectiveKind == "itinerary" && user.hasSection(.boarding) { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
             if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
         } catch { self.error = store.reportReadFailure(error) }
     }

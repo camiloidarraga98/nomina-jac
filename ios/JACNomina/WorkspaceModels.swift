@@ -50,6 +50,14 @@ struct PayrollWorkspace: Codable {
     let periods: [PeriodSummary]
     let employees: [Employee]
     var overview: PayrollOverview { PayrollOverview(version: version, company: company, user: user, periods: periods, employees: employees) }
+    var restrictedForSections: PayrollWorkspace {
+        guard !user.hasSection(.payroll) else {return self}
+        return PayrollWorkspace(controlUser:user,version:version,company:company)
+    }
+    private init(controlUser: PayrollUser, version: Int, company: String) {
+        self.user=controlUser;self.version=version;self.company=company;periods=[];employees=[]
+        data = .object(["employees":.array([]),"periods":.array([]),"concepts":.array([]),"settings":.object(["company":.string(company)])])
+    }
     init(envelope: PayrollEnvelope, user: PayrollUser) throws {
         data = envelope.data; version = envelope.version; self.user = user
         company = data["settings"]["company"].text
@@ -153,7 +161,13 @@ struct UserDirectory: Decodable { let configured: Bool; let users: [ManagedUser]
 struct ManagedUser: Codable, Identifiable {
     let id: String; var username: String; var email: String; var name: String
     let owner: Bool; var active: Bool; var permissions: [String]; let version: Int; let ready: Bool
+    var administrator: Bool? = nil
+    var itinerariesOnly: Bool? = nil
+    var mediaOnly: Bool? = nil
+    var sections: [String]? = nil
+    var effectiveSections: [String] { PayrollUser(id:id,email:email,username:username,displayName:name,isOwner:owner || administrator == true,permissions:permissions,itinerariesOnly:itinerariesOnly,mediaOnly:mediaOnly,sections:sections).sectionsForEditor }
 }
+extension PayrollUser { var sectionsForEditor: [String] { JACSection.allCases.filter { hasSection($0) && $0 != .crm }.map(\.rawValue) } }
 struct InvitationResult: Decodable { let activationPath: String; let notice: String }
 struct GmailStart: Decodable { let url: URL; let nonce: String }
 struct PayrollMail: Decodable {

@@ -114,7 +114,17 @@ private final class FixtureProtocol: URLProtocol {
         }
         return try JSONDecoder().decode(JSONValue.self, from: bytes)
     }
-    static var user: JSONValue { var user: JSONValue = .object(["id": .string("fixture-user"), "username": .string("simulado"), "email": .string("test@example.invalid"), "displayName": .string("Cuenta simulada"), "itinerariesOnly":.bool(ProcessInfo.processInfo.arguments.contains("--uitest-itineraries-only")), "isOwner": .bool(!reader), "permissions": .array([])]); if ProcessInfo.processInfo.arguments.contains("--uitest-media-only") { user["mediaOnly"] = .bool(true); user["itinerariesOnly"] = .bool(true); user["isOwner"] = .bool(false); user["displayName"] = .string("Anderson ficticio") }; return user }
+    static var user: JSONValue {
+        let arguments=ProcessInfo.processInfo.arguments
+        var user: JSONValue = .object(["id": .string("fixture-user"), "username": .string("simulado"), "email": .string("test@example.invalid"), "displayName": .string("Cuenta simulada"), "itinerariesOnly":.bool(arguments.contains("--uitest-itineraries-only")), "isOwner": .bool(!reader), "permissions": .array([])])
+        if arguments.contains("--uitest-media-only") {user["mediaOnly"] = .bool(true);user["itinerariesOnly"] = .bool(true);user["isOwner"] = .bool(false);user["displayName"] = .string("Anderson ficticio")}
+        if let selection=arguments.first(where:{$0.hasPrefix("--uitest-sections=")}) {
+            let sections=selection.dropFirst("--uitest-sections=".count).split(separator:",").map(String.init)
+            user["sections"] = .array(sections.map(JSONValue.string));user["isOwner"] = .bool(false)
+            user["mediaOnly"] = .bool(sections.contains("media") && !sections.contains("payroll"));user["itinerariesOnly"] = .bool(!sections.contains("payroll"))
+        }
+        return user
+    }
     static func response(_ request: URLRequest) throws -> (Int, JSONValue) {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
@@ -233,7 +243,7 @@ private final class FixtureProtocol: URLProtocol {
             }
         }
         if parts.path == "/api/mobile/payroll" {
-            if user["mediaOnly"].flag { return (200, .object(["data": .object(["employees": .array([]), "periods": .array([]), "settings": .object(["company": .string("JAC")])]), "version": .number(Double(revision)), "user": user, "company": .string("JAC"), "periods": .array([]), "employees": .array([])])) }
+            if (try? user.decoded(PayrollUser.self).hasSection(.payroll)) == false { return (200, .object(["data": .object(["employees": .array([]), "periods": .array([]), "settings": .object(["company": .string("JAC")])]), "version": .number(Double(revision)), "user": user, "company": .string("JAC"), "periods": .array([]), "employees": .array([])])) }
             if let id = parts.queryItems?.first(where: { $0.name == "period" })?.value { return (200, detail(state, id: id)) }
             let periods = state["periods"].elements.map { p in JSONValue.object(["id": p["id"], "start": p["start"], "end": p["end"], "status": p["status"], "ownerOnly": .bool(p["ownerOnly"].flag), "showCount": .number(Double(p["shows"].elements.count)), "closedAt": p["snapshot"]["closedAt"]]) }
             return (200, .object(["data": state, "version": .number(Double(revision)), "user": user, "company": state["settings"]["company"], "periods": .array(periods), "employees": state["employees"]]))
@@ -389,7 +399,7 @@ enum MediaFixture {
     static func response(_ request: URLRequest) throws -> (Int, JSONValue) {
         lock.lock(); defer { lock.unlock() }
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!, q = parts.queryItems ?? []
-        let photographer = ProcessInfo.processInfo.arguments.contains("--uitest-media-only")
+        let photographer = (try? FixtureProtocol.user.decoded(PayrollUser.self).canUploadMedia) == true
         if parts.path == "/api/media", request.httpMethod == "GET" {
             let id = q.first { $0.name == "folder" }?.value ?? "media-root", selected: JSONValue = id == "media-root" ? folder : .object(["id": .string(id), "name": .string(id == "media-day" ? "2026-10-16 · PEREIRA" : "Carpeta ficticia")])
             return (200, .object(["connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(photographer), "canConnect": .bool(!photographer), "root": folder, "folder": selected, "breadcrumbs": .array(id == "media-root" ? [folder] : [folder, selected]), "items": .array(items[id] ?? []), "nextPageToken": .string("")]))

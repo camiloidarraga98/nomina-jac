@@ -62,11 +62,12 @@ enum MacSettingsRoute: String, CaseIterable, Identifiable {
         }
     }
     func allowed(_ user: PayrollUser) -> Bool {
-        guard user.mediaOnly != true else { return false }
         return switch self {
-        case .expenses, .alerts, .notifications: true
-        case .connections, .users: user.isOwner && user.itinerariesOnly != true
-        default: user.itinerariesOnly != true
+        case .expenses: user.hasSection(.itineraries)
+        case .alerts: user.hasSection(.alerts)
+        case .notifications: user.hasNotices
+        case .connections, .users: user.hasSection(.crm)
+        default: user.hasSection(.payroll)
         }
     }
 }
@@ -196,7 +197,7 @@ struct MacCRMHomeView: View {
     private var canWrite: Bool { !store.isOffline && !busy && !feed.isNull && !crm.denied }
     var body: some View {
         Group {
-            if crm.denied || store.overview?.user.isOwner != true || store.overview?.user.itinerariesOnly == true {
+            if crm.denied || store.overview?.user.hasSection(.crm) != true {
                 ContentUnavailableView("CRM no disponible", systemImage: "lock", description: Text("Solo administradores de JAC."))
             } else {
                 VStack(spacing: 0) {

@@ -46,7 +46,7 @@ final class PayrollStore: ObservableObject {
     }
     var isAgendaOnly: Bool { overview != nil && workspace == nil }
     func cachedAgenda(month: String, userID: String) -> SavedAgenda? {
-        guard savedAgenda?.user.id == userID, savedAgendaScope == (try? client.agendaScope())?.id else { return nil }
+        guard overview?.user.hasSection(.calendar) != false, savedAgenda?.user.id == userID, savedAgendaScope == (try? client.agendaScope())?.id else { return nil }
         return savedAgenda?.month(month)
     }
     var preferredAgendaMonth: String {
@@ -112,8 +112,12 @@ final class PayrollStore: ObservableObject {
         }
     }
     @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
-        guard result.version >= (workspace?.version ?? 0) else { return false }
-        if let savedAgenda, savedAgenda.user.id != result.user.id { forgetAgenda() }
+        // A restricted control workspace deliberately uses revision zero and
+        // contains no payroll. Revoking that module must replace older private
+        // in-memory data immediately; ordinary payroll still obeys revision CAS.
+        let payrollRevoked = workspace?.user.hasSection(.payroll) == true && !result.user.hasSection(.payroll)
+        guard payrollRevoked || result.version >= (workspace?.version ?? 0) else { return false }
+        if let savedAgenda, savedAgenda.user != result.user || !result.user.hasSection(.calendar) { forgetAgenda() }
         workspace = result; overview = result.overview; hasSavedSession = true; client.rememberWorkspace(result); return true
     }
     func signOut() async {

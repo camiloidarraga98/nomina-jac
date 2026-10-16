@@ -1,6 +1,22 @@
 import XCTest
 
 final class MacLaunchTests:XCTestCase {
+    @MainActor func testModernHybridSidebarOpensMediaAndItinerariesWithoutFinancialOrBoardingAccess() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=media,itineraries,alerts","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
+        XCTAssertTrue(app.descendants(matching:.any)["mac.nav.itineraries"].waitForExistence(timeout:20));XCTAssertTrue(app.descendants(matching:.any)["mac.nav.media"].exists)
+        for section in ["crm","payroll","agenda"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
+        XCTAssertFalse(app.buttons["boarding.open"].exists);click(app,"mac.nav.media");XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons["media.createFolder"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
+        click(app,"media.item.media-day");click(app,"media.item.media-photo");click(app,"media.preview.close");click(app,"mac.nav.alerts");XCTAssertTrue(app.staticTexts["Lo importante, cerca."].waitForExistence(timeout:10));shot(app,"mac-secciones-hibridas")
+    }
+    @MainActor func testModernCalendarOnlyAndAlertsOnlySidebarRemainIsolated() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=calendar","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
+        XCTAssertTrue(app.descendants(matching:.any)["mac.nav.agenda"].waitForExistence(timeout:20));XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:15))
+        for section in ["crm","payroll","itineraries","alerts","media","management"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
+        app.terminate();app.launchArguments=["--uitest-payroll","--uitest-sections=alerts","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
+        XCTAssertTrue(app.descendants(matching:.any)["mac.nav.alerts"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts["Lo importante, cerca."].waitForExistence(timeout:15))
+        for section in ["crm","payroll","agenda","itineraries","media"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
+        click(app,"mac.nav.management");XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);shot(app,"mac-solo-alertas")
+    }
     @MainActor func testPhotographerOnlyGalleryCreatesFolderUploadsAndPreviewsPhotoAndMovie() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "-ApplePersistenceIgnoreState", "YES"]; app.launch(); app.activate()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
@@ -13,17 +29,23 @@ final class MacLaunchTests:XCTestCase {
         let uploaded = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Foto de prueba.png")).firstMatch
         XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15)); shot(app, "mac-fotografia-fotografo")
     }
-    @MainActor func testAdministratorGalleryIsReadOnlyAndDownloadsWholeFolder() {
-        let app = fixture(); click(app, "mac.nav.media")
-        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["media.createFolder"].exists); XCTAssertFalse(app.buttons["media.files"].exists)
+    @MainActor func testAdministratorGalleryAllowsUploadAndDownloadsWholeFolder() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-wide-window","-ApplePersistenceIgnoreState","YES"];app.terminate();app.launch();app.activate()
+        let ready=app.buttons["period.fixture-period"].waitForExistence(timeout:20);if !ready {print(app.debugDescription)};XCTAssertTrue(ready);click(app,"mac.nav.media")
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons["media.createFolder"].exists); XCTAssertTrue(app.buttons["media.files"].exists)
         click(app, "media.item.media-day"); click(app, "media.offline"); click(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
-        click(app, "media.item.media-photo"); click(app, "media.preview.close"); shot(app, "mac-fotografia-lectura")
+        click(app, "media.item.media-photo"); click(app, "media.preview.close")
+        click(app,"media.fixture");click(app,"media.upload")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:15))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mov")).firstMatch.waitForExistence(timeout:15));shot(app,"mac-fotografia-administrador-sube")
     }
     override func setUpWithError() throws {continueAfterFailure=false}
     @MainActor private func fixture(_ extra:[String]=[])->XCUIApplication {
-        let app=XCUIApplication();app.launchArguments=["--uitest-payroll"]+extra;app.launch()
-        XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout:20))
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","-ApplePersistenceIgnoreState","YES"]+extra;app.launch();app.activate()
+        let ready=app.buttons["period.fixture-period"].waitForExistence(timeout:20)
+        if !ready {print(app.debugDescription)}
+        XCTAssertTrue(ready)
         return app
     }
     @MainActor private func go(_ app:XCUIApplication,_ name:String) {

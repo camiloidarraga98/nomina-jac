@@ -41,7 +41,7 @@ struct CRMHomeView:View {
     init(client:PayrollClient){ _crm=StateObject(wrappedValue:CRMStore(client)) }
     var body:some View {
         Group {
-            if crm.denied || store.overview?.user.isOwner != true || store.overview?.user.itinerariesOnly == true { ContentUnavailableView("CRM no disponible",systemImage:"lock",description:Text(crm.message ?? "Solo administradores de JAC.")) }
+            if crm.denied || store.overview?.user.hasSection(.crm) != true { ContentUnavailableView("CRM no disponible",systemImage:"lock",description:Text(crm.message ?? "Solo administradores de JAC.")) }
             else { List {
                 if let error { InlineError(message:error) }
                 if store.isOffline { Text("Sin conexión · última información descargada. Los cambios necesitan internet.").font(.footnote).foregroundStyle(.secondary) }

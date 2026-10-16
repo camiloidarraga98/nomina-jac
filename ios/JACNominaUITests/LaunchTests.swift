@@ -1,6 +1,25 @@
 import XCTest
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testModernHybridSectionsShowMediaAndItinerariesWithoutFinanceOrBoarding() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=media,itineraries,alerts"];app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Itinerarios"].waitForExistence(timeout:20));XCTAssertTrue(app.tabBars.buttons["Fotografía"].exists)
+        XCTAssertFalse(app.tabBars.buttons["Quincena"].exists);XCTAssertFalse(app.tabBars.buttons["Agenda"].exists);XCTAssertFalse(app.buttons["boarding.open"].exists)
+        app.tabBars.buttons["Fotografía"].tap();XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons["media.createFolder"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
+        tap(app,"media.item.media-day");tap(app,"media.item.media-photo");tap(app,"media.preview.close")
+        app.tabBars.buttons["Gestión"].tap();XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.employees"].exists);XCTAssertFalse(app.buttons["management.crm"].exists)
+        attachScreen(app,name:"secciones-hibridas-sin-finanzas")
+    }
+    @MainActor func testCalendarOnlyAndAlertsOnlyAccountsStayInTheirOwnSections() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=calendar"];app.launch()
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20));XCTAssertTrue(app.tabBars.buttons["Agenda"].exists)
+        for title in ["Quincena","Itinerarios","Fotografía","Gestión","Alertas"] {XCTAssertFalse(app.tabBars.buttons[title].exists)}
+        app.terminate();app.launchArguments=["--uitest-payroll","--uitest-sections=alerts"];app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Alertas"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts["Lo importante, cerca."].waitForExistence(timeout:15))
+        for title in ["Quincena","Agenda","Itinerarios","Fotografía"] {XCTAssertFalse(app.tabBars.buttons[title].exists)}
+        app.tabBars.buttons["Gestión"].tap();XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.media"].exists)
+        attachScreen(app,name:"solo-alertas-sin-modulos-adicionales")
+    }
     @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only"]; app.launch()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
@@ -28,10 +47,13 @@ final class LaunchTests: XCTestCase {
         tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
         XCTAssertFalse(app.buttons["media.upload"].exists); XCTAssertFalse(app.buttons["media.createFolder"].exists)
     }
-    @MainActor func testAdministratorReadsGalleryWithoutUploadButtons() {
+    @MainActor func testAdministratorGalleryAllowsUploadAndPreview() {
         let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app, "management.media")
-        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["media.createFolder"].exists); XCTAssertFalse(app.buttons["media.files"].exists)
-        tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close"); attachScreen(app, name: "fotografia-administrador-lectura")
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons["media.createFolder"].exists); XCTAssertTrue(app.buttons["media.files"].exists)
+        tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
+        tap(app,"media.fixture");tap(app,"media.upload")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:15))
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mov")).firstMatch.waitForExistence(timeout:15));attachScreen(app,name:"fotografia-administrador-sube")
     }
     @MainActor func testAgendaDayEdgesSelectTheWholeVisibleCell() {
         let app=fixture();app.tabBars.buttons["Agenda"].tap()

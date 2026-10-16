@@ -76,6 +76,71 @@ private final class CRMDelayedProtocol:URLProtocol {
 }
 
 final class PayrollClientTests: XCTestCase {
+    @MainActor func testControlWorkspaceRevocationReplacesHigherPayrollRevisionWithoutLosingSession() async throws {
+        let original=try await UITestBackend.client().workspace()
+        var payload=try JSONDecoder().decode(JSONValue.self,from:JSONEncoder().encode(original));payload["version"] = .number(14)
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]
+        let vault=MemorySession();vault.token=String(repeating:"f",count:43)
+        let client=PayrollClient(baseURL:URL(string:"https://sections.example.invalid")!,vault:vault,configuration:configuration,automaticallyDownloadOffline:false)
+        MockProtocol.handler={request in XCTAssertEqual(request.url?.path,"/api/mobile/payroll");return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,try JSONEncoder().encode(payload))};defer{MockProtocol.handler=nil}
+        let store=PayrollStore(client:client);await store.restore();XCTAssertEqual(store.workspace?.version,14);XCTAssertFalse(store.overview?.periods.isEmpty ?? true)
+        payload["version"] = .number(0);payload["user"]["isOwner"] = .bool(false);payload["user"]["mediaOnly"] = .bool(true);payload["user"]["itinerariesOnly"] = .bool(true);payload["user"]["sections"] = .array([.string("media")])
+        try await store.refresh();XCTAssertEqual(store.workspace?.version,0);XCTAssertFalse(store.overview?.user.hasSection(.payroll) ?? true);XCTAssertTrue(store.overview?.periods.isEmpty == true);XCTAssertTrue(store.overview?.employees.isEmpty == true);XCTAssertTrue(store.hasSavedSession)
+        XCTAssertEqual(client.cachedWorkspace()?.version,0);XCTAssertFalse(client.cachedWorkspace()?.user.hasSection(.payroll) ?? true)
+    }
+    @MainActor func testRejectedWorkspaceSaveCannotRestoreRevokedRoleOrOldAgendaIdentity() async throws {
+        let client=UITestBackend.client(),original=try await client.workspace(),agenda=try await client.agenda(month:CalendarClock.month(Date())),scope=try XCTUnwrap(client.agendaScope())
+        try client.saveAgenda(AgendaOfflineRecord(schema:1,user:original.user,months:[SavedAgenda(data:agenda,receivedAt:Date())]),scope:scope);XCTAssertNotNil(client.cachedAgenda())
+        var json=try JSONDecoder().decode(JSONValue.self,from:JSONEncoder().encode(original));json["version"] = .number(0);json["user"]["isOwner"] = .bool(false);json["user"]["sections"] = .array([.string("calendar")]);json["user"]["displayName"] = .string(String(repeating:"x",count:OfflineResponseCache.maximumEntryBytes+1))
+        client.rememberWorkspace(try json.decoded(PayrollWorkspace.self))
+        XCTAssertNil(client.cachedWorkspace());XCTAssertNil(client.cachedAgenda());XCTAssertNotNil(client.offlineSyncMessage)
+        let vault=MemorySession();vault.token=String(repeating:"f",count:43)
+        let reopened=PayrollClient(baseURL:client.baseURL,vault:vault,agendaCache:client.agendaCache,offlineCache:client.offlineCache,automaticallyDownloadOffline:false),store=PayrollStore(client:reopened)
+        XCTAssertNil(store.overview);XCTAssertTrue(store.hasSavedSession,"A failed cache write must keep login while withholding stale permissions")
+    }
+    func testModernSectionsAreExactAndLegacyRestrictionsRemainDefensive() throws {
+        var user=PayrollUser(id:"sections",email:"sections@example.invalid",username:"sections",displayName:"Cuenta ficticia",isOwner:false,permissions:["payroll","export"],itinerariesOnly:true,mediaOnly:true,sections:["media","itineraries"])
+        XCTAssertTrue(user.canReadMedia);XCTAssertTrue(user.hasSection(.itineraries));XCTAssertFalse(user.canUploadMedia)
+        XCTAssertFalse(user.hasSection(.calendar));XCTAssertFalse(user.hasSection(.boarding));XCTAssertFalse(user.can("payroll"));XCTAssertFalse(user.hasSection(.crm))
+        user.sections=["calendar"];XCTAssertEqual(JACSection.allCases.filter{user.hasSection($0)},[.calendar]);XCTAssertEqual(user.firstDestination,"agenda")
+        user.sections=["alerts"];XCTAssertEqual(JACSection.allCases.filter{user.hasSection($0)},[.alerts]);XCTAssertTrue(user.hasNotices);XCTAssertEqual(user.firstDestination,"alerts")
+        user.sections=["mediaUpload"];XCTAssertFalse(user.canUploadMedia)
+        user.sections=["media","crm"];XCTAssertFalse(user.hasSection(.crm))
+        user.sections=["media","unknown"];XCTAssertTrue(JACSection.allCases.allSatisfy{!user.hasSection($0)})
+        user.sections=[];XCTAssertEqual(user.firstDestination,"account")
+        let administrator=PayrollUser(id:"admin",email:"admin@example.invalid",username:"admin",displayName:"Administrador ficticio",isOwner:true,permissions:[],sections:[])
+        XCTAssertTrue(JACSection.allCases.allSatisfy{administrator.hasSection($0)});XCTAssertTrue(administrator.canUploadMedia)
+        let legacy=PayrollUser(id:"legacy",email:"legacy@example.invalid",username:"legacy",displayName:"Legado",isOwner:false,permissions:[],itinerariesOnly:true)
+        XCTAssertTrue(legacy.hasSection(.calendar));XCTAssertTrue(legacy.hasSection(.boarding));XCTAssertFalse(legacy.hasSection(.payroll));XCTAssertFalse(legacy.canReadMedia)
+    }
+    @MainActor func testModernHybridReadsOnlyGrantedModulesOfflineAndRestoresEmptyFinancialWorkspace() async throws {
+        let client=UITestBackend.client(),original=try await client.workspace()
+        var json=try JSONDecoder().decode(JSONValue.self,from:JSONEncoder().encode(original))
+        json["user"]["isOwner"] = .bool(false);json["user"]["mediaOnly"] = .bool(true);json["user"]["itinerariesOnly"] = .bool(true);json["user"]["sections"] = .array([.string("media"),.string("itineraries")])
+        let hybrid=try json.decoded(PayrollWorkspace.self);client.rememberWorkspace(hybrid)
+        XCTAssertTrue(client.cachedWorkspace()?.periods.isEmpty == true);XCTAssertTrue(client.cachedWorkspace()?.employees.isEmpty == true);XCTAssertTrue(client.cachedWorkspace()?.data["periods"].elements.isEmpty == true)
+        let notices=try await client.notices();XCTAssertFalse(notices.notices.isEmpty);XCTAssertTrue(notices.notices.allSatisfy{$0.kind == "itinerary"})
+        let media=try await client.media(folder:"media-day"),photo=try XCTUnwrap(media.items.first{$0.kind == "image"});try await client.saveMediaOffline(photo)
+        client.beginOfflineRestore();let offlineNotices=try await client.notices();XCTAssertFalse(offlineNotices.notices.isEmpty)
+        let document=try await client.mediaDocument(photo);TemporaryDocuments.remove(document)
+        do {_ = try await client.detail(periodID:"fixture-period");XCTFail("No payroll details offline")}catch{guard case APIError.forbidden = error else{return XCTFail(String(describing:error))}}
+        do {_ = try await client.agenda(month:CalendarClock.month(Date()));XCTFail("No calendar offline")}catch{guard case APIError.forbidden = error else{return XCTFail(String(describing:error))}}
+        do {_ = try await client.notices(boarding:"current");XCTFail("No private boarding section offline")}catch{guard case APIError.forbidden = error else{return XCTFail(String(describing:error))}}
+        let vault=MemorySession();vault.token=String(repeating:"f",count:43)
+        let reopened=PayrollClient(baseURL:client.baseURL,vault:vault,offlineCache:client.offlineCache,mediaOffline:client.mediaOffline,automaticallyDownloadOffline:false),store=PayrollStore(client:reopened)
+        XCTAssertTrue(store.hasSavedSession);XCTAssertTrue(store.isOffline);XCTAssertEqual(store.overview?.user.sections,["media","itineraries"]);XCTAssertTrue(store.overview?.periods.isEmpty == true)
+        let reopenedMedia=try await reopened.media(folder:"media-day");XCTAssertTrue(reopenedMedia.items.contains{$0.id == photo.id})
+    }
+    @MainActor func testRevokingNoticeSectionsPurgesOldPDFAndStopsRetainedNoticeReads() async throws {
+        let client=UITestBackend.client(),original=try await client.workspace(),feed=try await client.notices(),item=try XCTUnwrap(feed.notices.first{$0.kind == "itinerary"})
+        let document=try await client.itinerary(item);TemporaryDocuments.remove(document)
+        var json=try JSONDecoder().decode(JSONValue.self,from:JSONEncoder().encode(original));json["user"]["isOwner"] = .bool(false);json["user"]["sections"] = .array([.string("alerts")])
+        client.rememberWorkspace(try json.decoded(PayrollWorkspace.self));client.beginOfflineRestore()
+        XCTAssertNil(client.cachedNotices());XCTAssertNil(client.cachedNotice(item.id))
+        do {_ = try await client.itinerary(item);XCTFail("Retained itinerary must not reopen a revoked PDF")}catch{guard case APIError.forbidden = error else{return XCTFail(String(describing:error))}}
+        let scope=try XCTUnwrap(client.offlineScope());XCTAssertFalse(client.offlineCache.entries(scope).contains{URL(string:$0.url)?.path.hasPrefix("/api/notices") == true})
+        XCTAssertTrue(try client.hasSession(),"Section revocation preserves the other authorized modules and login")
+    }
     @MainActor func testMediaMovieIsPlayableAndBulkPhotosReportsIndividualFailuresWithoutRealLibrary() async throws {
         let client = UITestBackend.client(), root = MediaFolder(id: "media-day", name: "Día ficticio")
         let feed = try await client.media(folder: root.id), video = try XCTUnwrap(feed.items.first { $0.kind == "video" })

@@ -3,6 +3,13 @@ import AppKit
 @testable import JACMac
 
 final class MacPlatformTests:XCTestCase {
+    func testModernSectionsOverrideCompatibilityFlagsInSidebarAndSettings() {
+        var hybrid=PayrollUser(id:"hybrid",email:"hybrid@example.invalid",username:"hybrid",displayName:"Híbrido",isOwner:false,permissions:["payroll"],itinerariesOnly:true,mediaOnly:true,sections:["media","itineraries","alerts"])
+        XCTAssertEqual(MacSection.sidebar(for:hybrid),[.itineraries,.alerts,.media,.account,.management]);XCTAssertFalse(MacSettingsRoute.archive.allowed(hybrid));XCTAssertTrue(MacSettingsRoute.expenses.allowed(hybrid));XCTAssertFalse(hybrid.canUploadMedia)
+        hybrid.sections=["calendar"];XCTAssertEqual(MacSection.sidebar(for:hybrid),[.agenda,.account]);XCTAssertTrue(MacSettingsRoute.allCases.allSatisfy{!$0.allowed(hybrid)})
+        hybrid.sections=["alerts"];XCTAssertEqual(MacSection.sidebar(for:hybrid),[.alerts,.account,.management]);XCTAssertFalse(MacSettingsRoute.expenses.allowed(hybrid))
+        hybrid.sections=["media","mediaUpload"];XCTAssertTrue(hybrid.canUploadMedia);XCTAssertEqual(MacSection.sidebar(for:hybrid),[.media,.account])
+    }
     func testDateCalendarLimitsAndPreservesTimeInColombia() throws {
         let c=CalendarClock.calendar
         XCTAssertNil(MacDateSelection.parse("31/02/2026",calendar:c))
@@ -31,9 +38,9 @@ final class MacPlatformTests:XCTestCase {
         let owner=PayrollUser(id:"owner",email:"owner@example.invalid",username:"owner",displayName:"Owner",isOwner:true,permissions:[])
         let reader=PayrollUser(id:"reader",email:"reader@example.invalid",username:"reader",displayName:"Reader",isOwner:false,permissions:[])
         var restricted=owner;restricted.itinerariesOnly=true
-        XCTAssertEqual(MacSection.sidebar(for:owner),[.crm,.payroll,.agenda,.itineraries,.media,.account,.management])
-        XCTAssertEqual(MacSection.sidebar(for:reader),[.payroll,.agenda,.itineraries,.account,.management])
-        XCTAssertEqual(MacSection.sidebar(for:restricted),[.agenda,.itineraries,.media,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:owner),[.crm,.payroll,.agenda,.itineraries,.alerts,.media,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:reader),[.payroll,.agenda,.itineraries,.alerts,.account,.management])
+        XCTAssertEqual(MacSection.sidebar(for:restricted),[.agenda,.itineraries,.alerts,.account,.management])
         XCTAssertFalse(MacSettingsRoute.users.allowed(reader));XCTAssertFalse(MacSettingsRoute.connections.allowed(reader))
         XCTAssertEqual(MacSettingsRoute.allCases.filter{$0.allowed(restricted)},[.expenses,.alerts,.notifications])
     }

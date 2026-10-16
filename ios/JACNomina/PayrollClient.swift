@@ -44,6 +44,8 @@ final class PayrollClient: ObservableObject {
     private var storageFailures = 0
     private var crmGeneration = 0
     private var cacheGeneration = 0
+    private var permissionUser: PayrollUser?
+    var accessUser: PayrollUser? { permissionUser }
     private let automaticOfflineSync: Bool
     let agendaCache: AgendaOfflineCache
     private var cookieName: String { "__Host-jac_session" }
@@ -69,6 +71,7 @@ final class PayrollClient: ObservableObject {
         mediaConfiguration.timeoutIntervalForResource = 2 * 60 * 60
         mediaSession = URLSession(configuration: mediaConfiguration, delegate: NoRedirects(), delegateQueue: nil)
         if let token = try? self.vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { self.offlineCache.removeOtherSessions(OfflineResponseCache.scope(origin: baseURL.absoluteString, token: token)); self.mediaOffline.removeOtherSessions(AgendaCacheScope(origin: origin + "/media-offline-v1", token: token)) }
+        permissionUser = rawCachedWorkspace()?.user ?? cachedAgenda()?.user
     }
 
     func hasSession() throws -> Bool { try vault.load() != nil }
@@ -78,7 +81,8 @@ final class PayrollClient: ObservableObject {
     }
     func cachedAgenda() -> AgendaOfflineRecord? {
         guard let scope = try? agendaScope() else { return nil }
-        return agendaCache.load(scope)
+        guard permissionUser?.hasSection(.calendar) != false else { return nil }
+        let record = agendaCache.load(scope);return record?.user.hasSection(.calendar) == false ? nil : record
     }
     func clearCachedAgenda() { if let scope = try? agendaScope() { agendaCache.remove(scope) } }
     func saveAgenda(_ record: AgendaOfflineRecord, scope: AgendaCacheScope) throws {
@@ -88,6 +92,7 @@ final class PayrollClient: ObservableObject {
     func clearSession() throws {
         syncTask?.cancel(); syncTask = nil
         cacheGeneration += 1
+        permissionUser = nil
         if let scope = try offlineScope() { offlineCache.clear(scope) }
         if let scope = try mediaScope() { mediaOffline.clear(scope) }
         clearCachedAgenda(); try vault.clear(); TemporaryDocuments.clear()
@@ -109,11 +114,32 @@ final class PayrollClient: ObservableObject {
         return parts.url!
     }
     private func resourceKey(_ url: URL, revision: Int = 0) -> String { url.absoluteString + "\nrevision=\(revision)" }
-    func cached<T: Decodable>(_ type: T.Type, path: String, query: [URLQueryItem] = [], revision: Int = 0) -> T? {
-        guard let scope = try? offlineScope(), let record = offlineCache.load(scope, key: resourceKey(resourceURL(path: path, query: query), revision: revision)) else { return nil }
-        return try? decoder.decode(type, from: record.data)
+    private func allowsResource(_ path: String, query: [URLQueryItem]) -> Bool {
+        guard let user=permissionUser else {return true}
+        if path == "api/mobile/payroll" {return query.contains{$0.name == "workspace"} || user.hasSection(.payroll)}
+        if path.hasPrefix("api/payroll/") || path == "api/mobile/gmail" {return user.hasSection(.payroll)}
+        if path.hasPrefix("api/calendar") {return user.hasSection(.calendar)}
+        if path.hasPrefix("api/crm") || path == "api/users" {return user.hasSection(.crm)}
+        if path.hasPrefix("api/expenses") {return user.hasSection(.itineraries)}
+        if path.hasPrefix("api/media") {return user.canReadMedia}
+        if path.hasPrefix("api/notices") {return query.contains{$0.name == "boarding"} ? user.hasSection(.boarding) : user.hasNotices}
+        return true
     }
-    func cachedWorkspace() -> PayrollWorkspace? { cached(PayrollWorkspace.self, path: "api/mobile/payroll", query: [URLQueryItem(name: "workspace", value: "1")]) }
+    private func authorizedNoticeData(_ data: Data, path: String) throws -> Data {
+        guard path == "api/notices",let user=permissionUser,var json=try? decoder.decode(JSONValue.self,from:data) else {return data}
+        if !json["item"].fields.isEmpty && !user.permitsNotice(json["item"]["kind"].text) {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
+        if case .array = json["notices"] {json["notices"] = .array(json["notices"].elements.filter{user.permitsNotice($0["kind"].text)})}
+        return try JSONEncoder().encode(json)
+    }
+    private func rawCachedWorkspace() -> PayrollWorkspace? {
+        guard let scope=try? offlineScope(),let record=offlineCache.load(scope,key:resourceKey(resourceURL(path:"api/mobile/payroll",query:[URLQueryItem(name:"workspace",value:"1")]))) else{return nil}
+        return try? decoder.decode(PayrollWorkspace.self,from:record.data)
+    }
+    func cached<T: Decodable>(_ type: T.Type, path: String, query: [URLQueryItem] = [], revision: Int = 0) -> T? {
+        guard allowsResource(path,query:query),let scope = try? offlineScope(), let record = offlineCache.load(scope, key: resourceKey(resourceURL(path: path, query: query), revision: revision)),let data=try? authorizedNoticeData(record.data,path:path) else { return nil }
+        return try? decoder.decode(type, from: data)
+    }
+    func cachedWorkspace() -> PayrollWorkspace? { rawCachedWorkspace()?.restrictedForSections }
     func cachedNotices(cursor: String = "", boarding: String? = nil) -> NoticeFeed? {
         guard let first = cached(NoticeFeed.self, path: "api/notices", query: (cursor.isEmpty ? [] : [URLQueryItem(name: "cursor", value: cursor)]) + (boarding.map { [URLQueryItem(name: "boarding", value: $0)] } ?? [])) else { return nil }
         var items = first.notices, next = first.nextCursor
@@ -123,7 +149,7 @@ final class PayrollClient: ObservableObject {
                 guard let parts = URLComponents(string: entry.url), parts.path == "/api/notices", parts.queryItems?.contains(where: { $0.name == "item" }) != true,
                       (parts.queryItems?.contains(where: { $0.name == "boarding" }) == true) == (boarding != nil),
                       let saved = offlineCache.load(scope, key: entry.key), let page = try? decoder.decode(NoticeFeed.self, from: saved.data) else { continue }
-                items += page.notices
+                items += page.notices.filter { permissionUser?.permitsNotice($0.kind) != false }
             }
             if let boarding { items = items.filter { boarding == "history" ? ($0.travelDate ?? "") < BoardingClock.today() : ($0.travelDate ?? "") >= BoardingClock.today() } }
             next = ""
@@ -153,12 +179,13 @@ final class PayrollClient: ObservableObject {
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0) async throws -> (Data, HTTPURLResponse) {
+        guard allowsResource(path,query:query) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
         let scope = try offlineScope(), generation = cacheGeneration, crmReadGeneration = crmGeneration
         let canCache = body == nil && cacheable(path, query: query)
         let saved = canCache ? scope.flatMap { offlineCache.load($0, key: key) } : nil
-        if let saved, let response = saved.response, !forceNetwork, usingOfflineCopy { return (saved.data, response) }
+        if let saved, let response = saved.response, !forceNetwork, usingOfflineCopy { return (try authorizedNoticeData(saved.data,path:path), response) }
         if usingOfflineCopy, body == nil, !forceNetwork, saved == nil { throw APIError.message("Este contenido todavía no está descargado. Conéctate para guardarlo en este \(JACDevice.name).") }
         if let body, usingOfflineCopy, path != "api/auth" || !["logout", "login", "activate"].contains(body["action"].text) {
             throw APIError.invalid("Estás consultando una copia guardada. Conéctate antes de guardar cambios.")
@@ -186,7 +213,7 @@ final class PayrollClient: ObservableObject {
             if path.hasPrefix("api/crm"),body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
             if AgendaOfflineCache.isUnavailable(error) {
                 usingOfflineCopy = true
-                if let saved, let response = saved.response, !forceNetwork { return (saved.data, response) }
+                if let saved, let response = saved.response, !forceNetwork { return (try authorizedNoticeData(saved.data,path:path), response) }
             }
             throw error
         }
@@ -201,7 +228,7 @@ final class PayrollClient: ObservableObject {
         }
         if path.hasPrefix("api/crm"),body == nil,crmReadGeneration != crmGeneration,!(400..<500).contains(response.statusCode) {throw CancellationError()}
         if [500, 502, 503, 504].contains(response.statusCode), let saved, let result = saved.response, !forceNetwork {
-            usingOfflineCopy = true; return (saved.data, result)
+            usingOfflineCopy = true; return (try authorizedNoticeData(saved.data,path:path), result)
         }
         guard (200..<300).contains(response.statusCode) else {
             if path.hasPrefix("api/media"), response.statusCode == 403, let mediaScope = try mediaScope() { cacheGeneration += 1; mediaOffline.clear(mediaScope); TemporaryDocuments.clear() }
@@ -232,7 +259,7 @@ final class PayrollClient: ObservableObject {
             do { try saveOffline(data, response: response, key: key, revision: cacheRevision, scope: scope) }
             catch { storageFailures += 1; offlineSyncMessage = "No se pudo guardar toda la copia local: " + error.localizedDescription }
         }
-        return (data, response)
+        return (body == nil ? try authorizedNoticeData(data,path:path) : data, response)
     }
 
     private func saveOffline(_ data: Data, response: HTTPURLResponse, key: String, revision: Int, scope: AgendaCacheScope) throws {
@@ -289,15 +316,24 @@ final class PayrollClient: ObservableObject {
         cacheRevision += 1
     }
     func rememberWorkspace(_ workspace: PayrollWorkspace) {
+        let userChanged = permissionUser.map{$0 != workspace.user} == true
+        if let previous=permissionUser, ["itinerary","alert","boarding_pass"].contains(where:{previous.permitsNotice($0) != workspace.user.permitsNotice($0)}),let scope=try? offlineScope() {offlineCache.remove(scope){URL(string:$0.url)?.path.hasPrefix("/api/notices") == true}}
+        if userChanged {cacheGeneration += 1;syncTask?.cancel();syncTask=nil;syncingOffline=false;TemporaryDocuments.clear();clearCachedAgenda()}
+        permissionUser=workspace.user
+        if !workspace.user.hasSection(.calendar) {clearCachedAgenda()}
         if !workspace.user.canReadMedia, let mediaScope = try? mediaScope() { mediaOffline.clear(mediaScope) }
         guard let scope = try? offlineScope() else { return }
+        offlineCache.remove(scope) { entry in guard let parts=URLComponents(string:entry.url) else{return true};return !self.allowsResource(String(parts.path.dropFirst()),query:parts.queryItems ?? []) }
         let url = resourceURL(path: "api/mobile/payroll", query: [URLQueryItem(name: "workspace", value: "1")])
+        // Removal precedes the write: a revision-zero control workspace must
+        // replace payroll, and a full disk must never resurrect the old role.
+        if userChanged {offlineCache.remove(scope){$0.key == self.resourceKey(url)}}
         offlineCache.remove(scope) { URL(string: $0.url)?.path == "/api/payroll/export" && $0.revision != workspace.version }
-        do { try offlineCache.save(OfflineResponse(key: resourceKey(url), url: url.absoluteString, headers: ["Content-Type": "application/json"], data: JSONEncoder().encode(workspace), receivedAt: Date(), revision: workspace.version), scope: scope) }
+        do { try offlineCache.save(OfflineResponse(key: resourceKey(url), url: url.absoluteString, headers: ["Content-Type": "application/json"], data: JSONEncoder().encode(workspace.restrictedForSections), receivedAt: Date(), revision: workspace.version), scope: scope) }
         catch { storageFailures += 1; offlineSyncMessage = "No se pudo guardar la copia local: " + error.localizedDescription }
     }
     func synchronizeOfflineContent(_ workspace: PayrollWorkspace) {
-        guard automaticOfflineSync, workspace.user.mediaOnly != true, syncTask == nil, !usingOfflineCopy else { return }
+        guard automaticOfflineSync, !workspace.user.onlyMedia, syncTask == nil, !usingOfflineCopy else { return }
         syncTask = Task { [weak self] in
             guard let self, let token = try? self.vault.load() else { return }
             let generation = self.cacheGeneration, failures = self.storageFailures
@@ -315,7 +351,7 @@ final class PayrollClient: ObservableObject {
             }
             do {
                 var noticeIDs = Set<String>(), fetchedKeys = Set<String>()
-                for boarding: String? in ["current", nil, "history"] {
+                for boarding: String? in ["current", nil, "history"] where boarding == nil ? (workspace.user.hasSection(.itineraries) || workspace.user.hasSection(.alerts)) : workspace.user.hasSection(.boarding) {
                     var cursor = "", visited = Set<String>()
                     repeat {
                         try validate()
@@ -323,7 +359,7 @@ final class PayrollClient: ObservableObject {
                         let (bytes, _) = try await self.request(path: "api/notices", query: query, forceNetwork: true)
                         fetchedKeys.insert(self.resourceKey(self.resourceURL(path: "api/notices", query: query)))
                         let page = try self.decoder.decode(NoticeFeed.self, from: bytes)
-                        for item in page.notices {
+                        for item in page.notices where workspace.user.permitsNotice(item.kind) {
                             try validate(); noticeIDs.insert(item.id)
                             for file in item.files {
                                 let path = item.attachments == nil && item.kind == "itinerary" ? "api/notices/pdf" : "api/notices/file"
@@ -347,12 +383,13 @@ final class PayrollClient: ObservableObject {
                         return !fetchedKeys.contains(entry.key)
                     }
                 }
-                for period in workspace.periods {
+                for period in workspace.periods where workspace.user.hasSection(.payroll) {
                     let query = [URLQueryItem(name: "period", value: period.id)]
                     if self.cached(PeriodDetail.self, path: "api/mobile/payroll", query: query)?.version == workspace.version { continue }
                     try await optionalRead { _ = try await self.request(path: "api/mobile/payroll", query: query, forceNetwork: true) }
                 }
-                try await optionalRead { _ = try await self.agenda(month: CalendarClock.month(Date())) }
+                if workspace.user.hasSection(.calendar) {try await optionalRead { _ = try await self.agenda(month: CalendarClock.month(Date())) }}
+                if workspace.user.hasSection(.itineraries) {
                 var cursor = "", visited = Set<String>()
                 repeat {
                     try validate()
@@ -364,8 +401,9 @@ final class PayrollClient: ObservableObject {
                     } }
                     cursor = page.nextCursor; guard cursor.isEmpty || visited.insert(cursor).inserted else { throw APIError.message("No se pudo completar la copia de gastos.") }
                 } while !cursor.isEmpty
-                if workspace.user.isOwner { try await optionalRead { _ = try await self.users() };if workspace.user.itinerariesOnly != true {try await optionalRead {try await self.synchronizeCrmOffline()}} }
-                if workspace.user.itinerariesOnly != true {
+                }
+                if workspace.user.hasSection(.crm) { try await optionalRead { _ = try await self.users() };try await optionalRead {try await self.synchronizeCrmOffline()} }
+                if workspace.user.hasSection(.payroll) {
                     try await optionalRead { _ = try await self.mail(periodID: nil) }
                     for period in workspace.periods { try await optionalRead { _ = try await self.mail(periodID: period.id) } }
                 }
@@ -398,7 +436,7 @@ final class PayrollClient: ObservableObject {
     }
     func workspace(forceNetwork: Bool = false) async throws -> PayrollWorkspace {
         let (data, _) = try await request(path: "api/mobile/payroll", query: [URLQueryItem(name: "workspace", value: "1")], forceNetwork: forceNetwork)
-        return try decoder.decode(PayrollWorkspace.self, from: data)
+        let result=try decoder.decode(PayrollWorkspace.self, from: data).restrictedForSections;rememberWorkspace(result);return result
     }
     func notices(cursor: String = "", boarding: String? = nil) async throws -> NoticeFeed {
         let (data, _) = try await request(path: "api/notices", query: (cursor.isEmpty ? [] : [URLQueryItem(name: "cursor", value: cursor)]) + (boarding.map { [URLQueryItem(name:"boarding",value:$0)] } ?? []))
@@ -411,6 +449,7 @@ final class PayrollClient: ObservableObject {
         return try decoder.decode(Response.self, from: data).item
     }
     func itinerary(_ notice: JACNotice) async throws -> ExportedDocument {
+        guard permissionUser?.permitsNotice(notice.kind) != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         let (data, response) = try await request(path: "api/notices/pdf", query: [URLQueryItem(name: "id", value: notice.id)], document: true, cacheRevision: notice.revision ?? 1)
         guard response.mimeType == "application/pdf", data.count <= 10*1024*1024, data.starts(with: Data("%PDF-".utf8)) else { throw APIError.message("No se recibió un PDF válido.") }
         let name = (notice.filename as NSString).lastPathComponent
@@ -423,6 +462,7 @@ final class PayrollClient: ObservableObject {
         if let travelDate { payload["travelDate"] = .string(travelDate) }; _ = try await request(path:"api/notices/publish",body:.object(payload))
     }
     func noticeFile(_ item: JACNotice, file: NoticeAttachment) async throws -> ExportedDocument {
+        guard permissionUser?.permitsNotice(item.kind) != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         if let latest = cachedNotice(item.id), (latest.revision ?? 1) > (item.revision ?? 1) || !latest.files.contains(where: { $0.id == file.id }) { throw APIError.invalid("El documento cambió. Abre la versión más reciente.") }
         let (data, response) = try await request(path: "api/notices/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "file", value: file.id)], document: true, cacheRevision: item.revision ?? 1)
         guard data.count <= 10*1024*1024, response.mimeType == file.mimeType, (try NoticeUpload.mime(data)) == file.mimeType else { throw APIError.message("No se recibió un archivo válido.") }
@@ -566,6 +606,7 @@ final class PayrollClient: ObservableObject {
     // Drive credentials stay on the server. Native transfers only use JAC's
     // authenticated origin, reject redirects and revalidate the session after I/O.
     func media(folder: String = "", pageToken: String = "") async throws -> MediaFeed {
+        guard permissionUser?.canReadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a Fotografía.")}
         var query: [URLQueryItem] = []
         if !folder.isEmpty { query.append(URLQueryItem(name: "folder", value: folder)) }
         if !pageToken.isEmpty { query.append(URLQueryItem(name: "pageToken", value: pageToken)) }
@@ -587,15 +628,18 @@ final class PayrollClient: ObservableObject {
         }
     }
     func createMediaFolder(id: String, parentID: String, name: String, date: String) async throws -> MediaFolder {
+        guard permissionUser?.canUploadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene permiso para subir contenido.")}
         let (data, _) = try await request(path: "api/media", body: .object(["action": .string("createFolder"), "id": .string(id), "parentId": .string(parentID), "name": .string(name), "date": .string(date)]))
         struct Result: Decodable { let folder: MediaFolder }
         return try decoder.decode(Result.self, from: data).folder
     }
     private func mediaUploadCommand(_ fields: [String: JSONValue]) async throws -> MediaUploadState {
+        guard permissionUser?.canUploadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene permiso para subir contenido.")}
         let (data, _) = try await request(path: "api/media/upload", body: .object(fields), forceNetwork: true)
         return try decoder.decode(MediaUploadState.self, from: data)
     }
     private func mediaRequest(path: String, query: [URLQueryItem], method: String = "GET") throws -> (URLRequest, String, Int) {
+        guard permissionUser?.canReadMedia != false,method != "PUT" || permissionUser?.canUploadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta operación de Fotografía.")}
         guard let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw APIError.unauthorized }
         var req = URLRequest(url: resourceURL(path: path, query: query))
         req.httpMethod = method; req.httpShouldHandleCookies = false
@@ -664,6 +708,7 @@ final class PayrollClient: ObservableObject {
         return document
     }
     func mediaDocument(_ item: MediaItem) async throws -> ExportedDocument {
+        guard permissionUser?.canReadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a Fotografía.")}
         guard let scope = try mediaScope() else { throw APIError.unauthorized }
         if usingOfflineCopy {
             guard let saved = try await restoredMediaDocument(item, scope: scope) else { throw APIError.message("Este archivo todavía no está descargado. Conéctate y elige Disponible sin conexión.") }
@@ -724,6 +769,7 @@ final class PayrollClient: ObservableObject {
         return MediaDownloadPlan(folder: root, files: files)
     }
     func saveMediaOffline(_ item: MediaItem) async throws {
+        guard permissionUser?.canReadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a Fotografía.")}
         guard let scope = try mediaScope() else { throw APIError.unauthorized }
         if mediaOffline.hasFile(item, scope: scope) { return }
         let generation = cacheGeneration

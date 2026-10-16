@@ -26,7 +26,7 @@ struct UsersView: View {
                     LabeledContent("Estado", value: user.active ? (user.ready ? "Activo" : "Pendiente de activación") : "Inactivo")
                     if user.owner { Label("Administrador · permisos completos", systemImage: "person.badge.key") }
                     else {
-                        Text(user.permissions.compactMap { PayrollFormat.permissionNames[$0] }.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
+                        Text(user.effectiveSections.compactMap { JACSection(rawValue:$0)?.title }.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
                         Button("Editar cuenta y permisos") { editor = UserEditorSession(user: user) }.disabled(busy || store.isOffline)
                         if user.active { Button(user.ready ? "Restablecer contraseña" : "Generar invitación") { selectedInvite = user }.disabled(busy || store.isOffline) }
                     }
@@ -79,16 +79,30 @@ struct UserEditorView: View {
                     TextField("Correo", text: $user.email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Toggle("Cuenta activa", isOn: $user.active)
                 }
+                Section("Secciones disponibles") {
+                    ForEach(JACSection.allCases.filter { $0 != .crm },id:\.self) { section in
+                        Toggle(section.title,isOn:Binding(get:{user.sections?.contains(section.rawValue) == true},set:{enabled in
+                            var selected=user.sections ?? user.effectiveSections;selected.removeAll{$0 == section.rawValue}
+                            if enabled {selected.append(section.rawValue)}
+                            if section == .mediaUpload && enabled && !selected.contains("media") {selected.append("media")}
+                            if section == .media && !enabled {selected.removeAll{$0 == "mediaUpload"}}
+                            if section == .payroll && !enabled {user.permissions.removeAll{$0 != "administrator"}}
+                            user.sections=selected
+                        })).disabled(user.administrator == true).accessibilityIdentifier("users.section."+section.rawValue)
+                    }
+                    LabeledContent("CRM",value:user.administrator == true ? "Administrador" : "Solo administradores")
+                }
                 Section {
                     ForEach(["payroll", "staff", "rules", "close", "send", "export", "modifyClosed"], id: \.self) { permission in
                         Toggle(PayrollFormat.permissionNames[permission] ?? permission, isOn: Binding(get: { user.permissions.contains(permission) }, set: { enabled in
                             user.permissions.removeAll { $0 == permission }; if enabled { user.permissions.append(permission) }
-                        }))
+                        })).disabled(user.sections?.contains("payroll") != true).accessibilityIdentifier("users.permission."+permission)
                     }
                 } header: { Text("Permisos") } footer: {
                     Text("Modificar cierres es un permiso independiente. Guardar cambios invalida las sesiones e invitaciones anteriores.")
                 }
             }.jacSurface().navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").jacInlineTitle()
+                .onAppear { if user.sections == nil || user.administrator == true {user.sections=user.effectiveSections} }
                 .disabled(busy || user.owner)
                 .toolbar {
                     ToolbarItem(placement: .jacLeading) { Button("Cancelar") { dismiss() }.disabled(busy) }

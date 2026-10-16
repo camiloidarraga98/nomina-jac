@@ -2,6 +2,16 @@
 
 Aplicación nativa de macOS en SwiftUI y AppKit, dentro de la misma carpeta del proyecto. Comparte modelos, formularios y API con el iPhone; no contiene un navegador incrustado ni crea una base de nómina distinta.
 
+## Accesos por sección — Mac 1.4.0 (5)
+
+En **Configuración → Usuarios → Editar** se eligen módulos de forma independiente. Fotografía y subida se conceden por separado; Camilo y `jac` pueden crear carpetas y subir fotos/videos por su rol administrador. La barra lateral y los demás menús muestran únicamente las secciones autorizadas. CRM conserva su restricción administrativa y los pases siguen siendo privados.
+
+La copia cifrada filtra los módulos permitidos y retira información/documentos revocados; una pérdida de internet conserva la sesión y la última copia permitida. La cuenta real de Anderson conserva sus permisos actuales hasta que Camilo guarde su selección. Ver [Accesos por sección](../docs/SECTION_ACCESS.md).
+
+Continúa con **Run desde este mismo `macos/JACMac.xcodeproj`**, esquema **JACMac → My Mac**. La app se entrega en la misma ruta `outputs/JAC Music.app`; si una versión anterior sigue abierta, reábrela para cargar el binario nuevo. El iPhone conserva su mismo proyecto y firma.
+
+Verificado en este Mac con fixtures `.invalid`: 84 unitarias más dos nuevas de revocación, tres recorridos UI distintos de permisos/subida/descarga y Release universal arm64/x86_64 correctos. Firma estricta verificada. Los informes intermedios y el detalle de las repeticiones se conservan en la guía de accesos; no se subieron archivos reales de prueba.
+
 ## Fotografía — Mac 1.3.0 (4)
 
 La barra lateral incorpora **Fotografía** para Camilo y `jac`, con consulta de carpetas, fotos y videos dentro de JAC. La cuenta de Anderson muestra únicamente **Fotografía** y **Mi cuenta**: crea carpetas por show/día, elige varios archivos o los arrastra y los sube por partes con reintentos sin duplicados. Las imágenes usan vista previa nativa y los videos el reproductor AVKit del Mac. Se conservan el logo, los demás menús y todos los permisos existentes.
