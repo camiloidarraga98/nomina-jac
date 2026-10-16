@@ -1,5 +1,13 @@
 # Fotografía: archivo nuevo en Cloudflare R2
 
+## Cierre publicado: R2 activo, sin Drive
+
+Web **v74** publicada succeeded en el Site existente; fuente `55e7cc030080719f889bcfa36231bfcf5fb1494b`, despliegue `appgdep_6ad28a9d101081918ab900f057099dc6`, revisión de secretos **2**. La activación de Camilo confirmó **R2 activo / Galería en R2**; `/fotografia` muestra **Archivo JAC · R2 / 0 elementos**. La conexión anterior de Fotografía se retiró en la transacción, sin revocar Google ni modificar los originales. No se importó, inventarió ni transfirió Drive. La preparación v73 descrita abajo es histórica y ya fue superada.
+
+Evidencia: `outputs/r2-conexion-activa-v74.png`, `outputs/r2-galeria-vacia-publicada-v74.png`. DB/BUCKET, dominio, audiencia, cuentas y demás conexiones intactos. La nueva migración solo añade el catálogo de Fotografía, inicialmente vacío. Nuevos archivos van a `jac-fotografia`; no hay carpetas o fotos iniciales. Las pruebas reales de carga/rendimiento no se ejecutaron; no se subieron archivos ficticios a producción.
+
+Versión local guardada en Git `0718f38`; proyectos nativos actualizados en su misma carpeta y Mac1.7.0(9) instalado en la misma ruta con respaldo anterior en work/local/r2-previous-mac. iPhone/iPad0.21.0(33) requiere Run del usuario. Personal Team/esquema comparados e intactos, pushNO. Los informes intermedios y límites se conservan al final de esta guía.
+
 ## Decisión vigente: empezar desde cero, sin transferir Drive
 
 Camilo indicó expresamente el 16 de octubre de 2026: **no transferir fotos ni videos de Drive a R2**. R2 comienza como una colección independiente y vacía para las fotos/videos nuevos de hoy en adelante. No inventariar, descargar, copiar, mover ni borrar el archivo histórico de Drive para este trabajo. Sus originales, carpetas y permisos se conservan intactos. Esta decisión sustituye cualquier propuesta anterior de migración histórica en este documento.
@@ -90,7 +98,7 @@ Las miniaturas JPEG de hasta 640 px/512 KiB las genera el dispositivo o navegado
 
 iPhone/iPad **0.21.0 (33)** y Mac **1.7.0 (9)**, en los mismos proyectos. La caché cifrada recibe la identidad de colección y retira solamente las copias anteriores de Fotografía al conocer R2. Rechaza guardados tardíos de Drive, sin borrar sus originales, cerrar sesión ni retirar otros módulos. Conserva Disponible sin conexión, Guardar en Fotos, permisos, Llavero, privacidad y push suspendido. Actualizar con Run en el proyecto existente, sin sustituirlo por otro.
 
-Verificación local: 104 pruebas de servidor/nómina/móvil, seis de acceso/cliente web y 14 Workerd correctas; los nueve casos del catálogo nuevo comprueban inicio vacío, retiro exclusivo de la conexión de Fotografía, multipart/reanudación, respuesta perdida, publicación única, datos inválidos, revocación, miniaturas y cancelación. Todas las salidas S3/Google están interceptadas. TypeScript/build correctos; tsconfig excluye `work/output/outputs/dist` para no verificar de nuevo un checkout anidado con otra identidad de tipos React. No se actualizan dependencias ni entradas existentes del lockfile.
+Verificación local: 112 pruebas de servidor/nómina/móvil/acceso/cliente web y 14 Workerd correctas; los nueve casos del catálogo nuevo comprueban inicio vacío, retiro exclusivo de la conexión de Fotografía, multipart/reanudación, respuesta perdida, publicación única, datos inválidos, revocación, miniaturas y cancelación. Todas las salidas S3/Google están interceptadas. TypeScript/build correctos; tsconfig excluye `work/output/outputs/dist` para no verificar de nuevo un checkout anidado con otra identidad de tipos React. No se actualizan dependencias ni entradas existentes del lockfile.
 
 Las 90 pruebas nativas de iPhone pasan, más una condición física omitida en simulador; Mac, 100 correctas. Se conservan informes intermedios: la primera ejecución iPhone sin firma falló en la comprobación existente del Llavero; con firma local ad hoc pasó completa, sin eliminar aserciones (`r2-native-unit-final.xcresult`). `r2-mac-unit.xcresult` correcto. La UI web real creó una carpeta y subió foto/video 2/2 con ambos JPEG ligeros, usando transferencia S3 simulada exclusivamente en localhost: `outputs/r2-galeria-local-miniaturas.png`. No se ha medido velocidad real desde Colombia ni subido archivos de prueba a producción.
 

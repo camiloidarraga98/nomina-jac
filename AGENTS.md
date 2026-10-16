@@ -1,6 +1,6 @@
 # Nómina JAC Music — continuidad local en Mac
 
-- Fotografía R2: Camilo indicó empezar una colección nueva y vacía para fotos/videos de hoy en adelante y descartar la conexión anterior de Fotografía. No inventariar, copiar, mover, descargar ni borrar contenido histórico de Drive para esta transición. Al activar R2, retirar únicamente la credencial local de Drive de Fotografía y sus autorizaciones pendientes; no revocar el grant en Google. Conservar originales/permisos y otras conexiones Google; nuevas tablas aditivas de Fotografía y bucket privado jac-fotografia independientes de nómina. Ver docs/PHOTOGRAPHY_R2_MIGRATION.md. La conexión cifrada preparada no significa proveedor activo.
+- Fotografía R2: Camilo indicó empezar una colección nueva y vacía para fotos/videos de hoy en adelante y descartar la conexión anterior de Fotografía. No inventariar, copiar, mover, descargar ni borrar contenido histórico de Drive para esta transición. Al activar R2, retirar únicamente la credencial local de Drive de Fotografía y sus autorizaciones pendientes; no revocar el grant en Google. Conservar originales/permisos y otras conexiones Google; nuevas tablas aditivas de Fotografía y bucket privado jac-fotografia independientes de nómina. Ver docs/PHOTOGRAPHY_R2_MIGRATION.md. Desde v74, R2 está activado y la galería publicada fue verificada con cero elementos. La conexión anterior de Fotografía se retiró; no volver a activarla.
 
 Lee `docs/PROJECT_CONTEXT.md` antes de modificar el proyecto. Habla con Camilo en español.
 
