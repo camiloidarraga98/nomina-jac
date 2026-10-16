@@ -27,13 +27,17 @@ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
  }};
  `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*'],plugins:[{name:'mock-request-headers',setup(b){b.onResolve({filter:/^next\/headers$/},()=>({path:'headers',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const headers=async()=>globalThis.__mfMediaHeaders;',loader:'js'}));}}]});
 async function fixture({readyFile=false,omitFileParents=false,readerPermissions=[]}={}){
- const state={offset:readyFile?13:0,size:readyFile?13:chunkSize+13,metadata:readyFile?{id:fileID,name:"Foto 'ficticia' \\ local.png",mimeType:'image/png',parents:[folderID]}:null,calls:[],redirect:false,revoke:null,omitFileParents,listedID:fileID,afterRead:null};
- const metadata=id=>id===root?{id,name:'Raíz ficticia',mimeType:folderMime,parents:[],capabilities:{canAddChildren:true}}:id===folderID?{id,name:'2026-10-16 · Show ficticio',mimeType:folderMime,parents:[root],capabilities:{canAddChildren:true}}:id===outsideID?{id,name:'Fuera de Fotografía JAC',mimeType:folderMime,parents:[]}:id===fileID&&state.offset===state.size?{...state.metadata,size:String(state.size),capabilities:{canDownload:true}}:null;
+ const state={offset:readyFile?13:0,size:readyFile?13:chunkSize+13,metadata:readyFile?{id:fileID,name:"Foto 'ficticia' \\ local.png",mimeType:'image/png',parents:[folderID]}:null,calls:[],redirect:false,revoke:null,omitFileParents,listedID:fileID,afterRead:null,afterThumbnail:null,thumbnailSize:4,thumbnailRedirect:false,listPages:null};
+ const metadata=id=>id===root?{id,name:'Raíz ficticia',mimeType:folderMime,parents:[],capabilities:{canAddChildren:true}}:id===folderID?{id,name:'2026-10-16 · Show ficticio',mimeType:folderMime,parents:[root],createdTime:'2026-10-16T00:00:00Z',capabilities:{canAddChildren:true}}:id===outsideID?{id,name:'Fuera de Fotografía JAC',mimeType:folderMime,parents:[]}:id===fileID&&state.offset===state.size?{...state.metadata,size:String(state.size),createdTime:'2026-10-16T01:00:00Z',thumbnailLink:'https://lh3.googleusercontent.com/worker-preview=s220',capabilities:{canDownload:true}}:null;
  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-media-worker'},bindings:{PAYROLL_AUTH_KEY:'fixture-workerd-independent-authentication-key',PAYROLL_MAIL_KEY:Buffer.alloc(32,9).toString('base64url')},outboundService:async req=>{
-  const url=new URL(req.url);assert.ok(['https://oauth2.googleapis.com','https://www.googleapis.com'].includes(url.origin),'The worker must never reach an external destination or redirect');
-  const entry={url:req.url,method:req.method,authorization:req.headers.get('authorization'),range:req.headers.get('content-range'),bytes:new Uint8Array(await req.arrayBuffer())};state.calls.push(entry);
+  const url=new URL(req.url);assert.ok(['https://oauth2.googleapis.com','https://www.googleapis.com','https://lh3.googleusercontent.com'].includes(url.origin),'The worker must never reach an external destination or redirect');
+  const entry={url:req.url,method:req.method,authorization:req.headers.get('authorization'),range:req.headers.get('content-range'),requestedRange:req.headers.get('range'),accept:req.headers.get('accept'),bytes:new Uint8Array(await req.arrayBuffer())};state.calls.push(entry);
   if(url.origin==='https://oauth2.googleapis.com'){assert.equal(req.method,'POST');return Response.json({access_token:'fixture-worker-access'});}
   assert.equal(req.headers.get('authorization'),'Bearer fixture-worker-access');
+  if(url.origin==='https://lh3.googleusercontent.com'){
+   assert.equal(url.pathname,'/worker-preview=s320');if(state.thumbnailRedirect)return new Response(null,{status:307,headers:{Location:'https://untrusted.example.invalid/collect'}});
+   if(state.afterThumbnail)await state.afterThumbnail();const bytes=new Uint8Array(state.thumbnailSize);bytes.set([255,216,255,1].slice(0,bytes.length));return new Response(bytes,{headers:{'Content-Type':'image/jpeg','Content-Length':String(bytes.length)}});
+  }
   if(url.pathname==='/drive/v3/files/generateIds')return Response.json({ids:[fileID]});
   if(url.pathname==='/upload/drive/v3/files'&&req.method==='POST'){state.metadata=JSON.parse(new TextDecoder().decode(entry.bytes));state.size=Number(req.headers.get('x-upload-content-length'));return new Response(null,{headers:{Location:'https://www.googleapis.com/upload/drive/v3/files?upload_id=fixture-worker-session'}});}
   if(url.pathname==='/upload/drive/v3/files'&&req.method==='PUT'){
@@ -47,6 +51,7 @@ async function fixture({readyFile=false,omitFileParents=false,readerPermissions=
    const escapedName=file?.name.replace(/\\/g,'\\\\').replace(/'/g,"\\'");
    const ordinary="'"+folderID+"' in parents and trashed=false and (mimeType='"+folderMime+"' or mimeType contains 'image/' or mimeType contains 'video/')",targeted="'"+folderID+"' in parents and name = '"+escapedName+"' and trashed=false";
    assert.ok(q===ordinary||q===targeted,'Every photo lookup must be constrained to its server-observed folder');
+   if(q===ordinary&&state.listPages){assert.equal(url.searchParams.get('orderBy'),'folder,createdTime desc,name');assert.match(url.searchParams.get('fields'),/createdTime/);const token=url.searchParams.get('pageToken')||'';assert.ok(token in state.listPages);return Response.json(state.listPages[token]);}
    return Response.json({files:file?.parents?.includes(folderID)?[{...file,id:state.listedID}]:[]});
   }
   const id=url.pathname.split('/').at(-1),value=metadata(id);if(!value)return new Response(null,{status:404});
@@ -155,5 +160,26 @@ test('Workerd lets administrators upload photos with the same guarded binary flo
   const id=crypto.randomUUID(),record={action:'start',id,parentId:folderID,filename:'admin-ficticio.png',mimeType:'image/png',size:13};
   let response=await call('/api/media/upload',{role:'owner',method:'POST',body:JSON.stringify(record)});assert.equal(response.status,200);
   const bytes=new Uint8Array(13);bytes.set([137,80,78,71,13,10,26,10]);response=await call('/api/media/upload?id='+id+'&offset=0',{role:'owner',method:'PUT',body:bytes});assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.equal(state.metadata.name,'admin-ficticio.png');
+ }finally{await mf.dispose();}
+});
+
+test('Workerd streams only bounded private previews and revalidates permission without original fallback',async()=>{
+ const {mf,db,state,call}=await fixture({readyFile:true});try{
+  let response=await call('/api/media/file?id='+fileID+'&thumbnail=1',{role:'owner',headers:{Range:'bytes=2-5'}});assert.equal(response.status,200);assert.deepEqual([...new Uint8Array(await response.arrayBuffer())],[255,216,255,1]);assert.equal(response.headers.get('Content-Length'),'4');assert.match(response.headers.get('Cache-Control'),/private, no-store/);assert.equal(response.headers.get('Accept-Ranges'),'none');
+  const preview=state.calls.find(call=>new URL(call.url).origin==='https://lh3.googleusercontent.com');assert.equal(preview.requestedRange,null);assert.match(preview.accept,/image\/jpeg/);assert.equal(state.calls.some(call=>new URL(call.url).searchParams.get('alt')==='media'),false);
+  state.thumbnailSize=512*1024+1;response=await call('/api/media/file?id='+fileID+'&thumbnail=1',{role:'owner'});assert.equal(response.status,502);state.thumbnailSize=4;
+  state.thumbnailRedirect=true;response=await call('/api/media/file?id='+fileID+'&thumbnail=1',{role:'owner'});assert.equal(response.status,502);state.thumbnailRedirect=false;
+  state.afterThumbnail=async()=>{await db.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').bind(ownerID).run();};response=await call('/api/media/file?id='+fileID+'&thumbnail=1',{role:'owner'});assert.equal(response.status,403);assert.equal(state.calls.some(call=>new URL(call.url).searchParams.get('alt')==='media'),false);
+ }finally{await mf.dispose();}
+});
+
+test('Workerd requests globally ordered creation pages rather than sorting by last modification or folder name',async()=>{
+ const {mf,state,call}=await fixture({readyFile:true});try{
+  const item=(id,name,createdTime,modifiedTime)=>({id,name,mimeType:folderMime,parents:[folderID],createdTime,modifiedTime});
+  const newest=item('worker_new_folder','Z recién creada','2026-10-16T00:00:00Z','2026-01-01T00:00:00Z'),middle=item('worker_mid_folder','M intermedia','2026-09-01T00:00:00Z','2026-12-01T00:00:00Z'),oldest=item('worker_old_folder','A antigua','2026-01-01T00:00:00Z','2026-12-31T00:00:00Z');
+  state.listPages={'':{files:[middle,newest],nextPageToken:'page_2'},page_2:{files:[oldest]}};
+  const first=await call('/api/media?folder='+folderID,{role:'owner'});assert.equal(first.status,200);const feed=await first.json();assert.equal(feed.nextPageToken,'page_2');assert.deepEqual(feed.items.map(item=>item.id),[newest.id,middle.id]);
+  const second=await call('/api/media?folder='+folderID+'&pageToken='+feed.nextPageToken,{role:'owner'});assert.equal(second.status,200);const page=await second.json();assert.deepEqual(page.items.map(item=>item.id),[oldest.id]);assert.equal(page.items[0].createdAt,oldest.createdTime);assert.equal(page.items[0].modifiedAt,oldest.modifiedTime);assert.equal(page.nextPageToken,undefined);
+  assert.equal(state.calls.filter(call=>new URL(call.url).searchParams.get('orderBy')==='folder,createdTime desc,name').length,2);
  }finally{await mf.dispose();}
 });

@@ -225,6 +225,62 @@ test('Google redirects and unsafe thumbnail URLs are rejected without forwarding
  files.get(imageID).thumbnailLink='https://lh3.googleusercontent.com/fixture-preview';const thumbnail=await m.mediaFile(g,imageID,true,null);assert.equal(thumbnail.status,200);assert.equal(calls.find(c=>c.url.hostname==='lh3.googleusercontent.com').headers.get('authorization'),'Bearer fixture-access');
  hook=async(entry,next)=>entry.url.hostname==='lh3.googleusercontent.com'?new Response(null,{status:302,headers:{Location:'https://untrusted.example.invalid/preview'}}):next();await assert.rejects(()=>m.mediaFile(g,imageID,true,null),fails(502));assert.ok(calls.every(c=>!c.url.hostname.includes('untrusted')));
 });
+
+test('folder feeds use creation time descending on every Drive page and preserve createdAt independently of modification',async()=>{
+ const g=await guard(ownerToken,'read'),owner=await m.authenticatedSession(ownerToken),entries=[
+  {...folder('creation_old_fixture','A anterior',[m.MEDIA_ROOT_ID]),createdTime:'2026-01-01T00:00:00Z',modifiedTime:'2026-12-30T00:00:00Z'},
+  {...folder('creation_new_fixture','Z reciente',[m.MEDIA_ROOT_ID]),createdTime:'2026-10-16T00:00:00Z',modifiedTime:'2026-01-01T00:00:00Z'},
+  {...folder('creation_mid_b_fixture','B simultánea',[m.MEDIA_ROOT_ID]),createdTime:'2026-09-01T00:00:00Z'},
+  {...folder('creation_mid_a_fixture','A simultánea',[m.MEDIA_ROOT_ID]),createdTime:'2026-09-01T00:00:00Z'},
+ ];
+ for(const file of entries)files.set(file.id,file);
+ const expected=[entries[1],entries[3],entries[2],entries[0]],seen=[];
+ hook=async(entry,next)=>{
+  if(entry.method==='GET'&&entry.url.pathname==='/drive/v3/files'&&!isNameListing(entry)){
+   assert.equal(entry.url.searchParams.get('orderBy'),'folder,createdTime desc,name');assert.match(entry.url.searchParams.get('fields'),/createdTime/);
+   const token=entry.url.searchParams.get('pageToken')||'',offset=token?Number(token.slice(5)):0;seen.push(token);
+   return Response.json({files:expected.slice(offset,offset+2).reverse(),...(offset+2<expected.length?{nextPageToken:'page_'+(offset+2)}:{})});
+  }return next();
+ };
+ const all=[];let pageToken;do{const page=await m.mediaFeed(g,owner,m.MEDIA_ROOT_ID,pageToken);all.push(...page.items);pageToken=page.nextPageToken;}while(pageToken);
+ assert.deepEqual(all.map(file=>file.id),expected.map(file=>file.id));assert.deepEqual(seen,['','page_2']);assert.equal(all.at(-1).createdAt,entries[0].createdTime);assert.equal(all.at(-1).modifiedAt,entries[0].modifiedTime);
+ const old={...all[0],id:'order_b_fixture',name:'Mismo',createdAt:''},other={...old,id:'order_a_fixture'};assert.deepEqual([old,other].sort(m.mediaItemOrder).map(file=>file.id),[other.id,old.id]);
+});
+
+test('thumbnail requests remain small, authenticated, and never fetch original bytes',async()=>{
+ const g=await guard(ownerToken,'read');files.get(imageID).thumbnailLink='https://lh3.googleusercontent.com/private-preview=s220';
+ const response=await m.mediaFile(g,imageID,true,'bytes=1-3'),bytes=new Uint8Array(await response.arrayBuffer()),request=calls.find(call=>call.url.hostname==='lh3.googleusercontent.com');
+ assert.equal(response.status,200);assert.deepEqual([...bytes],[255,216,255,1]);assert.equal(response.headers.get('Content-Length'),'4');assert.equal(response.headers.get('Accept-Ranges'),'none');assert.equal(request.url.pathname,'/private-preview=s320');assert.equal(request.headers.get('authorization'),'Bearer fixture-access');assert.match(request.headers.get('accept'),/image\/jpeg/);assert.equal(request.headers.get('range'),null);assert.equal(request.options.redirect,'manual');assert.equal(calls.filter(call=>call.url.searchParams.get('alt')==='media').length,0);
+ assert.equal(m.mediaThumbnailURL('https://lh3.googleusercontent.com/signed-preview?signature=fixture').toString(),'https://lh3.googleusercontent.com/signed-preview?signature=fixture');
+ for(const link of ['https://googleusercontent.com.untrusted.example.invalid/x=s220','http://lh3.googleusercontent.com/x=s220','https://user:pass@lh3.googleusercontent.com/x=s220','https://lh3.googleusercontent.com:8443/x=s220'])assert.throws(()=>m.mediaThumbnailURL(link),fails(502));
+});
+
+test('oversized or missing previews fail closed without falling back to an original download',async()=>{
+ const g=await guard(ownerToken,'read');
+ for(const declared of [true,false]){let cancelled=false;hook=async(entry,next)=>entry.url.hostname==='lh3.googleusercontent.com'?new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array(m.MEDIA_THUMBNAIL_MAX_BYTES+1));},cancel(){cancelled=true;}}),{headers:{'Content-Type':'image/jpeg',...(declared?{'Content-Length':String(m.MEDIA_THUMBNAIL_MAX_BYTES+1)}:{})}}):next();await assert.rejects(()=>m.mediaFile(g,imageID,true,null),fails(502));assert.equal(cancelled,true);}
+ hook=undefined;delete files.get(imageID).thumbnailLink;const before=calls.length;await assert.rejects(()=>m.mediaFile(g,imageID,true,null),fails(404));assert.equal(calls.slice(before).some(call=>call.url.searchParams.get('alt')==='media'||call.url.hostname==='lh3.googleusercontent.com'),false);
+});
+
+test('a preview that becomes ready after listing can be opened without trusting the old availability flag',async()=>{
+ const g=await guard(ownerToken,'read'),owner=await m.authenticatedSession(ownerToken);
+ hook=async(entry,next)=>{const response=await next();if(entry.url.pathname==='/drive/v3/files'&&!isNameListing(entry)){const body=await response.json();return Response.json({...body,files:body.files.map(file=>{const {thumbnailLink,...pending}=file;return pending;})});}return response;};
+ const feed=await m.mediaFeed(g,owner,folderID);assert.equal(feed.items.find(item=>item.id===imageID).thumbnailAvailable,false);
+ const response=await m.mediaFile(g,imageID,true,null);assert.equal(response.status,200);assert.equal((await response.arrayBuffer()).byteLength,4);assert.equal(calls.some(call=>call.url.searchParams.get('alt')==='media'),false);
+ hook=async(entry,next)=>entry.url.hostname==='lh3.googleusercontent.com'?new Response(new Uint8Array(m.MEDIA_THUMBNAIL_MAX_BYTES),{headers:{'Content-Type':'image/png'}}):next();
+ assert.equal((await(await m.mediaFile(g,imageID,true,null)).arrayBuffer()).byteLength,m.MEDIA_THUMBNAIL_MAX_BYTES);
+});
+
+test('permission revocation while a thumbnail body is being read prevents delivery',async()=>{
+ const g=await guard(ownerToken,'read');hook=async(entry,next)=>entry.url.hostname==='lh3.googleusercontent.com'?new Response(new ReadableStream({start(controller){controller.enqueue(new Uint8Array([255,216,255]));},pull(controller){sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(ownerID);controller.close();}}),{headers:{'Content-Type':'image/jpeg'}}):next();
+ await assert.rejects(()=>m.mediaFile(g,imageID,true,null),fails(403));assert.equal(calls.some(call=>call.url.searchParams.get('alt')==='media'),false);
+});
+
+test('uploads and new event folders may target the authorized Drive root without a second service',async()=>{
+ const g=await guard(),user=await m.authenticatedSession(photoToken),created=await m.createMediaFolder(g,{id:crypto.randomUUID(),parentId:m.MEDIA_ROOT_ID,name:'Evento ficticio desde raíz',date:'2026-10-16'});
+ assert.equal(files.get(created.folder.id).parents[0],m.MEDIA_ROOT_ID);
+ const record=input({parentId:m.MEDIA_ROOT_ID,size:13});await m.startMediaUpload(g,record);const final=await m.appendMediaUpload(g,record.id,0,chunk().slice(0,13));assert.equal(final.complete,true);
+ const rootFeed=await m.mediaFeed(g,user);assert.ok(rootFeed.items.some(item=>item.name===record.filename));assert.ok(rootFeed.items.some(item=>item.id===created.folder.id));assert.ok(calls.every(call=>!call.url.hostname.includes('untrusted')));
+});
 test('resumable locations outside the Google upload endpoint never get stored or followed',async()=>{
  const g=await guard(),record=input();hook=async(entry,next)=>entry.url.pathname==='/upload/drive/v3/files'&&entry.method==='POST'?new Response(null,{headers:{Location:'https://untrusted.example.invalid/upload?upload_id=fixture'}}):next();
  await assert.rejects(()=>m.startMediaUpload(g,record),fails(502));assert.equal(sql.prepare('SELECT session_payload FROM jac_media_operations WHERE id=?').get(record.id).session_payload,'');assert.ok(calls.every(c=>!c.url.hostname.includes('untrusted')));

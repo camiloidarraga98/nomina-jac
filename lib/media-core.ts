@@ -5,6 +5,8 @@ export const MEDIA_ROOT_ID='1yH4pNYQxArfynzho-IPBtx5w4AWbQ-C5';
 export const MEDIA_SCOPE='https://www.googleapis.com/auth/drive';
 export const MEDIA_CHUNK_SIZE=1024*1024;
 export const MEDIA_MAX_SIZE=20*1024*1024*1024;
+export const MEDIA_THUMBNAIL_MAX_BYTES=512*1024;
+export const MEDIA_THUMBNAIL_EDGE=320;
 export const MEDIA_FOLDER_MIME='application/vnd.google-apps.folder';
 export class MediaFailure extends Error {constructor(message:string,public status=400){super(message);}}
 export function mediaOAuthMessage(reason:string|null){const messages:Record<string,string>={browser_guard_missing:'El navegador no conservó la autorización. Vuelve a conectar Drive desde esta misma pestaña de JAC.',browser_guard_mismatch:'Se inició otra conexión de Google en este navegador. Vuelve a conectar Drive y termina ese único intento.',web_session_missing:'Inicia sesión como Camilo en JAC y vuelve a conectar Drive desde la misma pestaña.',web_session_changed:'La sesión de JAC cambió durante la autorización. Vuelve a conectar Drive sin iniciar sesión en otra pestaña.',authorization_used:'Este intento ya se utilizó. Inicia una nueva conexión de Google Drive.',expired:'La autorización venció mientras se completaba Google. Pulsa Conectar Google Drive para intentarlo de nuevo.',session_revoked:'La sesión o los permisos cambiaron. Inicia sesión como Camilo y vuelve a conectar Drive.',google_denied:'Google no autorizó la conexión. Puedes volver a intentarlo con la cuenta de JAC.',missing_code:'Google no entregó la autorización. Vuelve a conectar Drive.',configuration_changed:'La configuración de Google cambió. Inicia otra conexión de Drive.',google_token:'Google no confirmó el permiso necesario para Drive. Vuelve a conectar y autoriza el acceso solicitado.',google_account:'Selecciona jacmusicestudios@gmail.com al conectar Google Drive.',folder_access:'La cuenta jacmusicestudios@gmail.com necesita permiso de edición en la carpeta de contenido de JAC.',connection_storage:'No se pudo guardar la conexión de Drive. Vuelve a conectar desde tu sesión actual.'};return reason&&Object.hasOwn(messages,reason)?messages[reason]:'La conexión de Drive no se completó. Vuelve a conectarla desde esta misma pestaña de JAC.';}
@@ -14,7 +16,16 @@ export const canConnectMedia=(user:AccessUser)=>!user.legacy&&!user.mediaOnly&&!
 export const validMediaID=(id:unknown):id is string=>typeof id==='string'&&/^[A-Za-z0-9_-]{5,200}$/.test(id);
 export const validMediaRequestID=(id:unknown):id is string=>typeof id==='string'&&/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(id);
 export type MediaKind='folder'|'image'|'video';
-export type MediaItem={id:string;name:string;mimeType:string;kind:MediaKind;size:number;modifiedAt:string;thumbnailAvailable:boolean};
+export type MediaItem={id:string;name:string;mimeType:string;kind:MediaKind;size:number;createdAt:string;modifiedAt:string;thumbnailAvailable:boolean};
+export function mediaItemOrder(a:MediaItem,b:MediaItem){const group=Number(a.kind!=='folder')-Number(b.kind!=='folder');if(group)return group;const stamp=(item:MediaItem)=>Number.isFinite(Date.parse(item.createdAt))?Date.parse(item.createdAt):0;return stamp(b)-stamp(a)||a.name.localeCompare(b.name,'es')||a.id.localeCompare(b.id,'en');}
+export function mediaThumbnailURL(value:string){
+ let url:URL;try{url=new URL(value);}catch{throw new MediaFailure('La dirección de la miniatura no es válida.',502);}
+ if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash||!/(^|\.)googleusercontent\.com$/.test(url.hostname))throw new MediaFailure('La dirección de la miniatura no es válida.',502);
+ // Resize only the size suffix returned by Drive. Preserve signed URLs without
+ // this known suffix instead of inventing an alternate download endpoint.
+ url.pathname=url.pathname.replace(/=s\d+(?:-[a-z0-9]+)*$/i,'=s'+MEDIA_THUMBNAIL_EDGE);
+ return url;
+}
 export function mediaKind(mime:string):MediaKind|null {return mime===MEDIA_FOLDER_MIME?'folder':/^(image\/(jpeg|png|gif|webp|heic|heif|tiff))$/.test(mime)?'image':/^(video\/(mp4|quicktime|webm|x-m4v))$/.test(mime)?'video':null;}
 export function mediaName(value:unknown){if(typeof value!=='string')throw new MediaFailure('Escribe un nombre para la carpeta o el archivo.');const name=value.normalize('NFC').trim();if(!name||name.length>180||/[\u0000-\u001f\u007f/\\]/.test(name)||name==='.'||name==='..')throw new MediaFailure('Usa un nombre de hasta 180 caracteres, sin barras ni caracteres de control.');return name;}
 export function mediaFolderName(name:unknown,date:unknown){if(!validAgendaDate(date))throw new MediaFailure('Selecciona el día de trabajo.');return date+' · '+mediaName(name);}

@@ -2,6 +2,8 @@
 
 16 de octubre de 2026. Función del ecosistema existente: web, iPhone y Mac; no se crea otro Site ni otro almacenamiento de producción.
 
+La revisión más reciente de navegación, miniaturas, orden de carpetas, subida a eventos y menús de descarga está en [Fotografía: UX](PHOTOGRAPHY_UX.md). Los registros siguientes conservan las verificaciones de las entregas anteriores.
+
 ## Uso
 
 Fotografía muestra las carpetas y fotos/videos dentro de JAC. Conserva los meses y carpetas existentes de `Contenido 2026 Jhon Alex`, raíz `1yH4pNYQxArfynzho-IPBtx5w4AWbQ-C5`. Los cambios se consultan al entrar, volver a la ventana y cada 30 segundos mientras la vista está activa. Se puede actualizar manualmente. Las listas se paginan y la navegación incluye la ruta de carpetas.
