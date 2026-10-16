@@ -6,7 +6,7 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "install:ci": "npm install --no-audit --no-fund",
+    "install:ci": "npm ci --no-audit --no-fund",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
     "build": "vinext build",
     "start": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vinext start",

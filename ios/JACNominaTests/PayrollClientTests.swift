@@ -424,6 +424,65 @@ final class PayrollClientTests: XCTestCase {
             XCTAssertThrowsError(try PayrollClient.directMediaRequest(URL(string: value)!, mime: "video/mp4", offset: 0, count: 19, total: 19))
         }
     }
+    @MainActor func testR2UploadUsesSignedPartsWithoutJACCredentialsAndRecoversCommittedTimeout() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://mock.example.invalid")!, vault: vault, configuration: config)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mp4"), bytes = Data(repeating: 71, count: 8 * 1024 * 1024 + 19)
+        try bytes.write(to: source); defer { try? FileManager.default.removeItem(at: source); MockProtocol.handler = nil }
+        let file = try MediaLocalFile.stage(source); defer { file.remove() }
+        var offset = 0, starts = 0, statuses = 0, chunks: [Int] = [], failed = false
+        func signed(_ part: Int) -> String {
+            var url = URLComponents(string: "https://" + String(repeating: "1", count: 32) + ".r2.cloudflarestorage.com/jac-fotografia/originals/" + file.id.lowercased())!
+            url.queryItems = [URLQueryItem(name: "uploadId", value: "fixture-one-file"), URLQueryItem(name: "partNumber", value: String(part)), URLQueryItem(name: "X-Amz-Algorithm", value: "AWS4-HMAC-SHA256"), URLQueryItem(name: "X-Amz-Credential", value: String(repeating: "2", count: 32) + "/20261016/auto/s3/aws4_request"), URLQueryItem(name: "X-Amz-Date", value: "20261016T120000Z"), URLQueryItem(name: "X-Amz-Expires", value: "300"), URLQueryItem(name: "X-Amz-SignedHeaders", value: "content-length;content-type;host"), URLQueryItem(name: "X-Amz-Signature", value: String(repeating: "a", count: 64))]
+            return url.url!.absoluteString
+        }
+        MockProtocol.handler = { req in
+            if req.url?.host?.hasSuffix(".r2.cloudflarestorage.com") == true {
+                XCTAssertEqual(req.httpMethod, "PUT"); for header in ["Cookie", "Authorization", "Origin", "Content-Range"] { XCTAssertNil(req.value(forHTTPHeaderField: header)) }
+                let chunk = try MockProtocol.requestBody(req); XCTAssertEqual(req.value(forHTTPHeaderField: "Content-Length"), String(chunk.count))
+                chunks.append(chunk.count); offset += chunk.count
+                if !failed { failed = true; throw URLError(.timedOut) }
+                return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data())
+            }
+            XCTAssertEqual(req.httpMethod, "POST", "R2 must never fall back to relay bytes through JAC")
+            let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(req))
+            if body["action"].text == "start" { starts += 1 } else { statuses += 1 }
+            var state: JSONValue = .object(["id": .string(file.id), "provider": .string("r2"), "offset": .number(Double(offset)), "chunkSize": .number(8 * 1024 * 1024), "complete": .bool(offset == bytes.count)])
+            if offset < bytes.count { state["uploadURL"] = .string(signed(offset / (8 * 1024 * 1024) + 1)) }
+            return (HTTPURLResponse(url: req.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, try JSONEncoder().encode(state))
+        }
+        try await client.uploadMedia(file, parentID: "jac_r2_root") { _, _ in }
+        XCTAssertEqual(offset, bytes.count); XCTAssertEqual(starts, 1); XCTAssertEqual(statuses, 2); XCTAssertEqual(chunks, [8 * 1024 * 1024, 19])
+        let valid = URL(string: signed(1))!
+        for invalid in [valid.absoluteString.replacingOccurrences(of: "jac-fotografia", with: "another-bucket"), valid.absoluteString.replacingOccurrences(of: "originals", with: "thumbnails"), valid.absoluteString + "&partNumber=2", valid.absoluteString.replacingOccurrences(of: "X-Amz-Expires=300", with: "X-Amz-Expires=86400")] {
+            XCTAssertThrowsError(try PayrollClient.directMediaRequest(URL(string: invalid)!, mime: "video/mp4", offset: 0, count: 8 * 1024 * 1024, total: Int64(bytes.count)))
+        }
+        XCTAssertThrowsError(try PayrollClient.directMediaRequest(valid, mime: "video/mp4", offset: 0, count: 19, total: Int64(bytes.count)))
+    }
+    func testNewR2CollectionDiscardsOnlyLegacyGalleryCacheAndRejectsLateOldWrites() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), source = root.appendingPathComponent("photo.jpg")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true); defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MediaOfflineCache(root: root.appendingPathComponent("gallery")), scope = AgendaCacheScope(origin: "https://fixture.invalid", token: String(repeating: "f", count: 43)), bytes = Data([1, 2, 3]); try bytes.write(to: source)
+        let old = MediaItem(id: "legacy-drive-photo", name: "Anterior.jpg", mimeType: "image/jpeg", kind: "image", size: 3, modifiedAt: "old", thumbnailAvailable: false)
+        let oldFeed = MediaFeed(connected: true, canRead: true, canUpload: true, canConnect: false, root: MediaFolder(id: "drive-root", name: "Anterior"), folder: MediaFolder(id: "drive-root", name: "Anterior"), breadcrumbs: [], items: [old], nextPageToken: nil)
+        try cache.saveFeed(oldFeed, key: "", append: false, scope: scope); try cache.saveFile(source, item: old, scope: scope); try cache.pinFeed(oldFeed, key: "", scope: scope)
+        let fresh = MediaFeed(connected: true, canRead: true, canUpload: true, canConnect: false, root: MediaFolder(id: "jac_r2_root", name: "Fotografía"), folder: MediaFolder(id: "jac_r2_root", name: "Fotografía"), breadcrumbs: [], items: [], nextPageToken: nil, provider: "r2", collectionID: "jac-r2-new-20261016")
+        try cache.saveFeed(fresh, key: "", append: true, scope: scope)
+        XCTAssertEqual(cache.loadFeed("", scope: scope)?.items.count, 0); XCTAssertEqual(cache.loadFeed("", scope: scope)?.provider, "r2")
+        XCTAssertFalse(cache.hasFile(old, scope: scope)); XCTAssertFalse(FileManager.default.fileExists(atPath: cache.encryptedFile(old, scope: scope).path))
+        XCTAssertThrowsError(try cache.saveFeed(oldFeed, key: "", append: false, scope: scope)); XCTAssertThrowsError(try cache.pinFeed(oldFeed, key: "", scope: scope)); XCTAssertThrowsError(try cache.saveFile(source, item: old, scope: scope))
+        XCTAssertEqual(try Data(contentsOf: source), bytes, "The original source outside JAC's gallery cache is untouched")
+    }
+    func testNativeThumbnailIsSmallJPEGWhileOriginalRemainsUnchanged() async throws {
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".png"); try MediaFixture.photo.write(to: source); defer { try? FileManager.default.removeItem(at: source) }
+        let file = try MediaLocalFile.stage(source); defer { file.remove() }
+        let generated = await MediaThumbnail.jpeg(for: file)
+        let thumbnail = try XCTUnwrap(generated); XCTAssertLessThanOrEqual(thumbnail.count, 512 * 1024)
+        let image = try XCTUnwrap(CGImageSourceCreateWithData(thumbnail as CFData, nil)); XCTAssertEqual(CGImageSourceGetType(image) as String?, "public.jpeg")
+        let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any]); XCTAssertLessThanOrEqual(properties[kCGImagePropertyPixelWidth] as? Int ?? 1000, 640)
+        XCTAssertEqual(try Data(contentsOf: source), MediaFixture.photo)
+    }
     @MainActor func testDirectMediaUploadFallsBackToSameSessionIfNetworkRefusesDirectBytes() async throws {
         let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
         let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]

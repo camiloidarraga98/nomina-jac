@@ -16,6 +16,7 @@ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
  import * as media from './app/api/media/route';
  import * as upload from './app/api/media/upload/route';
  import * as file from './app/api/media/file/route';
+ import * as storage from './app/api/media/storage/route';
  import {ensureMediaConfig,mediaStoredGuard,storeMediaConnection} from './lib/media-drive';
  export default {async fetch(req:Request){
   globalThis.__mfMediaHeaders=new Headers(req.headers);globalThis.__mfMediaHeaders.set("host","media-worker.example.invalid");
@@ -23,6 +24,7 @@ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
   if(path==='/init'){const config=await ensureMediaConfig();await storeMediaConnection({clientId:'fixture.apps.googleusercontent.com',clientSecret:'fixture-secret',refreshToken:'fixture-refresh',scopes:['${scope}']},config.version,mediaStoredGuard('${tokenHash(tokens.owner)}','${ownerID}','connect'));return Response.json({ok:true});}
   if(path==='/api/media/upload')return req.method==='PUT'?upload.PUT(req):upload.POST(req);
   if(path==='/api/media/file')return file.GET(req);
+  if(path==='/api/media/storage')return req.method==='GET'?storage.GET(req):storage.POST(req);
   return req.method==='GET'?media.GET(req):media.POST(req);
  }};
  `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*'],plugins:[{name:'mock-request-headers',setup(b){b.onResolve({filter:/^next\/headers$/},()=>({path:'headers',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const headers=async()=>globalThis.__mfMediaHeaders;',loader:'js'}));}}]});
@@ -30,8 +32,22 @@ async function fixture({readyFile=false,omitFileParents=false,readerPermissions=
  const state={offset:readyFile?13:0,size:readyFile?13:chunkSize+13,metadata:readyFile?{id:fileID,name:"Foto 'ficticia' \\ local.png",mimeType:'image/png',parents:[folderID]}:null,calls:[],redirect:false,revoke:null,omitFileParents,listedID:fileID,afterRead:null,afterThumbnail:null,thumbnailSize:4,thumbnailRedirect:false,listPages:null};
  const metadata=id=>id===root?{id,name:'Raíz ficticia',mimeType:folderMime,parents:[],capabilities:{canAddChildren:true}}:id===folderID?{id,name:'2026-10-16 · Show ficticio',mimeType:folderMime,parents:[root],createdTime:'2026-10-16T00:00:00Z',capabilities:{canAddChildren:true}}:id===outsideID?{id,name:'Fuera de Fotografía JAC',mimeType:folderMime,parents:[]}:id===fileID&&state.offset===state.size?{...state.metadata,size:String(state.size),createdTime:'2026-10-16T01:00:00Z',thumbnailLink:'https://lh3.googleusercontent.com/worker-preview=s220',capabilities:{canDownload:true}}:null;
  const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-media-worker'},bindings:{PAYROLL_AUTH_KEY:'fixture-workerd-independent-authentication-key',PAYROLL_MAIL_KEY:Buffer.alloc(32,9).toString('base64url')},outboundService:async req=>{
-  const url=new URL(req.url);assert.ok(['https://oauth2.googleapis.com','https://www.googleapis.com','https://lh3.googleusercontent.com'].includes(url.origin),'The worker must never reach an external destination or redirect');
+  const url=new URL(req.url);assert.ok(['https://oauth2.googleapis.com','https://www.googleapis.com','https://lh3.googleusercontent.com','https://'+'1'.repeat(32)+'.r2.cloudflarestorage.com'].includes(url.origin),'The worker must never reach an external destination or redirect');
   const entry={url:req.url,method:req.method,authorization:req.headers.get('authorization'),range:req.headers.get('content-range'),requestedRange:req.headers.get('range'),accept:req.headers.get('accept'),bytes:new Uint8Array(await req.arrayBuffer())};state.calls.push(entry);
+  if(url.hostname.endsWith('.r2.cloudflarestorage.com')){
+   assert.match(req.headers.get('authorization'),/^AWS4-HMAC-SHA256 Credential=/);assert.equal(req.headers.get('cookie'),null);
+   if(state.r2Redirect)return new Response(null,{status:307,headers:{location:'https://untrusted.example.invalid/collect'}});
+   state.s3 ??= {parts:new Map(),objects:new Map()};const s3=state.s3,key=url.pathname.slice('/jac-fotografia/'.length),uploadID=url.searchParams.get('uploadId');
+   if(url.pathname==='/jac-fotografia'){assert.equal(req.method,'HEAD');return new Response(null);}
+   if(req.method==='POST'&&url.searchParams.has('uploads')){s3.key=key;s3.mime=req.headers.get('content-type');s3.id=req.headers.get('x-amz-meta-jac-request');return new Response('<InitiateMultipartUploadResult><UploadId>worker-r2-fixture</UploadId></InitiateMultipartUploadResult>');}
+   if(uploadID&&req.method==='GET')return new Response('<ListPartsResult><IsTruncated>false</IsTruncated>'+[...s3.parts].map(([n,b])=>'<Part><PartNumber>'+n+'</PartNumber><Size>'+b.length+'</Size><ETag>"'+'a'.repeat(32)+'"</ETag></Part>').join('')+'</ListPartsResult>');
+   if(uploadID&&req.method==='POST'){assert.equal(key,s3.key);s3.objects.set(key,{bytes:s3.parts.get(1),mime:s3.mime,id:s3.id});return new Response('<CompleteMultipartUploadResult><Key>'+key+'</Key></CompleteMultipartUploadResult>');}
+   if(req.method==='PUT'){s3.objects.set(key,{bytes:entry.bytes,mime:req.headers.get('content-type')});return new Response(null);}
+   const object=s3.objects.get(key);if(!object)return new Response(null,{status:404});const headers={'content-type':object.mime,'content-length':String(object.bytes.length),...(object.id?{'x-amz-meta-jac-request':object.id}:{})};
+   if(req.method==='HEAD')return new Response(null,{headers});
+   if(req.method==='GET'){if(state.afterR2Read)await state.afterR2Read();const match=req.headers.get('range')?.match(/^bytes=(\d+)-(\d+)$/);if(match){const a=Number(match[1]),b=Number(match[2]);return new Response(object.bytes.slice(a,b+1),{status:206,headers:{...headers,'content-length':String(b-a+1),'content-range':`bytes ${a}-${b}/${object.bytes.length}`}});}return new Response(object.bytes,{headers});}
+   throw new Error('Unrecognized simulated R2 request');
+  }
   if(url.origin==='https://oauth2.googleapis.com'){assert.equal(req.method,'POST');return Response.json({access_token:'fixture-worker-access'});}
   assert.equal(req.headers.get('authorization'),'Bearer fixture-worker-access');
   if(url.origin==='https://lh3.googleusercontent.com'){
@@ -80,6 +96,19 @@ async function listReadyFile({db,call}){
  const location=await db.prepare('SELECT parent_id,connection_version FROM jac_media_locations WHERE file_id=?').bind(fileID).first(),connection=await db.prepare("SELECT version FROM jac_media_connection WHERE id='jac'").first();
  assert.equal(location?.parent_id,folderID);assert.equal(location.connection_version,connection.version);
 }
+test('Workerd signs R2 requests, stores only encrypted staged credentials, and rejects redirected or unauthorized saves',async()=>{
+ const {mf,db,state,call}=await fixture();try{
+  const body=JSON.stringify({accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0});
+  const before=await db.prepare("SELECT credentials FROM jac_media_connection WHERE id='jac'").first();
+  assert.equal((await call('/api/media/storage',{method:'POST',body})).status,403);
+  state.r2Redirect=true;assert.equal((await call('/api/media/storage',{role:'owner',method:'POST',body})).status,502);assert.equal(await db.prepare('SELECT * FROM jac_media_r2_connection').first(),null);
+  state.r2Redirect=false;const response=await call('/api/media/storage',{role:'owner',method:'POST',body});assert.equal(response.status,200);const data=await response.json();assert.equal(data.active,false);assert.equal(data.configured,true);assert.ok(!JSON.stringify(data).includes('3'.repeat(64)));
+  const saved=await db.prepare('SELECT * FROM jac_media_r2_connection').first();assert.ok(saved.credentials&&!saved.credentials.includes('3'.repeat(64)));assert.equal(saved.enabled,0);
+  assert.deepEqual(await db.prepare("SELECT credentials FROM jac_media_connection WHERE id='jac'").first(),before);
+  assert.equal((await call('/api/media/storage',{role:'reader'})).status,403);assert.equal((await call('/api/media/storage',{role:'owner',method:'POST',body})).status,409);
+  assert.ok(state.calls.every(c=>!c.url.includes('untrusted')));
+ }finally{await mf.dispose();}
+});
 test('Workerd/D1 resumes binary chunks through manual Google 308 and serves private video/photo ranges',async()=>{
  const {mf,state,call}=await fixture();try{
   const id=crypto.randomUUID(),record={action:'start',id,parentId:folderID,filename:'foto-ficticia.png',mimeType:'image/png',size:chunkSize+13};
@@ -197,5 +226,28 @@ test('Workerd separates direct file bytes from JAC control and publishes only af
   response=await call('/api/media/upload',{role:'photo',method:'POST',body:JSON.stringify({action:'status',transport:'direct',id})});assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.deepEqual(state.metadata.parents,[folderID]);
   assert.ok(state.calls.filter(c=>c.method==='PUT').every(c=>c.bytes.length===0));assert.equal(state.calls.filter(c=>c.method==='PATCH').length,1);
   const row=await db.prepare('SELECT session_payload FROM jac_media_operations WHERE id=?').bind(id).first();assert.ok(!row.session_payload.includes('upload_id'));
+ }finally{await mf.dispose();}
+});
+
+test('Workerd starts a fresh R2-only gallery, publishes direct bytes, serves private previews and enforces revocation',async()=>{
+ const {mf,db,state,call}=await fixture();try{
+  const storage={accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0};
+  assert.equal((await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify(storage)})).status,200);
+  assert.equal((await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({action:'activateNewCollection',version:1})})).status,200);
+  assert.equal((await db.prepare("SELECT credentials FROM jac_media_connection WHERE id='jac'").first()).credentials,'');
+  let response=await call('/api/media',{role:'photo'});assert.equal(response.status,200);const root=(await response.json()).root.id;assert.equal(root,'jac_r2_root');assert.equal((await call('/api/media?folder='+folderID)).status,410);
+  const id=crypto.randomUUID(),request={action:'start',transport:'direct',id,parentId:root,filename:'Foto-nueva.png',mimeType:'image/png',size:13};
+  response=await call('/api/media/upload',{role:'photo',method:'POST',body:JSON.stringify(request)});assert.equal(response.status,200);const plan=await response.json();assert.equal(plan.provider,'r2');assert.ok(plan.uploadURL.includes('X-Amz-Expires=300'));assert.ok(!JSON.stringify(plan).includes(storage.secretAccessKey));
+  assert.equal((await (await call('/api/media')).json()).items.length,0);
+  // Represents device -> intercepted S3; original bytes never enter Workerd's
+  // upload endpoint. Workerd independently lists, completes, HEADs and validates.
+  const png=new Uint8Array(13);png.set([137,80,78,71,13,10,26,10]);state.s3.parts.set(1,png);
+  response=await call('/api/media/upload',{role:'photo',method:'POST',body:JSON.stringify({action:'status',transport:'direct',id})});assert.equal(response.status,200);const done=await response.json();assert.equal(done.complete,true);
+  response=await call('/api/media/file?id='+done.fileId+'&metadata=1',{role:'owner'});assert.equal(response.status,200);assert.equal((await response.json()).item.name,'Foto-nueva.png');
+  response=await call('/api/media/file?id='+done.fileId,{role:'owner',headers:{range:'bytes=2-5'}});assert.equal(response.status,206);assert.equal(response.headers.get('content-range'),'bytes 2-5/13');assert.match(response.headers.get('cache-control'),/private, no-store/);
+  const jpeg=new Uint8Array([255,216,255,192,0,11,8,0,16,0,16,1,1,17,0,255,217]);response=await call('/api/media/upload?thumbnail=1&id='+id,{role:'photo',method:'PUT',body:jpeg});assert.equal(response.status,200);
+  response=await call('/api/media/file?id='+done.fileId+'&thumbnail=1',{role:'owner'});assert.equal(response.status,200);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),jpeg);
+  assert.ok(state.calls.every(c=>new URL(c.url).hostname.endsWith('.r2.cloudflarestorage.com')),'No Google/Drive request is allowed after or during R2 activation');
+  state.afterR2Read=async()=>{await db.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').bind(ownerID).run();};response=await call('/api/media/file?id='+done.fileId,{role:'owner'});assert.equal(response.status,403);
  }finally{await mf.dispose();}
 });

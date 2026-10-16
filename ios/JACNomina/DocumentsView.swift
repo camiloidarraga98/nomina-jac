@@ -178,6 +178,22 @@ enum MediaGalleryOrder {
     }
 }
 enum MediaThumbnail {
+    static func jpeg(for file: MediaLocalFile) async -> Data? {
+        let image: CGImage?
+        if file.mimeType.hasPrefix("video/") {
+            let generator = AVAssetImageGenerator(asset: AVURLAsset(url: file.url))
+            generator.appliesPreferredTrackTransform = true; generator.maximumSize = CGSize(width: 640, height: 640)
+            image = try? await generator.image(at: .zero).image
+        } else if let source = CGImageSourceCreateWithURL(file.url as CFURL, nil) {
+            image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 640, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: false] as CFDictionary)
+        } else { image = nil }
+        guard !Task.isCancelled, let image else { return nil }
+        let data = NSMutableData()
+        guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.76] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), data.length <= 512 * 1024 else { return nil }
+        return data as Data
+    }
     static func image(_ data:Data) -> JACPlatformImage? {
         guard data.count <= 512*1024,let source=CGImageSourceCreateWithData(data as CFData,nil),let thumbnail=CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:360,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceShouldCacheImmediately:false] as CFDictionary) else{return nil}
         #if os(iOS)
@@ -197,6 +213,8 @@ struct MediaFeed: Codable {
     let breadcrumbs: [MediaFolder]
     let items: [MediaItem]
     let nextPageToken: String?
+    var provider: String? = nil
+    var collectionID: String? = nil
 }
 struct MediaUploadState: Decodable {
     let id: String
@@ -204,6 +222,8 @@ struct MediaUploadState: Decodable {
     let chunkSize: Int
     let complete: Bool
     let uploadURL: URL?
+    var provider: String? = nil
+    var fileId: String? = nil
     func validate(for file: MediaLocalFile) throws {
         guard id == file.id, offset >= 0, offset <= file.size, chunkSize > 0, chunkSize <= 8 * 1024 * 1024, (chunkSize <= 1024 * 1024 || complete || uploadURL != nil),
               !complete || offset == file.size else { throw APIError.invalid("El estado de la subida no es válido. Vuelve a intentarlo.") }
@@ -320,7 +340,7 @@ struct MediaGalleryView: View {
                 if loading && feed == nil { ProgressView("Cargando carpetas…").frame(maxWidth: .infinity) }
                 if let feed {
                     if !feed.connected {
-                        ContentUnavailableView("Fotografía está pendiente de conexión", systemImage: "externaldrive.badge.questionmark", description: Text("Camilo debe autorizar la carpeta compartida de Google Drive desde la configuración de Fotografía en la web."))
+                        ContentUnavailableView("Preparando el archivo de Fotografía", systemImage: "externaldrive.badge.questionmark", description: Text("El archivo privado de JAC se administra en Configuración general → Servicios conectados."))
                     } else if !feed.canRead || !user.canReadMedia {
                         ContentUnavailableView("Sin acceso a Fotografía", systemImage: "lock", description: Text("Tu cuenta no tiene acceso a estas fotos y videos."))
                     } else {
@@ -816,6 +836,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         var files: [String: MediaItem] = [:]
         var downloads: [String: MediaFeed] = [:]
         var previewAccess: [String: Double]?
+        var collectionID: String?
     }
     let root: URL
     private let lock = NSRecursiveLock()
@@ -855,9 +876,16 @@ final class MediaOfflineCache: @unchecked Sendable {
     func saveFeed(_ feed: MediaFeed, key: String, append: Bool, scope: AgendaCacheScope) throws {
         lock.lock(); defer { lock.unlock() }
         var index = readIndex(scope), result = feed
+        if let previous = index.collectionID, feed.collectionID == nil, previous.hasPrefix("jac-r2-") { throw CancellationError() }
+        if index.collectionID != feed.collectionID {
+            // A new collection replaces only this account's encrypted gallery
+            // cache. No Drive originals or other modules are touched.
+            try? FileManager.default.removeItem(at: folder(scope))
+            index = Index(); index.collectionID = feed.collectionID
+        }
         if let previous = index.feeds[key], append {
             var seen = Set<String>()
-            result = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: (previous.items + feed.items).filter { seen.insert($0.id).inserted }, nextPageToken: feed.nextPageToken)
+            result = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: (previous.items + feed.items).filter { seen.insert($0.id).inserted }, nextPageToken: feed.nextPageToken, provider: feed.provider, collectionID: feed.collectionID)
         }
         index.feeds[key] = result
         if let id = feed.folder?.id { index.feeds[id] = result }
@@ -867,11 +895,13 @@ final class MediaOfflineCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let index = readIndex(scope)
         guard let saved = index.downloads[key] ?? index.feeds[key] else { return nil }
-        return MediaFeed(connected: saved.connected, canRead: saved.canRead, canUpload: false, canConnect: false, root: saved.root, folder: saved.folder, breadcrumbs: saved.breadcrumbs, items: saved.items, nextPageToken: nil)
+        return MediaFeed(connected: saved.connected, canRead: saved.canRead, canUpload: false, canConnect: false, root: saved.root, folder: saved.folder, breadcrumbs: saved.breadcrumbs, items: saved.items, nextPageToken: nil, provider: saved.provider, collectionID: saved.collectionID)
     }
     func pinFeed(_ feed: MediaFeed, key: String, scope: AgendaCacheScope) throws {
         lock.lock(); defer { lock.unlock() }
-        var index = readIndex(scope); index.downloads[key] = feed
+        var index = readIndex(scope)
+        guard index.collectionID == feed.collectionID else { throw CancellationError() }
+        index.downloads[key] = feed
         if let id = feed.folder?.id { index.downloads[id] = feed }
         try writeIndex(index, scope: scope)
     }
@@ -912,6 +942,8 @@ final class MediaOfflineCache: @unchecked Sendable {
         try output.write(contentsOf: length(0)); try output.synchronize()
         lock.lock(); defer { lock.unlock() }
         guard !revoked.contains(scope.id) else { throw CancellationError() }
+        let current = readIndex(scope)
+        guard current.collectionID?.hasPrefix("jac-r2-") != true || item.id.hasPrefix("r2_") else { throw CancellationError() }
         if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
         try FileManager.default.moveItem(at: partial, to: destination)
         var index = readIndex(scope); index.files[item.id] = item

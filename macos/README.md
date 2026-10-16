@@ -1,5 +1,9 @@
 # JAC Music para Mac
 
+## Fotografía R2 · Mac 1.7.0 (9)
+
+Mismo proyecto JACMac y misma outputs/JAC Music.app. Archivo nuevo R2, sin importar contenido histórico de Drive, con subidas directas reanudables y miniaturas nativas. Se renueva solo la copia cifrada de Fotografía al recibir la nueva colección; sesión, demás módulos y privacidad se conservan. Cierra y vuelve a abrir la app para ejecutar el binario actualizado. Ver docs/PHOTOGRAPHY_R2_MIGRATION.md para estado publicado y verificación.
+
 Aplicación nativa de macOS en SwiftUI y AppKit, dentro de la misma carpeta del proyecto. Comparte modelos, formularios y API con el iPhone; no contiene un navegador incrustado ni crea una base de nómina distinta.
 
 ## Fotografía: actualización inmediata — Mac 1.5.1 (7)

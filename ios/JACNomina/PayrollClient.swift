@@ -710,7 +710,7 @@ final class PayrollClient: ObservableObject {
                     let direct = try Self.directMediaRequest(url, mime: file.mimeType, offset: previous, count: count, total: file.size)
                     let (_, raw) = try await mediaSession.upload(for: direct, from: chunk)
                     guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
-                    guard let response = raw as? HTTPURLResponse, (200..<300).contains(response.statusCode) || response.statusCode == 308 else { throw APIError.message("Drive no confirmó la transferencia. Reintenta para consultar su avance.") }
+                    guard let response = raw as? HTTPURLResponse, (200..<300).contains(response.statusCode) || response.statusCode == 308 else { throw APIError.message("El almacenamiento no confirmó la transferencia. Reintenta para consultar su avance.") }
                     plan = try await mediaUploadCommand(["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)])
                 } else {
                     let (data, raw) = try await mediaSession.upload(for: legacyRequest, from: chunk)
@@ -722,25 +722,56 @@ final class PayrollClient: ObservableObject {
                 if case APIError.unauthorized = error { throw error }
                 if case APIError.forbidden = error { throw error }
                 if case APIError.invalid = error { throw error }
-                // A timed-out chunk may already be in Drive. Ask JAC for the
+                // A timed-out chunk may already be stored. Ask JAC for the
                 // committed offset before retrying; never create a second file.
                 plan = try await mediaUploadCommand(["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)])
                 try plan.validate(for: file)
-                if plan.uploadURL != nil, !compatible, plan.offset == previous { compatible = true; continue }
+                if plan.provider != "r2", plan.uploadURL != nil, !compatible, plan.offset == previous { compatible = true; continue }
                 guard plan.offset > previous else { throw error }
             }
             try plan.validate(for: file)
             guard plan.offset > previous else { throw APIError.message("La subida no avanzó. Reintenta el mismo archivo.") }
             progress(plan.offset, file.size)
         }
+        if plan.provider == "r2", let thumbnail = await MediaThumbnail.jpeg(for: file) {
+            guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
+            let (request, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "thumbnail", value: "1"), URLQueryItem(name: "id", value: file.id)], method: "PUT")
+            var upload = request; upload.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
+            do {
+                let (data, response) = try await mediaSession.upload(for: upload, from: thumbnail)
+                _ = try validateMediaResponse(response, data: data, token: token, generation: generation)
+            } catch {
+                if error is CancellationError { throw error }
+                if case APIError.unauthorized = error { throw error }
+                if case APIError.forbidden = error { throw error }
+                // The original is already safely committed; a thumbnail failure
+                // must never duplicate it or delete the photographer's source.
+            }
+        }
     }
     static func directMediaRequest(_ url: URL, mime: String, offset: Int64, count: Int, total: Int64) throws -> URLRequest {
-        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme == "https", parts.host == "www.googleapis.com", parts.port == nil, parts.user == nil, parts.password == nil, parts.fragment == nil,
-              parts.path.range(of: "^/upload/drive/v3/files(/[A-Za-z0-9_-]+)?$", options: .regularExpression) != nil,
-              parts.queryItems?.contains(where: { $0.name == "upload_id" && !($0.value ?? "").isEmpty }) == true,
+        guard let parts = URLComponents(url: url, resolvingAgainstBaseURL: false), parts.scheme == "https", parts.port == nil, parts.user == nil, parts.password == nil, parts.fragment == nil,
               offset >= 0, count > 0, count <= 8 * 1024 * 1024, offset + Int64(count) <= total else { throw APIError.invalid("La autorización de subida no es válida.") }
+        let r2 = parts.host?.range(of: "^[a-f0-9]{32}\\.r2\\.cloudflarestorage\\.com$", options: .regularExpression) != nil
+        if r2 {
+            let items = parts.queryItems ?? [], allowed: Set<String> = ["uploadId", "partNumber", "X-Amz-Algorithm", "X-Amz-Credential", "X-Amz-Date", "X-Amz-Expires", "X-Amz-SignedHeaders", "X-Amz-Signature"]
+            let values = Dictionary(items.map { ($0.name, $0.value ?? "") }, uniquingKeysWith: { a, _ in a })
+            guard items.count == allowed.count, Set(items.map(\.name)) == allowed,
+                  parts.path.range(of: "^/jac-fotografia/originals/[a-f0-9-]{36}$", options: .regularExpression) != nil,
+                  !(values["uploadId"] ?? "").isEmpty, Int64(values["partNumber"] ?? "") == offset / (8 * 1024 * 1024) + 1,
+                  offset % (8 * 1024 * 1024) == 0, count == min(8 * 1024 * 1024, Int(total - offset)),
+                  values["X-Amz-Algorithm"] == "AWS4-HMAC-SHA256", values["X-Amz-Expires"] == "300", values["X-Amz-SignedHeaders"] == "content-length;content-type;host",
+                  values["X-Amz-Credential"]?.range(of: "^[a-fA-F0-9]{32}/[0-9]{8}/auto/s3/aws4_request$", options: .regularExpression) != nil,
+                  values["X-Amz-Date"]?.range(of: "^[0-9]{8}T[0-9]{6}Z$", options: .regularExpression) != nil,
+                  values["X-Amz-Signature"]?.range(of: "^[a-f0-9]{64}$", options: .regularExpression) != nil else { throw APIError.invalid("La autorización de subida no es válida.") }
+        } else {
+            guard parts.host == "www.googleapis.com", parts.path.range(of: "^/upload/drive/v3/files(/[A-Za-z0-9_-]+)?$", options: .regularExpression) != nil,
+                  parts.queryItems?.filter({ $0.name == "upload_id" && !($0.value ?? "").isEmpty }).count == 1 else { throw APIError.invalid("La autorización de subida no es válida.") }
+        }
         var request = URLRequest(url: url); request.httpMethod = "PUT"; request.httpShouldHandleCookies = false; request.cachePolicy = .reloadIgnoringLocalCacheData; request.timeoutInterval = 120
-        request.setValue(mime, forHTTPHeaderField: "Content-Type"); request.setValue("bytes \(offset)-\(offset + Int64(count) - 1)/\(total)", forHTTPHeaderField: "Content-Range")
+        request.setValue(mime, forHTTPHeaderField: "Content-Type")
+        if r2 { request.setValue(String(count), forHTTPHeaderField: "Content-Length") }
+        else { request.setValue("bytes \(offset)-\(offset + Int64(count) - 1)/\(total)", forHTTPHeaderField: "Content-Range") }
         // This request intentionally has no JAC cookie, owner OAuth token or
         // Authorization header. The URL only authorizes its reserved new file.
         return request

@@ -1,5 +1,9 @@
 ## App universal iPhone/iPad — 0.20.0 (32)
 
+## Fotografía R2 · iPhone/iPad 0.21.0 (33)
+
+Mismo proyecto y esquema JACNomina. Fotografía está preparada para el archivo nuevo y privado de R2, sin importar contenido de Drive. Subidas directas reanudables, miniaturas JPEG nativas de fotos/videos y renovación de la copia cifrada por colección. Disponible sin conexión y Guardar en Fotos se conservan. Usa Run sobre tu iPhone o iPad conectado; tu equipo, firma, bundle co.jacmusic.nomina y push suspendido permanecen. No necesitas descargar otro proyecto. Ver docs/PHOTOGRAPHY_R2_MIGRATION.md para publicación, pruebas y límites.
+
 El **mismo proyecto** ya incluye iPad, con barra lateral nativa, CRM para administradores y Agenda adaptada al ancho disponible. Fotografía, itinerarios/pases, alertas, nómina, Gestión y Mi cuenta conservan sus accesos y funciones. El iPhone mantiene sus pestañas. Ver [App para iPad](../docs/IPAD_APP.md) para pruebas y límites de verificación.
 
 Para instalar, abre **este mismo `ios/JACNomina.xcodeproj`**, elige **JACNomina → tu iPad → Run**. Se conservan la firma personal y `co.jacmusic.nomina`; push sigue suspendido. No necesitas descargar ni sustituir otro proyecto.

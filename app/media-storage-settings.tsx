@@ -1,0 +1,24 @@
+'use client';
+import {useEffect,useState,type FormEvent} from 'react';
+import {Cloud,Check,LoaderCircle} from 'lucide-react';
+import {Button} from '@/components/ui/button';
+import {Input} from '@/components/ui/input';
+type Status={configured:boolean;active:boolean;version:number;accountId?:string;bucket?:string;error?:string};
+export default function MediaStorageSettings(){
+ const [status,setStatus]=useState<Status|null>(null),[editing,setEditing]=useState(false),[account,setAccount]=useState(''),[key,setKey]=useState(''),[secret,setSecret]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState(''),[saved,setSaved]=useState(false);
+ useEffect(()=>{const controller=new AbortController();void fetch('/api/media/storage',{cache:'no-store',credentials:'same-origin',signal:controller.signal}).then(async r=>{if(r.status===401||r.status===403)return;const data=await r.json() as Status;if(!r.ok)throw new Error(data.error||'No pudimos consultar R2.');setStatus(data);setAccount(data.accountId||'');}).catch(e=>{if(!controller.signal.aborted)setError(e instanceof Error?e.message:'No pudimos consultar R2.');});return()=>controller.abort();},[]);
+ async function activate(){if(!status)return;setBusy(true);setError('');try{const r=await fetch('/api/media/storage',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'activateNewCollection',version:status.version})});const data=await r.json() as Status;if(!r.ok)throw new Error(data.error||'No pudimos activar R2.');setStatus(data);setSaved(true);}catch(e){setError(e instanceof Error?e.message:'No pudimos activar R2.');}finally{setBusy(false);}}
+ async function save(event:FormEvent){event.preventDefault();if(!status)return;setBusy(true);setError('');setSaved(false);try{const response=await fetch('/api/media/storage',{method:'POST',cache:'no-store',credentials:'same-origin',headers:{'Content-Type':'application/json'},body:JSON.stringify({accountId:account.trim(),bucket:'jac-fotografia',accessKeyId:key.trim(),secretAccessKey:secret.trim(),version:status.version})});const data=await response.json() as Status;if(!response.ok)throw new Error(data.error||'No pudimos guardar R2.');setStatus(data);setKey('');setSecret('');setEditing(false);setSaved(true);}catch(e){setError(e instanceof Error?e.message:'No pudimos guardar R2.');}finally{setBusy(false);}}
+ if(!status&&!error)return null;
+ return <section className="panel media-storage-settings" aria-label="Almacenamiento de fotografía"><div className="panel-title"><h2><Cloud size={21}/>Almacenamiento de Fotografía</h2>{status?.configured&&<span className="badge"><Check size={14}/>{status.active?'R2 activo':'R2 preparado'}</span>}</div>
+  <p className="muted">Conexión privada de Cloudflare R2. Las claves se guardan cifradas y nunca se devuelven al navegador.</p>
+  {error&&<p className="message error" role="alert">{error}</p>}{saved&&<p className="message success" role="status">{status?.active?'Archivo nuevo de R2 activo. Ya puedes crear carpetas y subir fotos o videos.':'R2 verificado y guardado. El archivo nuevo empezará vacío, sin importar contenido anterior.'}</p>}
+  {status?.configured&&!editing?<><p><strong>{status.bucket}</strong> · {status.active?'Galería en R2':'Listo para empezar un archivo nuevo'}</p>{!status.active&&<><p className="muted">La galería comenzará vacía. Se retirará la conexión anterior de Fotografía, sin transferir ni borrar sus archivos.</p><Button className="primary" disabled={busy} onClick={()=>void activate()}>Activar archivo nuevo de R2</Button><Button variant="outline" onClick={()=>{setSaved(false);setEditing(true);}}>Reemplazar credencial</Button></>}</>:status&&<form autoComplete="off" onSubmit={save} className="media-storage-form">
+   <label>Account ID<Input aria-label="Account ID de R2" value={account} onChange={e=>setAccount(e.target.value)} maxLength={32} required autoComplete="off" spellCheck={false} disabled={busy}/></label>
+   <label>Bucket<Input value="jac-fotografia" readOnly aria-label="Bucket de Fotografía"/></label>
+   <label>Access Key ID<Input aria-label="Access Key ID de R2" type="password" value={key} onChange={e=>setKey(e.target.value)} maxLength={32} required autoComplete="off" disabled={busy}/></label>
+   <label>Secret Access Key<Input aria-label="Secret Access Key de R2" type="password" value={secret} onChange={e=>setSecret(e.target.value)} maxLength={64} required autoComplete="new-password" disabled={busy}/></label>
+   <div className="media-dialog-actions">{status.configured&&<Button type="button" variant="outline" disabled={busy} onClick={()=>{setKey('');setSecret('');setEditing(false);}}>Cancelar</Button>}<Button type="submit" className="primary" disabled={busy||!account||!key||!secret}>{busy?<><LoaderCircle size={16} className="media-spin"/>Comprobando…</>:'Verificar y guardar R2'}</Button></div>
+  </form>}
+ </section>;
+}

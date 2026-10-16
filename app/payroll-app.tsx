@@ -10,6 +10,8 @@ import PayrollEmailPanel from './payroll-email-panel';
 import AgendaPanel from './agenda-panel';
 import CrmPanel from './crm-panel';
 import MediaPanel from './media-panel';
+import MediaStorageSettings from './media-storage-settings';
+import {canConnectMedia} from '@/lib/media-core';
 import './crm.css';
 import {bindAgendaCache,clearBrowserAgendaCache,type AgendaCacheContext} from '@/lib/agenda-cache';
 import TravelExpensesPanel from './travel-expenses-panel';
@@ -83,6 +85,7 @@ export default function PayrollApp({initial,user,isOwner,access,agendaCache=null
  {notice&&<div className="message success" role="status"><Check size={17}/>{notice}</div>}
  {allowed('notificaciones')&&<NotificationSettings key={access.id} userID={access.id} owner={isOwner} view={view} enabled={!access.legacy}/>}
  {view==='fotografia'&&hasSection(access,'media')&&<MediaPanel/>}
+ {view==='conexiones'&&canConnectMedia(access)&&<MediaStorageSettings/>}
  {view==='crm'&&isOwner&&<CrmPanel/>}
  {view==='gastos'&&<TravelExpensesPanel blocked={busy||dirty} onPayrollChanged={async()=>{const r=await fetch('/api/payroll'),d=await r.json() as {data:PayrollState;version:number;error?:string};if(!r.ok)throw new Error(d.error||'Actualiza la nómina.');setData(d.data);setVersion(d.version);}}/>}
  {view==='configuracion'&&<section className="panel general-settings"><div className="panel-title"><h2>Opciones generales</h2></div><nav className="general-settings-grid" aria-label="Opciones de configuración general">{generalNavigation.filter(item=>allowed(item.key)).map(({key,label,Icon})=><a key={key} href={payrollHref(key,tab,periodId)} onClick={e=>follow(e,key)}><Icon size={22}/><span>{label}</span></a>)}</nav></section>}
