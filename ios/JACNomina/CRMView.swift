@@ -41,17 +41,35 @@ struct CRMHomeView:View {
             else { List {
                 if let error { InlineError(message:error) }
                 if store.isOffline { Text("Sin conexión · última información descargada. Los cambios necesitan internet.").font(.footnote).foregroundStyle(.secondary) }
+                Section {
+                    JACFeatureBanner(eyebrow:"JAC · CRM",title:"El show empieza aquí.",subtitle:"Ventas, abonos y preparación de cada fecha.",symbol:"briefcase",tone:.violet)
+                    ViewThatFits(in:.horizontal) {
+                        HStack(spacing:12) { quickPayment; moreActions }
+                        VStack(spacing:12) { quickPayment; moreActions }
+                    }.padding(.top,5)
+                }.jacStandaloneRow()
                 Picker("Sección",selection:$section) { Text("Shows").tag("shows");Text("Semana").tag("weekly");Text("Empresarios").tag("contacts") }.pickerStyle(.segmented).accessibilityIdentifier("crm.sections")
                 if section == "shows" { showList }
                 else if section == "weekly" { CRMWeeklyView() }
                 else { CRMContactsView() }
             }.jacSurface().navigationTitle("CRM").navigationBarTitleDisplayMode(.inline)
-                .toolbar { ToolbarItem(placement:.primaryAction) { Menu { Button("Crear show") { editor=CRMEditorRequest(kind:.create,record:.null,feed:feed) };Button("Registrar abono") { editor=CRMEditorRequest(kind:.payment,record:.null,feed:feed) };Button("Actualizar shows de Calendar") { Task { await load(sync:true) } } } label:{ Image(systemName:"plus") }.disabled(busy || store.isOffline || feed.isNull).accessibilityIdentifier("crm.add") } }
                 .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60) } catch { break } } }
                 .refreshable { await load(sync:!store.isOffline) }
                 .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             }
         }.environmentObject(crm)
+    }
+    private var quickPayment:some View {
+        Button { editor=CRMEditorRequest(kind:.payment,record:.null,feed:feed) } label: { Label("Registrar abono",systemImage:"plus.circle").frame(maxWidth:.infinity) }
+            .buttonStyle(JACPrimaryButtonStyle()).disabled(busy || store.isOffline || feed.isNull).accessibilityIdentifier("crm.quickPayment")
+    }
+    private var moreActions:some View {
+        Menu {
+            Button("Crear show") { editor=CRMEditorRequest(kind:.create,record:.null,feed:feed) }
+            Button("Registrar abono") { editor=CRMEditorRequest(kind:.payment,record:.null,feed:feed) }
+            Button("Actualizar shows de Calendar") { Task { await load(sync:true) } }
+        } label: { Label("Más",systemImage:"ellipsis").frame(minWidth:48) }
+            .buttonStyle(JACSecondaryButtonStyle(tone:.violet)).disabled(busy || store.isOffline || feed.isNull).accessibilityIdentifier("crm.add")
     }
     private var showList:some View {
         Group {
@@ -77,9 +95,20 @@ struct CRMHomeView:View {
 }
 struct CRMShowRow:View {
     let show:JSONValue
-    var body:some View { VStack(alignment:.leading,spacing:8) { Text(show["title"].text).font(.headline);Text(show["showDate"].text+(show["entrepreneur"].text.isEmpty ? "":" · "+show["entrepreneur"].text)).font(.caption).foregroundStyle(.secondary)
-        HStack { Text(show["sale"].isNull ? "Sin precio":CRMFields.money(show["sale"].number));Spacer();Text(show["balance"].isNull ? "":"Pendiente "+CRMFields.money(show["balance"].number)).font(.caption) }
-    }.padding(.vertical,7) }
+    var body:some View {
+        VStack(alignment:.leading,spacing:14) {
+            HStack(alignment:.top,spacing:12) {
+                JACIcon(symbol:"music.mic",tone:.violet)
+                VStack(alignment:.leading,spacing:6) { Text(show["title"].text).font(.system(.headline,design:.rounded));Text(show["showDate"].text).font(.caption).foregroundStyle(JACTone.violet.color) }
+            }
+            if !show["entrepreneur"].text.isEmpty { Text(show["entrepreneur"].text).font(.caption).foregroundStyle(.secondary) }
+            HStack(alignment:.top) {
+                VStack(alignment:.leading,spacing:4) { Text("VENTA").font(.caption2.weight(.semibold)).foregroundStyle(.secondary);Text(show["sale"].isNull ? "Sin precio":CRMFields.money(show["sale"].number)).font(.subheadline.weight(.semibold)) }
+                Spacer(minLength:12)
+                if !show["balance"].isNull { VStack(alignment:.trailing,spacing:4) { Text("PENDIENTE").font(.caption2.weight(.semibold)).foregroundStyle(.secondary);Text(CRMFields.money(show["balance"].number)).font(.subheadline.weight(.semibold)).foregroundStyle(JACTone.violet.color) } }
+            }.monospacedDigit()
+        }.padding(.vertical,10)
+    }
 }
 struct CRMEditorRequest:Identifiable {
     enum Kind { case price,create,payment,contact,contracts,void }
@@ -101,13 +130,17 @@ struct CRMShowView:View {
     @State private var deleteTitle=""
     @State private var confirmDelete=false
     var body:some View {
-        List {
-            if let error { InlineError(message:error) }
-            Picker("Sección del show",selection:$tab) { Text("Cuenta").tag("account");Text("Rentabilidad").tag("profit");Text("Preparación").tag("tasks") }.pickerStyle(.segmented).accessibilityIdentifier("crm.show.sections")
-            if tab == "account" { account }
-            else { CRMPlanView(id:id,show:detail["show"],tab:tab,data:$planData,draft:$planDraft) }
-        }.jacSurface().navigationTitle(detail["show"]["title"].text.isEmpty ? "Show":detail["show"]["title"].text).navigationBarTitleDisplayMode(.inline)
-            .task { tab=initialTab;await load();while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30));await load()}catch{break}} }.refreshable { await load() }
+        VStack(spacing:0) {
+            Picker("Sección del show",selection:$tab) { Text("Cuenta").tag("account");Text("Rentabilidad").tag("profit");Text("Preparación").tag("tasks") }
+                .pickerStyle(.segmented).accessibilityIdentifier("crm.show.sections").padding(.horizontal,18).padding(.vertical,10)
+            List {
+                if let error { InlineError(message:error) }
+                if tab == "account" { account }
+                else { CRMPlanView(id:id,show:detail["show"],tab:tab,data:$planData,draft:$planDraft) }
+            }.scrollContentBackground(.hidden).refreshable { await load() }
+        }.jacSurface()
+            .navigationTitle(detail["show"]["title"].text.isEmpty ? "Show":detail["show"]["title"].text).navigationBarTitleDisplayMode(.inline)
+            .task { tab=initialTab;await load();while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30));await load()}catch{break}} }
             .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             .onChange(of:crm.denied) {_,denied in if denied {editor=nil;detail = .null;planData = .null;planDraft = .null;confirmDelete=false}}
             .confirmationDialog(deleteTitle,isPresented:$confirmDelete,titleVisibility:.visible) { Button("Eliminar evento",role:.destructive) { Task { await remove() } };Button("Cancelar",role:.cancel) {} } message:{ Text("Se quitará de Calendar, CRM y Agenda. Abonos y comprobantes se conservan como historial.") }
@@ -117,7 +150,7 @@ struct CRMShowView:View {
             if !detail["show"]["entrepreneur"].text.isEmpty { Text(detail["show"]["entrepreneur"].text) }
             if !detail["show"]["note"].text.isEmpty { Text(detail["show"]["note"].text).font(.footnote) }
             if writable { Button("Editar precio y empresario") { editor=CRMEditorRequest(kind:.price,record:detail["show"],feed:.object(["contacts":contacts.elements.isEmpty ? crm.feed["contacts"]:contacts])) }.accessibilityIdentifier("crm.price")
-                Button("Registrar abono") { editor=CRMEditorRequest(kind:.payment,record:detail["show"],feed:feed.isNull ? crm.feed:feed) }.disabled(detail["show"]["sale"].isNull).accessibilityIdentifier("crm.payment") }
+                Button { editor=CRMEditorRequest(kind:.payment,record:detail["show"],feed:feed.isNull ? crm.feed:feed) } label:{ Label("Registrar abono",systemImage:"plus.circle").frame(maxWidth:.infinity) }.buttonStyle(JACPrimaryButtonStyle()).disabled(detail["show"]["sale"].isNull).accessibilityIdentifier("crm.payment") }
             else if !detail.isNull { Text("Historial · evento eliminado o pendiente de eliminación").font(.footnote) }
         }
         Section("Abonos y comprobantes") { ForEach(detail["payments"].crmItems) { item in VStack(alignment:.leading,spacing:9) {
@@ -144,7 +177,7 @@ struct CRMContactInput:View {
     @FocusState private var focused:Bool
     var body:some View { VStack(alignment:.leading,spacing:10) {
         TextField("Empresario",text:Binding(get:{name},set:{name=$0;contactID=""})).textInputAutocapitalization(.words).focused($focused).accessibilityIdentifier("crm.entrepreneur")
-        if focused { let matches=CRMFields.matches(name,in:contacts);ScrollView {VStack(alignment:.leading,spacing:4) {ForEach(matches.map { CRMItem(value:$0) }) { item in Button { name=item.value["name"].text;contactID=item.id;focused=false } label:{ VStack(alignment:.leading,spacing:4) { Text(item.value["name"].text);if !item.value["company"].text.isEmpty { Text(item.value["company"].text).font(.caption).foregroundStyle(.secondary) } }.frame(maxWidth:.infinity,alignment:.leading).padding(10).background(Color.white,in:RoundedRectangle(cornerRadius:9)) }.buttonStyle(.plain).accessibilityIdentifier("crm.suggestion."+item.id) }}}.frame(height:CGFloat(min(matches.count*66,198))) }
+        if focused { let matches=CRMFields.matches(name,in:contacts);ScrollView {VStack(alignment:.leading,spacing:4) {ForEach(matches.map { CRMItem(value:$0) }) { item in Button { name=item.value["name"].text;contactID=item.id;focused=false } label:{ VStack(alignment:.leading,spacing:4) { Text(item.value["name"].text);if !item.value["company"].text.isEmpty { Text(item.value["company"].text).font(.caption).foregroundStyle(.secondary) } }.frame(maxWidth:.infinity,alignment:.leading).padding(10).background(JACTheme.card,in:RoundedRectangle(cornerRadius:9)).foregroundStyle(JACTheme.ink) }.buttonStyle(.plain).accessibilityIdentifier("crm.suggestion."+item.id) }}}.frame(height:CGFloat(min(matches.count*66,198))) }
         if !contactID.isEmpty,let contact=contacts.first(where:{$0["id"].text==contactID}),!contact["company"].text.isEmpty { Label(contact["company"].text,systemImage:"checkmark").font(.caption).foregroundStyle(.secondary) }
     }.id("crm.contact.row").onChange(of:focused){_,value in onFocusChanged(value)} }
 }

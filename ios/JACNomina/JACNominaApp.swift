@@ -168,6 +168,7 @@ enum JACTheme {
     static let navy = Color(red: 6/255, green: 47/255, blue: 70/255)
     static let highlight = Color(red: 98/255, green: 206/255, blue: 255/255)
     static let primary = Color(red: 0/255, green: 111/255, blue: 189/255)
+    static let card = Color(uiColor: .secondarySystemGroupedBackground)
     static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 11/255, green: 24/255, blue: 35/255, alpha: 1) : UIColor(red: 243/255, green: 247/255, blue: 251/255, alpha: 1) })
     static let action = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 98/255, green: 206/255, blue: 255/255, alpha: 1) : UIColor(red: 0/255, green: 111/255, blue: 189/255, alpha: 1) })
     static let ink = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 231/255, green: 241/255, blue: 250/255, alpha: 1) : UIColor(red: 22/255, green: 52/255, blue: 73/255, alpha: 1) })
@@ -185,7 +186,8 @@ struct JACPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.fontWeight(.semibold).padding(.horizontal, 16).padding(.vertical, 12)
-            .foregroundStyle(.white).background(JACTheme.primary, in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(.white).background(LinearGradient(colors: [JACTheme.primary, Color(red: 0.02, green: 0.33, blue: 0.59)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 16))
+            .contentShape(RoundedRectangle(cornerRadius: 16))
             .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
     }
 }
@@ -193,5 +195,116 @@ extension View {
     // Mark the content, not the NavigationStack/TabView that owns it. On iOS 27
     // redacting the whole navigation hierarchy for a background snapshot can
     // attach its UINavigationItem to a second bar while the keyboard resigns.
-    func jacSurface() -> some View { scrollContentBackground(.hidden).background(JACTheme.canvas).foregroundStyle(JACTheme.ink).tint(JACTheme.action).privacySensitive() }
+    func jacSurface() -> some View {
+        scrollContentBackground(.hidden).background(JACCanvas()).foregroundStyle(JACTheme.ink)
+            .tint(JACTheme.action).listSectionSpacing(18).privacySensitive()
+    }
+    func jacStandaloneRow() -> some View {
+        listRowBackground(Color.clear).listRowSeparator(.hidden)
+            .listRowInsets(EdgeInsets(top: 5, leading: 0, bottom: 5, trailing: 0))
+    }
+}
+
+
+// Presentation only. Navigation, permissions and actions remain owned by each screen.
+enum JACTone {
+    case blue, teal, violet, amber
+    var color: Color {
+        switch self {
+        case .blue: return JACTheme.action
+        case .teal: return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.36, green: 0.86, blue: 0.79, alpha: 1) : UIColor(red: 0.02, green: 0.43, blue: 0.43, alpha: 1) })
+        case .violet: return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 0.74, green: 0.71, blue: 1, alpha: 1) : UIColor(red: 0.34, green: 0.30, blue: 0.66, alpha: 1) })
+        case .amber: return Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 1, green: 0.77, blue: 0.38, alpha: 1) : UIColor(red: 0.56, green: 0.34, blue: 0.08, alpha: 1) })
+        }
+    }
+    var deep: Color {
+        switch self {
+        case .blue: return Color(red: 0.02, green: 0.28, blue: 0.46)
+        case .teal: return Color(red: 0.02, green: 0.31, blue: 0.34)
+        case .violet: return Color(red: 0.22, green: 0.23, blue: 0.46)
+        case .amber: return Color(red: 0.38, green: 0.24, blue: 0.13)
+        }
+    }
+}
+struct JACCanvas: View {
+    var body: some View {
+        LinearGradient(colors: [JACTheme.action.opacity(0.055), JACTheme.canvas, JACTheme.canvas], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
+    }
+}
+struct JACFeatureBanner: View {
+    let eyebrow: String
+    let title: String
+    let subtitle: String
+    var symbol = "waveform"
+    var tone: JACTone = .blue
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 10) {
+                Image(systemName: symbol).font(.subheadline.bold()).frame(width: 32, height: 32)
+                    .background(.white.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                Text(eyebrow.uppercased()).font(.caption2.weight(.bold)).tracking(1.8)
+                Spacer(minLength: 0)
+                HStack(alignment: .center, spacing: 3) {
+                    ForEach(Array([10.0, 22.0, 15.0, 29.0, 19.0].enumerated()), id: \.offset) { _, height in
+                        Capsule().fill(JACTheme.highlight.opacity(0.85)).frame(width: 3, height: height)
+                    }
+                }.accessibilityHidden(true)
+            }.foregroundStyle(.white.opacity(0.9))
+            Text(title).font(.system(.title2, design: .rounded, weight: .bold)).foregroundStyle(.white).fixedSize(horizontal: false, vertical: true)
+            Text(subtitle).font(.subheadline).foregroundStyle(Color(red: 0.80, green: 0.89, blue: 0.96)).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, alignment: .leading).padding(22)
+            .background {
+                ZStack(alignment: .trailing) {
+                    LinearGradient(colors: [JACTheme.navy, tone.deep], startPoint: .topLeading, endPoint: .bottomTrailing)
+                    Circle().stroke(.white.opacity(0.07), lineWidth: 28).frame(width: 180, height: 180).offset(x: 72, y: 28)
+                }.allowsHitTesting(false).accessibilityHidden(true)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 24))
+            .overlay(RoundedRectangle(cornerRadius: 24).stroke(.white.opacity(0.08), lineWidth: 1))
+    }
+}
+struct JACIcon: View {
+    let symbol: String
+    var tone: JACTone = .blue
+    var body: some View {
+        Image(systemName: symbol).font(.system(size: 20, weight: .semibold))
+            .foregroundStyle(tone.color).frame(width: 46, height: 46)
+            .background(tone.color.opacity(0.10), in: RoundedRectangle(cornerRadius: 15))
+            .accessibilityHidden(true)
+    }
+}
+struct JACBadge: View {
+    let title: String
+    var tone: JACTone = .blue
+    var body: some View {
+        Text(title).font(.caption2.weight(.semibold)).foregroundStyle(tone.color)
+            .padding(.horizontal, 10).padding(.vertical, 6)
+            .background(tone.color.opacity(0.09), in: Capsule())
+    }
+}
+struct JACAccessCard: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+    var tone: JACTone = .blue
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack { JACIcon(symbol: symbol, tone: tone); Spacer(minLength: 0); Image(systemName: "arrow.up.right").font(.caption.bold()).foregroundStyle(tone.color) }
+            Text(title).font(.system(.subheadline, design: .rounded, weight: .bold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal: false, vertical: true)
+            Text(subtitle).font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+        }.frame(maxWidth: .infinity, minHeight: 126, alignment: .topLeading).padding(16)
+            .background(JACTheme.card, in: RoundedRectangle(cornerRadius: 22))
+            .overlay(RoundedRectangle(cornerRadius: 22).stroke(tone.color.opacity(0.12), lineWidth: 1))
+            .contentShape(RoundedRectangle(cornerRadius: 22))
+            .accessibilityElement(children: .ignore).accessibilityLabel(title)
+    }
+}
+struct JACSecondaryButtonStyle: ButtonStyle {
+    var tone: JACTone = .blue
+    @Environment(\.isEnabled) private var enabled
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label.font(.subheadline.weight(.semibold)).padding(.horizontal, 15).padding(.vertical, 12)
+            .foregroundStyle(tone.color).background(tone.color.opacity(configuration.isPressed ? 0.18 : 0.09), in: RoundedRectangle(cornerRadius: 15))
+            .opacity(enabled ? 1 : 0.45)
+    }
 }

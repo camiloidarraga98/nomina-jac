@@ -72,28 +72,44 @@ struct NoticesView: View {
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
             if let notice { Section { Text(notice).foregroundStyle(JACTheme.action) } }
             if loading && feed == nil { ProgressView("Consultando…") }
-            if effectiveKind == "itinerary" { Section { NavigationLink { NoticesView(user:user,kind:"boarding_pass") } label: { VStack(alignment:.leading,spacing:6) { Label("Pases de abordar",systemImage:"airplane").font(.headline); Text(boardingCount > 0 ? "Para hoy: \(boardingCount) · Mañana: \(tomorrowCount)" : "Para mañana: \(tomorrowCount) · Próximos días e historial").font(.caption).foregroundStyle(.secondary) } }.accessibilityIdentifier("boarding.open") } }
+            if effectiveKind == "itinerary" {
+                Section {
+                    NavigationLink { NoticesView(user:user,kind:"boarding_pass") } label: {
+                        JACFeatureBanner(eyebrow:"JAC · En ruta",title:"Pases de abordar",subtitle:boardingCount > 0 ? "Para hoy: \(boardingCount) · Mañana: \(tomorrowCount)" : "Para mañana: \(tomorrowCount) · Próximos días e historial",symbol:"airplane",tone:.teal)
+                    }.buttonStyle(.plain).accessibilityIdentifier("boarding.open")
+                }.jacStandaloneRow()
+            }
+            if effectiveKind == "alert" {
+                Section {
+                    JACFeatureBanner(eyebrow:"JAC · Equipo",title:"Lo importante, cerca.",subtitle:"Avisos y documentos para estar al tanto.",symbol:"bell.badge",tone:.amber)
+                    if user.isOwner {
+                        Button { editor = true } label: { Label("Crear alerta o itinerario",systemImage:"plus").frame(maxWidth:.infinity) }
+                            .buttonStyle(JACPrimaryButtonStyle()).accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil || store.isOffline).padding(.top,5)
+                    }
+                }.jacStandaloneRow()
+            }
             if effectiveKind == "boarding_pass" {
                 ForEach(BoardingClock.priorityDays(day,hasToday:records.contains { $0.travelDate == day }),id:\.self) { date in
                     Section("Pases de abordar para " + (date == day ? "hoy" : "mañana") + " · \(records.filter { $0.travelDate == date }.count)") { let items=records.filter { $0.travelDate == date }; if items.isEmpty { Text(date == day ? "No tienes pases para hoy." : "No tienes pases para mañana.").foregroundStyle(.secondary) }; boardingRows(items) }
                 }
                 ForEach(Array(Set(records.compactMap(\.travelDate))).filter { $0 > BoardingClock.nextDay(day) }.sorted(),id:\.self) { date in Section(BoardingClock.label(date)) { boardingRows(records.filter { $0.travelDate == date }) } }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Section { Button("Ver más próximos pases") { Task { await refresh(cursor) } }.disabled(loading) } }
-                Section { Button { historyOpen.toggle() } label: { Label(historyOpen ? "Ocultar historial de pases anteriores" : "Historial de pases anteriores",systemImage:historyOpen ? "chevron.up" : "chevron.down") }.accessibilityIdentifier("boarding.history") }
+                Section { Button { historyOpen.toggle() } label: { Label(historyOpen ? "Ocultar historial de pases anteriores" : "Historial de pases anteriores",systemImage:historyOpen ? "chevron.up" : "chevron.down") }.buttonStyle(JACSecondaryButtonStyle(tone:.teal)).accessibilityIdentifier("boarding.history") }
                 if historyOpen { Section("Pases anteriores") { boardingRows(historyRecords.filter { ($0.travelDate ?? "") < day }); if historyRecords.isEmpty { Text("No tienes pases anteriores.").foregroundStyle(.secondary) }; if let cursor=history?.nextCursor,!cursor.isEmpty { Button("Ver más del historial") { Task { await loadHistory(cursor) } } } } }
 
             } else { Section(effectiveKind == "itinerary" ? "Itinerarios del equipo" : "Avisos del equipo") {
                 let items = records.filter { $0.kind == effectiveKind }
                 if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
-                ForEach(items) { item in VStack(alignment:.leading,spacing:14) { Button { detail = item } label: { VStack(alignment: .leading, spacing: 7) { Label(item.title, systemImage: item.kind == "itinerary" ? "doc.text" : "bell").font(.headline); if (item.revision ?? 1) > 1 { Text("Actualizado · Versión \(item.revision ?? 1)").font(.caption.bold()).foregroundStyle(Color.accentColor) }; if item.confirmed == true { Text("✓ Recibido").font(.caption) }; Text(item.createdLabel + (!item.files.isEmpty ? " · \(item.files.count) adjunto(s)" : "") + (item.read ? "" : " · Nuevo")).font(.caption).foregroundStyle(.secondary) } }.buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)") }
-                    .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner && item.kind == "itinerary" { deleteButton(item,destructive:false).tint(.red) } }
-                    .contextMenu { if user.isOwner && item.kind == "itinerary" { deleteButton(item) } }
+                ForEach(items) { item in
+                    Button { detail = item } label: { JACNoticeCard(item:item) }
+                        .buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)").jacStandaloneRow()
+                        .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner && item.kind == "itinerary" { deleteButton(item,destructive:false).tint(.red) } }
+                        .contextMenu { if user.isOwner && item.kind == "itinerary" { deleteButton(item) } }
                 }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             } }
 
-        }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").refreshable { await refresh() }
-            .toolbar { if user.isOwner && effectiveKind == "alert" { ToolbarItem(placement: .topBarTrailing) { Button { editor = true } label: { Image(systemName: "plus") }.accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil || store.isOffline) } } }
+        }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").navigationBarTitleDisplayMode(.inline).refreshable { await refresh() }
             .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
             .onChange(of: store.cacheRevision) { _, _ in restoreCached() }
             .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }
@@ -123,16 +139,26 @@ struct NoticesView: View {
         ForEach(items) { item in VStack(alignment:.leading,spacing:16) {
             ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
                 Button { Task { await openBoarding(item,file:file) } } label: {
-                    VStack(alignment:.leading,spacing:7) {
+                    VStack(alignment:.leading,spacing:16) {
                         let info=BoardingClock.filenameDetails(file.filename)
-                        Label(info.map { $0.origin + " → " + $0.destination } ?? item.title,systemImage:"airplane").font(.headline)
-                        if let info { Text(info.passenger).font(.subheadline) }
-                        Text(file.filename).font(.caption).foregroundStyle(.secondary)
-                        HStack { Text(BoardingClock.label(item.travelDate ?? "")).font(.caption).foregroundStyle(.secondary); Spacer(); if openingFile == file.id { ProgressView() }; Text(file.mimeType == "application/pdf" ? "Abrir PDF" : "Abrir imagen").font(.subheadline.bold()) }
-                    }
+                        HStack { Label("PASE DE ABORDAR",systemImage:"airplane").font(.caption2.weight(.bold)).tracking(1);Spacer();JACBadge(title:file.mimeType == "application/pdf" ? "PDF":"Imagen",tone:.teal) }.foregroundStyle(JACTone.teal.color)
+                        if let info {
+                            Text(info.origin + " → " + info.destination).font(.system(.title3,design:.rounded,weight:.bold)).fixedSize(horizontal:false,vertical:true)
+                            Text(info.passenger).font(.subheadline.weight(.medium))
+                        } else { Text(item.title).font(.system(.headline,design:.rounded)) }
+                        Rectangle().fill(JACTone.teal.color.opacity(0.18)).frame(height:1)
+                        Text(file.filename).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                        HStack(alignment:.center,spacing:14) {
+                            Label(BoardingClock.label(item.travelDate ?? ""),systemImage:"calendar").font(.caption).foregroundStyle(.secondary)
+                            Spacer(minLength:0)
+                            if openingFile == file.id { ProgressView() }
+                            Text(file.mimeType == "application/pdf" ? "Abrir PDF" : "Abrir imagen").font(.subheadline.bold()).foregroundStyle(JACTone.teal.color).fixedSize(horizontal:true,vertical:false)
+                        }
+                    }.padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
+                        .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1))
                 }.buttonStyle(.plain).disabled(openingFile != nil || deleting).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
             }
-        }.padding(.vertical,6)
+        }.padding(.vertical,6).jacStandaloneRow()
             .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner { deleteButton(item,destructive:false).tint(.red) } }
             .contextMenu { if user.isOwner { deleteButton(item) } }
         }
@@ -326,5 +352,35 @@ enum BoardingClock {
         guard let day=group(1),let month=group(2),let index=months.firstIndex(of:month=="setiembre" ? "septiembre" : month),let current=Int(today(at).prefix(4)) else { return nil }
         let years=group(3).flatMap(Int.init).map { [$0] } ?? [current-1,current,current+1]
         return years.compactMap { parse(String(format:"%04d-%02d-%02d",$0,index+1,Int(day) ?? 0)) }.sorted { let a=abs($0.timeIntervalSince(at)),b=abs($1.timeIntervalSince(at)); return a == b ? $0 > $1 : a < b }.first
+    }
+}
+
+
+private struct JACNoticeCard: View {
+    let item: JACNotice
+    private var tone: JACTone { item.kind == "itinerary" ? .blue : .amber }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 15) {
+            HStack(alignment: .top, spacing: 12) {
+                JACIcon(symbol: item.kind == "itinerary" ? "doc.text" : "bell", tone: tone)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(item.title).font(.system(.headline, design: .rounded)).foregroundStyle(JACTheme.ink).fixedSize(horizontal:false,vertical:true)
+                    Text(item.createdLabel).font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer(minLength:0)
+                Image(systemName:"arrow.up.right").font(.caption.bold()).foregroundStyle(tone.color).accessibilityHidden(true)
+            }
+            if !item.body.isEmpty { Text(item.body).font(.subheadline).foregroundStyle(.secondary).lineLimit(2).multilineTextAlignment(.leading) }
+            HStack(spacing:10) {
+                if !item.files.isEmpty { Label("\(item.files.count) adjunto(s)",systemImage:"paperclip").font(.caption).foregroundStyle(.secondary) }
+                Spacer(minLength:0)
+                if item.confirmed == true { JACBadge(title:"✓ Recibido",tone:tone) }
+                else if (item.revision ?? 1) > 1 { JACBadge(title:"Actualizado · Versión \(item.revision ?? 1)",tone:tone) }
+                else if !item.read { JACBadge(title:"Nuevo",tone:tone) }
+            }
+        }.padding(18).frame(maxWidth:.infinity,alignment:.leading)
+            .background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
+            .overlay(RoundedRectangle(cornerRadius:22).stroke(tone.color.opacity(0.12),lineWidth:1))
+            .contentShape(RoundedRectangle(cornerRadius:22))
     }
 }

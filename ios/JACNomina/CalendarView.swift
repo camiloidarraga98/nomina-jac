@@ -50,6 +50,9 @@ struct CalendarView: View {
                     }
                 }
                 if loading && visible == nil { Section { ProgressView("Consultando agenda…") } }
+                if visible == nil || visible?.connection.connected != true || visible?.connection.selected == nil {
+                    Section { agendaActions }
+                }
                 if let visible, visible.connection.connected, visible.connection.selected != nil {
                     Section { Picker("Vista de agenda", selection: $mode) { Text("Mes").tag("Mes"); Text("Próximos").tag("Próximos") }.pickerStyle(.segmented).accessibilityIdentifier("agenda.mode") }
                     if mode == "Mes" {
@@ -58,7 +61,8 @@ struct CalendarView: View {
                                 Button { shift(-1) } label: { Image(systemName: "chevron.left") }.accessibilityLabel("Mes anterior")
                                 Spacer(); Text(visible.monthLabel.capitalized).font(.headline); Spacer()
                                 Button { shift(1) } label: { Image(systemName: "chevron.right") }.accessibilityLabel("Mes siguiente")
-                            }.buttonStyle(.borderless)
+                            }.buttonStyle(JACSecondaryButtonStyle(tone:.teal))
+                            .padding(.vertical,4)
                             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: 3), count: 7), spacing: 5) {
                                 ForEach(["L", "M", "X", "J", "V", "S", "D"], id: \.self) { Text($0).font(.caption.weight(.semibold)).foregroundStyle(.secondary) }
                                 ForEach(visible.days, id: \.self) { date in
@@ -66,14 +70,17 @@ struct CalendarView: View {
                                     Button { day = date } label: {
                                         VStack(spacing: 4) {
                                             Text(String(Int(date.suffix(2)) ?? 0)).font(.subheadline.weight(day == date ? .bold : .regular))
-                                            HStack(spacing: 2) { ForEach(0..<min(count, 3), id: \.self) { _ in Circle().fill(JACTheme.action).frame(width: 4, height: 4) } }.frame(height: 4)
-                                        }.frame(maxWidth: .infinity, minHeight: 42).background(day == date ? JACTheme.highlight.opacity(0.25) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                                            .foregroundStyle(date.hasPrefix(month) ? Color.primary : .secondary)
-                                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(date == visible.today ? JACTheme.action : .clear, lineWidth: 1))
+                                            HStack(spacing: 2) { ForEach(0..<min(count, 3), id: \.self) { _ in Circle().fill(day == date ? Color.white : JACTone.teal.color).frame(width: 4, height: 4) } }.frame(height: 4)
+                                        }.frame(maxWidth: .infinity, minHeight: 42).background(day == date ? JACTheme.primary : .clear, in: RoundedRectangle(cornerRadius: 13))
+                                            .foregroundStyle(day == date ? .white : date.hasPrefix(month) ? JACTheme.ink : .secondary)
+                                            .overlay(RoundedRectangle(cornerRadius: 13).stroke(date == visible.today ? JACTone.teal.color : .clear, lineWidth: 1))
                                     }.buttonStyle(.plain).accessibilityLabel(CalendarClock.dayLabel(date) + ", \(count) eventos").accessibilityAddTraits(day == date ? .isSelected : []).accessibilityIdentifier("agenda.day.\(date)")
                                 }
                             }
-                            Button("Hoy") { month = CalendarClock.month(Date()); day = CalendarClock.day(Date()) }.buttonStyle(.borderless)
+                            ViewThatFits(in:.horizontal) {
+                                HStack { todayButton; Spacer(); agendaActions }
+                                VStack(alignment:.leading,spacing:10) { todayButton; agendaActions }
+                            }.padding(.top,10)
                         }
                         Section(CalendarClock.dayLabel(day).capitalized) {
                             let events = byDay[day] ?? []
@@ -81,6 +88,7 @@ struct CalendarView: View {
                             ForEach(events) { item in Button { event = item } label: { AgendaEventRow(event: item) }.buttonStyle(.plain).accessibilityIdentifier("agenda.event.\(item.id)") }
                         }
                     } else {
+                        Section { agendaActions }
                         Section {
                             Text("Próximos 90 días · hasta " + CalendarClock.dayLabel(visible.upcomingUntil)).font(.caption).foregroundStyle(.secondary)
                             if visible.upcoming.isEmpty { Text("No hay eventos programados en los próximos 90 días.").foregroundStyle(.secondary) }
@@ -97,15 +105,9 @@ struct CalendarView: View {
                         Section { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
                     }
                 }
-            }.jacSurface().navigationTitle("Agenda").refreshable { await refresh() }
+            }.jacSurface().navigationTitle("Agenda").navigationBarTitleDisplayMode(.inline).refreshable { await refresh() }
                 .toolbar {
-                    ToolbarItemGroup(placement: .topBarTrailing) {
-                        if live, let visible, visible.canEditEvents == true {
-                            Button { editor = AgendaEditorSession(event: nil, day: day, revision: visible.connection.revision) } label: { Image(systemName: "plus") }.accessibilityLabel("Crear evento").accessibilityIdentifier("agenda.create").disabled(loading)
-                        }
-                        Button { Task { await refresh() } } label: { if loading { ProgressView() } else { Image(systemName: "arrow.clockwise") } }.accessibilityLabel("Actualizar agenda").accessibilityIdentifier(loading ? "agenda.updating" : "agenda.refresh").disabled(loading)
-                        if user.isOwner { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) }
-                    }
+                    if user.isOwner { ToolbarItem(placement:.topBarTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) } }
                 }
                 .task(id: month) {
                     await refresh()
@@ -121,6 +123,19 @@ struct CalendarView: View {
                     AgendaEventDetail(event: item, onEdit: live && visible?.canEditEvents == true && item.editable == true ? { editAfterDetail = item; event = nil } : nil)
                 }
                 .sheet(item: $editor) { session in AgendaEventEditor(session: session) { result in notice = result.notice; await refresh() } }
+        }
+    }
+    private var todayButton: some View {
+        Button("Hoy") { month = CalendarClock.month(Date()); day = CalendarClock.day(Date()) }.buttonStyle(JACSecondaryButtonStyle(tone:.teal))
+    }
+    private var agendaActions: some View {
+        HStack(spacing:10) {
+            Button { Task { await refresh() } } label: { if loading { ProgressView() } else { Image(systemName:"arrow.clockwise") } }
+                .buttonStyle(JACSecondaryButtonStyle(tone:.teal)).accessibilityLabel("Actualizar agenda").accessibilityIdentifier(loading ? "agenda.updating":"agenda.refresh").disabled(loading)
+            if live, let visible, visible.canEditEvents == true {
+                Button { editor = AgendaEditorSession(event:nil,day:day,revision:visible.connection.revision) } label: { Label("Nuevo evento",systemImage:"plus") }
+                    .buttonStyle(JACPrimaryButtonStyle()).accessibilityLabel("Crear evento").accessibilityIdentifier("agenda.create").disabled(loading)
+            }
         }
     }
     private func shift(_ offset: Int) {
@@ -155,12 +170,17 @@ struct AgendaEventRow: View {
     let event: AgendaEvent
     var showsDay = false
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            if showsDay { Text(CalendarClock.dayLabel(event.firstDay).capitalized).font(.caption).foregroundStyle(.tint) }
-            Text(event.title).font(.headline)
-            Label(event.timeLabel, systemImage: "clock").font(.subheadline).foregroundStyle(.secondary)
-            if !event.location.isEmpty { Label(event.location, systemImage: "mappin.and.ellipse").font(.caption).foregroundStyle(.secondary) }
-        }.padding(.vertical, 4)
+        HStack(alignment:.top,spacing:14) {
+            RoundedRectangle(cornerRadius:3).fill(JACTone.teal.color).frame(width:4)
+            VStack(alignment:.leading,spacing:9) {
+                if showsDay { JACBadge(title:CalendarClock.dayLabel(event.firstDay).capitalized,tone:.teal) }
+                Text(event.title).font(.system(.headline,design:.rounded))
+                Label(event.timeLabel,systemImage:"clock").font(.subheadline).foregroundStyle(JACTone.teal.color)
+                if !event.location.isEmpty { Label(event.location,systemImage:"mappin.and.ellipse").font(.caption).foregroundStyle(.secondary) }
+            }
+            Spacer(minLength:0)
+            Image(systemName:"arrow.up.right").font(.caption).foregroundStyle(JACTone.teal.color).accessibilityHidden(true)
+        }.padding(.vertical,10).fixedSize(horizontal:false,vertical:true)
     }
 }
 struct AgendaEventDetail: View {

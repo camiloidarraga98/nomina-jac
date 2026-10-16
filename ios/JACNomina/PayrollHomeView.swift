@@ -56,6 +56,16 @@ struct PeriodsView: View {
     private var content: some View {
             List {
                 OperationStatusSection()
+                Section {
+                    JACFeatureBanner(eyebrow: archive ? "JAC · Archivo" : "JAC · Nómina", title: archive ? "Cada cierre, a mano." : "Tu equipo. Todo al día.", subtitle: archive ? "Consulta tus quincenas y documentos conservados." : "\(overview.periods.filter { !$0.isClosed }.count) en preparación · \(overview.periods.filter(\.isClosed).count) cerradas", symbol: archive ? "archivebox" : "wallet.pass")
+                    if !archive && overview.user.can("payroll") {
+                        Button {
+                            if let w = store.workspace { editor = PayrollEditorSession(kind: .period, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.period, workspace: w)) }
+                        } label: { Label("Nueva quincena", systemImage: "plus").frame(maxWidth: .infinity) }
+                            .buttonStyle(JACPrimaryButtonStyle()).accessibilityLabel("Crear quincena").accessibilityIdentifier("period.create").disabled(!store.canWrite)
+                            .padding(.top, 5)
+                    }
+                }.jacStandaloneRow()
                 if periods.isEmpty {
                     ContentUnavailableView(search.isEmpty ? (archive ? "Archivo vacío" : "Sin quincenas") : "Sin resultados", systemImage: archive ? "archivebox" : "calendar", description: Text(archive ? "Consulta los cierres y sus documentos." : "Crea una quincena para comenzar."))
                 }
@@ -72,29 +82,22 @@ struct PeriodsView: View {
                         }
                     }
                 }
-            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas")
+            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $search, prompt: "Buscar mes o estado")
                 .refreshable { try? await store.refresh() }
-                .toolbar {
-                    if !archive && overview.user.can("payroll") {
-                        ToolbarItem(placement: .topBarTrailing) {
-                            Button {
-                                if let w = store.workspace { editor = PayrollEditorSession(kind: .period, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.period, workspace: w)) }
-                            } label: { Image(systemName: "plus") }
-                                .accessibilityLabel("Crear quincena").accessibilityIdentifier("period.create").disabled(!store.canWrite)
-                        }
-                    }
-                }
                 .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }
     }
     private func periodRow(_ period: PeriodSummary) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(period.title).font(.headline)
-            HStack {
-                Label(period.isClosed ? "Cerrada" : "Abierta", systemImage: period.isClosed ? "lock.fill" : "pencil")
-                Spacer(); Text("\(period.showCount) shows")
-            }.font(.caption).foregroundStyle(.secondary)
-            if period.ownerOnly { Text("Corrección de cierre").font(.caption).foregroundStyle(.orange) }
-        }.padding(.vertical, 5)
+        HStack(alignment: .top, spacing: 14) {
+            JACIcon(symbol: period.isClosed ? "checkmark.seal" : "wallet.pass", tone: period.isClosed ? .violet : .blue)
+            VStack(alignment: .leading, spacing: 10) {
+                Text(period.title).font(.system(.headline, design: .rounded)).fixedSize(horizontal: false, vertical: true)
+                ViewThatFits(in: .horizontal) {
+                    HStack { JACBadge(title: period.isClosed ? "Cerrada" : "En preparación", tone: period.isClosed ? .violet : .blue); Spacer(); Text("\(period.showCount) shows").font(.caption).foregroundStyle(.secondary) }
+                    VStack(alignment: .leading, spacing: 6) { JACBadge(title: period.isClosed ? "Cerrada" : "En preparación", tone: period.isClosed ? .violet : .blue); Text("\(period.showCount) shows").font(.caption).foregroundStyle(.secondary) }
+                }
+                if period.ownerOnly { Text("Corrección de cierre").font(.caption).foregroundStyle(.orange) }
+            }
+        }.padding(.vertical, 10)
     }
 }

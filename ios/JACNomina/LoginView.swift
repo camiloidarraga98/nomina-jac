@@ -10,40 +10,45 @@ struct LoginView: View {
 
     var body: some View {
         NavigationStack {
-            Form {
-                Section {
-                    BrandView().frame(maxWidth: 230).frame(maxWidth: .infinity).padding(.vertical, 16)
-                    Text("La nómina de tu equipo, contigo.").font(.title2.weight(.semibold)).foregroundStyle(.white)
-                }.listRowBackground(JACTheme.navy)
-                Section {
-                    TextField("Usuario o correo", text: $username)
-                        .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
-                        .focused($focus, equals: .username).submitLabel(.next)
-                        .onSubmit { focus = .password }
-                        .accessibilityIdentifier("login.username")
-                    SecureField("Contraseña", text: $password).textContentType(.password)
-                        .focused($focus, equals: .password).submitLabel(.go)
-                        .onSubmit { signIn() }.accessibilityIdentifier("login.password")
-                    Toggle("Mantener la sesión iniciada", isOn: $keepSignedIn)
-                        .accessibilityIdentifier("login.keepSignedIn")
-                } header: {
-                    Text("Tu cuenta de nómina")
-                } footer: {
-                    Text("Si la marcas, permanecerás conectado en este iPhone hasta que cierres sesión.")
-                }
-                if let error = store.error { Section { InlineError(message: error) } }
-                Section {
-                    Button(action: signIn) {
-                        HStack { Spacer(); if store.busy { ProgressView() }; Text("Iniciar sesión").fontWeight(.semibold); Spacer() }
-                    }.buttonStyle(JACPrimaryButtonStyle()).disabled(store.busy).accessibilityIdentifier("login.submit")
-                } footer: {
-                    Text("Usa el mismo usuario y contraseña que en la web. El acceso es exclusivo para las cuentas autorizadas por Camilo.")
-                }
-                Section { NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() } }
+            ScrollView {
+                VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack { BrandView().frame(width: 156); Spacer(); Image(systemName: "waveform").font(.system(size: 34, weight: .light)).foregroundStyle(JACTheme.highlight).accessibilityHidden(true) }
+                        Text("El equipo se mueve contigo.").font(.system(.title, design: .rounded, weight: .bold)).foregroundStyle(.white)
+                        Text("Tu agenda, tus viajes y cada show. JAC, donde estés.").font(.subheadline).foregroundStyle(Color(red: 0.80, green: 0.89, blue: 0.96))
+                    }.padding(24).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(LinearGradient(colors:[JACTheme.navy, JACTone.blue.deep],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:28))
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("Bienvenido.").font(.system(.title2, design: .rounded, weight: .bold))
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("Usuario o correo").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            TextField("Usuario o correo", text: $username)
+                                .textContentType(.username).textInputAutocapitalization(.never).autocorrectionDisabled()
+                                .focused($focus, equals: .username).submitLabel(.next).onSubmit { focus = .password }
+                                .accessibilityIdentifier("login.username")
+                                .padding(15).background(JACTheme.canvas,in:RoundedRectangle(cornerRadius:14))
+                        }
+                        VStack(alignment: .leading, spacing: 7) {
+                            Text("Contraseña").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+                            SecureField("Contraseña", text: $password).textContentType(.password)
+                                .focused($focus, equals: .password).submitLabel(.go).onSubmit { signIn() }
+                                .accessibilityIdentifier("login.password")
+                                .padding(15).background(JACTheme.canvas,in:RoundedRectangle(cornerRadius:14))
+                        }
+                        Toggle("Mantener la sesión iniciada", isOn: $keepSignedIn).font(.subheadline).accessibilityIdentifier("login.keepSignedIn")
+                        Text("Si la activas, permanecerás conectado en este iPhone hasta que cierres sesión.").font(.caption).foregroundStyle(.secondary)
+                        if let error = store.error { InlineError(message: error) }
+                        Button(action: signIn) {
+                            HStack { Spacer(); if store.busy { ProgressView().tint(.white) }; Text("Iniciar sesión"); Image(systemName: "arrow.right"); Spacer() }
+                        }.buttonStyle(JACPrimaryButtonStyle()).disabled(store.busy).accessibilityIdentifier("login.submit")
+                    }.padding(22).background(JACTheme.card,in:RoundedRectangle(cornerRadius:24))
+                    NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() }
+                        .font(.subheadline.weight(.medium)).frame(maxWidth:.infinity).padding(.vertical,4)
+                    Text("Usa la misma cuenta que en la web. Acceso exclusivo del equipo autorizado.").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity).multilineTextAlignment(.center)
+                }.padding(20)
             }
-            .jacSurface().navigationTitle("Nómina JAC")
-            .scrollDismissesKeyboard(.interactively)
-            .disabled(store.busy)
+            .jacSurface().navigationTitle("JAC Music").navigationBarTitleDisplayMode(.inline)
+            .scrollDismissesKeyboard(.interactively).disabled(store.busy)
         }
     }
     private func signIn() {

@@ -114,6 +114,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testCRMNativeAutocompleteBudgetPreparationAndPrivateReceipt() {
         let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm")
+        attachScreen(app,name:"nuevo-crm-acciones")
         let show="77777777-7777-4777-8777-777777777777",contact="88888888-8888-4888-8888-888888888888"
         tap(app,"crm.show."+show);tap(app,"crm.price");fill(app,"crm.entrepreneur","jose");tap(app,"crm.suggestion."+contact)
         XCTAssertEqual(app.textFields["crm.entrepreneur"].value as? String,"José · Empresario ficticio")
@@ -121,7 +122,12 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["crm.payment"].waitForExistence(timeout:10));tap(app,"crm.payment")
         fill(app,"crm.amount.Valor del abono (COP)","50000000");tap(app,"travel.fixture");tap(app,"crm.editor.save")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","90.000.000")).firstMatch.waitForExistence(timeout:10))
-        tap(app,"Rentabilidad");XCTAssertTrue(app.staticTexts["Comisión de toda la quincena"].waitForExistence(timeout:10));attachScreen(app,name:"crm-rentabilidad-nativa")
+        tap(app,"Rentabilidad")
+        let commission=app.staticTexts["Comisión de toda la quincena"]
+        // On compact iPhones this section is below the budget fields. Exercise
+        // the same scroll a person uses; retain the original presence check.
+        for _ in 0..<8 { if commission.exists {break};app.swipeUp() }
+        XCTAssertTrue(commission.waitForExistence(timeout:10));attachScreen(app,name:"crm-rentabilidad-nativa")
         tap(app,"Preparación");tap(app,"crm.plan.save")
         let saved=app.staticTexts["Presupuesto y preparación guardados."];for _ in 0..<8 {if saved.exists{break};app.swipeDown()};XCTAssertTrue(saved.waitForExistence(timeout:10))
     }
@@ -137,7 +143,7 @@ final class LaunchTests: XCTestCase {
     @MainActor func testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary() {
         let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"crm.add");tap(app,"Crear show")
         fill(app,"crm.create.title","PEREIRA · Nuevo ficticio");fill(app,"crm.amount.Valor de venta (COP)","140000000")
-        fill(app,"crm.entrepreneur","jose");tap(app,"crm.suggestion.88888888-8888-4888-8888-888888888888")
+        fill(app,"crm.entrepreneur","jose");attachScreen(app,name:"crm-autocompletar-legible");tap(app,"crm.suggestion.88888888-8888-4888-8888-888888888888")
         let first=app.switches["crm.firstPayment"];for _ in 0..<5{if first.exists && first.isHittable{break};app.swipeUp()};XCTAssertTrue(first.exists);first.coordinate(withNormalizedOffset:CGVector(dx:0.9,dy:0.5)).tap();XCTAssertEqual(first.value as? String,"1")
         fill(app,"crm.amount.Valor del abono (COP)","50000000");tap(app,"travel.fixture");tap(app,"crm.editor.save")
         XCTAssertTrue(app.textFields["crm.search"].waitForExistence(timeout:10));fill(app,"crm.search","Nuevo ficticio")
@@ -201,9 +207,10 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(app.tabBars.buttons.count, 5)
         for title in ["Quincena", "Agenda", "Itinerarios", "Mi cuenta", "Gestión"] { XCTAssertTrue(app.tabBars.buttons[title].exists) }
         XCTAssertFalse(app.tabBars.buttons["Archivo"].exists); XCTAssertFalse(app.tabBars.buttons["Equipo"].exists)
+        attachScreen(app,name:"nueva-quincena-inicio")
         app.tabBars.buttons["Mi cuenta"].tap()
         XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.archive")
+        app.tabBars.buttons["Gestión"].tap(); attachScreen(app,name:"nueva-gestion-tarjetas"); tap(app, "management.archive")
         XCTAssertTrue(app.navigationBars["Archivo"].waitForExistence(timeout: 10))
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.employees")
         XCTAssertTrue(app.navigationBars["Equipo JAC"].waitForExistence(timeout: 10))
@@ -423,6 +430,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testItineraryPDFAndSelectiveAlertAreAccessibleInManagement() {
         let app = fixture(); app.tabBars.buttons["Itinerarios"].tap()
+        attachScreen(app,name:"nuevos-itinerarios")
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
         attachScreen(app, name: "itinerario-pdf"); tap(app, "notices.pdf.close"); tap(app, "notices.detail.close")
@@ -517,7 +525,7 @@ final class LaunchTests: XCTestCase {
         let app=XCUIApplication(); app.launchArguments=["--uitest-payroll","--uitest-boarding-tomorrow"]; app.launch(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
         let tomorrow=app.staticTexts["Pases de abordar para mañana · 1"],today=app.staticTexts["Pases de abordar para hoy · 0"]
         XCTAssertTrue(tomorrow.waitForExistence(timeout:15)); XCTAssertTrue(today.exists); XCTAssertLessThan(tomorrow.frame.minY,today.frame.minY)
-        XCTAssertTrue(app.staticTexts["Pereira → Bogota"].exists); tap(app,"notices.item.boarding-fixture-2")
+        XCTAssertTrue(app.staticTexts["Pereira → Bogota"].exists); attachScreen(app,name:"nuevo-pase-tipo-boleto"); tap(app,"notices.item.boarding-fixture-2")
         XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["notices.detail.close"].exists); XCTAssertFalse(app.buttons["notices.delete"].exists); attachScreen(app,name:"pase-manana-pdf-directo")
     }
 

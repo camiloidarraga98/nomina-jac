@@ -1,3 +1,9 @@
+## Nueva distribución y personalidad — iPhone 0.15.0 (26)
+
+Rediseño nativo con tarjetas de acceso en Gestión y Actividad, acciones principales visibles en Quincena/CRM/Alertas, pases tipo boleto y acceso/Mi cuenta renovados. Azul profundo y cian JAC, con acentos discretos por sección y soporte claro/oscuro. Agenda sigue mostrando primero el calendario, con Hoy/actualización/Nuevo evento bajo el mes. Las cinco pestañas, logo, funciones, permisos, datos, privacidad y copia offline se mantienen. Ver `docs/IPHONE_REDESIGN.md` para cambios y verificación.
+
+Actualiza con **Run desde este mismo `ios/JACNomina.xcodeproj`**, esquema **JACNomina**, eligiendo tu iPhone. Conserva tu equipo, firma y `co.jacmusic.nomina`; push sigue suspendido. No descargues ni sustituyas otro proyecto. La web conserva v63; este cambio es de la app nativa. Verificado en simuladores grande/claro y pequeño/oscuro, con 65 unitarias y 20 recorridos UI distintos aprobados; una comprobación de cifrado requiere iPhone físico. Build Release sin firma correcto. El ZIP es solo respaldo opcional; estas pruebas no instalan la actualización en tu teléfono.
+
 ## Identidad azul JAC — iPhone 0.14.1 (25)
 
 La identidad azul aprobada está aplicada a toda la app mediante el tema compartido: Quincena, Agenda, CRM, Itinerarios/Pases, Alertas, Gastos y Gestión. Conserva el logo, controles nativos, funciones, privacidad, copia sin conexión y colores de éxito/advertencia/eliminación. Consulta `docs/JAC_BLUE_PREVIEW.md`.

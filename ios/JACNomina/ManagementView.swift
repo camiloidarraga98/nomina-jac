@@ -5,27 +5,105 @@ import UIKit
 
 struct ManagementView: View {
     @EnvironmentObject private var store: PayrollStore
+    @Environment(\.dynamicTypeSize) private var typeSize
     let user: PayrollUser
+    @State private var destination: Destination?
+    private enum Destination: String, Identifiable {
+        case expenses, alerts, crm, archive, employees, mail, notifications, concepts, users
+        var id:String { rawValue }
+        var title:String {
+            switch self {
+            case .expenses:return "Gastos de viaje";case .alerts:return "Alertas";case .crm:return "CRM · Shows y abonos"
+            case .archive:return "Archivo";case .employees:return "Equipo";case .mail:return "Correos y Gmail"
+            case .notifications:return "Notificaciones";case .concepts:return "Conceptos y reglas";case .users:return "Usuarios y permisos"
+            }
+        }
+        var subtitle:String {
+            switch self {
+            case .expenses:return "Facturas y reintegros";case .alerts:return "Avisos del equipo";case .crm:return "Ventas y preparación"
+            case .archive:return "Quincenas cerradas";case .employees:return "Personas y tarifas";case .mail:return "Documentos y envíos"
+            default:return ""
+            }
+        }
+        var symbol:String {
+            switch self {
+            case .expenses:return "receipt";case .alerts:return "bell.badge";case .crm:return "briefcase"
+            case .archive:return "archivebox";case .employees:return "person.2";case .mail:return "envelope"
+            case .notifications:return "bell";case .concepts:return "list.bullet.rectangle";case .users:return "person.badge.key"
+            }
+        }
+        var tone:JACTone {
+            switch self { case .expenses,.employees:return .teal;case .alerts:return .amber;case .archive:return .violet;default:return .blue }
+        }
+        var identifier:String {
+            switch self { case .alerts:return "notices.alerts";case .concepts,.users,.mail:return title;default:return "management."+rawValue }
+        }
+    }
+    private var columnCount:Int { typeSize.isAccessibilitySize ? 1:2 }
+    private var administration:[Destination] {
+        var items:[Destination]=[]
+        if user.isOwner { items.append(.crm) }
+        if store.overview != nil { items += [.archive,.employees] }
+        return items + [.mail]
+    }
+    private var preferences:[Destination] {
+        var items:[Destination]=[.notifications]
+        if user.itinerariesOnly != true { items.append(.concepts);if user.isOwner {items.append(.users)} }
+        return items
+    }
     var body: some View {
         NavigationStack {
-            List {
-                OperationStatusSection()
-                Section("Avisos") {
-                    NavigationLink { TravelExpensesView() } label: { Label("Gastos de viaje",systemImage:"receipt") }.accessibilityIdentifier("management.expenses")
-                    NavigationLink { NoticesView(user: user, kind: "alert") } label: { Label("Alertas", systemImage: "bell") }.accessibilityIdentifier("notices.alerts")
-                    NavigationLink { NotificationSettingsView() } label: { Label("Notificaciones", systemImage: "bell.badge") }.accessibilityIdentifier("management.notifications")
-                }
-                if user.itinerariesOnly != true { Section("Administración") {
-                    if user.isOwner { NavigationLink { CRMHomeView(client:store.client) } label:{ Label("CRM · Shows y abonos",systemImage:"briefcase") }.accessibilityIdentifier("management.crm") }
-                    if let overview = store.overview {
-                        NavigationLink { PeriodsView(overview: overview, archive: true, embedded: true) } label: { Label("Archivo", systemImage: "archivebox") }.accessibilityIdentifier("management.archive")
-                        NavigationLink { EmployeesView(overview: overview, embedded: true) } label: { Label("Equipo", systemImage: "person.2") }.accessibilityIdentifier("management.employees")
+            ScrollView {
+                VStack(alignment:.leading,spacing:24) {
+                    if store.isOffline || store.error != nil || store.notice != nil || store.pending != nil {
+                        VStack(alignment:.leading,spacing:12) { OperationStatusSection() }.padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:20))
                     }
-                    NavigationLink { ConceptsRulesView(user: user) } label: { Label("Conceptos y reglas", systemImage: "list.bullet.rectangle") }
-                    NavigationLink { MailView(user: user) } label: { Label("Correos y Gmail", systemImage: "envelope") }
-                    if user.isOwner { NavigationLink { UsersView() } label: { Label("Usuarios y permisos", systemImage: "person.badge.key") } }
+                    JACFeatureBanner(eyebrow:"JAC · Tu equipo",title:"Todo en su lugar.",subtitle:"Herramientas para lo que pasa antes y después del show.",symbol:"slider.horizontal.3",tone:.violet)
+                    Text("Tu día a día").font(.system(.headline,design:.rounded))
+                    cards([.expenses,.alerts])
+                    if user.itinerariesOnly != true {
+                        Text("Administración").font(.system(.headline,design:.rounded))
+                        cards(administration)
+                    }
+                    Text("Preferencias y acceso").font(.system(.headline,design:.rounded))
+                    VStack(spacing:0) {
+                        ForEach(preferences) { target in
+                            Button { destination=target } label: {
+                                HStack(spacing:14) { JACIcon(symbol:target.symbol,tone:target.tone);Text(target.title).font(.subheadline.weight(.medium)).foregroundStyle(JACTheme.ink);Spacer(minLength:0);Image(systemName:"chevron.right").font(.caption.weight(.semibold)).foregroundStyle(.secondary) }.padding(16).contentShape(Rectangle())
+                            }.buttonStyle(.plain).accessibilityLabel(target.title).accessibilityIdentifier(target.identifier)
+                            if target != preferences.last { Divider().padding(.leading,76) }
+                        }
+                    }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
+                }.padding(18)
+            }.jacSurface().navigationTitle("Gestión").navigationBarTitleDisplayMode(.inline)
+                .navigationDestination(item:$destination) { target in
+                    switch target {
+                    case .expenses:TravelExpensesView()
+                    case .alerts:NoticesView(user:user,kind:"alert")
+                    case .crm:if user.isOwner && user.itinerariesOnly != true {CRMHomeView(client:store.client)}
+                    case .archive:if user.itinerariesOnly != true,let overview=store.overview {PeriodsView(overview:overview,archive:true,embedded:true)}
+                    case .employees:if user.itinerariesOnly != true,let overview=store.overview {EmployeesView(overview:overview,embedded:true)}
+                    case .mail:if user.itinerariesOnly != true {MailView(user:user)}
+                    case .notifications:NotificationSettingsView()
+                    case .concepts:if user.itinerariesOnly != true {ConceptsRulesView(user:user)}
+                    case .users:if user.isOwner && user.itinerariesOnly != true {UsersView()}
+                    }
                 }
-            } }.jacSurface().navigationTitle("Gestión")
+        }
+    }
+    // These few cards stay instantiated while scrolling, including on compact
+    // iPhones. List/LazyVGrid recycling must not drop a previously visible access.
+    private func cards(_ items:[Destination]) -> some View {
+        VStack(spacing:12) {
+            ForEach(0..<((items.count+columnCount-1)/columnCount),id:\.self) { row in
+                HStack(alignment:.top,spacing:12) {
+                    ForEach(Array(items.dropFirst(row*columnCount).prefix(columnCount))) { target in
+                        Button { destination=target } label: { JACAccessCard(title:target.title,subtitle:target.subtitle,symbol:target.symbol,tone:target.tone) }
+                            .buttonStyle(.plain).accessibilityLabel(target.title).accessibilityIdentifier(target.identifier)
+                    }
+                    if columnCount == 2 && row*columnCount+1 >= items.count { Color.clear.frame(maxWidth:.infinity) }
+                }
+            }
         }
     }
 }
@@ -80,7 +158,7 @@ struct TravelExpensesView: View {
         List {
             if let error { InlineError(message:error) }
             Section { Text("Adjunta tus comprobantes. Un administrador revisará el gasto antes de incorporarlo como reintegro.").font(.footnote).foregroundStyle(.secondary)
-                Button(hasDraft ? "Continuar borrador" : "Registrar gasto") { editor=true }.accessibilityIdentifier("expenses.create")
+                Button { editor=true } label: { Label(hasDraft ? "Continuar borrador" : "Registrar gasto",systemImage:hasDraft ? "square.and.pencil" : "plus.viewfinder").frame(maxWidth:.infinity) }.buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("expenses.create")
                 if hasDraft { Button("Eliminar borrador",role:.destructive) { deleteDraft=true }.accessibilityIdentifier("expenses.deleteDraft") }
                 if store.isOffline { Text("Puedes escanear y guardar un borrador en este iPhone. El envío necesita conexión.").font(.footnote).foregroundStyle(.secondary) } }
             Section("Gastos de viaje") {

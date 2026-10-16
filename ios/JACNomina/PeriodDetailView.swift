@@ -24,6 +24,7 @@ final class PeriodWorkspace: ObservableObject {
 struct PeriodDetailView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     let periodID: String
     let user: PayrollUser
     @StateObject private var period = PeriodWorkspace()
@@ -32,20 +33,30 @@ struct PeriodDetailView: View {
     @State private var category = ""
     @State private var action: String?
     @State private var editor: PayrollEditorSession?
+    @State private var selectedActivity: ActivityKind?
     var body: some View {
         List {
             OperationStatusSection()
             if let error = period.error { Section { InlineError(message: error); Button("Volver a intentar") { Task { await load() } } } }
             if let d = period.detail {
                 Section {
-                    Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(JACTheme.highlight)
-                    Text(PayrollFormat.money(d.calculation.total)).font(.largeTitle.weight(.bold)).minimumScaleFactor(0.6).lineLimit(1)
-                    Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta", systemImage: d.period.isClosed ? "lock.fill" : "pencil")
-                    if d.record["ownerOnly"].flag { Text("Corrección con condiciones históricas").font(.caption).foregroundStyle(.orange) }
-                    if let closedAt = d.calculation.closedAt { LabeledContent("Fecha de cierre", value: PayrollFormat.timestamp(closedAt)) }
-                    if !d.record["snapshot"]["closedBy"].text.isEmpty { LabeledContent("Cerrado por", value: d.record["snapshot"]["closedBy"].text) }
-                    if !d.record["revisions"].elements.isEmpty { LabeledContent("Versiones de cierre conservadas", value: "\(d.record["revisions"].elements.count)") }
-                }.foregroundStyle(.white).listRowBackground(JACTheme.navy)
+                    VStack(alignment:.leading,spacing:16) {
+                        HStack { Label("JAC · NÓMINA",systemImage:"waveform").font(.caption2.weight(.bold)).tracking(1.5);Spacer();Image(systemName:d.period.isClosed ? "lock.shield":"wallet.pass").font(.title3) }.foregroundStyle(JACTheme.highlight)
+                        Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                        Text(PayrollFormat.money(d.calculation.total)).font(.system(.largeTitle,design:.rounded,weight:.bold)).minimumScaleFactor(0.6).lineLimit(1).monospacedDigit()
+                        Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta",systemImage:d.period.isClosed ? "lock.fill":"pencil").font(.caption.weight(.semibold))
+                            .padding(.horizontal,12).padding(.vertical,7).background(.white.opacity(0.12),in:Capsule())
+                    }.padding(24).foregroundStyle(.white).frame(maxWidth:.infinity,alignment:.leading)
+                        .background(LinearGradient(colors:[JACTheme.navy,JACTone.blue.deep],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:24))
+                }.jacStandaloneRow()
+                if d.record["ownerOnly"].flag || d.calculation.closedAt != nil || !d.record["revisions"].elements.isEmpty || !d.record["snapshot"]["closedBy"].text.isEmpty {
+                    Section("Datos del cierre") {
+                        if d.record["ownerOnly"].flag { Text("Corrección con condiciones históricas").font(.caption).foregroundStyle(.orange) }
+                        if let closedAt = d.calculation.closedAt { LabeledContent("Fecha de cierre",value:PayrollFormat.timestamp(closedAt)) }
+                        if !d.record["snapshot"]["closedBy"].text.isEmpty { LabeledContent("Cerrado por",value:d.record["snapshot"]["closedBy"].text) }
+                        if !d.record["revisions"].elements.isEmpty { LabeledContent("Versiones de cierre conservadas",value:"\(d.record["revisions"].elements.count)") }
+                    }
+                }
                 Section {
                     Picker("Vista de la quincena", selection: $section) {
                         Text("Pagos").tag("pagos"); Text("Actividad").tag("actividad"); Text("Documentos").tag("documentos")
@@ -54,11 +65,13 @@ struct PeriodDetailView: View {
                 if section == "pagos" { payments(d) }
                 else if section == "actividad" {
                     Section {
-                        ForEach(ActivityKind.allCases) { kind in
-                            NavigationLink { ActivityView(kind: kind, user: user).environmentObject(period) } label: { Label(kind.title, systemImage: kind.symbol) }
-                                .accessibilityIdentifier("activity.\(kind.rawValue)")
-                        }
-                    }
+                        LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:12),count:typeSize.isAccessibilitySize ? 1:2),spacing:12) {
+                            ForEach(ActivityKind.allCases) { kind in
+                                Button { selectedActivity = kind } label:{ JACAccessCard(title:kind.title,subtitle:"Consultar y gestionar",symbol:kind.symbol,tone:kind == .shows ? .blue:.teal) }
+                                    .accessibilityIdentifier("activity.\(kind.rawValue)")
+                            }
+                        }.buttonStyle(.plain)
+                    }.jacStandaloneRow()
                 } else { DocumentsSection(detail: d, user: user) }
                 operations(d)
             } else if period.loading { Section { ProgressView("Consultando quincena…") } }
@@ -67,6 +80,7 @@ struct PeriodDetailView: View {
             .onChange(of: store.workspace?.version) { _, _ in Task { await load() } }
             .refreshable { await load() }
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
+            .navigationDestination(item:$selectedActivity) { kind in ActivityView(kind:kind,user:user).environmentObject(period) }
             .confirmationDialog(confirmationTitle, isPresented: Binding(get: { action != nil }, set: { if !$0 { action = nil } }), titleVisibility: .visible) {
                 if let selected = action {
                     Button(selected == "close" ? "Cerrar quincena" : selected == "reopen" ? "Reabrir para corregir" : "Eliminar definitivamente", role: selected == "deletePeriod" ? .destructive : nil) {
