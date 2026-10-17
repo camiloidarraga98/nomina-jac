@@ -8,7 +8,7 @@ Se usa el PDF aprobado `Contrato-JAC-Soraca-propuesta-visual.pdf`, SHA256 `0f31b
 
 Variables: razón social, NIT, representante, cédula, fecha/hora de presentación, sitio, municipio/departamento, precio, consignado y fecha para completar el50%. El bloque del contratante se completa con esos mismos datos. El pago final es exactamente el50% del total, no total menos abonos; el resumen calcula además cuánto falta para completar el primer50% y la fecha del pago final, cinco días calendario antes. Importes de entrada en pesos enteros, hasta1billón; una mitad con50centavos se expresa también en letras. No se altera la redacción jurídica de las cláusulas.
 
-Para que la forma de pago de esta plantilla sea coherente, el abono inicial no puede superar el50% y el plazo de ese primer50% no puede ser posterior al pago final. Se validan fechas reales y horas. Los importes se convierten en letras en español; nombre del archivo: `Contrato JAC - Soracá treinta y uno de octubre de dos mil veintiséis.pdf`.
+Para que la forma de pago de esta plantilla sea coherente, el abono inicial no puede superar el50% y el plazo de ese primer50% no puede ser posterior al pago final. Se validan fechas reales y horas. Los importes se convierten en letras en español; nombre del archivo: `Contrato JAC - Soracá - 31 de octubre 2026.pdf`.
 
 Los párrafos variables se ajustan dentro de sus áreas originales, con Arial y sus negritas. Textos excepcionalmente largos se reducen de forma acotada o se rechazan con un mensaje; nunca se recortan ni se eliminan cláusulas para hacerlos caber. No hay conexión con servicios de IA ni envío del contrato a terceros.
 
