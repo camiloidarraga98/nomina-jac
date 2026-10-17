@@ -362,6 +362,8 @@ struct MediaGalleryView: View {
     @Environment(\.scenePhase) private var phase
     @StateObject private var folderTransfer = MediaFolderTransfer()
     @State private var transferReview: MediaTransferReview?
+    @State private var confirmedTransfer: MediaTransferReview?
+    @State private var uploadMeter=MediaUploadRate()
     @State private var preparingTransfer = false
     @State private var feed: MediaFeed?
     @State private var items: [MediaItem] = []
@@ -484,7 +486,7 @@ struct MediaGalleryView: View {
             .overlay(alignment:.bottom) {if deleting {HStack(spacing:12){ProgressView();Text("Eliminando carpeta…").font(.subheadline)}.padding(18).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20).accessibilityIdentifier("media.delete.progress")}else if let deletionError {HStack {Text(deletionError).font(.footnote);Button("Reintentar"){beginFolderDeletion()};Button("Cerrar"){self.deletionError=nil;deletingFolder=nil;deletionConfirmed=false}}.padding(16).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20)}}
             .sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
             .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
-            .sheet(item: $transferReview) { review in MediaTransferReviewSheet(review: review) { folderTransfer.start(client: store.client, plan: review.plan, photos: review.photos, writer: photosWriter) } }
+            .sheet(item: $transferReview,onDismiss:{if let review=confirmedTransfer {confirmedTransfer=nil;folderTransfer.start(client:store.client,plan:review.plan,photos:review.photos,writer:photosWriter)}}) { review in MediaTransferReviewSheet(review: review) { confirmedTransfer=review } }
             .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document, photos: items.filter { $0.kind == "image" }, feed: feed, client: store.client, denied: thumbnailDenied) }
             .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.image, .movie, .video], allowsMultipleSelection: true) { result in
                 switch result { case .success(let urls): importTask?.cancel(); importTask = Task { await readFiles(urls) }; case .failure(let failure): if (failure as? CocoaError)?.code != .userCancelled { error = failure.localizedDescription } }
@@ -544,7 +546,7 @@ struct MediaGalleryView: View {
             let scope=try store.client.mediaScope(),cache=store.client.mediaOffline
             let pending=photos ? plan.files:plan.files.filter{item in scope.map{!cache.hasFile(item,scope:$0)} ?? true}
             transferReview=MediaTransferReview(plan:plan,photos:photos,requiredBytes:MediaStorageReview.required(pending))
-        } catch {if let message=store.reportReadFailure(error){self.error=message}}
+        } catch {if let message=store.reportReadFailure(error){self.error=message}else if !Task.isCancelled {self.error="No se pudo preparar la carpeta. Actualiza Fotografía e inténtalo de nuevo."}}
     }
     private func beginUpload() {
         guard writable,!uploading else{return}
@@ -590,7 +592,20 @@ struct MediaGalleryView: View {
     private var fileButton: some View { Button { pickingFiles = true } label: { Label("Archivos", systemImage: "folder") }.buttonStyle(.bordered).accessibilityIdentifier("media.files") }
     private var pendingUploads: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Archivos seleccionados").font(.headline)
+            TimelineView(.periodic(from:.now,by:0.5)) {_ in
+                let total=queue.reduce(Int64(0)){$0+$1.size},sent=queue.reduce(Double(0)){$0+Double($1.size)*(completed.contains($1.id) ? 1 : progress[$1.id] ?? 0)},fraction=total>0 ? min(completed.count == queue.count ? 1:0.99,sent/Double(total)):0
+                HStack(spacing:20) {
+                    ZStack {Circle().stroke(JACTheme.action.opacity(0.12),lineWidth:8);Circle().trim(from:0,to:fraction).stroke(JACTheme.action,style:StrokeStyle(lineWidth:8,lineCap:.round)).rotationEffect(.degrees(-90));Text("\(Int(fraction*100))%").font(.title3.bold()).monospacedDigit()}.frame(width:82,height:82).accessibilityElement(children:.ignore).accessibilityLabel("Progreso general de subida").accessibilityValue("\(Int(fraction*100)) por ciento").accessibilityIdentifier("media.upload.progress")
+                    VStack(alignment:.leading,spacing:5) {
+                        Text(uploading ? "Subiendo al archivo":"Archivos seleccionados").font(.headline)
+                        Text("\(completed.count) de \(queue.count) completados").font(.subheadline).foregroundStyle(.secondary)
+                        Text(ByteCountFormatter.string(fromByteCount:Int64(sent),countStyle:.file)+" de "+ByteCountFormatter.string(fromByteCount:total,countStyle:.file)).font(.caption).foregroundStyle(.secondary)
+                        if uploading {let rate=uploadMeter.rate();Text(rate>0 ? ByteCountFormatter.string(fromByteCount:Int64(rate),countStyle:.file)+"/s":"Esperando transferencia…").font(.subheadline.bold()).monospacedDigit().foregroundStyle(JACTheme.action).accessibilityIdentifier("media.upload.speed")}
+                    };Spacer(minLength:0)
+                }.padding(.vertical,6)
+            }
+            if !uploadErrors.isEmpty {Text("Hay archivos por reintentar. Abre Ver archivos para revisar el detalle.").font(.footnote).foregroundStyle(.red)}
+            DisclosureGroup("Ver archivos") {
             ForEach(queue) { file in
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
@@ -598,9 +613,10 @@ struct MediaGalleryView: View {
                         Text(file.name).font(.subheadline).lineLimit(2); Spacer(minLength: 8)
                         if !uploading { Button { file.remove(); queue.removeAll { $0.id == file.id }; completed.remove(file.id) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.plain).accessibilityLabel("Quitar " + file.name) }
                     }
-                    if uploading || progress[file.id] != nil { ProgressView(value: progress[file.id] ?? 0).tint(JACTheme.action) }
+                    if uploading && !completed.contains(file.id) {Text(progress[file.id] == nil ? "En espera":"Subiendo y confirmando…").font(.caption).foregroundStyle(.secondary)}
                     if let failure = uploadErrors[file.id] { Text(failure).font(.footnote).foregroundStyle(.red) }
                 }
+            }
             }
             if uploading {
                 Button("Detener subida") { uploadTask?.cancel() }.buttonStyle(.bordered)
@@ -699,17 +715,26 @@ struct MediaGalleryView: View {
             queue.removeAll { completed.contains($0.id) }; completed = [];if queue.isEmpty {uploadDestination=nil}
             uploading = false; uploadTask = nil; Task { await reload() }
         }
-        let destination = parentID
-        for file in queue where !completed.contains(file.id) {
-            if Task.isCancelled { return }; uploadErrors[file.id] = nil
-            do {
-                try await store.client.uploadMedia(file, parentID: destination) { sent, total in progress[file.id] = total > 0 ? Double(sent) / Double(total) : 0 }
-                completed.insert(file.id); file.remove()
-            } catch {
-                if error is CancellationError || (error as? URLError)?.code == .cancelled { return }
-                uploadErrors[file.id] = error.localizedDescription; store.report(error)
-                if case APIError.unauthorized = error { return }; if case APIError.forbidden = error { return }
+        let destination = parentID,files=queue.filter{!completed.contains($0.id)}
+        uploadMeter=MediaUploadRate();for file in files {progress[file.id]=nil;uploadErrors[file.id]=nil}
+        await withTaskGroup(of:Bool.self) {group in
+            var iterator=files.makeIterator()
+            for _ in 0..<2 {if let file=iterator.next(){group.addTask {@MainActor in await uploadOne(file,destination:destination)}}}
+            while let keepGoing=await group.next() {
+                if !keepGoing || Task.isCancelled {group.cancelAll();return}
+                if let file=iterator.next(){group.addTask {@MainActor in await uploadOne(file,destination:destination)}}
             }
+        }
+    }
+    private func uploadOne(_ file:MediaLocalFile,destination:String) async -> Bool {
+        guard !Task.isCancelled else{return false}
+        do {
+            try await store.client.uploadMedia(file,parentID:destination,transferred:{delta in uploadMeter.record(delta)},progress:{sent,total in progress[file.id]=total>0 ? Double(sent)/Double(total):0})
+            try Task.checkCancellation();completed.insert(file.id);file.remove();return true
+        }catch {
+            if error is CancellationError || (error as? URLError)?.code == .cancelled {return false}
+            uploadErrors[file.id]=error.localizedDescription;store.report(error)
+            if case APIError.unauthorized=error{return false};if case APIError.forbidden=error{return false};return true
         }
     }
 }
@@ -1213,6 +1238,17 @@ final class MediaOfflineCache: @unchecked Sendable {
     }
 }
 
+struct MediaUploadRate {
+    private var samples:[(time:TimeInterval,bytes:Int64)]=[]
+    mutating func record(_ bytes:Int64,at now:TimeInterval=ProcessInfo.processInfo.systemUptime){
+        samples.removeAll{now-$0.time>=4};if bytes>0 {samples.append((now,bytes))}
+    }
+    func rate(at now:TimeInterval=ProcessInfo.processInfo.systemUptime)->Double {
+        let recent=samples.filter{now-$0.time<4};guard let first=recent.first else{return 0}
+        return Double(recent.reduce(Int64(0)){$0+$1.bytes})/max(0.5,min(4,now-first.time+0.5))
+    }
+}
+
 struct MediaDownloadPlan: Identifiable {
     let id = UUID()
     let folder: MediaFolder
@@ -1260,7 +1296,7 @@ struct DeviceMediaPhotosWriter: MediaPhotosWriting {
         guard !running else { return }; running = true; completed = 0; total = plan.files.count; failures = []; message = nil
         task = Task {
             defer { running = false; task = nil }
-            if photos { do { try await writer.authorize() } catch { failures = [error.localizedDescription]; return } }
+            if photos { do { try await writer.authorize() } catch { failures = [error.localizedDescription];message="No se pudo iniciar el guardado en Fotos. "+error.localizedDescription; return } }
             for item in plan.files {
                 do {
                     try Task.checkCancellation()

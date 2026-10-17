@@ -127,32 +127,32 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"fotografia-visor-anterior-siguiente");tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
     }
     @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
-        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only"]; app.launch()
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-slow-media-upload"]; app.launch()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.tabBars.buttons["Fotografía"].exists);XCTAssertTrue(app.tabBars.buttons["Gestión"].exists);XCTAssertFalse(app.tabBars.buttons["Mi cuenta"].exists)
         for forbidden in ["Quincena", "Agenda", "Itinerarios", "Mi cuenta"] { XCTAssertFalse(app.tabBars.buttons[forbidden].exists) }
         tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
         tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-video-nativo"); tap(app, "media.preview.close")
         tap(app,"media.folder.media-root");tap(app,"media.add");tap(app, "media.createFolder"); let field = app.textFields["media.folder.name"]; XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("Ensayo ficticio")
-        tap(app, "media.folder.save"); XCTAssertTrue(app.buttons["media.fixture"].waitForExistence(timeout: 15)); tap(app, "media.fixture"); tap(app, "media.upload")
+        tap(app, "media.folder.save"); XCTAssertTrue(app.buttons["media.fixture"].waitForExistence(timeout: 15)); tap(app, "media.fixture"); tap(app, "media.upload");XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["media.upload.speed"].exists);attachScreen(app,name:"fotografia-progreso-general")
         let uploaded = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Foto de prueba.png")).firstMatch
         XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-subida-multiple-nativa")
         openAccount(app); XCTAssertTrue(app.staticTexts["Fotografía JAC"].waitForExistence(timeout: 10)); XCTAssertFalse(app.staticTexts["Administrador de JAC"].exists)
     }
     @MainActor func testPhotographerDownloadsFolderOfflineAndSavesPhotosThroughFakeWriter() {
-        let app = XCUIApplication(); let base = ["--uitest-payroll", "--uitest-media-only", "--uitest-offline-content"]
+        let app = XCUIApplication(); let base = ["--uitest-payroll", "--uitest-media-only", "--uitest-offline-content", "--uitest-media-r2"]
         app.launchArguments = base + ["--uitest-reset-content", "--uitest-reset-media"]; app.launch()
-        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20));tap(app,"media.options.media-day")
+        XCTAssertTrue(app.buttons["media.item.r2_media-day"].waitForExistence(timeout: 20));tap(app,"media.options.r2_media-day")
         tap(app, "media.offline"); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
-        tap(app,"media.options.media-day");tap(app, "media.savePhotos"); tap(app, "media.transfer.begin")
+        tap(app,"media.options.r2_media-day");tap(app, "media.savePhotos"); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
         let heading=app.staticTexts["media.heading"];XCTAssertTrue(heading.exists);XCTAssertGreaterThanOrEqual(heading.frame.minX,app.frame.minX+12);XCTAssertLessThanOrEqual(heading.frame.maxX,app.frame.maxX-12)
         attachScreen(app, name: "carpeta-guardada-fotos-sin-biblioteca-real")
         app.terminate(); app.launchArguments = base + ["--uitest-offline"]; app.launch()
-        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20)); tap(app, "media.item.media-day")
-        tap(app, "media.item.media-photo"); XCTAssertTrue(app.buttons["media.preview.close"].waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-reapertura-sin-internet"); tap(app, "media.preview.close")
-        tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
+        XCTAssertTrue(app.buttons["media.item.r2_media-day"].waitForExistence(timeout: 20)); tap(app, "media.item.r2_media-day")
+        tap(app, "media.item.r2_media-photo"); XCTAssertTrue(app.buttons["media.preview.close"].waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-reapertura-sin-internet"); tap(app, "media.preview.close")
+        tap(app, "media.item.r2_media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
         XCTAssertFalse(app.buttons["media.upload"].exists); XCTAssertFalse(app.buttons["media.createFolder"].exists)
     }
     @MainActor func testAdministratorGalleryAllowsUploadAndPreview() {
@@ -935,18 +935,18 @@ final class IPadTests: XCTestCase {
         tap(app, "ipad.section.agenda"); XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout: 10))
     }
     @MainActor func testTabletDownloadedGalleryAndAgendaSurviveOfflineRelaunch() {
-        let app = XCUIApplication(), base = ["--uitest-payroll", "--uitest-offline-content", "--uitest-fake-photos"]
+        let app = XCUIApplication(), base = ["--uitest-payroll", "--uitest-offline-content", "--uitest-fake-photos", "--uitest-media-r2"]
         app.launchArguments = base + ["--uitest-reset-content", "--uitest-reset-media"]; app.launch()
         tap(app, "ipad.section.agenda"); XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout: 20))
-        tap(app, "ipad.section.media"); tap(app, "media.options.media-day"); tap(app, "media.offline"); tap(app, "media.transfer.begin")
+        tap(app, "ipad.section.media"); tap(app, "media.options.r2_media-day"); tap(app, "media.offline"); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
-        tap(app, "media.options.media-day"); tap(app, "media.savePhotos"); tap(app, "media.transfer.begin")
+        tap(app, "media.options.r2_media-day"); tap(app, "media.savePhotos"); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
         app.terminate(); app.launchArguments = base + ["--uitest-offline"]; app.launch()
         XCTAssertTrue(app.buttons["ipad.section.agenda"].waitForExistence(timeout: 20)); XCTAssertFalse(app.textFields["login.username"].exists)
         tap(app, "ipad.section.agenda"); XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout: 15))
-        tap(app, "ipad.section.media"); tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
-        tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); capture("ipad-video-sin-conexion"); tap(app, "media.preview.close")
+        tap(app, "ipad.section.media"); tap(app, "media.item.r2_media-day"); tap(app, "media.item.r2_media-photo"); tap(app, "media.preview.close")
+        tap(app, "media.item.r2_media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); capture("ipad-video-sin-conexion"); tap(app, "media.preview.close")
         XCTAssertFalse(app.buttons["media.add"].exists); capture("ipad-galeria-sin-conexion")
     }
     @MainActor func testTabletEditorSurvivesBackgroundAndPrivacyCoversSheet() {

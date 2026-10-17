@@ -25,6 +25,18 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
+private final class MediaUploadObserver: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
+    private let callback: @MainActor (Int64) -> Void
+    private let lock=NSLock();private var active=true
+    init(_ callback:@escaping @MainActor (Int64)->Void){self.callback=callback}
+    func stop(){lock.lock();active=false;lock.unlock()}
+    private var isActive:Bool{lock.lock();defer{lock.unlock()};return active}
+    func urlSession(_ session:URLSession,task:URLSessionTask,didSendBodyData bytesSent:Int64,totalBytesSent:Int64,totalBytesExpectedToSend:Int64){
+        Task {@MainActor [self] in if isActive {callback(totalBytesSent)}}
+    }
+    func urlSession(_ session:URLSession,task:URLSessionTask,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,completionHandler:@escaping(URLRequest?)->Void){completionHandler(nil)}
+}
+
 @MainActor
 final class PayrollClient: ObservableObject {
     nonisolated static let productionURL = URL(string: "https://jhonalexcastano.com")!
@@ -701,7 +713,7 @@ final class PayrollClient: ObservableObject {
         }
         return response
     }
-    func uploadMedia(_ file: MediaLocalFile, parentID: String, progress: @escaping (Int64, Int64) -> Void) async throws {
+    func uploadMedia(_ file: MediaLocalFile, parentID: String, transferred: @escaping (Int64) -> Void = {_ in}, progress: @escaping (Int64, Int64) -> Void) async throws {
         guard !usingOfflineCopy else { throw APIError.invalid("Conéctate para subir fotos y videos.") }
         let stamp = try mediaAccessStamp()
         var plan = try await mediaUploadCommand(["action": .string("start"), "transport": .string("direct"), "id": .string(file.id), "parentId": .string(parentID), "filename": .string(file.name), "mimeType": .string(file.mimeType), "size": .number(Double(file.size)), "imageLimit": .number(Double(file.imageLimit))])
@@ -714,17 +726,28 @@ final class PayrollClient: ObservableObject {
             guard count > 0, let chunk = try handle.read(upToCount: count), chunk.count == count else { throw APIError.invalid("El archivo local cambió. Vuelve a seleccionarlo.") }
             let (legacyRequest, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "id", value: file.id), URLQueryItem(name: "offset", value: String(plan.offset))] + (plan.uploadURL == nil ? [] : [URLQueryItem(name: "transport", value: "direct")]), method: "PUT")
             let previous = plan.offset
+            var transmitted:Int64=0
+            let observer=MediaUploadObserver {sent in
+                guard stamp == (try? self.mediaAccessStamp()),!Task.isCancelled else{return}
+                let value=min(Int64(count),max(transmitted,sent));transferred(value-transmitted);transmitted=value
+                progress(previous+value,file.size)
+            }
+            defer {observer.stop()}
             do {
                 guard stamp == (try mediaAccessStamp()) else { throw CancellationError() }
                 if let url = plan.uploadURL, !compatible {
                     let direct = try Self.directMediaRequest(url, mime: file.mimeType, offset: previous, count: count, total: file.size)
-                    let (_, raw) = try await mediaSession.upload(for: direct, from: chunk)
+                    let (_, raw) = try await mediaSession.upload(for: direct, from: chunk, delegate:observer)
+                    observer.stop()
                     guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
                     guard let response = raw as? HTTPURLResponse, (200..<300).contains(response.statusCode) || response.statusCode == 308 else { throw APIError.message("El almacenamiento no confirmó la transferencia. Reintenta para consultar su avance.") }
+                    transferred(Int64(count)-transmitted)
                     plan = try await mediaUploadCommand(["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)])
                 } else {
-                    let (data, raw) = try await mediaSession.upload(for: legacyRequest, from: chunk)
+                    let (data, raw) = try await mediaSession.upload(for: legacyRequest, from: chunk, delegate:observer)
+                    observer.stop()
                     _ = try validateMediaResponse(raw, data: data, token: token, generation: generation)
+                    transferred(Int64(count)-transmitted)
                     plan = try decoder.decode(MediaUploadState.self, from: data)
                 }
             } catch {
@@ -860,12 +883,15 @@ final class PayrollClient: ObservableObject {
 
     func mediaDownloadPlan(folder: String = "") async throws -> MediaDownloadPlan {
         var pending = [folder], seenFolders = Set<String>(), seenFiles = Set<String>(), files: [MediaItem] = [], root: MediaFolder?
+        let stamp=try mediaAccessStamp();var firstFeed:MediaFeed?
         while !pending.isEmpty {
             try Task.checkCancellation()
             let current = pending.removeFirst(); guard seenFolders.insert(current).inserted else { continue }
             var cursor = "", seenPages = Set<String>(), folderItems: [MediaItem] = [], lastFeed: MediaFeed?
             repeat {
                 let feed = try await media(folder: current, pageToken: cursor)
+                guard stamp == (try mediaAccessStamp()) else {throw CancellationError()}
+                if let firstFeed {guard firstFeed.collectionID == feed.collectionID,firstFeed.root?.id == feed.root?.id else {throw APIError.invalid("La colección cambió. Actualiza Fotografía e inténtalo de nuevo.")}}else {firstFeed=feed}
                 guard feed.connected, feed.canRead else { throw APIError.forbidden("La carpeta ya no está disponible para tu cuenta.") }
                 if root == nil { root = feed.folder ?? feed.root }
                 folderItems += feed.items; lastFeed = feed
@@ -877,7 +903,7 @@ final class PayrollClient: ObservableObject {
                 guard cursor.isEmpty || seenPages.insert(cursor).inserted else { throw APIError.message("No se pudo completar el listado. Actualiza la carpeta.") }
             } while !cursor.isEmpty
             if let feed = lastFeed, let scope = try mediaScope() {
-                let complete = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: folderItems, nextPageToken: nil)
+                let complete = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: folderItems, nextPageToken: nil,provider:feed.provider,collectionID:feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders)
                 try mediaOffline.pinFeed(complete, key: current, scope: scope)
             }
         }

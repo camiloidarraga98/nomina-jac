@@ -708,9 +708,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.9.0</string>
+				<string>1.10.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>11</string>
+				<string>12</string>
 				<key>INFOPLIST_FILE</key>
 				<string>JACMac/Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
@@ -766,9 +766,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.9.0</string>
+				<string>1.10.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>11</string>
+				<string>12</string>
 				<key>INFOPLIST_FILE</key>
 				<string>JACMac/Info.plist</string>
 				<key>INFOPLIST_KEY_CFBundleDisplayName</key>
@@ -986,9 +986,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.0</string>
+				<string>1.10.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>12</string>
 				<key>TEST_HOST</key>
 				<string>$(BUILT_PRODUCTS_DIR)/JAC Music.app/Contents/MacOS/JAC Music</string>
 				<key>BUNDLE_LOADER</key>
@@ -1040,9 +1040,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>YES</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.0</string>
+				<string>1.10.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>12</string>
 				<key>TEST_HOST</key>
 				<string>$(BUILT_PRODUCTS_DIR)/JAC Music.app/Contents/MacOS/JAC Music</string>
 				<key>BUNDLE_LOADER</key>
@@ -1237,9 +1237,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>NO</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.0</string>
+				<string>1.10.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>12</string>
 				<key>TEST_TARGET_NAME</key>
 				<string>JACMac</string>
 				<key>CODE_SIGN_ENTITLEMENTS</key>
@@ -1291,9 +1291,9 @@
 				<key>ENABLE_HARDENED_RUNTIME</key>
 				<string>NO</string>
 				<key>MARKETING_VERSION</key>
-				<string>1.0.0</string>
+				<string>1.10.0</string>
 				<key>CURRENT_PROJECT_VERSION</key>
-				<string>1</string>
+				<string>12</string>
 				<key>TEST_TARGET_NAME</key>
 				<string>JACMac</string>
 				<key>CODE_SIGN_ENTITLEMENTS</key>

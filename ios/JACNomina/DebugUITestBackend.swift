@@ -88,6 +88,7 @@ private final class FixtureProtocol: URLProtocol {
             if Self.cancelRead(request) { throw URLError(.cancelled) }
             if request.url?.host == "www.googleapis.com" {
                 guard request.url?.path == "/upload/drive/v3/files", request.value(forHTTPHeaderField: "Cookie") == nil, request.value(forHTTPHeaderField: "Authorization") == nil else { throw URLError(.unsupportedURL) }
+                if ProcessInfo.processInfo.arguments.contains("--uitest-slow-media-upload"){Thread.sleep(forTimeInterval:2)}
                 let result = try MediaFixture.direct(request), response = HTTPURLResponse(url: request.url!, statusCode: result, httpVersion: nil, headerFields: nil)!
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed); client?.urlProtocolDidFinishLoading(self); return
             }
@@ -425,12 +426,23 @@ enum MediaFixture {
         while true { let count = stream.read(&buffer, maxLength: buffer.count); if count < 0 { throw stream.streamError ?? URLError(.badServerResponse) }; if count == 0 { break }; result.append(contentsOf: buffer.prefix(count)) }
         return result
     }
+    static var r2Fixture:Bool {ProcessInfo.processInfo.arguments.contains("--uitest-media-r2")}
+    static func sourceID(_ id:String)->String {r2Fixture && id.hasPrefix("r2_media-") ? String(id.dropFirst(3)):id}
+    static func r2Value(_ value:JSONValue)->JSONValue {
+        guard r2Fixture else{return value}
+        switch value {
+        case .object(let fields):return .object(fields.mapValues{r2Value($0)})
+        case .array(let entries):return .array(entries.map{r2Value($0)})
+        case .string(let text):return text.hasPrefix("media-") ? .string("r2_"+text):value
+        default:return value
+        }
+    }
     static func file(_ request: URLRequest) throws -> (Int, String, Data) {
         lock.lock(); defer { lock.unlock() }
-        let q = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems ?? [], id = q.first { $0.name == "id" }?.value ?? ""
+        let q = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems ?? [], id = sourceID(q.first { $0.name == "id" }?.value ?? "")
         guard let bytes = files[id] else { return (404, "application/json", Data("{\"error\":\"Archivo ficticio no encontrado\"}".utf8)) }
         let record = items.values.flatMap { $0 }.first { $0["id"].text == id }
-        if q.contains(where: { $0.name == "metadata" }), let record { return (200, "application/json", try JSONEncoder().encode(JSONValue.object(["item": record]))) }
+        if q.contains(where: { $0.name == "metadata" }), let record { return (200, "application/json", try JSONEncoder().encode(JSONValue.object(["item": r2Value(record)]))) }
         let mime = record?["mimeType"].text ?? "image/png"
         return (200, q.contains { $0.name == "thumbnail" } ? "image/png" : mime, q.contains { $0.name == "thumbnail" } ? photo : bytes)
     }
@@ -447,9 +459,11 @@ enum MediaFixture {
         let photographer = (try? FixtureProtocol.user.decoded(PayrollUser.self).canUploadMedia) == true
         let administrator = (try? FixtureProtocol.user.decoded(PayrollUser.self).canDeleteMedia) == true
         if parts.path == "/api/media", request.httpMethod == "GET" {
-            let id = q.first { $0.name == "folder" }?.value ?? "media-root", selected: JSONValue = id == "media-root" ? folder : .object(["id": .string(id), "name": .string(id == "media-day" ? "2026-10-16 · PEREIRA" : id == "media-other" ? "2026-10-17 · BOGOTÁ" : "Carpeta ficticia")])
+            let id = sourceID(q.first { $0.name == "folder" }?.value ?? "media-root"), selected: JSONValue = id == "media-root" ? folder : .object(["id": .string(id), "name": .string(id == "media-day" ? "2026-10-16 · PEREIRA" : id == "media-other" ? "2026-10-17 · BOGOTÁ" : "Carpeta ficticia")])
             if deletedFolders.contains(id){return (410,.object(["error":.string("Carpeta eliminada")]))}
-            return (200, .object(["canDelete":.bool(administrator),"deletedFolders":.array(deletedFolders.map{.string($0)}),"pendingDeletions":.array([]),"connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(photographer), "canConnect": .bool(!photographer), "root": folder, "folder": selected, "breadcrumbs": .array(id == "media-root" ? [folder] : [folder, selected]), "items": .array(items[id] ?? []), "nextPageToken": .string("")]))
+            var feed:JSONValue = .object(["canDelete":.bool(administrator),"deletedFolders":.array(deletedFolders.map{.string($0)}),"pendingDeletions":.array([]),"connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(photographer), "canConnect": .bool(!photographer), "root": folder, "folder": selected, "breadcrumbs": .array(id == "media-root" ? [folder] : [folder, selected]), "items": .array(items[id] ?? []), "nextPageToken": .string("")])
+            if r2Fixture {feed["provider"] = .string("r2");feed["collectionID"] = .string("jac-r2-new-20261016")}
+            return (200,r2Value(feed))
         }
         if parts.path=="/api/media",request.httpMethod=="POST",let input=try? JSONDecoder().decode(JSONValue.self,from:bytes(request)),input["action"].text=="deleteFolder" {
             guard administrator else{return(403,.object(["error":.string("Solo administradores")]))}

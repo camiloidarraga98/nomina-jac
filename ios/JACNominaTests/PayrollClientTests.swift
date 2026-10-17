@@ -24,6 +24,10 @@ private final class MemorySession: SessionStoring {
     func save(_ token: String) throws { self.token = token }
     func clear() throws { token = nil }
 }
+private struct DeniedMediaPhotosWriter:MediaPhotosWriting {
+    @MainActor func authorize() async throws {throw APIError.invalid("Permiso de Fotos rechazado en prueba.")}
+    @MainActor func save(_ document:ExportedDocument,item:MediaItem) async throws {XCTFail("No debe guardar sin autorización")}
+}
 
 private final class MockProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
@@ -390,6 +394,40 @@ final class PayrollClientTests: XCTestCase {
         var broken = try Data(contentsOf: cache.encryptedFile(item, scope: scope)); broken[64] ^= 1; try broken.write(to: cache.encryptedFile(item, scope: scope))
         XCTAssertThrowsError(try cache.document(item, scope: scope)); cache.clear(scope)
         XCTAssertFalse(cache.hasFile(item, scope: scope)); XCTAssertFalse(FileManager.default.fileExists(atPath: cache.encryptedFile(item, scope: scope).path))
+    }
+    func testUploadSpeedCountsBytesFromConcurrentTransfersAndExpiresWhenIdle() {
+        var meter=MediaUploadRate();meter.record(1000,at:0);meter.record(1000,at:0);XCTAssertEqual(meter.rate(at:0.5),2000)
+        meter.record(1000,at:0.5);meter.record(0,at:0.5);XCTAssertEqual(meter.rate(at:0.5),3000);XCTAssertEqual(meter.rate(at:5),0)
+    }
+    @MainActor func testDeniedPhotosPermissionReportsAnActionableResultWithoutDownloading() async throws {
+        let client=UITestBackend.client(),plan=MediaDownloadPlan(folder:MediaFolder(id:"ficticia",name:"Prueba"),files:[]),transfer=MediaFolderTransfer()
+        transfer.start(client:client,plan:plan,photos:true,writer:DeniedMediaPhotosWriter())
+        for _ in 0..<100 where transfer.running {try await Task.sleep(for:.milliseconds(20))}
+        XCTAssertFalse(transfer.running);XCTAssertEqual(transfer.completed,0);XCTAssertEqual(transfer.failures,["Permiso de Fotos rechazado en prueba."]);XCTAssertTrue(transfer.message?.contains("No se pudo iniciar el guardado en Fotos") == true)
+    }
+    @MainActor func testR2FolderDownloadPlanPreservesCollectionForOfflineAndPhotos() async throws {
+        let vault=MemorySession();vault.token=String(repeating:"f",count:43)
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString);defer{try? FileManager.default.removeItem(at:root);MockProtocol.handler=nil}
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let cache=MediaOfflineCache(root:root),client=PayrollClient(baseURL:URL(string:"https://r2-download.invalid")!,vault:vault,configuration:config,mediaOffline:cache,automaticallyDownloadOffline:false)
+        let folder=MediaFolder(id:"jac_r2_root",name:"Fotografía"),day=MediaFolder(id:"r2_"+UUID().uuidString.lowercased(),name:"Show ficticio")
+        let item=MediaItem(id:"r2_"+UUID().uuidString.lowercased(),name:"Foto ficticia.png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"2026-10-16T12:00:00Z",thumbnailAvailable:true)
+        MockProtocol.handler={req in
+            XCTAssertEqual(req.url?.host,"r2-download.invalid")
+            if req.url?.path=="/api/media/file",req.url?.query?.contains("metadata=1")==true {return(HTTPURLResponse(url:req.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,try JSONEncoder().encode(JSONValue.object(["item":try JSONDecoder().decode(JSONValue.self,from:JSONEncoder().encode(item))])))}
+            if req.url?.path=="/api/media/file" {return(HTTPURLResponse(url:req.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"image/png"])!,MediaFixture.photo)}
+            let feed=MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:folder,folder:day,breadcrumbs:[folder,day],items:[item],nextPageToken:nil,provider:"r2",collectionID:"jac-r2-new-20261016",canDelete:false)
+            return(HTTPURLResponse(url:req.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,try JSONEncoder().encode(feed))
+        }
+        let plan=try await client.mediaDownloadPlan(folder:day.id)
+        XCTAssertEqual(plan.files.map(\.id),[item.id]);let scope=try XCTUnwrap(client.mediaScope())
+        XCTAssertEqual(cache.loadFeed(day.id,scope:scope)?.collectionID,"jac-r2-new-20261016")
+        let transfer=MediaFolderTransfer();transfer.start(client:client,plan:plan,photos:false)
+        for _ in 0..<100 where transfer.running {try await Task.sleep(for:.milliseconds(20))}
+        XCTAssertFalse(transfer.running);XCTAssertEqual(transfer.completed,1);XCTAssertTrue(transfer.failures.isEmpty);XCTAssertTrue(cache.hasFile(item,scope:scope))
+        transfer.start(client:client,plan:plan,photos:true,writer:FixtureMediaPhotosWriter())
+        for _ in 0..<100 where transfer.running {try await Task.sleep(for:.milliseconds(20))}
+        XCTAssertEqual(transfer.completed,1,transfer.failures.joined(separator:"; "));XCTAssertEqual(transfer.message,"1 de 1 archivos guardados en Fotos.");XCTAssertTrue(transfer.failures.isEmpty)
     }
     @MainActor func testMediaFolderPaginationRecursionOfflineReopenAndRevocation() async throws {
         let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
