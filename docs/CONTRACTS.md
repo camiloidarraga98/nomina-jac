@@ -29,3 +29,5 @@ Sin dependencias nuevas, cambios de lockfile, migraciones, permisos de otras sec
 - Reproducción del ejemplo y PDF ficticio renderizados con Poppler e inspeccionados en sus cuatro páginas. Píxeles de zonas fijas y toda la página3 idénticos al original; firma original conservada. Se comprobó la ausencia de razón social/NIT/representante/cédula/importes anteriores en el texto del PDF ficticio.
 - Formulario local aislado en navegador: campos manuales, puntuación COP, resumen del50%, selección nativa de fechas, generación, enlace de vista y descarga correctos. Sin conectar Calendar, Sheets, correo o bases reales.
 - Informes intermedios privados en `work/local/contract-template/`. No incluirlos ni los contratos generados en el repositorio.
+
+Publicado como web v79 en el Site existente, fuente privada `aefa1f7778cf16e4335118b1d1b3d4715feb83eb`, despliegue `appgdep_6ad3eb33393881919410136d72ab9cfe` succeeded. Sin cambios de dominio, audiencia, DB, BUCKET, secretos o conexiones. Formato de nombre corregido antes de publicar y verificado en la descarga local; seis pruebas finales aprobadas.
