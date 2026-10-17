@@ -24,6 +24,8 @@ Se usaron exclusivamente `.invalid`, fotos/videos ficticios y guardado en Fotos 
 
 Mismo bundle `co.jacmusic.nomina`, firma personal y push suspendido. El iPhone físico aparece desconectado: instalar con **Run en el mismo proyecto**, sin sustituir ni descargar otro proyecto.
 
+Fuente guardada en Git local `4d5caeea2c2ef1810a989eff8a1e822c7d6398cd` y en el repositorio privado del Site existente `df4d4350e896ad600e1f6404566ef5c28d7339d2`. Se verificó el acceso propietario; la web continúa en v77, sin despliegue. Respaldo nativo opcional de 77 archivos: `outputs/JAC-iPhone-iPad-0.26.0-Mac-1.10.0-fuente-nativa.zip`, SHA256 `f3b739aa4cc129d0ee19f24e10f187209f64deeb0c0dc4f685960a458d707910`; conserva ejecutables y excluye equipo personal, claves y estado local. Capturas ficticias en `outputs/iphone-fotografia-{visor,progreso,gestos}-0.26.png`. El producto instalado de Mac no se sustituyó en esta entrega.
+
 ## Pausa al subir archivos
 
 La revisión encontró una espera entre el envío del original, su confirmación en R2 y la generación/subida de miniatura. Incluso una foto pequeña usa multipart y ocupa uno de los dos turnos durante toda esa secuencia. Ambos turnos pueden estar confirmando sin enviar nuevos bytes. No hay una pausa artificial entre archivos; el tiempo real de cada fase aún requiere medición. Esta entrega corrige el visor y su carga; el protocolo de subida conserva su comportamiento.
