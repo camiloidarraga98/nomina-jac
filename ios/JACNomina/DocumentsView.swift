@@ -426,7 +426,7 @@ struct MediaGalleryView: View {
             VStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
                 if compactGallery {
-                    if writable { HStack { Spacer(); Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(uploading || !queue.isEmpty).accessibilityIdentifier("media.add") } }
+                    if user.canUploadMedia { HStack { Spacer(); Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(!writable || uploading || !queue.isEmpty).accessibilityIdentifier("media.add") } }
                 } else {
                 VStack(alignment:.leading,spacing:12) {
                     Text(feed?.folder?.id == feed?.root?.id ? "Cada show, en imágenes." : feed?.folder?.name ?? "Fotos y videos de JAC").font(.system(.title2,design:.rounded,weight:.bold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading).accessibilityIdentifier("media.heading")

@@ -44,13 +44,14 @@ final class LaunchTests: XCTestCase {
         // remains pending for eight seconds, without blocking URLProtocol.
         XCTAssertTrue(day.exists,"La carpeta descargada debe estar visible antes de validar la sesión.");day.tap()
         XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
-        XCTAssertFalse(app.buttons["media.add"].exists,"Esta comprobación debe observar la sesión todavía en validación.")
+        XCTAssertTrue(app.buttons["media.add"].exists);XCTAssertFalse(app.buttons["media.add"].isEnabled,"El botón permanece visible sin permitir subir antes de validar.")
         let thumbnail=app.descendants(matching:.any).matching(identifier:"media.thumbnail.media-photo").firstMatch
         XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"media.placeholder.media-photo").firstMatch.exists)
         XCTAssertFalse(thumbnail.exists)
         XCTAssertFalse(app.staticTexts["media.offline.status"].exists)
         XCTAssertTrue(thumbnail.waitForExistence(timeout:max(0,15-Date().timeIntervalSince(reopenedAt))),"Al validar la sesión, la miniatura debe aparecer sin esperar treinta segundos ni abrir el original.")
         XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout:max(0,15-Date().timeIntervalSince(reopenedAt))))
+        XCTAssertTrue(app.buttons["media.add"].isEnabled)
         attachScreen(app,name:"fotografia-miniaturas-al-recuperar-sesion")
     }
     @MainActor func testPhotographerGalleryRestoresImmediatelyAndRevalidatesBeforePolling() {

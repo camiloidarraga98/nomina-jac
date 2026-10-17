@@ -1,3 +1,7 @@
+## Botón Subir visible desde el inicio — 17 de octubre de 2026
+
+Cambio mínimo solicitado: en iPhone, Subir se muestra por el permiso conocido del usuario, sin esperar el feed y sin texto adicional. Conserva deshabilitación/guardas hasta validar acceso. Solo una prueba UI específica actualizada y aprobada: upload-button-visible.xcresult. Sin cambios web, API, dependencias o firma; mismo proyecto0.27.0(40).
+
 ## Cola de subidas del iPhone — 17 de octubre de 2026
 
 Preparación0.27.0(40) en el mismo proyecto: cola persistente protegida separada de TemporaryDocuments, transferencias URLSession background desde archivos con recuperación de tareas/UUID, dos originales y una miniatura independiente con cuatro reservas máximas. Manifest AES-GCM y copia de sesión/key de cola solo en Llavero AFUThisDeviceOnly mientras haya pendientes; sesión/cachés principales no cambian su protección. Logout/cambio de cuenta/permisos retira cola y tareas; capacidad R2 vencida se concilia/reintenta sin duplicar. Recibo opcional de una sola parte reduce confirmación S3 de5a3 llamadas, conservando validaciones finales/CAS y compatibilidad. Sin dependencias, migraciones, datos reales de prueba o conexiones nuevas. Forzar cierre iOS exige reabrir para retomar. Ver docs/IPHONE_BACKGROUND_UPLOADS.md; resultados finales se añaden al cerrar.
