@@ -29,6 +29,9 @@ private final class FixtureSession: SessionStoring {
 }
 private final class FixtureProtocol: URLProtocol {
     private var delayedResponse:DispatchWorkItem?
+    private let responseLock=NSLock()
+    private var stopped=false
+    private var isStopped:Bool {responseLock.lock();defer{responseLock.unlock()};return stopped}
     static let lock = NSRecursiveLock()
     static var state = initialState()
     static var revision = 1
@@ -100,6 +103,22 @@ private final class FixtureProtocol: URLProtocol {
                     guard parts.count == 2, let start = Int(parts[0]), let end = Int(parts[1]), start >= 0, end >= start, end < body.count else { throw URLError(.badServerResponse) }
                     headers["Content-Range"] = "bytes \(start)-\(end)/\(body.count)"; code = 206; body = body.subdata(in: start..<(end + 1))
                 }
+                if ProcessInfo.processInfo.arguments.contains("--uitest-slow-photo-preview"),code==200,
+                   let query=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)?.queryItems,
+                   query.contains(where:{$0.name=="id" && $0.value?.hasSuffix("media-photo-2")==true}),
+                   !query.contains(where:{["thumbnail","metadata"].contains($0.name)}) {
+                    headers["Content-Length"]=String(body.count)
+                    let response=HTTPURLResponse(url:request.url!,statusCode:code,httpVersion:nil,headerFields:headers)!,split=max(1,body.count/2)
+                    client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed)
+                    client?.urlProtocol(self,didLoad:body.prefix(split))
+                    let tail=body.dropFirst(split)
+                    let work=DispatchWorkItem { [weak self] in
+                        guard let self,!self.isStopped else{return}
+                        self.client?.urlProtocol(self,didLoad:Data(tail));self.client?.urlProtocolDidFinishLoading(self)
+                    };delayedResponse=work
+                    DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+12,execute:work)
+                    return
+                }
                 let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: headers)!
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed); client?.urlProtocol(self, didLoad: body); client?.urlProtocolDidFinishLoading(self); return
             }
@@ -134,7 +153,7 @@ private final class FixtureProtocol: URLProtocol {
             client?.urlProtocolDidFinishLoading(self)
         } catch { client?.urlProtocol(self, didFailWithError: error) }
     }
-    override func stopLoading() {delayedResponse?.cancel()}
+    override func stopLoading() {responseLock.lock();stopped=true;responseLock.unlock();delayedResponse?.cancel()}
     static func body(_ request: URLRequest) throws -> JSONValue {
         var bytes = request.httpBody ?? Data()
         if bytes.isEmpty, let stream = request.httpBodyStream {
@@ -411,7 +430,10 @@ enum MediaFixture {
         files = ["media-photo": photo, "media-video": video]; uploads = [:];deletedFolders=[]
         items = ["media-root": [item(id: "media-day", name: "2026-10-16 · PEREIRA", mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)], "media-day": [item(id: "media-photo", name: "Foto ficticia.png", mime: "image/png", kind: "image", size: photo.count), item(id: "media-video", name: "Video ficticio.mov", mime: "video/quicktime", kind: "video", size: video.count)]]
         if ProcessInfo.processInfo.arguments.contains("--uitest-media-slideshow") {
-            items["media-day",default:[]].append(item(id:"media-photo-2",name:"Segunda foto ficticia.png",mime:"image/png",kind:"image",size:photo.count));files["media-photo-2"]=photo
+            // Trailing padding preserves the fictitious PNG while making each
+            // streamed half large enough to flush URLSession's disk buffer.
+            let second=ProcessInfo.processInfo.arguments.contains("--uitest-slow-photo-preview") ? photo+Data(repeating:0,count:1024*1024):photo
+            items["media-day",default:[]].append(item(id:"media-photo-2",name:"Segunda foto ficticia.png",mime:"image/png",kind:"image",size:second.count));files["media-photo-2"]=second
         }
         if ProcessInfo.processInfo.arguments.contains("--uitest-media-two-folders") {
             var other=item(id:"media-other",name:"2026-10-17 · BOGOTÁ",mime:"application/vnd.google-apps.folder",kind:"folder",size:0);other["createdAt"] = .string("2026-10-17T12:00:00Z")

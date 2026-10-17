@@ -2,6 +2,7 @@ import XCTest
 import UserNotifications
 import AVFoundation
 import ImageIO
+import CryptoKit
 #if os(iOS)
 import UIKit
 @testable import JACNomina
@@ -83,6 +84,26 @@ private final class MediaDelayedProtocol: URLProtocol {
         client?.urlProtocol(self, didLoad: data); client?.urlProtocolDidFinishLoading(self)
     }
     override func stopLoading() {}
+}
+
+private final class MediaDownloadChunkProtocol: URLProtocol, @unchecked Sendable {
+    static let bytes = Data(repeating: 42, count: 1024 * 1024)
+    private let lock = NSLock()
+    private var stopped = false
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host?.hasSuffix(".invalid") == true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let data = Self.bytes, midpoint = Self.bytes.count / 2
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png", "Content-Length": String(data.count)])!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data.prefix(midpoint))
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.8) { [self] in
+            lock.lock(); let cancelled = stopped; lock.unlock()
+            guard !cancelled else { return }
+            client?.urlProtocol(self, didLoad: data.suffix(data.count - midpoint))
+            client?.urlProtocolDidFinishLoading(self)
+        }
+    }
+    override func stopLoading() { lock.lock(); stopped = true; lock.unlock() }
 }
 
 @MainActor private final class FakeMediaPhotosWriter: MediaPhotosWriting {
@@ -627,6 +648,139 @@ final class PayrollClientTests: XCTestCase {
         revoked = true
         do { _ = try await client.mediaDocument(item); XCTFail("A cached image must never bypass a confirmed 403") } catch { guard case APIError.forbidden = error else { return XCTFail(String(describing: error)) } }
         XCTAssertEqual(originals, 1); XCTAssertEqual(metadata, 2); XCTAssertFalse(client.mediaOffline.hasFile(item, scope: scope))
+    }
+    @MainActor func testMediaPhotoDownloadProgressAndPersistentCacheHitDoNotRedownload() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let cache = MediaOfflineCache(root: root)
+        let client = PayrollClient(baseURL: URL(string: "https://progress.example.invalid")!, vault: vault, configuration: config, mediaOffline: cache)
+        let item = MediaItem(id: "photo-progress", name: "Ficticia.png", mimeType: "image/png", kind: "image", size: Int64(MediaFixture.photo.count), modifiedAt: "fixture-progress", thumbnailAvailable: true)
+        var originals = 0, metadata = 0
+        MockProtocol.handler = { request in
+            if request.url!.query?.contains("metadata=1") == true {
+                metadata += 1
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(["item": item]))
+            }
+            originals += 1
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": item.mimeType, "Content-Length": String(item.size)])!, MediaFixture.photo)
+        }
+        defer { MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: root) }
+        var first: [(Int64, Int64)] = []
+        let downloaded = try await client.mediaDocument(item) { first.append(($0, $1)) }
+        XCTAssertEqual(try Data(contentsOf: downloaded.url), MediaFixture.photo); TemporaryDocuments.remove(downloaded)
+        XCTAssertEqual(first.first?.0, 0); XCTAssertEqual(first.last?.0, item.size)
+        XCTAssertTrue(first.allSatisfy { $0.0 >= 0 && $0.0 <= item.size && $0.1 == item.size })
+        let reopened = PayrollClient(baseURL: client.baseURL, vault: vault, configuration: config, mediaOffline: MediaOfflineCache(root: root))
+        var second: [(Int64, Int64)] = []
+        let restored = try await reopened.mediaDocument(item) { second.append(($0, $1)) }
+        XCTAssertEqual(try Data(contentsOf: restored.url), MediaFixture.photo); TemporaryDocuments.remove(restored)
+        XCTAssertEqual(originals, 1); XCTAssertEqual(metadata, 1)
+        XCTAssertEqual(second.map { $0.0 }, [0, item.size], "La copia no inventa pasos de descarga intermedios")
+        XCTAssertTrue(second.allSatisfy { $0.1 == item.size })
+    }
+    @MainActor func testMediaDownloadDelegateReportsActualBytesStopsLateCallbacksAndRejectsRedirects() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let session = URLSession(configuration: configuration)
+        let request = URLRequest(url: URL(string: "https://download.example.invalid/ficticia")!)
+        let task = session.downloadTask(with: request)
+        defer { task.cancel(); session.invalidateAndCancel() }
+        var values: [(Int64, Int64)] = []
+        let received = expectation(description: "Bytes entregados por el delegado")
+        let observer = MediaDownloadProgressObserver(total: 20) { count, total in values.append((count, total)); received.fulfill() }
+        observer.urlSession(session, downloadTask: task, didWriteData: 7, totalBytesWritten: 7, totalBytesExpectedToWrite: 20)
+        await fulfillment(of: [received], timeout: 2)
+        XCTAssertEqual(values.map { $0.0 }, [7]); XCTAssertEqual(values.first?.1, 20)
+        observer.stop()
+        observer.urlSession(session, downloadTask: task, didWriteData: 5, totalBytesWritten: 12, totalBytesExpectedToWrite: 20)
+        await Task.yield()
+        XCTAssertEqual(values.map { $0.0 }, [7])
+        var redirected = true
+        observer.urlSession(session, task: task, willPerformHTTPRedirection: HTTPURLResponse(url: request.url!, statusCode: 302, httpVersion: nil, headerFields: nil)!, newRequest: URLRequest(url: URL(string: "https://other.example.invalid")!)) { redirected = $0 != nil }
+        XCTAssertFalse(redirected)
+    }
+    @MainActor func testMediaDownloadBridgeDeliversIntermediateProgressBeforeFinishing() async throws {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MediaDownloadChunkProtocol.self]
+        let session = URLSession(configuration: configuration)
+        defer { session.invalidateAndCancel() }
+        let total = Int64(MediaDownloadChunkProtocol.bytes.count)
+        let partial = expectation(description: "La descarga real entrega progreso antes de terminar")
+        var counts: [Int64] = [], signalled = false
+        let observer = MediaDownloadProgressObserver(total: total) { received, expected in
+            XCTAssertEqual(expected, total); counts.append(received)
+            if received > 0 && received < total && !signalled { signalled = true; partial.fulfill() }
+        }
+        let loading = Task { try await observer.download(session: session, request: URLRequest(url: URL(string: "https://chunks.example.invalid/photo")!)) }
+        defer { loading.cancel(); observer.stop() }
+        await fulfillment(of: [partial], timeout: 4)
+        let (document, response) = try await loading.value
+        defer { TemporaryDocuments.remove(document) }
+        XCTAssertEqual((response as? HTTPURLResponse)?.statusCode, 200)
+        XCTAssertEqual(try Data(contentsOf: document.url), MediaDownloadChunkProtocol.bytes)
+        XCTAssertTrue(counts.contains { $0 > 0 && $0 < total })
+    }
+    func testMediaPreviewCacheTouchesRecencyAtMostEveryThirtySecondsAndPreservesPinnedCopies() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let source = root.appendingPathComponent("ficticia.png"); try MediaFixture.photo.write(to: source)
+        let scope = AgendaCacheScope(origin: "https://lru.example.invalid/media-offline-v1", token: String(repeating: "f", count: 43))
+        let cache = MediaOfflineCache(root: root.appendingPathComponent("cache"))
+        let item = MediaItem(id: "lru-photo", name: "Ficticia.png", mimeType: "image/png", kind: "image", size: Int64(MediaFixture.photo.count), modifiedAt: "fixture-lru", thumbnailAvailable: true)
+        try cache.saveFile(source, item: item, scope: scope, preview: true)
+        let indexURL = cache.root.appendingPathComponent(scope.id).appendingPathComponent("index.sealed")
+        func accessTime() throws -> TimeInterval {
+            let box = try AES.GCM.SealedBox(combined: Data(contentsOf: indexURL))
+            let plain = try AES.GCM.open(box, using: scope.key, authenticating: Data("jac-media-index-v1".utf8))
+            let index = try XCTUnwrap(JSONSerialization.jsonObject(with: plain) as? [String: Any])
+            return try XCTUnwrap((index["previewAccess"] as? [String: Double])?[item.id])
+        }
+        let initial = try accessTime(), initialBytes = try Data(contentsOf: indexURL)
+        let first = try XCTUnwrap(cache.document(item, scope: scope, accessedAt: initial + 10)); TemporaryDocuments.remove(first)
+        XCTAssertEqual(try Data(contentsOf: indexURL), initialBytes)
+        let touched = try XCTUnwrap(cache.document(item, scope: scope, accessedAt: initial + 31)); TemporaryDocuments.remove(touched)
+        XCTAssertEqual(try accessTime(), initial + 31)
+        let touchedBytes = try Data(contentsOf: indexURL)
+        let again = try XCTUnwrap(cache.document(item, scope: scope, accessedAt: initial + 40)); TemporaryDocuments.remove(again)
+        XCTAssertEqual(try Data(contentsOf: indexURL), touchedBytes)
+        try cache.saveFile(source, item: item, scope: scope, preview: false)
+        let pinnedBytes = try Data(contentsOf: indexURL)
+        let pinned = try XCTUnwrap(cache.document(item, scope: scope, accessedAt: initial + 100)); TemporaryDocuments.remove(pinned)
+        XCTAssertEqual(try Data(contentsOf: indexURL), pinnedBytes)
+        XCTAssertTrue(cache.hasFile(item, scope: scope))
+    }
+    @MainActor func testDeletedPhotoMetadataRemovesOnlyThatCachedItemAndNeverFallsBackOffline() async throws {
+        for status in [404, 410] {
+            let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+            let cache = MediaOfflineCache(root: root)
+            let client = PayrollClient(baseURL: URL(string: "https://deleted.example.invalid")!, vault: vault, configuration: configuration, mediaOffline: cache)
+            let item = MediaItem(id: "deleted-photo", name: "Retirada.png", mimeType: "image/png", kind: "image", size: Int64(MediaFixture.photo.count), modifiedAt: "fixture-delete", thumbnailAvailable: true)
+            let other = MediaItem(id: "other-photo", name: "Conservar.png", mimeType: "image/png", kind: "image", size: item.size, modifiedAt: "fixture-other", thumbnailAvailable: true)
+            var removed = false, originals = 0
+            MockProtocol.handler = { request in
+                let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
+                if parts.queryItems?.contains(where: { $0.name == "metadata" }) == true {
+                    if removed { return (HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Archivo retirado\"}".utf8)) }
+                    return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(["item": item]))
+                }
+                originals += 1
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!, MediaFixture.photo)
+            }
+            defer { MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: root) }
+            for photo in [item, other] { let document = try await client.mediaDocument(photo); TemporaryDocuments.remove(document) }
+            let scope = try XCTUnwrap(client.mediaScope()); XCTAssertTrue(cache.hasFile(item, scope: scope)); XCTAssertTrue(cache.hasFile(other, scope: scope))
+            removed = true
+            do { _ = try await client.mediaDocument(item); XCTFail("Una eliminación confirmada no usa la copia") }
+            catch { XCTAssertTrue(error is MediaFileRemoved) }
+            XCTAssertFalse(cache.hasFile(item, scope: scope)); XCTAssertTrue(cache.hasFile(other, scope: scope))
+            XCTAssertFalse(FileManager.default.fileExists(atPath: cache.encryptedFile(item, scope: scope).path))
+            client.beginOfflineRestore()
+            do { _ = try await client.mediaDocument(item); XCTFail("No debe reaparecer sin conexión") } catch {}
+            let available = try await client.mediaDocument(other); XCTAssertEqual(try Data(contentsOf: available.url), MediaFixture.photo); TemporaryDocuments.remove(available)
+            XCTAssertEqual(originals, 2)
+        }
     }
     @MainActor func testMediaStreamingAssetUsesAuthenticatedRangesAndRejectsChangedContent() async throws {
         let client = UITestBackend.client(), feed = try await client.media(folder: "media-day"), item = try XCTUnwrap(feed.items.first { $0.kind == "video" })

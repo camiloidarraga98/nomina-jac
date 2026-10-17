@@ -1,3 +1,5 @@
+> Fotos · iPhone0.26.0(39): visor a pantalla completa con swipe continuo, precarga y reutilización de fotos vistas; círculo con progreso real mientras carga. Mismo proyecto/firma, actualizar con Run. Ver [visor y caché](../docs/IPHONE_PHOTO_VIEWER.md).
+
 > Fotografía · iPhone0.25.0(38): carpetas desplegables en la misma pantalla, una sola hoja para nombre/archivos y deslizar sobre las fotos. Mismo proyecto y firma; actualizar con Run. Ver [uso y comprobaciones](../docs/IPHONE_PHOTOGRAPHY_SIMPLE.md).
 
 > Agenda · iPhone/iPad0.24.1(37): corregido el cierre de listas al abrir eventos en iOS26.6.1. Misma navegación, permisos y copia offline. Versión instalada y recorrido ficticio confirmado por Camilo en su iPhone; ver [diagnóstico y verificación](../docs/IOS_AGENDA_EVENT_DETAIL_LAYOUT.md).

@@ -157,6 +157,23 @@ final class LaunchTests: XCTestCase {
         image.doubleTap();expectation(for:NSPredicate(format:"value == %@","Ampliada"),evaluatedWith:image);waitForExpectations(timeout:10);image.swipeLeft();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");image.doubleTap();expectation(for:NSPredicate(format:"value == %@","Tamaño original"),evaluatedWith:image);waitForExpectations(timeout:10)
         tap(app,"media.preview.next");XCTAssertTrue(app.staticTexts["Segunda foto ficticia.png"].waitForExistence(timeout:15));tap(app,"media.preview.previous");attachScreen(app,name:"fotografia-visor-deslizar-y-flechas");tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
     }
+    @MainActor func testFullscreenPhotoChangesImmediatelyShowsProgressAndReusesViewedCache() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-slideshow","--uitest-media-r2","--uitest-slow-photo-preview"];app.launch()
+        tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-photo")
+        let image=app.descendants(matching:.any).matching(identifier:"media.photo.document").firstMatch
+        XCTAssertTrue(image.waitForExistence(timeout:15));XCTAssertFalse(app.tabBars.buttons["Fotografía"].isHittable)
+        image.swipeLeft()
+        XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertEqual(app.staticTexts["media.preview.name"].label,"Segunda foto ficticia.png")
+        let ring=app.descendants(matching:.any).matching(identifier:"media.photo.progress.r2_media-photo-2").firstMatch
+        XCTAssertTrue(ring.waitForExistence(timeout:3));expectation(for:NSPredicate(format:"value == %@","50 %"),evaluatedWith:ring);waitForExpectations(timeout:5)
+        attachScreen(app,name:"fotografia-pantalla-completa-progreso-real")
+        let pager=app.scrollViews["media.photo.pager"];pager.swipeRight();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");XCTAssertTrue(image.exists)
+        pager.swipeLeft();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertTrue(image.waitForExistence(timeout:20))
+        attachScreen(app,name:"fotografia-pantalla-completa-foto");tap(app,"media.preview.close")
+        tap(app,"media.item.r2_media-photo");XCTAssertTrue(image.waitForExistence(timeout:5));tap(app,"media.preview.next")
+        XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertTrue(image.waitForExistence(timeout:5),"La copia vista debe abrir sin repetir la descarga ficticia de doce segundos.")
+        tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.r2_media-day"].exists)
+    }
     @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-slow-media-upload"]; app.launch()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))

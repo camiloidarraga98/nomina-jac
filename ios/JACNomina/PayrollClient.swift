@@ -18,6 +18,10 @@ enum APIError: LocalizedError {
     }
 }
 
+struct MediaFileRemoved: LocalizedError {
+    var errorDescription: String? { "Esta foto o video ya no está disponible. Actualiza la carpeta." }
+}
+
 private final class NoRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         // Never forward payroll credentials to a redirect destination.
@@ -35,6 +39,84 @@ private final class MediaUploadObserver: NSObject, URLSessionTaskDelegate, @unch
         Task {@MainActor [self] in if isActive {callback(totalBytesSent)}}
     }
     func urlSession(_ session:URLSession,task:URLSessionTask,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,completionHandler:@escaping(URLRequest?)->Void){completionHandler(nil)}
+}
+
+private struct MediaDownloadResponseFailure: Error { let response: URLResponse }
+
+final class MediaDownloadProgressObserver: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
+    private let total: Int64
+    private let callback: @MainActor (Int64, Int64) -> Void
+    private let lock = NSLock()
+    private var active = true
+    private var started = false
+    private var finished = false
+    private var task: URLSessionDownloadTask?
+    private var continuation: CheckedContinuation<(ExportedDocument, URLResponse), Error>?
+    private var pendingDocument: ExportedDocument?
+    private var pendingResponse: URLResponse?
+    init(total: Int64, callback: @escaping @MainActor (Int64, Int64) -> Void) {
+        self.total = total; self.callback = callback
+    }
+    func download(session: URLSession, request: URLRequest) async throws -> (ExportedDocument, URLResponse) {
+        try Task.checkCancellation()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task = session.downloadTask(with: request)
+                task.delegate = self
+                lock.lock()
+                guard active, !started, !finished else {
+                    lock.unlock(); task.cancel(); continuation.resume(throwing: CancellationError()); return
+                }
+                started = true; self.task = task; self.continuation = continuation
+                lock.unlock()
+                task.resume()
+            }
+        } onCancel: { self.stop() }
+    }
+    func stop() { finish(error: CancellationError()) }
+    private var isActive: Bool { lock.lock(); defer { lock.unlock() }; return active }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didWriteData bytesWritten: Int64, totalBytesWritten: Int64, totalBytesExpectedToWrite: Int64) {
+        guard isActive else { return }
+        guard totalBytesWritten >= 0, totalBytesWritten <= total else {
+            if let response = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(response.statusCode) {
+                finish(error: MediaDownloadResponseFailure(response: response))
+            } else { finish(error: APIError.invalid("La descarga supera el tamaño esperado del archivo.")) }
+            return
+        }
+        if let response = downloadTask.response as? HTTPURLResponse, !(200..<300).contains(response.statusCode) { return }
+        Task { @MainActor [self] in if isActive { callback(totalBytesWritten, total) } }
+    }
+    func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask, didFinishDownloadingTo location: URL) {
+        lock.lock()
+        guard active, !finished, task === downloadTask else { lock.unlock(); return }
+        do {
+            // URLSession removes this URL when the callback returns. Claim it
+            // now, then wait for didCompleteWithError before exposing a result.
+            pendingDocument = try TemporaryDocuments.move(location, filename: "incoming.bin")
+            pendingResponse = downloadTask.response
+            lock.unlock()
+        } catch { lock.unlock(); finish(error: error) }
+    }
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) { finish(error: error) }
+    func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) { completionHandler(nil) }
+    private func finish(error: Error?) {
+        lock.lock()
+        guard !finished else { lock.unlock(); return }
+        finished = true; active = false
+        let continuation = self.continuation, task = self.task
+        let document = pendingDocument, response = pendingResponse
+        self.continuation = nil; self.task = nil; pendingDocument = nil; pendingResponse = nil
+        lock.unlock()
+        if let error {
+            task?.cancel()
+            if let document { TemporaryDocuments.remove(document) }
+            continuation?.resume(throwing: error)
+        } else if let document, let response { continuation?.resume(returning: (document, response)) }
+        else {
+            if let document { TemporaryDocuments.remove(document) }
+            continuation?.resume(throwing: APIError.message("La descarga no terminó correctamente."))
+        }
+    }
 }
 
 @MainActor
@@ -259,6 +341,7 @@ final class PayrollClient: ObservableObject {
             }
             struct ServerError: Decodable { let error: String }
             let message = (try? decoder.decode(ServerError.self, from: data).error) ?? "No se pudo completar la operación. Intenta de nuevo."
+            if path == "api/media/file", query.contains(where: { $0.name == "metadata" }), [404, 410].contains(response.statusCode) { throw MediaFileRemoved() }
             if response.statusCode == 409 { throw APIError.conflict(message) }
             if response.statusCode == 403 { if path == "api/calendar" { clearCachedAgenda() }; throw APIError.forbidden(message) }
             if response.statusCode == 400 || response.statusCode == 413 { throw APIError.invalid(message) }
@@ -821,38 +904,45 @@ final class PayrollClient: ObservableObject {
         guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { if let document { TemporaryDocuments.remove(document) }; throw CancellationError() }
         return document
     }
-    func mediaDocument(_ item: MediaItem) async throws -> ExportedDocument {
+    func mediaDocument(_ item: MediaItem, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
         guard permissionUser?.canReadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a Fotografía.")}
         guard let scope = try mediaScope() else { throw APIError.unauthorized }
+        progress(0, item.size)
         if usingOfflineCopy {
             guard let saved = try await restoredMediaDocument(item, scope: scope) else { throw APIError.message("Este archivo todavía no está descargado. Conéctate y elige Disponible sin conexión.") }
-            return saved
+            progress(item.size, item.size); return saved
         }
         let generation = cacheGeneration
         do {
             if mediaOffline.hasFile(item, scope: scope) {
                 try await validateMediaItem(item)
-                if let saved = try await restoredMediaDocument(item, scope: scope) { return saved }
+                if let saved = try await restoredMediaDocument(item, scope: scope) { progress(item.size, item.size); return saved }
             }
-            let document = try await downloadMediaDocument(item)
+            let document = try await downloadMediaDocument(item, progress: progress)
             if item.kind == "image", item.size <= 24 * 1024 * 1024, MediaStorageReview.freeBytes > item.size * 2 + 64 * 1024 * 1024 {
                 let cache = mediaOffline, work = Task.detached(priority: .utility) { try cache.saveFile(document.url, item: item, scope: scope, preview: true) }
                 do { try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() } }
                 catch { if scope.id != (try mediaScope())?.id { cache.clear(scope) } }
             }
             guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { TemporaryDocuments.remove(document); throw CancellationError() }
-            return document
+            progress(item.size, item.size); return document
         }
         catch {
-            if AgendaOfflineCache.isUnavailable(error), let saved = try await restoredMediaDocument(item, scope: scope) { return saved }
+            if AgendaOfflineCache.isUnavailable(error), let saved = try await restoredMediaDocument(item, scope: scope) { progress(item.size, item.size); return saved }
             throw error
         }
     }
     func validateMediaItem(_ item: MediaItem) async throws {
-        let (data, _) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "metadata", value: "1")], forceNetwork: true)
-        struct Result: Decodable { let item: MediaItem }
-        let current = try decoder.decode(Result.self, from: data).item
-        guard current.id == item.id, current.size == item.size, current.mimeType == item.mimeType, current.modifiedAt == item.modifiedAt else { throw APIError.conflict("El archivo cambió. Actualiza la carpeta.") }
+        let scope = try mediaScope()
+        do {
+            let (data, _) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "metadata", value: "1")], forceNetwork: true)
+            struct Result: Decodable { let item: MediaItem }
+            let current = try decoder.decode(Result.self, from: data).item
+            guard current.id == item.id, current.size == item.size, current.mimeType == item.mimeType, current.modifiedAt == item.modifiedAt else { throw APIError.conflict("El archivo cambió. Actualiza la carpeta.") }
+        } catch is MediaFileRemoved {
+            if let scope, scope.id == (try mediaScope())?.id { try mediaOffline.removeFile(item, scope: scope) }
+            throw MediaFileRemoved()
+        }
     }
     func mediaRange(_ item: MediaItem, offset: Int64, count: Int) async throws -> Data {
         guard count > 0, count <= 1024 * 1024, offset >= 0, offset < item.size, offset + Int64(count) <= item.size else { throw APIError.invalid("El tramo de video no es válido.") }
@@ -864,13 +954,25 @@ final class PayrollClient: ObservableObject {
               response.value(forHTTPHeaderField: "Content-Range") == "bytes \(offset)-\(offset + Int64(count) - 1)/\(item.size)" else { throw APIError.invalid("El video cambió o llegó incompleto. Actualiza la carpeta.") }
         return data
     }
-    private func downloadMediaDocument(_ item: MediaItem) async throws -> ExportedDocument {
+    private func downloadMediaDocument(_ item: MediaItem, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
         guard item.kind != "folder", item.size > 0, item.size <= MediaLocalFile.maximumSize else { throw APIError.invalid("El archivo no está disponible para abrirse.") }
         let free = (try? FileManager.default.attributesOfFileSystem(forPath: TemporaryDocuments.root.deletingLastPathComponent().path)[.systemFreeSize] as? NSNumber)?.int64Value ?? Int64.max
         guard free > item.size + 64 * 1024 * 1024 else { throw APIError.invalid("No hay espacio suficiente para abrir este archivo en el dispositivo.") }
         let (req, token, generation) = try mediaRequest(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "revision", value: item.modifiedAt)])
-        let (temporary, raw) = try await mediaSession.download(for: req)
-        defer { try? FileManager.default.removeItem(at: temporary) }
+        let stamp = try mediaAccessStamp()
+        let observer = MediaDownloadProgressObserver(total: item.size) { [weak self] received, total in
+            guard let self, stamp == (try? self.mediaAccessStamp()) else { return }
+            progress(received, total)
+        }
+        defer { observer.stop() }
+        let incoming: ExportedDocument, raw: URLResponse
+        do { (incoming, raw) = try await observer.download(session: mediaSession, request: req) }
+        catch let failure as MediaDownloadResponseFailure {
+            _ = try validateMediaResponse(failure.response, data: Data(), token: token, generation: generation)
+            throw APIError.invalid("La respuesta de descarga no es válida.")
+        }
+        defer { TemporaryDocuments.remove(incoming) }
+        let temporary = incoming.url
         try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: temporary.path)
         let handle = try FileHandle(forReadingFrom: temporary); defer { try? handle.close() }
         let prefix = try handle.read(upToCount: 64 * 1024) ?? Data()

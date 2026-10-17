@@ -397,6 +397,7 @@ struct MediaGalleryView: View {
     @State private var thumbnailEpoch = UUID()
     @State private var preview: MediaPreview?
     @State private var previewFeed: MediaFeed?
+    @State private var fullscreenPhotos:MediaPhotoPresentation?
     @State private var expandedFolders: Set<String> = []
     @State private var uploadComposition: MediaUploadComposition?
     @State private var confirmedUpload = false
@@ -485,7 +486,7 @@ struct MediaGalleryView: View {
                 await reload()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(30)) } catch { return }
-                    if phase == .active && !uploading && preview == nil && !choosingDestination && uploadComposition == nil && opening == nil { await reload() }
+                    if phase == .active && !uploading && preview == nil && fullscreenPhotos == nil && !choosingDestination && uploadComposition == nil && opening == nil { await reload() }
                 }
             }
             .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
@@ -509,12 +510,15 @@ struct MediaGalleryView: View {
             }
             .sheet(item: $transferReview,onDismiss:{if let review=confirmedTransfer {confirmedTransfer=nil;folderTransfer.start(client:store.client,plan:review.plan,photos:review.photos,writer:photosWriter)}}) { review in MediaTransferReviewSheet(review: review) { confirmedTransfer=review } }
             .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document, photos: (previewFeed?.items ?? items).filter { $0.kind == "image" }, feed: previewFeed ?? feed, client: store.client, denied: thumbnailDenied) }
+            #if os(iOS)
+            .fullScreenCover(item:$fullscreenPhotos) {request in MediaFullscreenPhotoView(selected:request.selected,feed:request.feed,client:store.client,denied:thumbnailDenied)}
+            #endif
             .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.image, .movie, .video], allowsMultipleSelection: true) { result in
                 switch result { case .success(let urls): importTask?.cancel(); importTask = Task { await readFiles(urls) }; case .failure(let failure): if (failure as? CocoaError)?.code != .userCancelled { error = failure.localizedDescription } }
             }
             .jacFileDrop(enabled: !compactGallery && writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls);if uploadDestination == nil && !queue.isEmpty {if parentID == feed?.root?.id {choosingDestination=true}else{uploadDestination=feed?.folder}} } }
             .jacRefreshCommand { Task { await reload() } }
-            .onDisappear { deletionTask?.cancel();uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview() }
+            .onDisappear {if fullscreenPhotos == nil || store.overview?.user.id != user.id {deletionTask?.cancel();uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview()}}
     }
     #if os(iOS)
     private var inlineFolders: some View {
@@ -720,6 +724,10 @@ struct MediaGalleryView: View {
     }
     private func open(_ item: MediaItem,in context:MediaFeed?=nil) {
         if item.kind == "folder" { navigate(to: item.id); return }
+        if compactGallery,item.kind == "image",let source=context ?? feed {
+            let whole=MediaFeed(connected:source.connected,canRead:source.canRead,canUpload:source.canUpload,canConnect:source.canConnect,root:source.root,folder:source.folder,breadcrumbs:source.breadcrumbs,items:context?.items ?? items,nextPageToken:source.nextPageToken,provider:source.provider,collectionID:source.collectionID,canDelete:source.canDelete,pendingDeletions:source.pendingDeletions,deletedFolders:source.deletedFolders)
+            fullscreenPhotos=MediaPhotoPresentation(selected:item,feed:whole);return
+        }
         guard opening == nil else { return }; opening = item.id
         openingTask = Task {
             defer { opening = nil; openingTask = nil }
@@ -744,10 +752,10 @@ struct MediaGalleryView: View {
         guard !queue.contains(where: { !completed.contains($0.id) }) else { error = "Sube o quita los archivos seleccionados antes de cambiar de carpeta."; return }
         queue = []; completed = [];uploadDestination=nil; generation = UUID(); folderID = id; loadedPages = 1; feed = nil; items = []
     }
-    private func clearPreview() { preview?.stream?.cancel(); if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil;previewFeed=nil }
+    private func clearPreview() { preview?.stream?.cancel(); if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil;previewFeed=nil;fullscreenPhotos=nil }
     private func thumbnailDenied(_ failure:Error) {
         generation=UUID();loadingFolder=nil;loading=false;expandedFolders=[];openingTask?.cancel();clearPreview()
-        if failure is MediaFolderRemoved {if compactGallery {Task {await reload()}}else{navigate(to:"")};return}
+        if failure is MediaFolderRemoved || failure is MediaFileRemoved {if compactGallery {Task {await reload()}}else{navigate(to:"")};return}
         items=[];feed=nil;queue.forEach{$0.remove()};queue=[];uploadDestination=nil;uploadComposition=nil;error=store.reportReadFailure(failure)
     }
     private func readFiles(_ urls: [URL]) async {
@@ -807,6 +815,11 @@ private struct MediaUploadComposition:Identifiable {
     let id=UUID()
     let root:MediaFolder
     let destination:MediaFolder?
+}
+private struct MediaPhotoPresentation:Identifiable {
+    let id=UUID()
+    let selected:MediaItem
+    let feed:MediaFeed
 }
 
 struct MediaTile: View {
@@ -1238,6 +1251,26 @@ final class MediaOfflineCache: @unchecked Sendable {
         guard !revoked.contains(scope.id) else { return }
         var index = readIndex(scope); index.files.removeValue(forKey: item.id); try? writeIndex(index, scope: scope)
     }
+    func removeFile(_ item: MediaItem, scope: AgendaCacheScope) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !revoked.contains(scope.id) else { return }
+        var index = readIndex(scope)
+        index.files.removeValue(forKey: item.id); index.previewAccess?.removeValue(forKey: item.id)
+        index.deletedFiles = Array(Set(index.deletedFiles ?? []).union([item.id]))
+        func withoutFile(_ feed: MediaFeed) -> MediaFeed {
+            MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload,
+                      canConnect: feed.canConnect, root: feed.root, folder: feed.folder,
+                      breadcrumbs: feed.breadcrumbs, items: feed.items.filter { $0.id != item.id },
+                      nextPageToken: feed.nextPageToken, provider: feed.provider,
+                      collectionID: feed.collectionID, canDelete: feed.canDelete,
+                      pendingDeletions: feed.pendingDeletions, deletedFolders: feed.deletedFolders)
+        }
+        index.feeds = index.feeds.mapValues(withoutFile)
+        index.downloads = index.downloads.mapValues(withoutFile)
+        try? FileManager.default.removeItem(at: encryptedFile(item, scope: scope))
+        do { try writeIndex(index, scope: scope) }
+        catch { clear(scope); throw error }
+    }
     private func associated(_ item: MediaItem, scope: AgendaCacheScope, block: Int) -> Data { Data("jac-media-v1|\(scope.id)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(block)".utf8) }
     private func length(_ value: Int) -> Data { var size = UInt32(value).bigEndian; return withUnsafeBytes(of: &size) { Data($0) } }
     private func readExactly(_ handle: FileHandle, count: Int) throws -> Data {
@@ -1281,7 +1314,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         }
         try writeIndex(index, scope: scope)
     }
-    func document(_ item: MediaItem, scope: AgendaCacheScope) throws -> ExportedDocument? {
+    func document(_ item: MediaItem, scope: AgendaCacheScope, accessedAt: TimeInterval = Date().timeIntervalSince1970) throws -> ExportedDocument? {
         guard hasFile(item, scope: scope) else { return nil }
         let id = UUID(), destinationFolder = TemporaryDocuments.root.appendingPathComponent(id.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
@@ -1303,8 +1336,26 @@ final class MediaOfflineCache: @unchecked Sendable {
                 try output.write(contentsOf: plain); block += 1
             }
             guard count == item.size, (try input.read(upToCount: 1))?.isEmpty != false else { throw APIError.invalid("La copia está incompleta o cambió.") }
+            try finishRead(item, scope: scope, accessedAt: accessedAt)
             return ExportedDocument(id: id, url: destination)
         } catch { try? FileManager.default.removeItem(at: destinationFolder); if !(error is CancellationError) { invalidateFile(item, scope: scope) }; throw error }
+    }
+    private func finishRead(_ item: MediaItem, scope: AgendaCacheScope, accessedAt: TimeInterval) throws {
+        lock.lock(); defer { lock.unlock() }
+        // A folder deletion or collection change may finish while a file is
+        // being decrypted. Never expose that now-retired plaintext document.
+        guard !revoked.contains(scope.id) else { throw CancellationError() }
+        var index = readIndex(scope)
+        guard let saved = index.files[item.id], saved.modifiedAt == item.modifiedAt,
+              saved.size == item.size, saved.mimeType == item.mimeType,
+              !(index.deletedFiles ?? []).contains(item.id) else { throw CancellationError() }
+        let pinned = index.downloads.values.contains { $0.items.contains { $0.id == item.id } }
+        if !pinned, let previous = index.previewAccess?[item.id], accessedAt - previous >= 30 {
+            index.previewAccess?[item.id] = accessedAt
+            // Recency is best effort: a full disk must not prevent opening an
+            // already verified copy. The previous bounded index remains valid.
+            try? writeIndex(index, scope: scope)
+        }
     }
     func clear(_ scope: AgendaCacheScope) {
         lock.lock(); defer { lock.unlock() }; revoked.insert(scope.id)
