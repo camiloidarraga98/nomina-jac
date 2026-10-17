@@ -1,3 +1,7 @@
+## Contratos de presentación en la web — 17 de octubre de 2026
+
+Nueva pestaña CRM → Contratos, solo administradores. PDF de cuatro páginas basado en el modelo aprobado de Camilo, conservando diseño/cláusulas/firma JAC; identidad del contratante, datos del show, importes en letras/números y50% final calculado. Generación privada sin escribir D1/R2 ni enviar documentos. Sin cambios nativos, dependencias, lockfile o migraciones. Ver docs/CONTRACTS.md para alcance, validaciones, archivos y pruebas:43incluyendo6nuevas más41regresiones CRM, TypeScript/build y revisión visual del PDF/formulario local correctos. Publicación y fuente se añaden al cierre.
+
 ## Botón Subir visible desde el inicio — 17 de octubre de 2026
 
 Cambio mínimo solicitado: en iPhone, Subir se muestra por el permiso conocido del usuario, sin esperar el feed y sin texto adicional. Conserva deshabilitación/guardas hasta validar acceso. Solo una prueba UI específica actualizada y aprobada: upload-button-visible.xcresult. Sin cambios web, API, dependencias o firma; mismo proyecto0.27.0(40).

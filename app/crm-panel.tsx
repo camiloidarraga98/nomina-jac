@@ -9,6 +9,7 @@ import CrmCreateForm,{type CrmCalendar} from './crm-create-form';
 import {crmFilePayload,type CrmFile} from './crm-files';
 import CrmAttachments from './crm-attachments';
 import CrmContactInput,{protectCrmContactSuggestions} from './crm-contact-input';
+import CrmContractForm from './crm-contract-form';
 import {CrmContacts,CrmWeekly,CrmShowWorkspace,type CrmRequest,type CrmContactChoice} from './crm-workspace';
 import {crmMoney,type CrmShow} from '@/lib/crm-core';
 import {agendaDate} from '@/lib/calendar-core';
@@ -21,7 +22,8 @@ class RequestFailure extends Error {constructor(message:string,readonly status:n
 async function request<T>(path:string,body?:unknown):Promise<T>{const r=await fetch(path,{cache:'no-store',...(body?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)}:{})});const d=await r.json() as T&{error?:string};if(r.status===401){location.assign('/acceso?returnTo='+encodeURIComponent(location.pathname+location.search));throw new RequestFailure('Inicia sesión de nuevo.',401);}if(!r.ok)throw new RequestFailure(d.error||'No pudimos completar la operación. Conserva el formulario y reintenta.',r.status);return d;}
 const post=<T,>(action:string,extra:Record<string,unknown>={})=>request<T>('/api/crm',{action,...extra});
 export default function CrmPanel(){
- const [month,setMonth]=useState(agendaDate().slice(0,7)),[feed,setFeed]=useState<Feed|null>(null),[detail,setDetail]=useState<Detail|null>(null),[loading,setLoading]=useState(true),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[search,setSearch]=useState(''),[ignored,setIgnored]=useState(false),[creating,setCreating]=useState(false),[payment,setPayment]=useState<{show?:CrmShow}|null>(null),[voiding,setVoiding]=useState<Payment|null>(null),[reason,setReason]=useState(''),[deleting,setDeleting]=useState<{show:CrmShow;record:DeleteRecord}|null>(null),[deleteError,setDeleteError]=useState(''),[section,setSection]=useState<'shows'|'weekly'|'contacts'>('shows'),[detailTab,setDetailTab]=useState<'account'|'profit'|'tasks'>('account');
+ const [month,setMonth]=useState(agendaDate().slice(0,7)),[feed,setFeed]=useState<Feed|null>(null),[detail,setDetail]=useState<Detail|null>(null),[loading,setLoading]=useState(true),[syncing,setSyncing]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[notice,setNotice]=useState(''),[search,setSearch]=useState(''),[ignored,setIgnored]=useState(false),[creating,setCreating]=useState(false),[payment,setPayment]=useState<{show?:CrmShow}|null>(null),[voiding,setVoiding]=useState<Payment|null>(null),[reason,setReason]=useState(''),[deleting,setDeleting]=useState<{show:CrmShow;record:DeleteRecord}|null>(null),[deleteError,setDeleteError]=useState(''),[section,setSection]=useState<'shows'|'weekly'|'contacts'|'contracts'>('shows'),[detailTab,setDetailTab]=useState<'account'|'profit'|'tasks'>('account');
+ useEffect(()=>{if(new URLSearchParams(location.search).get('seccion')==='contratos')setSection('contracts');},[]);
  const alive=useRef(true),generation=useRef(0),lastCalendar=useRef(0),lastSheet=useRef(0),sheetBusy=useRef(false),selectedID=useRef(''),openPayment=useRef(''),currentMonth=useRef(month),calendarBusy=useRef(''),calendarRun=useRef(0);currentMonth.current=month;
  const report=useCallback((e:unknown)=>{if(!alive.current)return;if(e instanceof RequestFailure&&[401,403].includes(e.status)){setFeed(null);setDetail(null);selectedID.current='';setPayment(null);setCreating(false);setDeleting(null);}setError(e instanceof Error?e.message:'No pudimos consultar el CRM.');},[]);
  const featureApi=useCallback<CrmRequest>(async(path,body)=>{try{return await request(path,body);}catch(e){report(e);throw e;}},[report]);
@@ -42,7 +44,8 @@ export default function CrmPanel(){
  const list=(feed?.shows||[]).filter(s=>(ignored||s.status!=='ignored')&&[s.title,s.municipality,s.entrepreneur].join(' ').toLocaleLowerCase('es').includes(search.toLocaleLowerCase('es'))),active=list.filter(s=>s.status==='active'),priced=active.filter(s=>s.sale!==null);
  return <div className="crm">
   {error&&<p className="message error" role="alert">{error}</p>}{notice&&<p className="message success" role="status">{notice}</p>}
-  <div className="crm-tabs" role="tablist" aria-label="Secciones del CRM">{([['shows','Shows y abonos'],['weekly','Resumen semanal'],['contacts','Empresarios']] as const).map(([key,label])=><button key={key} role="tab" aria-selected={section===key} onClick={()=>setSection(key)}>{label}</button>)}</div>
+  <div className="crm-tabs" role="tablist" aria-label="Secciones del CRM">{([['shows','Shows y abonos'],['weekly','Resumen semanal'],['contacts','Empresarios'],['contracts','Contratos']] as const).map(([key,label])=><button key={key} role="tab" aria-selected={section===key} onClick={()=>setSection(key)}>{label}</button>)}</div>
+  {section==='contracts'&&<CrmContractForm/>}
   {section==='weekly'&&feed&&<CrmWeekly api={featureApi} openShow={(s,tab)=>void open(s,tab)}/>}
   {section==='contacts'&&feed&&<CrmContacts api={featureApi} onChanged={()=>void load()} openShow={s=>void open(s)}/>}
   {section==='shows'&&<>
