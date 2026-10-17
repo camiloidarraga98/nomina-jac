@@ -67,12 +67,23 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(app.buttons["media.offline"].exists);XCTAssertFalse(app.buttons["media.savePhotos"].exists)
         tap(app,"media.options.media-other");tap(app,"media.offline");XCTAssertTrue(app.staticTexts["2026-10-17 · BOGOTÁ"].waitForExistence(timeout:10));tap(app,"media.transfer.begin")
         XCTAssertTrue(app.staticTexts["1 de 1 archivos disponibles sin conexión."].waitForExistence(timeout:20))
-        tap(app,"media.add");tap(app,"media.destination.media-day");tap(app,"media.fixture");tap(app,"media.upload")
+        tap(app,"media.options.media-day");tap(app,"media.upload.here");XCTAssertFalse(app.textFields["media.folder.name"].exists,"Subir aquí debe recibir la carpeta seleccionada desde la primera apertura");tap(app,"media.fixture");tap(app,"media.upload")
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:20));XCTAssertFalse(app.buttons["media.item.media-other-photo"].exists)
-        tap(app,"media.folder.media-root");tap(app,"media.item.media-other");XCTAssertTrue(app.buttons["media.item.media-other-photo"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.exists)
+        tap(app,"media.item.media-day");tap(app,"media.item.media-other");XCTAssertTrue(app.buttons["media.item.media-other-photo"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.exists)
         attachScreen(app,name:"fotografia-destino-y-menu-por-carpeta")
-        tap(app,"media.folder.media-root");tap(app,"media.add");XCTAssertTrue(app.buttons["media.destination.current"].label.contains("Archivo JAC"));tap(app,"media.destination.current");tap(app,"media.fixture");tap(app,"media.upload")
+        tap(app,"media.item.media-other");tap(app,"media.add");let newName=app.textFields["media.folder.name"];newName.tap();newName.typeText("Nuevo show ficticio");tap(app,"media.fixture");tap(app,"media.upload")
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:20))
+    }
+    @MainActor func testInlinePhotoFoldersExpandTogetherAndCancelledComposerCreatesNothing() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-two-folders","--uitest-media-r2"];app.launch()
+        tap(app,"media.item.r2_media-other");tap(app,"media.item.r2_media-day")
+        XCTAssertTrue(app.buttons["media.item.r2_media-other-photo"].waitForExistence(timeout:15));XCTAssertTrue(app.buttons["media.item.r2_media-photo"].waitForExistence(timeout:15));attachScreen(app,name:"fotografia-carpetas-abiertas")
+        XCTAssertFalse(app.staticTexts["media.heading"].exists);XCTAssertFalse(app.buttons["media.folder.r2_media-root"].exists)
+        tap(app,"media.item.r2_media-day");XCTAssertFalse(app.buttons["media.item.r2_media-photo"].exists);XCTAssertTrue(app.buttons["media.item.r2_media-other-photo"].exists)
+        tap(app,"media.item.r2_media-other");attachScreen(app,name:"fotografia-carpetas-simplificadas")
+        tap(app,"media.add");let name=app.textFields["media.folder.name"];XCTAssertTrue(name.exists);name.tap();name.typeText("No crear esta carpeta");tap(app,"media.fixture");XCTAssertTrue(app.buttons["media.library"].exists);XCTAssertTrue(app.buttons["media.files"].exists)
+        attachScreen(app,name:"fotografia-subir-una-sola-hoja");tap(app,"media.composer.cancel")
+        XCTAssertEqual(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","media.item.")).count,2);XCTAssertFalse(app.staticTexts["No crear esta carpeta"].exists)
     }
     @MainActor func testEmptyProfileCanReachAccountAndLogOutThroughManagement() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections="];app.launch()
@@ -127,23 +138,24 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Carpeta eliminada."].exists)
     }
     @MainActor func testPhotographerCannotDeleteFolders() {
-        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch();tap(app,"media.item.media-day");tap(app,"media.current.options");XCTAssertFalse(app.buttons["media.delete.folder"].exists)
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch();tap(app,"media.options.media-day");XCTAssertFalse(app.buttons["media.delete.folder"].exists)
     }
     @MainActor func testImageQualityPreferenceCanBeSelectedAndPersistsAcrossRelaunch() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch()
-        tap(app,"media.current.options");tap(app,"media.quality")
+        XCTAssertTrue(app.tabBars.buttons["Gestión"].waitForExistence(timeout:20));app.tabBars.buttons["Gestión"].tap();tap(app,"management.imageQuality")
         XCTAssertTrue(app.buttons["media.quality.option.0"].waitForExistence(timeout:10));XCTAssertEqual(app.buttons["media.quality.option.0"].label,"Sin compresión");tap(app,"media.quality.option.6000000")
-        tap(app,"media.quality.close");app.terminate();app.launch();tap(app,"media.current.options");tap(app,"media.quality")
+        app.terminate();app.launch();app.tabBars.buttons["Gestión"].tap();tap(app,"management.imageQuality")
         let selected=app.buttons["media.quality.option.6000000"];XCTAssertTrue(selected.waitForExistence(timeout:10));XCTAssertEqual(selected.value as? String,"Seleccionado","La preferencia debe persistir al relanzar")
-        tap(app,"media.quality.option.2000000");tap(app,"media.quality.close")
+        tap(app,"media.quality.option.2000000")
     }
     @MainActor func testPhotoSlideshowMovesBothWaysWithinTheSameSheet() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-slideshow"];app.launch()
         tap(app,"media.item.media-day");tap(app,"media.item.media-photo")
         XCTAssertTrue(app.staticTexts["media.preview.counter"].waitForExistence(timeout:15));XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2")
-        tap(app,"media.preview.next");XCTAssertTrue(app.staticTexts["Segunda foto ficticia.png"].waitForExistence(timeout:15));XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertFalse(app.buttons["media.preview.next"].isEnabled)
-        tap(app,"media.preview.previous");XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");XCTAssertFalse(app.buttons["media.preview.previous"].isEnabled)
-        attachScreen(app,name:"fotografia-visor-anterior-siguiente");tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
+        let image=app.descendants(matching:.any).matching(identifier:"media.photo.document").firstMatch;XCTAssertTrue(image.waitForExistence(timeout:10));image.swipeLeft();XCTAssertTrue(app.staticTexts["Segunda foto ficticia.png"].waitForExistence(timeout:15));XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertFalse(app.buttons["media.preview.next"].isEnabled)
+        image.swipeRight();expectation(for:NSPredicate(format:"label == %@","1 de 2"),evaluatedWith:app.staticTexts["media.preview.counter"]);waitForExpectations(timeout:15);XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");XCTAssertFalse(app.buttons["media.preview.previous"].isEnabled)
+        image.doubleTap();expectation(for:NSPredicate(format:"value == %@","Ampliada"),evaluatedWith:image);waitForExpectations(timeout:10);image.swipeLeft();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");image.doubleTap();expectation(for:NSPredicate(format:"value == %@","Tamaño original"),evaluatedWith:image);waitForExpectations(timeout:10)
+        tap(app,"media.preview.next");XCTAssertTrue(app.staticTexts["Segunda foto ficticia.png"].waitForExistence(timeout:15));tap(app,"media.preview.previous");attachScreen(app,name:"fotografia-visor-deslizar-y-flechas");tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.media-photo"].exists)
     }
     @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-slow-media-upload"]; app.launch()
@@ -152,8 +164,8 @@ final class LaunchTests: XCTestCase {
         for forbidden in ["Quincena", "Agenda", "Itinerarios", "Mi cuenta"] { XCTAssertFalse(app.tabBars.buttons[forbidden].exists) }
         tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
         tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-video-nativo"); tap(app, "media.preview.close")
-        tap(app,"media.folder.media-root");tap(app,"media.add");tap(app, "media.createFolder"); let field = app.textFields["media.folder.name"]; XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("Ensayo ficticio")
-        tap(app, "media.folder.save"); XCTAssertTrue(app.buttons["media.fixture"].waitForExistence(timeout: 15)); tap(app, "media.fixture"); tap(app, "media.upload");XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["media.upload.speed"].exists);attachScreen(app,name:"fotografia-progreso-general")
+        tap(app,"media.item.media-day");tap(app,"media.add"); let field = app.textFields["media.folder.name"]; XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("Ensayo ficticio")
+        XCTAssertTrue(app.buttons["media.fixture"].waitForExistence(timeout: 15)); tap(app, "media.fixture"); tap(app, "media.upload");XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["media.upload.speed"].exists);attachScreen(app,name:"fotografia-progreso-general")
         let uploaded = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Foto de prueba.png")).firstMatch
         XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-subida-multiple-nativa")
         openAccount(app); XCTAssertTrue(app.staticTexts["Fotografía JAC"].waitForExistence(timeout: 10)); XCTAssertFalse(app.staticTexts["Administrador de JAC"].exists)
@@ -166,7 +178,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
         tap(app,"media.options.r2_media-day");tap(app, "media.savePhotos"); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
-        let heading=app.staticTexts["media.heading"];XCTAssertTrue(heading.exists);XCTAssertGreaterThanOrEqual(heading.frame.minX,app.frame.minX+12);XCTAssertLessThanOrEqual(heading.frame.maxX,app.frame.maxX-12)
+        let folder=app.buttons["media.item.r2_media-day"];XCTAssertFalse(app.staticTexts["media.heading"].exists);XCTAssertGreaterThanOrEqual(folder.frame.minX,app.frame.minX+12);XCTAssertLessThanOrEqual(folder.frame.maxX,app.frame.maxX-12)
         attachScreen(app, name: "carpeta-guardada-fotos-sin-biblioteca-real")
         app.terminate(); app.launchArguments = base + ["--uitest-offline"]; app.launch()
         XCTAssertTrue(app.buttons["media.item.r2_media-day"].waitForExistence(timeout: 20)); tap(app, "media.item.r2_media-day")
@@ -178,7 +190,7 @@ final class LaunchTests: XCTestCase {
         let app = fixture();app.tabBars.buttons["Fotografía"].tap()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons["media.add"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
         tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
-        tap(app,"media.add");tap(app,"media.destination.current");tap(app,"media.fixture");tap(app,"media.upload")
+        tap(app,"media.item.media-day");tap(app,"media.options.media-day");tap(app,"media.upload.here");XCTAssertFalse(app.textFields["media.folder.name"].exists,"Subir aquí debe recibir la carpeta seleccionada desde la primera apertura");tap(app,"media.fixture");tap(app,"media.upload")
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:15))
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mov")).firstMatch.waitForExistence(timeout:15));attachScreen(app,name:"fotografia-administrador-sube")
     }

@@ -396,21 +396,36 @@ struct MediaGalleryView: View {
     @State private var generation = UUID()
     @State private var thumbnailEpoch = UUID()
     @State private var preview: MediaPreview?
+    @State private var previewFeed: MediaFeed?
+    @State private var expandedFolders: Set<String> = []
+    @State private var uploadComposition: MediaUploadComposition?
+    @State private var confirmedUpload = false
     @State private var previewDocument: ExportedDocument?
     @State private var openingTask: Task<Void, Never>?
     @State private var opening: String?
     private var writable: Bool { user.canUploadMedia && feed?.canUpload == true && feed?.connected == true && !store.isOffline }
     private var parentID: String { feed?.folder?.id ?? feed?.root?.id ?? "" }
+    private var compactGallery: Bool {
+        #if os(iOS)
+        return !JACDevice.isPad
+        #else
+        return false
+        #endif
+    }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
+                if compactGallery {
+                    if writable { HStack { Spacer(); Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(uploading || !queue.isEmpty).accessibilityIdentifier("media.add") } }
+                } else {
                 VStack(alignment:.leading,spacing:12) {
                     Text(feed?.folder?.id == feed?.root?.id ? "Cada show, en imágenes." : feed?.folder?.name ?? "Fotos y videos de JAC").font(.system(.title2,design:.rounded,weight:.bold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading).accessibilityIdentifier("media.heading")
                     HStack(alignment:.top,spacing:16) {
                         Text("Tu archivo de fotos y videos, organizado por día.").font(.subheadline).foregroundStyle(.secondary).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading)
                         if writable {Button {beginUpload()} label:{Label("Subir",systemImage:"plus")}.buttonStyle(.borderedProminent).fixedSize().accessibilityIdentifier("media.add")}
                     }
+                }
                 }
                 #else
                 HStack(alignment:.top,spacing:16) {
@@ -431,18 +446,92 @@ struct MediaGalleryView: View {
                     } else if !feed.canRead || !user.canReadMedia {
                         ContentUnavailableView("Sin acceso a Fotografía", systemImage: "lock", description: Text("Tu cuenta no tiene acceso a estas fotos y videos."))
                     } else {
-                        breadcrumbs(feed)
-                        transferStatus
+                        if !compactGallery { breadcrumbs(feed) }
+                        if preparingTransfer || folderTransfer.running || folderTransfer.message != nil || !folderTransfer.failures.isEmpty { transferStatus }
                         if user.canDeleteMedia,let pending=feed.pendingDeletions,!pending.isEmpty {
                             VStack(alignment:.leading,spacing:12) {ForEach(pending) {job in HStack {Text("Eliminación pendiente: "+job.name).font(.footnote);Spacer();Button("Continuar eliminación") {deletingFolder=MediaFolder(id:job.id,name:job.name);deletionConfirmed=true;beginFolderDeletion()}.disabled(deleting).accessibilityIdentifier("media.delete.resume."+job.id)}}}.padding(14).background(.orange.opacity(0.08),in:RoundedRectangle(cornerRadius:14))
                         }
-                        if writable && uploadDestination?.id == parentID { uploadActions }
+                        if !compactGallery && writable && uploadDestination?.id == parentID { uploadActions }
                         if importing { HStack { ProgressView("Preparando archivos…"); Spacer(); Button("Cancelar preparación") { importTask?.cancel() } } }
                         if let uploadNotice { Label(uploadNotice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.upload.status") }
                         if !queue.isEmpty { pendingUploads }
                         if items.isEmpty && !loading {
                             ContentUnavailableView("Esta carpeta está vacía", systemImage: "photo.on.rectangle", description: Text(writable ? "Crea una carpeta para cada show o día y agrega sus fotos y videos." : "Aquí aparecerán las fotos y videos que suba el fotógrafo."))
                         }
+                        #if os(iOS)
+                        if compactGallery { inlineFolders }
+                        else { legacyGrid }
+                        #else
+                        legacyGrid
+                        #endif
+                        if !(feed.nextPageToken ?? "").isEmpty {
+                            Button("Cargar más") { loadedPages += 1; Task { await reload() } }.frame(maxWidth: .infinity).disabled(loading || uploading).accessibilityIdentifier("media.more")
+                        }
+                    }
+                }
+            }.padding(18).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
+        }.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle()
+            #if os(iOS)
+            .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
+            #endif
+            .refreshable { await reload() }
+            .toolbar {
+                if !compactGallery {
+                ToolbarItem {Button {Task {await reload()}} label:{Image(systemName:"arrow.clockwise")}.accessibilityLabel("Actualizar fotografías").accessibilityIdentifier("media.refresh").disabled(loading || uploading)}
+                ToolbarItem {if let folder=feed?.folder,feed?.canRead == true {Menu {folderCommands(folder);if user.canUploadMedia {Button("Calidad de las imágenes",systemImage:"slider.horizontal.3"){imageQualitySettings=true}.accessibilityIdentifier("media.quality")}} label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel("Opciones de esta carpeta").accessibilityIdentifier("media.current.options")}}
+                }
+            }
+            .task(id: folderID) {
+                await reload()
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    if phase == .active && !uploading && preview == nil && !choosingDestination && uploadComposition == nil && opening == nil { await reload() }
+                }
+            }
+            .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
+            .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline { Task { await reload() } } }
+            .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
+            .alert("Eliminar carpeta",isPresented:$deletionConfirmation) {
+                Button("Cancelar",role:.cancel){deletingFolder=nil}
+                Button("Eliminar",role:.destructive){deletionConfirmed=true;beginFolderDeletion()}.accessibilityIdentifier("media.delete.confirm")
+            } message:{Text("¿Estás seguro de eliminar esta carpeta y todo su contenido?")}
+            .overlay(alignment:.bottom) {if deleting {HStack(spacing:12){ProgressView();Text("Eliminando carpeta…").font(.subheadline)}.padding(18).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20).accessibilityIdentifier("media.delete.progress")}else if let deletionError {HStack {Text(deletionError).font(.footnote);Button("Reintentar"){beginFolderDeletion()};Button("Cerrar"){self.deletionError=nil;deletingFolder=nil;deletionConfirmed=false}}.padding(16).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20)}}
+            .sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
+            .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
+            .sheet(item:$uploadComposition,onDismiss:{
+                if confirmedUpload {confirmedUpload=false;if !queue.isEmpty {uploadTask=Task {await uploadAll()}}}
+            }) { request in
+                #if os(iOS)
+                MediaSimpleUploadComposer(root:request.root,destination:request.destination) { folder,files in
+                    uploadDestination=folder;queue=files;completed=[];progress=[:];uploadErrors=[:];expandedFolders.insert(folder.id);confirmedUpload=true;uploadComposition=nil
+                }
+                #endif
+            }
+            .sheet(item: $transferReview,onDismiss:{if let review=confirmedTransfer {confirmedTransfer=nil;folderTransfer.start(client:store.client,plan:review.plan,photos:review.photos,writer:photosWriter)}}) { review in MediaTransferReviewSheet(review: review) { confirmedTransfer=review } }
+            .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document, photos: (previewFeed?.items ?? items).filter { $0.kind == "image" }, feed: previewFeed ?? feed, client: store.client, denied: thumbnailDenied) }
+            .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.image, .movie, .video], allowsMultipleSelection: true) { result in
+                switch result { case .success(let urls): importTask?.cancel(); importTask = Task { await readFiles(urls) }; case .failure(let failure): if (failure as? CocoaError)?.code != .userCancelled { error = failure.localizedDescription } }
+            }
+            .jacFileDrop(enabled: !compactGallery && writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls);if uploadDestination == nil && !queue.isEmpty {if parentID == feed?.root?.id {choosingDestination=true}else{uploadDestination=feed?.folder}} } }
+            .jacRefreshCommand { Task { await reload() } }
+            .onDisappear { deletionTask?.cancel();uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview() }
+    }
+    #if os(iOS)
+    private var inlineFolders: some View {
+        VStack(spacing:12) {
+            ForEach(items.filter { $0.kind == "folder" }) { item in
+                MediaInlineFolder(folder:MediaFolder(id:item.id,name:item.name),collectionID:feed?.collectionID,expanded:$expandedFolders,epoch:thumbnailEpoch,disabled:uploading || opening != nil || deleting,opening:opening,open:{item,context in open(item,in:context)},denied:thumbnailDenied,commands:{AnyView(folderCommands($0))})
+            }
+            // Older general uploads remain readable without adding a heading.
+            LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:12) {
+                ForEach(items.filter { $0.kind != "folder" }) {item in
+                    Button {open(item)} label:{MediaTile(item:item,client:store.client,offline:store.isOffline,opening:opening==item.id,epoch:thumbnailEpoch,denied:thumbnailDenied)}.buttonStyle(.plain).disabled(opening != nil || uploading).accessibilityIdentifier("media.item."+item.id)
+                }
+            }
+        }
+    }
+    #endif
+    private var legacyGrid: some View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 280), spacing: 14)], spacing: 14) {
                             ForEach(items) { item in
                                 VStack(alignment:.leading,spacing:0) {
@@ -457,43 +546,6 @@ struct MediaGalleryView: View {
                                     .contextMenu {if item.kind == "folder" {folderCommands(MediaFolder(id:item.id,name:item.name))}}
                             }
                         }
-                        if !(feed.nextPageToken ?? "").isEmpty {
-                            Button("Cargar más") { loadedPages += 1; Task { await reload() } }.frame(maxWidth: .infinity).disabled(loading || uploading).accessibilityIdentifier("media.more")
-                        }
-                    }
-                }
-            }.padding(18).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
-        }.jacSurface().navigationTitle("Fotografía").jacInlineTitle()
-            .refreshable { await reload() }
-            .toolbar {
-                ToolbarItem {Button {Task {await reload()}} label:{Image(systemName:"arrow.clockwise")}.accessibilityLabel("Actualizar fotografías").accessibilityIdentifier("media.refresh").disabled(loading || uploading)}
-                ToolbarItem {if let folder=feed?.folder,feed?.canRead == true {Menu {folderCommands(folder);if user.canUploadMedia {Button("Calidad de las imágenes",systemImage:"slider.horizontal.3"){imageQualitySettings=true}.accessibilityIdentifier("media.quality")}} label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel("Opciones de esta carpeta").accessibilityIdentifier("media.current.options")}}
-            }
-            .task(id: folderID) {
-                await reload()
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
-                    if phase == .active && !uploading && preview == nil && !choosingDestination && opening == nil { await reload() }
-                }
-            }
-            .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
-            .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline { Task { await reload() } } }
-            .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
-            .alert("Eliminar carpeta",isPresented:$deletionConfirmation) {
-                Button("Cancelar",role:.cancel){deletingFolder=nil}
-                Button("Eliminar",role:.destructive){deletionConfirmed=true;beginFolderDeletion()}.accessibilityIdentifier("media.delete.confirm")
-            } message:{Text("¿Estás seguro de eliminar esta carpeta y todo su contenido?")}
-            .overlay(alignment:.bottom) {if deleting {HStack(spacing:12){ProgressView();Text("Eliminando carpeta…").font(.subheadline)}.padding(18).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20).accessibilityIdentifier("media.delete.progress")}else if let deletionError {HStack {Text(deletionError).font(.footnote);Button("Reintentar"){beginFolderDeletion()};Button("Cerrar"){self.deletionError=nil;deletingFolder=nil;deletionConfirmed=false}}.padding(16).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20)}}
-            .sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
-            .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
-            .sheet(item: $transferReview,onDismiss:{if let review=confirmedTransfer {confirmedTransfer=nil;folderTransfer.start(client:store.client,plan:review.plan,photos:review.photos,writer:photosWriter)}}) { review in MediaTransferReviewSheet(review: review) { confirmedTransfer=review } }
-            .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document, photos: items.filter { $0.kind == "image" }, feed: feed, client: store.client, denied: thumbnailDenied) }
-            .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.image, .movie, .video], allowsMultipleSelection: true) { result in
-                switch result { case .success(let urls): importTask?.cancel(); importTask = Task { await readFiles(urls) }; case .failure(let failure): if (failure as? CocoaError)?.code != .userCancelled { error = failure.localizedDescription } }
-            }
-            .jacFileDrop(enabled: writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls);if uploadDestination == nil && !queue.isEmpty {if parentID == feed?.root?.id {choosingDestination=true}else{uploadDestination=feed?.folder}} } }
-            .jacRefreshCommand { Task { await reload() } }
-            .onDisappear { deletionTask?.cancel();uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview() }
     }
     private var photosWriter: any MediaPhotosWriting {
         #if DEBUG
@@ -513,6 +565,10 @@ struct MediaGalleryView: View {
         }
     }
     @ViewBuilder private func folderCommands(_ folder:MediaFolder) -> some View {
+        if compactGallery && writable {
+            Button { if let root=feed?.root {uploadComposition=MediaUploadComposition(root:root,destination:folder)} } label:{Label("Subir aquí",systemImage:"plus")}.accessibilityIdentifier("media.upload.here")
+                .disabled(uploading || importing || !queue.isEmpty)
+        }
         Button {Task {await prepareTransfer(folder:folder.id,photos:false)}} label:{Label("Disponible sin conexión",systemImage:"arrow.down.circle")}.accessibilityIdentifier("media.offline")
             .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
         #if os(iOS)
@@ -549,7 +605,8 @@ struct MediaGalleryView: View {
         } catch {if let message=store.reportReadFailure(error){self.error=message}else if !Task.isCancelled {self.error="No se pudo preparar la carpeta. Actualiza Fotografía e inténtalo de nuevo."}}
     }
     private func beginUpload() {
-        guard writable,!uploading else{return}
+        guard writable,!uploading,queue.isEmpty else{return}
+        if compactGallery {if let root=feed?.root {uploadComposition=MediaUploadComposition(root:root,destination:nil)};return}
         if let target=uploadDestination,target.id == parentID {return}
         choosingDestination=true
     }
@@ -645,8 +702,9 @@ struct MediaGalleryView: View {
                 result = try await store.client.media(folder: requestedFolder, pageToken: cursor, forceNetwork: true); all += result.items; cursor = result.nextPageToken ?? ""
             }
             guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
+            if let previous=feed?.collectionID,previous != result.collectionID {expandedFolders=[];clearPreview()}
             feed = result; var seen = Set<String>(); items = MediaGalleryOrder.sorted(all.filter { seen.insert($0.id).inserted });thumbnailEpoch=UUID(); error = nil;mediaIsOffline=false
-            if !result.canRead || !result.connected { items = []; clearPreview(); queue.forEach { $0.remove() }; queue = [] }
+            if !result.canRead || !result.connected { items = []; expandedFolders=[];uploadComposition=nil;clearPreview(); queue.forEach { $0.remove() }; queue = [] }
             // A live gallery does not grant unrelated financial permissions.
             // Join session revalidation before restoring write controls.
             if store.isOffline { try? await store.refreshAutomatically() }
@@ -656,22 +714,27 @@ struct MediaGalleryView: View {
                 feed=saved;items=MediaGalleryOrder.sorted(saved.items);mediaIsOffline=true;self.error=nil;return
             }
             if let message = store.reportReadFailure(error) { self.error = message }
-            if case APIError.forbidden = error { items = []; feed = nil; clearPreview() }
-            if error is MediaFolderRemoved {clearPreview();navigate(to:"")}
+            if case APIError.forbidden = error { items = []; feed = nil; expandedFolders=[];uploadComposition=nil;clearPreview() }
+            if error is MediaFolderRemoved {clearPreview();expandedFolders=[];navigate(to:"")}
         }
     }
-    private func open(_ item: MediaItem) {
+    private func open(_ item: MediaItem,in context:MediaFeed?=nil) {
         if item.kind == "folder" { navigate(to: item.id); return }
         guard opening == nil else { return }; opening = item.id
         openingTask = Task {
             defer { opening = nil; openingTask = nil }
             do {
+                let stamp=try store.client.mediaAccessStamp()
                 if item.kind == "video", !store.client.usingOfflineCopy {
                     try await store.client.validateMediaItem(item)
                     try Task.checkCancellation()
+                    guard stamp == (try store.client.mediaAccessStamp()) else {throw CancellationError()}
+                    previewFeed=context
                     preview = MediaPreview(item: item, document: nil, stream: try MediaVideoStream(client: store.client, item: item))
                 } else {
-                    let document = try await store.client.mediaDocument(item); previewDocument = document; preview = MediaPreview(item: item, document: document, stream: nil)
+                    let document = try await store.client.mediaDocument(item)
+                    guard !Task.isCancelled,stamp == (try store.client.mediaAccessStamp()) else {TemporaryDocuments.remove(document);throw CancellationError()}
+                    previewFeed=context;previewDocument = document; preview = MediaPreview(item: item, document: document, stream: nil)
                 }
             }
             catch { if let message = store.reportReadFailure(error) { self.error = message } }
@@ -681,10 +744,11 @@ struct MediaGalleryView: View {
         guard !queue.contains(where: { !completed.contains($0.id) }) else { error = "Sube o quita los archivos seleccionados antes de cambiar de carpeta."; return }
         queue = []; completed = [];uploadDestination=nil; generation = UUID(); folderID = id; loadedPages = 1; feed = nil; items = []
     }
-    private func clearPreview() { preview?.stream?.cancel(); if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil }
+    private func clearPreview() { preview?.stream?.cancel(); if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil;previewFeed=nil }
     private func thumbnailDenied(_ failure:Error) {
-        if failure is MediaFolderRemoved {clearPreview();navigate(to:"");return}
-        items=[];feed=nil;queue.forEach{$0.remove()};queue=[];uploadDestination=nil;clearPreview();error=store.reportReadFailure(failure)
+        generation=UUID();loadingFolder=nil;loading=false;expandedFolders=[];openingTask?.cancel();clearPreview()
+        if failure is MediaFolderRemoved {if compactGallery {Task {await reload()}}else{navigate(to:"")};return}
+        items=[];feed=nil;queue.forEach{$0.remove()};queue=[];uploadDestination=nil;uploadComposition=nil;error=store.reportReadFailure(failure)
     }
     private func readFiles(_ urls: [URL]) async {
         guard writable, !uploading, !importing, let stamp = try? store.client.mediaAccessStamp() else { return }; importing = true; defer { importing = false; importTask = nil }
@@ -709,13 +773,13 @@ struct MediaGalleryView: View {
         }
     }
     private func uploadAll() async {
-        guard writable,!uploading,uploadDestination?.id == parentID else {error="Elige la carpeta del show antes de subir los archivos.";return};uploading = true; error = nil; uploadNotice = nil
+        guard writable,!uploading,let target=uploadDestination,compactGallery || target.id == parentID else {error="Elige la carpeta del show antes de subir los archivos.";return};uploading = true; error = nil; uploadNotice = nil
         defer {
             if !completed.isEmpty { uploadNotice = "\(completed.count) archivos subidos." }
             queue.removeAll { completed.contains($0.id) }; completed = [];if queue.isEmpty {uploadDestination=nil}
             uploading = false; uploadTask = nil; Task { await reload() }
         }
-        let destination = parentID,files=queue.filter{!completed.contains($0.id)}
+        let destination = target.id,files=queue.filter{!completed.contains($0.id)}
         uploadMeter=MediaUploadRate();for file in files {progress[file.id]=nil;uploadErrors[file.id]=nil}
         await withTaskGroup(of:Bool.self) {group in
             var iterator=files.makeIterator()
@@ -739,7 +803,13 @@ struct MediaGalleryView: View {
     }
 }
 
-private struct MediaTile: View {
+private struct MediaUploadComposition:Identifiable {
+    let id=UUID()
+    let root:MediaFolder
+    let destination:MediaFolder?
+}
+
+struct MediaTile: View {
     let item: MediaItem
     let client: PayrollClient
     let offline: Bool
@@ -923,7 +993,14 @@ private struct MediaPreviewSheet: View {
                 Group {
                     if let stream = preview.stream { MediaStreamingPlayer(stream: stream) }
                     else if let document = preview.document, preview.item.kind == "video" { MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video").onAppear { player = AVPlayer(url: document.url); player?.play() }.onDisappear { player?.pause(); player = nil } }
-                    else if let document = photos.document { DocumentPreview(url: document.url).id(document.url).accessibilityIdentifier("media.photo.document") }
+                    else if let document = photos.document {
+                        #if os(iOS)
+                        MediaZoomPhoto(url:document.url,name:photos.selected.name,canPrevious:photos.canPrevious,canNext:photos.canNext,active:phase == .active) {photos.start($0)}
+                            .accessibilityIdentifier("media.photo.document")
+                        #else
+                        DocumentPreview(url: document.url).id(document.url).accessibilityIdentifier("media.photo.document")
+                        #endif
+                    }
                 }.frame(maxWidth:.infinity,maxHeight:.infinity)
                 if preview.item.kind == "image" {
                     Divider()
@@ -939,10 +1016,13 @@ private struct MediaPreviewSheet: View {
                     }.buttonStyle(.plain).padding(.horizontal,16).padding(.vertical,6).background(.bar)
                     if let error=photos.error {Text(error).font(.footnote).foregroundStyle(.red).padding(12)}
                 }
-            }.simultaneousGesture(DragGesture(minimumDistance:60).onEnded {value in
+            }
+            #if os(macOS)
+            .simultaneousGesture(DragGesture(minimumDistance:60).onEnded {value in
                 guard preview.item.kind=="image",abs(value.translation.width)>abs(value.translation.height)*1.5 else{return}
                 photos.start(value.translation.width<0 ? 1 : -1)
             })
+            #endif
             .privacySensitive().navigationTitle(preview.item.kind=="image" ? photos.selected.name : preview.item.name).jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() }.accessibilityIdentifier("media.preview.close") } }
         }.onChange(of: phase) { _, value in if value != .active { player?.pause() } }
@@ -1381,3 +1461,167 @@ enum MediaStorageReview {
         return total + largest + (total / (1024 * 1024) + Int64(files.count)) * 28 + 64 * 1024 * 1024
     }
 }
+
+#if os(iOS)
+// QuickLook owns the pan recognizers inside its preview controller. Keep the
+// photo gesture in the same UIKit surface as zoom so a drag on the image itself
+// reliably advances, while a magnified photo can still be inspected by panning.
+private struct MediaZoomPhoto: UIViewRepresentable {
+    let url: URL
+    let name: String
+    let canPrevious: Bool
+    let canNext: Bool
+    let active: Bool
+    let move: (Int) -> Void
+    func makeUIView(context: Context) -> MediaZoomPhotoView { MediaZoomPhotoView() }
+    func updateUIView(_ view: MediaZoomPhotoView, context: Context) {
+        view.configure(url:url,name:name,canPrevious:canPrevious,canNext:canNext,active:active,move:move)
+    }
+    static func dismantleUIView(_ view: MediaZoomPhotoView, coordinator: ()) { view.stop() }
+}
+
+private final class MediaZoomPhotoView: UIView, UIScrollViewDelegate, UIGestureRecognizerDelegate {
+    private let scroll = UIScrollView()
+    private let imageView = UIImageView()
+    private let spinner = UIActivityIndicatorView(style:.medium)
+    private let failure = UILabel()
+    private var photoURL: URL?
+    private var decodeTask: Task<Void,Never>?
+    private var decodeID = UUID()
+    private var viewport = CGSize.zero
+    private var active = true
+    private var canPrevious = false
+    private var canNext = false
+    private var move: ((Int)->Void)?
+    private lazy var photoPan = UIPanGestureRecognizer(target:self,action:#selector(panPhoto(_:)))
+    override init(frame: CGRect) {
+        super.init(frame:frame)
+        backgroundColor = .clear
+        clipsToBounds = true
+        scroll.delegate = self
+        scroll.minimumZoomScale = 1
+        scroll.maximumZoomScale = 5
+        scroll.bouncesZoom = true
+        scroll.showsHorizontalScrollIndicator = false
+        scroll.showsVerticalScrollIndicator = false
+        scroll.scrollsToTop = false
+        scroll.contentInsetAdjustmentBehavior = .never
+        imageView.contentMode = .scaleAspectFit
+        imageView.isAccessibilityElement = false
+        scroll.addSubview(imageView)
+        addSubview(scroll)
+        spinner.hidesWhenStopped = true
+        addSubview(spinner)
+        failure.text = "No se pudo mostrar esta imagen."
+        failure.font = .preferredFont(forTextStyle:.subheadline)
+        failure.textColor = .secondaryLabel
+        failure.numberOfLines = 0
+        failure.textAlignment = .center
+        failure.isHidden = true
+        addSubview(failure)
+        photoPan.maximumNumberOfTouches = 1
+        photoPan.delegate = self
+        scroll.addGestureRecognizer(photoPan)
+        scroll.panGestureRecognizer.require(toFail:photoPan)
+        let doubleTap = UITapGestureRecognizer(target:self,action:#selector(doubleTapPhoto(_:)))
+        doubleTap.numberOfTapsRequired = 2
+        scroll.addGestureRecognizer(doubleTap)
+        isAccessibilityElement = true
+        accessibilityTraits = .image
+        accessibilityIdentifier = "media.photo.document"
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+    func configure(url:URL,name:String,canPrevious:Bool,canNext:Bool,active:Bool,move:@escaping (Int)->Void) {
+        self.canPrevious=canPrevious;self.canNext=canNext;self.move=move
+        accessibilityLabel=name
+        self.active=active
+        scroll.isHidden = !active
+        spinner.isHidden = !active
+        if !active {decodeTask?.cancel();decodeTask=nil;decodeID=UUID();failure.isHidden=true}
+        if photoURL != url {
+            decodeTask?.cancel();decodeTask=nil;decodeID=UUID();photoURL=url
+            scroll.setZoomScale(1,animated:false);imageView.image=nil;viewport = .zero
+            failure.isHidden=true
+        }
+        if active,imageView.image == nil,decodeTask == nil {decode(url)}
+        updateAccessibility()
+    }
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        let changed = viewport != bounds.size
+        scroll.frame=bounds
+        spinner.center=CGPoint(x:bounds.midX,y:bounds.midY)
+        failure.frame=bounds.insetBy(dx:24,dy:24)
+        if changed {fitImage()}
+    }
+    private func decode(_ url:URL) {
+        let expected=UUID();decodeID=expected;spinner.startAnimating();failure.isHidden=true
+        decodeTask=Task { [weak self] in
+            let work=Task.detached(priority:.userInitiated) { Self.decodedImage(url) }
+            let image=await withTaskCancellationHandler {await work.value} onCancel:{work.cancel()}
+            guard !Task.isCancelled,let self,self.active,self.decodeID==expected,self.photoURL==url else{return}
+            self.decodeTask=nil;self.spinner.stopAnimating();self.imageView.image=image
+            self.failure.isHidden = image != nil;self.viewport = .zero;self.setNeedsLayout()
+        }
+    }
+    nonisolated private static func decodedImage(_ url:URL) -> UIImage? {
+        // Display decoding never alters the authorized local original. Bound
+        // the bitmap (4096 px, at most about 64 MiB) even for very large stills.
+        autoreleasepool {
+            guard !Task.isCancelled,let source=CGImageSourceCreateWithURL(url as CFURL,[kCGImageSourceShouldCache:false] as CFDictionary),
+                  let image=CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:4096,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceShouldCacheImmediately:true] as CFDictionary),!Task.isCancelled else{return nil}
+            return UIImage(cgImage:image)
+        }
+    }
+    private func fitImage() {
+        guard let image=imageView.image,bounds.width>0,bounds.height>0 else{return}
+        viewport=bounds.size
+        scroll.setZoomScale(1,animated:false)
+        let scale=min(bounds.width/image.size.width,bounds.height/image.size.height)
+        let size=CGSize(width:image.size.width*scale,height:image.size.height*scale)
+        imageView.frame=CGRect(origin:.zero,size:size);scroll.contentSize=size
+        centerImage()
+        scroll.contentOffset=CGPoint(x:-scroll.contentInset.left,y:-scroll.contentInset.top)
+    }
+    private func centerImage() {
+        scroll.contentInset=UIEdgeInsets(top:max(0,(scroll.bounds.height-scroll.contentSize.height)/2),left:max(0,(scroll.bounds.width-scroll.contentSize.width)/2),bottom:0,right:0)
+    }
+    func viewForZooming(in scrollView: UIScrollView) -> UIView? { imageView }
+    func scrollViewDidZoom(_ scrollView: UIScrollView) {centerImage();updateAccessibility()}
+    override func gestureRecognizerShouldBegin(_ recognizer: UIGestureRecognizer) -> Bool {
+        guard recognizer === photoPan else{return true}
+        guard active,imageView.image != nil,scroll.zoomScale <= scroll.minimumZoomScale+0.01 else{return false}
+        let velocity=photoPan.velocity(in:scroll)
+        guard abs(velocity.x)>abs(velocity.y)*1.2 else{return false}
+        return velocity.x<0 ? canNext:canPrevious
+    }
+    @objc private func panPhoto(_ recognizer:UIPanGestureRecognizer) {
+        guard recognizer.state == .ended,active,scroll.zoomScale <= scroll.minimumZoomScale+0.01 else{return}
+        let translation=recognizer.translation(in:scroll),velocity=recognizer.velocity(in:scroll)
+        guard abs(translation.x)>abs(translation.y)*1.2,
+              abs(translation.x)>=44 || (abs(translation.x)>=14 && abs(velocity.x)>=350) else{return}
+        let direction=translation.x<0 ? 1:-1
+        guard direction==1 ? canNext:canPrevious else{return}
+        move?(direction)
+    }
+    @objc private func doubleTapPhoto(_ recognizer:UITapGestureRecognizer) {
+        guard active,imageView.image != nil else{return}
+        if scroll.zoomScale>scroll.minimumZoomScale+0.01 {scroll.setZoomScale(1,animated:true);return}
+        let point=recognizer.location(in:imageView),scale:CGFloat=2.5
+        let size=CGSize(width:scroll.bounds.width/scale,height:scroll.bounds.height/scale)
+        scroll.zoom(to:CGRect(x:point.x-size.width/2,y:point.y-size.height/2,width:size.width,height:size.height),animated:true)
+    }
+    private func updateAccessibility() {
+        accessibilityValue = scroll.zoomScale>1.01 ? "Ampliada":"Tamaño original"
+        var actions:[UIAccessibilityCustomAction]=[]
+        if canPrevious {actions.append(UIAccessibilityCustomAction(name:"Foto anterior") {[weak self] _ in guard let self,self.active,self.canPrevious else{return false};self.move?(-1);return true})}
+        if canNext {actions.append(UIAccessibilityCustomAction(name:"Foto siguiente") {[weak self] _ in guard let self,self.active,self.canNext else{return false};self.move?(1);return true})}
+        actions.append(UIAccessibilityCustomAction(name:"Restablecer zoom") {[weak self] _ in guard let self,self.active else{return false};self.scroll.setZoomScale(1,animated:true);return true})
+        accessibilityCustomActions=actions
+    }
+    func stop() {
+        active=false;decodeID=UUID();decodeTask?.cancel();decodeTask=nil;move=nil
+        scroll.delegate=nil;imageView.image=nil;photoURL=nil;spinner.stopAnimating()
+    }
+}
+#endif

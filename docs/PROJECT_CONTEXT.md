@@ -1,3 +1,9 @@
+## Fotografía simplificada en iPhone — 16 de octubre de 2026
+
+Mismo proyecto JACNomina, versión0.25.0(38), firma/bundle/push suspendido conservados. Camilo pidió el cambio específicamente para iPhone: carpetas desplegables dentro de la misma pantalla, sin encabezados repetidos, y una sola hoja para nombre/selección/subida. Subir aquí conserva el destino existente desde la primera apertura mediante solicitud identificable. El visor iOS propio permite deslizar sobre la foto, zoom con doble toque/pinch y flechas accesibles; cada carpeta aporta su contexto completo autorizado/paginado. Web/Mac/iPad conservan su distribución; iPad comparte el visor. No hay cambios de API, migraciones, dependencias o servicios/datos reales.
+
+Ver docs/IPHONE_PHOTOGRAPHY_SIMPLE.md para archivos, seguridad y resultados:37 pruebas obligatorias web, TypeScript/build,98 unitarias iPhone aprobadas más una condición física omitida,108 Mac y10 recorridos UI distintos de Fotografía más2iPad correctos al sumar sus repeticiones. Dos fallos de destino inicial se corrigieron y verificaron sin eliminar comprobaciones. Misma fuente y proyecto en esta carpeta; el iPhone físico está desconectado y requiere Run para instalar0.25.0. La web permanece en v77. Cierre del respaldo/fuente privada se añade al guardarlo.
+
 ## Cierre de Fotografía y Agenda — 16 de octubre de 2026
 
 Web v77 succeeded en el Site existente appgprj_6aa0260b82a88191a47960614238350a; fuente privada95ae26209596ae62df6bc1a739a2ca21c376718f, versión appgprj_6aa0260b82a88191a47960614238350a~appgver_782f5f188d5481919c95322ee001912b y despliegue appgdep_6ad2c2b5b18481918ff816a7d2ecc99f, env_set_revision2. Subida simultánea limitada a2, círculo total/velocidad real reciente y detalle de errores. Misma audiencia/dominio/DB/BUCKET/R2/secretos;26migraciones idénticas. Sin GitHub, Cloud o Actions. Build exacto y TypeScript comprobados; entrada web comparada idéntica tras añadido nativo.
