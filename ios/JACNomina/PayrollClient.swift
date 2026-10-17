@@ -231,7 +231,7 @@ final class PayrollClient: ObservableObject {
         if path == "api/mobile/payroll" {return query.contains{$0.name == "workspace"} || user.hasSection(.payroll)}
         if path.hasPrefix("api/payroll/") || path == "api/mobile/gmail" {return user.hasSection(.payroll)}
         if path.hasPrefix("api/calendar") {return user.hasSection(.calendar)}
-        if path.hasPrefix("api/crm") || path == "api/users" {return user.hasSection(.crm)}
+        if path.hasPrefix("api/crm") || path == "api/mobile/contracts" || path == "api/users" {return user.hasSection(.crm)}
         if path.hasPrefix("api/expenses") {return user.hasSection(.itineraries)}
         if path.hasPrefix("api/media") {return user.canReadMedia}
         if path.hasPrefix("api/notices") {return query.contains{$0.name == "boarding"} ? user.hasSection(.boarding) : user.hasNotices}
@@ -290,7 +290,7 @@ final class PayrollClient: ObservableObject {
         return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file", "api/media"].contains(path)
     }
 
-    private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0) async throws -> (Data, HTTPURLResponse) {
+    private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false) async throws -> (Data, HTTPURLResponse) {
         guard allowsResource(path,query:query) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
@@ -312,7 +312,10 @@ final class PayrollClient: ObservableObject {
         let sentToken = try vault.load()
         if let token = sentToken {
             guard token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { try clearSession(); throw APIError.unauthorized }
-            request.setValue("\(cookieName)=\(token)", forHTTPHeaderField: "Cookie")
+            if nativeBearer {
+                guard path == "api/mobile/contracts" else {throw APIError.invalid("Ruta móvil no disponible.")}
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            } else { request.setValue("\(cookieName)=\(token)", forHTTPHeaderField: "Cookie") }
         }
         if let body {
             request.httpMethod = "POST"
@@ -348,9 +351,9 @@ final class PayrollClient: ObservableObject {
             if path=="api/media",body==nil,response.statusCode==410,let folder=query.first(where:{$0.name=="folder"})?.value,let mediaScope=try mediaScope() {try mediaOffline.removeFolders([folder],scope:mediaScope);throw MediaFolderRemoved()}
             if path.hasPrefix("api/media"), response.statusCode == 403, let mediaScope = try mediaScope() { cacheGeneration += 1; mediaOffline.clear(mediaScope); TemporaryDocuments.clear() }
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }
-            if let scope, (body == nil || path == "api/crm"), [403, 404, 410].contains(response.statusCode) {
+            if let scope, (body == nil || path == "api/crm" || path == "api/mobile/contracts"), [403, 404, 410].contains(response.statusCode) {
                 if path.hasPrefix("api/notices"), let id = query.first(where: { ["id", "item"].contains($0.name) })?.value { removeCachedNotice(id, scope: scope) }
-                else { let prefix=path.hasPrefix("api/crm") && response.statusCode == 403 ? "/api/crm":"/"+path;offlineCache.remove(scope) { URL(string: $0.url)?.path.hasPrefix(prefix) == true } }
+                else { let prefix=(path.hasPrefix("api/crm") || path == "api/mobile/contracts") && response.statusCode == 403 ? "/api/crm":"/"+path;offlineCache.remove(scope) { URL(string: $0.url)?.path.hasPrefix(prefix) == true } }
                 cacheGeneration += 1; syncTask?.cancel(); syncTask = nil; syncingOffline = false
                 offlineSyncMessage = "Se conserva lo descargado. Quedan datos o adjuntos por actualizar."
                 TemporaryDocuments.clear(); self.cacheRevision += 1
@@ -628,6 +631,20 @@ final class PayrollClient: ObservableObject {
         return try decoder.decode(JSONValue.self,from:data)
     }
     func crmUploads(_ files:[NoticeUpload]) throws -> JSONValue { try travelUploads(files) }
+    func createContract(_ input:ContractDraft) async throws -> ExportedDocument {
+        let payload=try input.payload()
+        guard try hasSession() else {throw APIError.unauthorized}
+        let (data,response)=try await request(path:"api/mobile/contracts",body:payload,document:true,forceNetwork:true,nativeBearer:true)
+        guard !Task.isCancelled,permissionUser?.hasSection(.crm) != false else {throw CancellationError()}
+        guard response.mimeType == "application/pdf",data.count <= 5*1024*1024,data.starts(with:Data("%PDF-".utf8)) else {throw APIError.invalid("No se recibió un contrato PDF válido.")}
+        // Decode the UTF-8 filename supplied by the same generator as the web.
+        // Neither a header nor a municipality may choose a filesystem path.
+        let disposition=response.value(forHTTPHeaderField:"Content-Disposition") ?? ""
+        let encoded=disposition.components(separatedBy:"filename*=UTF-8''").dropFirst().first?.components(separatedBy:";").first
+        let received=encoded?.removingPercentEncoding
+        let filename=received.flatMap { name in name == (name as NSString).lastPathComponent && !name.contains("\\") && !name.unicodeScalars.contains(where:{$0.value < 32 || $0.value == 127}) && name.hasSuffix(".pdf") ? name:nil } ?? input.filename
+        return try TemporaryDocuments.save(data,filename:filename)
+    }
     func crmFile(owner:String,file:NoticeAttachment,version:Int,contact:Bool) async throws -> ExportedDocument {
         let query=[URLQueryItem(name:contact ? "contact":"id",value:owner),URLQueryItem(name:"file",value:file.id)]
         let(data,response)=try await request(path:"api/crm/file",query:query,document:true,cacheRevision:version)

@@ -402,6 +402,32 @@ final class LaunchTests: XCTestCase {
         tap(app,"Semana");XCTAssertTrue(app.staticTexts["Resumen semanal"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["Gastos por fecha de registro"].exists);XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","50.000.000")).firstMatch.exists);attachScreen(app,name:"crm-resumen-semanal-nativo")
     }
 
+    @MainActor func testCRMContractsRUTEditableFieldsManualEntryAndPDFPreview() {
+        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Contratos")
+        XCTAssertTrue(app.buttons["contracts.rut.upload"].waitForExistence(timeout:10))
+        XCTAssertTrue(app.textFields["contracts.company"].exists,"Los campos manuales deben existir sin cargar RUT")
+        tap(app,"contracts.rut.fixture")
+        XCTAssertEqual(app.textFields["contracts.company"].value as? String,"EMPRESA FICTICIA JAC SAS")
+        XCTAssertEqual(app.textFields["contracts.nit"].value as? String,"900000001-0")
+        XCTAssertEqual(app.textFields["contracts.representative"].value as? String,"ANA MARÍA PRUEBA GÓMEZ")
+        fill(app,"contracts.company","EMPRESA CORREGIDA A MANO")
+        XCTAssertEqual(app.textFields["contracts.company"].value as? String,"EMPRESA CORREGIDA A MANO")
+        XCUIDevice.shared.press(.home);app.activate()
+        // SwiftUI briefly exposes both the privacy snapshot and the live form
+        // while returning from Home. Wait for the live, unchanged draft.
+        let restored=app.textFields.matching(identifier:"contracts.company").matching(NSPredicate(format:"value == %@","EMPRESA CORREGIDA A MANO")).firstMatch
+        XCTAssertTrue(restored.waitForExistence(timeout:10));XCTAssertEqual(restored.value as? String,"EMPRESA CORREGIDA A MANO","El borrador debe conservarse al volver a la app")
+        XCTAssertTrue(app.images["privacy.cover"].waitForNonExistence(timeout:10))
+        fill(app,"contracts.venue","Escenario ficticio");fill(app,"contracts.municipality","Pereira");fill(app,"contracts.department","Risaralda")
+        fill(app,"crm.amount.Precio del contrato (COP)","140000000");fill(app,"crm.amount.Consignado a la fecha (COP)","10000000")
+        tap(app,"contracts.generate")
+        XCTAssertTrue(app.navigationBars["Contrato JAC"].waitForExistence(timeout:15));XCTAssertTrue(app.buttons["contracts.share"].exists)
+        let pdfText=app.descendants(matching:.any).matching(NSPredicate(format:"label CONTAINS %@","Itinerario simulado")).firstMatch
+        XCTAssertTrue(pdfText.waitForExistence(timeout:15),"La vista previa debe mostrar el contenido PDF, no solo su barra de navegación")
+        attachScreen(app,name:"contrato-nativo-pdf-ficticio");tap(app,"Listo")
+        XCTAssertTrue(app.buttons["contracts.generate"].waitForExistence(timeout:10))
+    }
+
     @MainActor private func fixture(_ arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"] + arguments; app.launch()
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 20))
@@ -418,7 +444,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(button.isHittable, "Debe poderse tocar \(label)"); button.tap()
     }
     @MainActor private func fill(_ app: XCUIApplication, _ id: String, _ value: String) {
-        if id.hasPrefix("crm."),app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
+        if id.hasPrefix("crm.") || id.hasPrefix("contracts."),app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
         let field = app.textFields[id].firstMatch
         for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(field.waitForExistence(timeout: 10))

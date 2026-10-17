@@ -1,5 +1,7 @@
 import SwiftUI
 import Combine
+import PDFKit
+import UniformTypeIdentifiers
 #if os(iOS)
 import UIKit
 #else
@@ -42,7 +44,9 @@ struct CRMHomeView:View {
     var body:some View {
         Group {
             if crm.denied || store.overview?.user.hasSection(.crm) != true { ContentUnavailableView("CRM no disponible",systemImage:"lock",description:Text(crm.message ?? "Solo administradores de JAC.")) }
-            else { List {
+            else { Group {
+              if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractForm() } }
+              else { List {
                 if let error { InlineError(message:error) }
                 if store.isOffline { Text("Sin conexión · última información descargada. Los cambios necesitan internet.").font(.footnote).foregroundStyle(.secondary) }
                 Section {
@@ -52,17 +56,19 @@ struct CRMHomeView:View {
                         VStack(spacing:12) { quickPayment; moreActions }
                     }.padding(.top,5)
                 }.jacStandaloneRow()
-                Picker("Sección",selection:$section) { Text("Shows").tag("shows");Text("Semana").tag("weekly");Text("Empresarios").tag("contacts") }.pickerStyle(.segmented).accessibilityIdentifier("crm.sections")
+                sectionPicker
                 if section == "shows" { showList }
                 else if section == "weekly" { CRMWeeklyView() }
                 else { CRMContactsView() }
-            }.jacSurface().navigationTitle("CRM").jacInlineTitle()
-                .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60) } catch { break } } }
+              } }
+            }.jacSurface().navigationTitle(section == "contracts" ? "Contratos":"CRM").jacInlineTitle()
+                .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));if section != "contracts" {await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60)} } catch { break } } }
                 .refreshable { await load(sync:!store.isOffline) }
                 .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             }
         }.environmentObject(crm)
     }
+    private var sectionPicker:some View {Picker("Sección",selection:$section) {Text("Shows").tag("shows");Text("Semana").tag("weekly");Text("Empresarios").tag("contacts");Text("Contratos").tag("contracts")}.pickerStyle(.segmented).accessibilityIdentifier("crm.sections")}
     private var quickPayment:some View {
         Button { editor=CRMEditorRequest(kind:.payment,record:.null,feed:feed) } label: { Label("Registrar abono",systemImage:"plus.circle").frame(maxWidth:.infinity) }
             .buttonStyle(JACPrimaryButtonStyle()).disabled(busy || store.isOffline || feed.isNull).accessibilityIdentifier("crm.quickPayment")
@@ -443,4 +449,304 @@ struct CRMContactView:View {
         Section("Contratos y documentos") {CRMFilesView(owner:id,files:data["files"],version:Int(data["contact"]["version"].number),contact:true);Button("Adjuntar documentos"){editor=CRMEditorRequest(kind:.contracts,record:data["contact"])}.disabled(store.isOffline || data.isNull).accessibilityIdentifier("crm.contact.files")}
     }.onChange(of:crm.denied){_,denied in if denied {editor=nil;data = .null}}.jacSurface().navigationTitle(data["contact"]["name"].text.isEmpty ? "Empresario":data["contact"]["name"].text).jacInlineTitle().task{await load()}.refreshable{await load()}.sheet(item:$editor,onDismiss:{Task{await load()}}){CRMEditor(request:$0).environmentObject(crm)} }
     private func load() async {let q=["view":"contact","id":id];if data.isNull,let saved=crm.cached(q){data=saved};do{data=try await crm.read(q);error=nil}catch{self.error=store.reportReadFailure(error)}}
+}
+
+// Contracts reuse the private server template; the phone only keeps an editable
+// draft in memory. The RUT itself never leaves this device or enters the cache.
+struct ContractDraft: Sendable {
+    var company="",nit="",representative="",identity=""
+    var eventDate=CalendarClock.day(CalendarClock.calendar.date(byAdding:.day,value:14,to:Date()) ?? Date())
+    var venue="",municipality="",department="",showTime="23:00"
+    var price:Double=0,deposited:Double=0
+    var halfDeadline=CalendarClock.day(Date())
+    var finalDate:String { CalendarClock.date(eventDate).flatMap { CalendarClock.calendar.date(byAdding:.day,value:-5,to:$0) }.map(CalendarClock.day) ?? "" }
+    var filename:String {
+        let town=municipality.precomposedStringWithCanonicalMapping.replacingOccurrences(of:"[^\\p{L}\\p{N} .-]",with:"",options:.regularExpression).trimmingCharacters(in:.whitespacesAndNewlines)
+        let f=DateFormatter();f.locale=Locale(identifier:"es_CO");f.calendar=CalendarClock.calendar;f.timeZone=CalendarClock.calendar.timeZone;f.dateFormat="d 'de' MMMM yyyy"
+        return "Contrato JAC - \(town) - \(CalendarClock.date(eventDate).map {f.string(from:$0)} ?? eventDate).pdf"
+    }
+    func payload() throws -> JSONValue {
+        let fields=[("company",company,"la razón social",100),("nit",nit,"el NIT",25),("representative",representative,"el representante legal",90),("identity",identity,"la cédula",25),("venue",venue,"el sitio del evento",100),("municipality",municipality,"el municipio",60),("department",department,"el departamento",40)]
+        var values:[String:JSONValue]=[:]
+        for (key,value,label,limit) in fields {
+            let text=value.trimmingCharacters(in:.whitespacesAndNewlines).precomposedStringWithCanonicalMapping
+            guard !text.isEmpty else {throw APIError.invalid("Completa \(label).")}
+            guard text.count <= limit else {throw APIError.invalid("\(label.capitalized): máximo \(limit) caracteres.")}
+            guard text.range(of:"^[\\u0020-\\u007e\\u00a0-\\u00ff–—‘’“”€]+$",options:.regularExpression) != nil else {throw APIError.invalid("\(label.capitalized): usa letras, números y signos habituales en español.")}
+            values[key] = .string(text)
+        }
+        for value in [eventDate,halfDeadline] { guard let date=CalendarClock.date(value),CalendarClock.day(date)==value,value >= "1900-01-01",value <= "2199-12-31" else {throw APIError.invalid("Introduce una fecha válida.")} }
+        guard showTime.range(of:"^([01]\\d|2[0-3]):[0-5]\\d$",options:.regularExpression) != nil else {throw APIError.invalid("Introduce la hora del show.")}
+        guard price.isFinite,price>0,price<=1e12,price.rounded()==price else {throw APIError.invalid("Introduce el precio en pesos enteros, mayor que cero y hasta un billón.")}
+        guard deposited.isFinite,deposited>=0,deposited.rounded()==deposited,deposited<=price/2 else {throw APIError.invalid("El abono debe estar en pesos enteros y no superar el 50% del contrato.")}
+        guard halfDeadline<=finalDate else {throw APIError.invalid("El plazo para completar el 50% debe ser anterior o igual al pago final, cinco días antes del show.")}
+        for (key,value) in [("eventDate",eventDate),("halfDeadline",halfDeadline),("showTime",showTime)] { values[key] = .string(value) }
+        values["price"] = .number(price);values["deposited"] = .number(deposited)
+        return .object(values)
+    }
+    mutating func apply(_ rut:RutExtraction) {
+        company=rut.company ?? "";nit=rut.nit ?? ""
+        if let index=rut.automaticRepresentative { let person=rut.representatives[index];representative=person.name;identity=person.identity }
+        else {representative="";identity=""}
+    }
+}
+
+struct CRMContractForm:View {
+    @EnvironmentObject private var store:PayrollStore
+    @EnvironmentObject private var crm:CRMStore
+    @State private var draft=ContractDraft()
+    @State private var importing=false
+    @State private var busy=false
+    @State private var error:String?
+    @State private var reading=false
+    @State private var rut:RutExtraction?
+    @State private var selectedRepresentative=""
+    @State private var document:ExportedDocument?
+    @State private var ownedDocument:ExportedDocument?
+    @State private var operation:Task<Void,Never>?
+    @State private var active=true
+    private let dateRange=CalendarClock.date("1900-01-01")!...CalendarClock.date("2199-12-31")!
+    var body:some View {
+        Form {
+            Section {
+                Button { importing=true } label: { HStack {Label(reading ? "Leyendo RUT…":"Subir RUT",systemImage:"doc.badge.plus");Spacer();if reading {ProgressView()} } }.buttonStyle(JACPrimaryButtonStyle()).disabled(reading || busy).accessibilityIdentifier("contracts.rut.upload")
+                Text("Completa los datos del contratante desde un RUT PDF. También puedes escribirlos manualmente y modificar cualquier campo.").font(.footnote).foregroundStyle(.secondary)
+                if let rut {
+                    Text("RUT leído. Revisa los datos antes de generar el contrato.").font(.footnote).foregroundStyle(JACTheme.primary).accessibilityIdentifier("contracts.rut.ready")
+                    ForEach(rut.warnings,id:\.self) { Text($0).font(.footnote).foregroundStyle(.secondary) }
+                    if rut.representatives.count>1 || rut.representatives.filter({$0.kind == .principal}).count != 1 {
+                        Picker("Representante que firmará",selection:$selectedRepresentative) {
+                            Text("Seleccionar o escribir manualmente").tag("")
+                            ForEach(Array(rut.representatives.enumerated()),id:\.offset) { index,person in Text(person.name+" · "+person.kind.title).tag(String(index)).disabled(person.documentType != "Cédula de ciudadanía") }
+                        }.accessibilityIdentifier("contracts.rut.representative")
+                    }
+                }
+                #if DEBUG
+                if ProcessInfo.processInfo.arguments.contains("--uitest-payroll") { Button("Usar RUT ficticio") { useRut(RutExtraction(company:"EMPRESA FICTICIA JAC SAS",nit:"900000001-0",representatives:[RutRepresentative(name:"ANA MARÍA PRUEBA GÓMEZ",identity:"100000001",kind:.principal,documentType:"Cédula de ciudadanía")],warnings:[])) }.accessibilityIdentifier("contracts.rut.fixture") }
+                #endif
+            }
+            if let error { Section {InlineError(message:error).accessibilityIdentifier("contracts.error")} }
+            Section("Contratante") {
+                TextField("Razón social",text:$draft.company).accessibilityIdentifier("contracts.company")
+                TextField("NIT con dígito de verificación",text:$draft.nit).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("contracts.nit")
+                TextField("Representante legal",text:$draft.representative).accessibilityIdentifier("contracts.representative")
+                TextField("Cédula de ciudadanía",text:$draft.identity).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("contracts.identity")
+            }.disabled(busy)
+            Section("Presentación") {
+                JACDatePicker("Día del evento",selection:dateBinding("eventDate"),in:dateRange,displayedComponents:.date).accessibilityIdentifier("contracts.eventDate")
+                TextField("Sitio exacto del evento",text:$draft.venue).accessibilityIdentifier("contracts.venue")
+                TextField("Municipio",text:$draft.municipality).accessibilityIdentifier("contracts.municipality")
+                TextField("Departamento",text:$draft.department).accessibilityIdentifier("contracts.department")
+                JACDatePicker("Hora del show",selection:timeBinding,displayedComponents:.hourAndMinute).accessibilityIdentifier("contracts.showTime")
+            }.disabled(busy)
+            Section("Precio y forma de pago") {
+                CRMAmountField(title:"Precio del contrato (COP)",value:$draft.price)
+                CRMAmountField(title:"Consignado a la fecha (COP)",value:$draft.deposited)
+                JACDatePicker("Plazo para completar el 50%",selection:dateBinding("halfDeadline"),in:dateRange,displayedComponents:.date).accessibilityIdentifier("contracts.halfDeadline")
+                if draft.price>0 {
+                    LabeledContent("Primer 50%",value:CRMFields.money(draft.price/2))
+                    LabeledContent("Falta para ese 50%",value:CRMFields.money(max(0,draft.price/2-draft.deposited)))
+                    LabeledContent("Pago final · 50%",value:CRMFields.money(draft.price/2))
+                    LabeledContent("Pago final antes del",value:CalendarClock.dayLabel(draft.finalDate))
+                }
+            }.disabled(busy)
+            Section {
+                Button { generate() } label:{ HStack {Label(busy ? "Generando PDF…":"Crear contrato PDF",systemImage:"doc.text");Spacer();if busy {ProgressView()} } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || reading || store.isOffline).accessibilityIdentifier("contracts.generate")
+                Text("Conserva la plantilla de JAC. Los importes se escriben en letras y números; el pago final es el 50%, cinco días antes del show.").font(.footnote).foregroundStyle(.secondary)
+            }
+        }.jacSurface().privacySensitive()
+            .toolbar {
+                #if os(iOS)
+                ToolbarItemGroup(placement:.keyboard){Spacer();Button("Listo"){JACPlatform.endEditing()}.accessibilityIdentifier("crm.keyboard.done")}
+                #endif
+            }
+            .fileImporter(isPresented:$importing,allowedContentTypes:[.pdf],allowsMultipleSelection:false) { result in
+                switch result {case .success(let urls):if let url=urls.first {readRut(url)};case .failure(let failure):if !RutParser.cancelled(failure) {error=failure.localizedDescription}}
+            }
+            .onChange(of:selectedRepresentative) {_,value in
+                guard let rut,let index=Int(value),rut.representatives.indices.contains(index) else {return}
+                let person=rut.representatives[index]
+                guard person.documentType == "Cédula de ciudadanía" else {return}
+                draft.representative=person.name;draft.identity=person.identity
+            }
+            .sheet(item:$document,onDismiss:clearDocument) { file in NavigationStack {
+                DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Contrato JAC").jacInlineTitle()
+                    .toolbar {ToolbarItem(placement:.jacLeading){Button("Listo"){document=nil}};ToolbarItem(placement:.jacTrailing){ShareLink(item:file.url){Image(systemName:"square.and.arrow.up")}.accessibilityLabel("Compartir contrato").accessibilityIdentifier("contracts.share")}}
+            } }
+            .onAppear {active=true}
+            .onDisappear {active=false;operation?.cancel();operation=nil;clearDocument()}
+    }
+    private func dateBinding(_ key:String)->Binding<Date> { Binding(get:{CalendarClock.date(key == "eventDate" ? draft.eventDate:draft.halfDeadline) ?? Date()},set:{if key == "eventDate" {draft.eventDate=CalendarClock.day($0)} else {draft.halfDeadline=CalendarClock.day($0)}}) }
+    private var timeBinding:Binding<Date> { Binding(get:{let parts=draft.showTime.split(separator:":").compactMap{Int($0)};return CalendarClock.calendar.date(bySettingHour:parts.first ?? 23,minute:parts.last ?? 0,second:0,of:Date()) ?? Date()},set:{let c=CalendarClock.calendar.dateComponents([.hour,.minute],from:$0);draft.showTime=String(format:"%02d:%02d",c.hour ?? 23,c.minute ?? 0)}) }
+    private func useRut(_ result:RutExtraction) {
+        rut=result;draft.apply(result);error=nil
+        selectedRepresentative=result.automaticRepresentative.map(String.init) ?? ""
+    }
+    private func readRut(_ url:URL) {
+        reading=true;error=nil
+        operation?.cancel();operation=Task {
+            let scoped=url.startAccessingSecurityScopedResource();defer {if scoped {url.stopAccessingSecurityScopedResource()};reading=false}
+            do {
+                let worker=Task.detached(priority:.userInitiated){try RutParser.read(url)}
+                let result=try await withTaskCancellationHandler(operation:{try await worker.value},onCancel:{worker.cancel()})
+                guard active,!Task.isCancelled else{return};useRut(result)
+            } catch {if active,!RutParser.cancelled(error){self.error=error.localizedDescription}}
+        }
+    }
+    private func generate() {
+        JACPlatform.endEditing();busy=true;error=nil;operation?.cancel()
+        operation=Task {
+            defer{busy=false}
+            do {let next=try await store.client.createContract(draft);guard active,!Task.isCancelled else {TemporaryDocuments.remove(next);return};clearDocument();ownedDocument=next;document=next}
+            catch {if active,!RutParser.cancelled(error){crm.reject(error);self.error=error.localizedDescription}}
+        }
+    }
+    private func clearDocument() {document=nil;if let ownedDocument {TemporaryDocuments.remove(ownedDocument);self.ownedDocument=nil}}
+}
+
+struct RutRepresentative:Equatable,Sendable {
+    enum Kind:String,Sendable {case principal,suplente,otro;var title:String {switch self {case .principal:"Principal";case .suplente:"Suplente";case .otro:"Otra representación"}}}
+    let name:String,identity:String,kind:Kind,documentType:String
+}
+struct RutExtraction:Sendable {
+    var company:String?,nit:String?;var representatives:[RutRepresentative]=[];var warnings:[String]=[]
+    var automaticRepresentative:Int? {
+        let principals=representatives.indices.filter{representatives[$0].kind == .principal}
+        guard principals.count == 1,let index=principals.first else{return nil}
+        let person=representatives[index]
+        guard person.documentType == "Cédula de ciudadanía",!person.name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty,person.identity.range(of:"^[0-9]+$",options:.regularExpression) != nil,!warnings.contains(where:{$0.contains("nombre o identificación incompletos")}) else{return nil}
+        return index
+    }
+}
+struct RutTextItem:Sendable {let text:String,x:Double,y:Double,width:Double,height:Double}
+struct RutPageLayout:Sendable {let width:Double,height:Double,items:[RutTextItem]}
+
+enum RutParser {
+    private struct Line {var y:Double,height:Double,items:[RutTextItem],text="",starts:[Int]=[]}
+    private struct Anchor {let x:Double,y:Double,height:Double}
+    static func cancelled(_ error:Error)->Bool {error is CancellationError || ((error as NSError).domain == NSURLErrorDomain && (error as NSError).code == NSURLErrorCancelled)}
+    private static func plain(_ s:String)->String {s.folding(options:.diacriticInsensitive,locale:Locale(identifier:"es_CO")).lowercased()}
+    private static func tidy(_ s:String)->String {s.replacingOccurrences(of:"[\\u0000-\\u001f\\u007f]",with:" ",options:.regularExpression).replacingOccurrences(of:"\\s+",with:" ",options:.regularExpression).trimmingCharacters(in:.whitespacesAndNewlines)}
+    private static func matches(_ pattern:String,_ text:String)->[NSTextCheckingResult] {guard let r=try? NSRegularExpression(pattern:pattern) else{return []};return r.matches(in:text,range:NSRange(location:0,length:(text as NSString).length))}
+    static func read(_ url:URL) throws -> RutExtraction {
+        let size=try url.resourceValues(forKeys:[.fileSizeKey]).fileSize ?? 0
+        guard size>0,size<=10*1024*1024 else {throw APIError.invalid("Selecciona un RUT en PDF de hasta 10 MB.")}
+        let bytes=try Data(contentsOf:url,options:.mappedIfSafe)
+        guard bytes.starts(with:Data("%PDF-".utf8)),let document=PDFDocument(data:bytes),!document.isLocked,document.pageCount>0,document.pageCount<=50 else {throw APIError.invalid("Selecciona un RUT PDF válido, sin contraseña y con un máximo de 50 páginas.")}
+        return try extract(layouts(document))
+    }
+    static func layouts(_ document:PDFDocument) throws -> [RutPageLayout] {
+        var pages:[RutPageLayout]=[]
+        for index in 0..<document.pageCount {
+            try Task.checkCancellation()
+            guard let page=document.page(at:index),page.rotation%360 == 0 else {throw APIError.invalid("El RUT tiene páginas rotadas. Usa una copia vertical o completa los datos manualmente.")}
+            let box=page.bounds(for:.mediaBox),text=(page.string ?? "") as NSString
+            guard text.length<=300000 else {throw APIError.invalid("El RUT contiene demasiado texto para leerlo con seguridad.")}
+            var items:[RutTextItem]=[]
+            for (offset,match) in matches("\\S+",text as String).enumerated() {
+                if offset%100==0 {try Task.checkCancellation()}
+                guard items.count<30000 else {throw APIError.invalid("El RUT contiene demasiado texto para leerlo con seguridad.")}
+                guard let selection=page.selection(for:match.range) else {continue}
+                let bounds=selection.bounds(for:page)
+                guard !bounds.isEmpty,!bounds.isNull else {continue}
+                items.append(RutTextItem(text:text.substring(with:match.range),x:bounds.minX-box.minX,y:box.maxY-bounds.maxY,width:bounds.width,height:bounds.height))
+            }
+            pages.append(RutPageLayout(width:box.width,height:box.height,items:items))
+        }
+        return pages
+    }
+    private static func lines(_ page:RutPageLayout)->[Line] {
+        var lines:[Line]=[]
+        for item in page.items.sorted(by:{$0.y == $1.y ? $0.x<$1.x:$0.y<$1.y}) where !tidy(item.text).isEmpty {
+            if let index=lines.lastIndex(where:{abs($0.y-item.y)<=3.5}) {lines[index].items.append(item);lines[index].height=max(lines[index].height,item.height)}
+            else {lines.append(Line(y:item.y,height:item.height,items:[item]))}
+        }
+        for index in lines.indices {
+            lines[index].items.sort{$0.x<$1.x}
+            for item in lines[index].items {lines[index].starts.append((lines[index].text as NSString).length);lines[index].text += plain(tidy(item.text))+" "}
+        }
+        return lines
+    }
+    private static func anchors(_ lines:[Line],_ number:Int,_ caption:String)->[Anchor] {
+        var result:[Anchor]=[]
+        for line in lines {
+            for match in matches("(?:^|\\s)\(number)\\s*\\.\\s*\(caption)",line.text) {
+                let matched=(line.text as NSString).substring(with:match.range),at=match.range.location+(matched.hasPrefix(" ") ? 1:0)
+                let index=line.starts.lastIndex(where:{$0<=at}) ?? 0,item=line.items[index]
+                let offset=max(0,at-line.starts[index]),length=max(1,(plain(tidy(item.text)) as NSString).length)
+                result.append(Anchor(x:item.x+item.width*min(1,Double(offset)/Double(length)),y:line.y,height:line.height))
+            }
+        }
+        return result
+    }
+    private static func near(_ all:[Anchor],_ y:Double)->Anchor? {all.first{abs($0.y-y)<=4}}
+    private static func below(_ all:[Anchor],_ start:Double,_ end:Double)->Anchor? {all.first{$0.y>start+4 && $0.y<end}}
+    private static func cell(_ page:RutPageLayout,_ anchor:Anchor,_ right:Double,_ bottom:Double,_ left:Double?=nil)->String {
+        let selected=page.items.filter {item in let center=item.x+item.width/2;return center >= (left ?? anchor.x-3) && center<right-1 && item.y>anchor.y+anchor.height+0.3 && item.y<bottom-1}
+        return tidy(lines(RutPageLayout(width:page.width,height:page.height,items:selected)).map{$0.items.map(\.text).joined(separator:" ")}.joined(separator:" "))
+    }
+    private static func digits(_ value:String)->String? {guard !value.isEmpty,value.range(of:"^[0-9.\\s]+$",options:.regularExpression) != nil else{return nil};return value.replacingOccurrences(of:"[.\\s]",with:"",options:.regularExpression)}
+    private static func checkDigit(_ nit:String)->Int {let weights=[71,67,59,53,47,43,41,37,29,23,19,17,13,7,3],value=String(repeating:"0",count:max(0,15-nit.count))+nit;let remainder=zip(value,weights).reduce(0){$0+(Int(String($1.0)) ?? 0)*$1.1}%11;return remainder>1 ? 11-remainder:remainder}
+    static func extract(_ input:[RutPageLayout]) throws -> RutExtraction {
+        guard !input.isEmpty,input.count<=50 else {throw APIError.invalid("Selecciona un RUT DIAN válido.")}
+        var pages:[RutPageLayout]=[]
+        for page in input {
+            guard page.width.isFinite,page.height.isFinite,page.width>0,page.height>0,page.items.count<=30000 else {throw APIError.invalid("No se pudo leer la estructura del RUT.")}
+            let sx=612/page.width,sy=792/page.height
+            let items=page.items.filter{$0.text.count<=5000 && [$0.x,$0.y,$0.width,$0.height].allSatisfy(\.isFinite) && $0.width>=0 && $0.height>0}.map{RutTextItem(text:tidy($0.text),x:$0.x*sx,y:$0.y*sy,width:$0.width*sx,height:$0.height*sy)}
+            pages.append(RutPageLayout(width:612,height:792,items:items))
+        }
+        let layouts=pages.map{($0,lines($0))}
+        let identification=layouts.filter {_,lines in
+            let text=lines.map(\.text).joined(separator:" ")
+            return !matches("\\bdian\\b",text).isEmpty && !anchors(lines,5,"numero de identificacion tributaria").isEmpty && !anchors(lines,6,"dv\\b").isEmpty && !anchors(lines,24,"tipo de contribuyente").isEmpty && !anchors(lines,35,"razon social").isEmpty && (!anchors(lines,41,"direccion principal").isEmpty || !matches("responsabilidades,? calidades",text).isEmpty)
+        }
+        guard !identification.isEmpty else {throw APIError.invalid("No se reconoce un RUT DIAN con texto seleccionable. Revisa el archivo o completa los datos manualmente.")}
+        var result=RutExtraction(),companies=Set<String>(),nits=Set<String>(),completeNits=Set<String>()
+        for (page,lines) in identification {
+            let label=anchors(lines,35,"razon social")[0],next=below(anchors(lines,36,"nombre comercial"),label.y,label.y+35)
+            let company=cell(page,label,590,next?.y ?? label.y+24);if !company.isEmpty{companies.insert(company)}
+        }
+        guard companies.count<=1 else {throw APIError.invalid("El archivo contiene razones sociales distintas. Selecciona un solo RUT.")}
+        result.company=companies.first
+        if result.company==nil {result.warnings.append("No se encontró la razón social en la casilla 35. Complétala manualmente.")}
+        for (page,lines) in layouts {
+            guard let label=anchors(lines,5,"numero de identificacion tributaria").first,let dv=near(anchors(lines,6,"dv\\b"),label.y),dv.x>label.x else {continue}
+            let end=near(anchors(lines,12,"direccion seccional"),label.y)?.x ?? dv.x+20,divider=dv.x+3
+            let base=digits(cell(page,label,divider+1,label.y+24)),check=digits(cell(page,dv,end,label.y+24,divider))
+            if let base,base.count>=5,base.count<=15 {nits.insert(base);if let check,check.count==1{completeNits.insert(base+"-"+check)}}
+        }
+        guard nits.count<=1,completeNits.count<=1 else {throw APIError.invalid("El archivo contiene NIT distintos. Selecciona un solo RUT.")}
+        result.nit=completeNits.first ?? nits.first
+        if let nit=result.nit {let parts=nit.split(separator:"-");if parts.count==1 {result.warnings.append("Falta el dígito de verificación del NIT. Revísalo antes de generar el contrato.")} else if Int(parts[1]) != checkDigit(String(parts[0])) {result.warnings.append("El dígito de verificación no coincide con el NIT leído. Revisa ambos datos; no se han corregido automáticamente.")}}
+        else {result.warnings.append("No se pudo leer el NIT de las casillas 5 y 6. Complétalo manualmente.")}
+        for (page,lines) in layouts {
+            let rows=anchors(lines,98,"representacion")
+            for (index,row) in rows.enumerated() {
+                let end=index+1<rows.count ? rows[index+1].y:row.y+96
+                guard let date=near(anchors(lines,99,"fecha inicio ejercicio representacion"),row.y),let type=below(anchors(lines,100,"tipo de documento"),row.y,end),let identity=near(anchors(lines,101,"numero de identificacion"),type.y),let firstSurname=below(anchors(lines,104,"primer apellido"),row.y,end),let secondSurname=near(anchors(lines,105,"segundo apellido"),firstSurname.y),let firstName=near(anchors(lines,106,"primer nombre"),firstSurname.y),let otherNames=near(anchors(lines,107,"otros nombres"),firstSurname.y) else {result.warnings.append("Una fila de representación tiene una estructura incompleta; revisa sus datos manualmente.");continue}
+                let role=cell(page,row,date.x,type.y),documentRaw=cell(page,type,identity.x,firstSurname.y)
+                let identityRight=near(anchors(lines,102,"dv\\b"),type.y)?.x ?? identity.x+260,identityRaw=cell(page,identity,identityRight,firstSurname.y)
+                let bottom=below(anchors(lines,108,"numero de identificacion tributaria"),firstSurname.y,end)?.y ?? firstSurname.y+24
+                let surnames=[cell(page,firstSurname,secondSurname.x,bottom),cell(page,secondSurname,firstName.x,bottom)],names=[cell(page,firstName,otherNames.x,bottom),cell(page,otherNames,590,bottom)]
+                guard [role,documentRaw,identityRaw]+names+surnames != Array(repeating:"",count:7) else {continue}
+                let name=tidy((names+surnames).filter{!$0.isEmpty}.joined(separator:" "))
+                let codeMatch=matches("(?:^|\\s)((?:\\d\\s*){2})$",documentRaw).first
+                let code=codeMatch.map{(documentRaw as NSString).substring(with:$0.range(at:1)).replacingOccurrences(of:"\\s",with:"",options:.regularExpression)}
+                let documentLabel=tidy(documentRaw.replacingOccurrences(of:"(?:^|\\s)(?:\\d\\s*){2}$",with:"",options:.regularExpression)),citizen=plain(documentLabel).contains("cedula de ciudadan") && (code==nil || code=="13")
+                let documentType=citizen ? "Cédula de ciudadanía":(!documentLabel.isEmpty ? documentLabel:code.map{"Documento tipo "+$0} ?? "No identificado")
+                let normalizedRole=plain(role),kind:RutRepresentative.Kind = !matches("legal\\s+(?:prin(?:cipal)?)(?:\\b|\\s)",normalizedRole).isEmpty ? .principal:!matches("legal\\s+supl(?:ente)?(?:\\b|\\s)",normalizedRole).isEmpty ? .suplente:.otro
+                let id=digits(identityRaw) ?? (identityRaw.range(of:"^[a-z0-9 .-]+$",options:[.regularExpression,.caseInsensitive]) != nil ? identityRaw.replacingOccurrences(of:"\\s",with:"",options:.regularExpression):"")
+                let person=RutRepresentative(name:name,identity:id,kind:kind,documentType:documentType)
+                if !result.representatives.contains(person){result.representatives.append(person)}
+                if names[0].isEmpty || surnames[0].isEmpty || id.isEmpty {result.warnings.append("Un representante tiene nombre o identificación incompletos. Revisa esa fila del RUT.")}
+                if !citizen {result.warnings.append("Un representante usa un documento distinto o no identificable como cédula de ciudadanía. Revisa su tipo antes de usar la plantilla.")}
+            }
+        }
+        let principals=result.representatives.filter{$0.kind == .principal}
+        if principals.count>1 {result.warnings.append("El RUT contiene varios representantes principales. Selecciona quién firmará; no se ha elegido automáticamente.")}
+        if principals.isEmpty {result.warnings.append("No se encontró un representante legal principal. Selecciona o completa los datos manualmente.")}
+        var seen=Set<String>();result.warnings=result.warnings.filter{seen.insert($0).inserted}
+        return result
+    }
 }

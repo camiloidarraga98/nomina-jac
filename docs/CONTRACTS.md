@@ -31,3 +31,26 @@ Sin dependencias nuevas, cambios de lockfile, migraciones, permisos de otras sec
 - Informes intermedios privados en `work/local/contract-template/`. No incluirlos ni los contratos generados en el repositorio.
 
 Publicado como web v79 en el Site existente, fuente privada `aefa1f7778cf16e4335118b1d1b3d4715feb83eb`, despliegue `appgdep_6ad3eb33393881919410136d72ab9cfe` succeeded. Sin cambios de dominio, audiencia, DB, BUCKET, secretos o conexiones. Formato de nombre corregido antes de publicar y verificado en la descarga local; seis pruebas finales aprobadas.
+
+## RUT y contratos en iPhone · 17 de octubre de 2026
+
+La primera acción de Contratos ahora es **Subir RUT**. Se completan razón social, NIT/DV, representante legal principal y su cédula; los cuatro campos permanecen editables y pueden escribirse sin cargar un RUT. Los datos del evento y pagos siguen siendo manuales. El PDF, las cláusulas y el formato de nombre no cambian.
+
+Se leen las casillas DIAN 35, 5/6 y 98–107 mediante posición y etiqueta, reconstruyendo nombres antes de apellidos. No se confunden sigla, solicitante del pie, socios/junta o contador con el representante principal. Se conservan dígitos y DV cero. El dígito de verificación se comprueba sin corregirlo silenciosamente. Si hay varios principales se pide selección; un principal incompleto o con documento diferente a cédula no se elige automáticamente. Ante datos ausentes se avisa y queda la alternativa manual. PDFs escaneados sin texto requieren entrada manual; no se incorpora un servicio OCR ni validación jurídica en línea.
+
+Web: `lib/rut-extract.ts` interpreta el texto y `lib/rut-pdf-client.ts` lee el archivo en un Worker local. No se envía ni almacena el RUT; únicamente los campos del formulario llegan al servidor al generar el contrato. Límites de 10 MB/20 páginas, tiempo de lectura y complejidad; cancelación y limpieza del lector sin resultados tardíos. `app/crm-contract-rut.tsx` ocupa la primera posición y actualiza los cuatro datos juntos para no mezclar contratantes. PDF.js 6.4.299 queda fijado, con su worker de la misma versión y licencia local. Se usa el build compatible con navegadores anteriores. La carga del lector es diferida; no hay CDN ni claves nuevas.
+
+Dependencias: única dependencia directa nueva `pdfjs-dist` con versión exacta; 13 entradas nuevas en el lock (incluidos canvas/binarios opcionales). Todos los objetos anteriores del lock se conservaron íntegros, sin actualizar versiones/URLs/integridades ni metadatos ajenos. `npm ci --ignore-scripts` y el instalador oficial de Sites comprobaron la instalación desde el lock. No se borró ni regeneró indiscriminadamente.
+
+iPhone: CRM → Contratos en el mismo proyecto `ios/JACNomina.xcodeproj`. PDFKit procesa el RUT localmente, con límite de tamaño/páginas y cancelación. El contrato se genera con la misma plantilla del servidor, se presenta y se puede compartir; requiere internet para generarlo. No se añade el RUT al caché ni se envía su archivo. El PDF se guarda solo como temporal protegido y se retira al cerrar/revocar. Se conserva la cubierta de privacidad y la sesión en Llavero. Nueva API `POST /api/mobile/contracts`: Bearer exclusivo con la sesión nativa existente, administrador CRM, cuerpo de 8 KiB y revalidación de sesión/perfil antes y después del PDF. Sin escrituras D1/R2 ni nuevos secretos.
+
+Cambios nativos acotados a `CRMView.swift`, `PayrollClient.swift`, fixture DEBUG y pruebas existentes. Proyecto/esquema/Info/firma/bundle/push suspendido se conservan. No hay que descargar otro proyecto; usar Run en este mismo para instalar en el teléfono.
+
+Verificación final:
+
+- 77 pruebas Node aprobadas: nómina/autenticación/correo/móvil, contratos y 22 comprobaciones nuevas de RUT/lector/API móvil. D1 en memoria y servicios interceptados.
+- TypeScript y build web correctos. Instalación limpia desde lock comprobada; la construcción exacta se ejecuta al empaquetar para Sites.
+- RUT suministrado contrastado en privado con extracción independiente, PDF.js y PDFKit: los cuatro datos y un principal coinciden sin advertencias. Documento original sin modificar; ningún identificador real se copió a código, pruebas o documentación.
+- Navegador local: carga del RUT, edición posterior y creación manual sin RUT hasta descarga con nombre correcto. El primer fallo de descarga fue del orden del middleware de la vista aislada y se corrigió allí; no alteraba la API real. Captura ficticia `outputs/contratos-rut-web.png`.
+- 134 unitarias nativas ejecutadas: 133 aprobadas y una condición física de protección omitida por CoreSimulator. UI de contratos aprobada con regreso desde Home, edición manual y contenido del PDF visible; una captura inicial se tomó antes de renderizar QuickLook y se reforzó la espera manteniendo las aserciones. Release iPhone y compilación de compatibilidad Mac correctas. Informes `contracts-native-verified.xcresult`, `contracts-native-rendered.xcresult`, `contracts-native-release.log` y `contracts-mac-compatibility.log` bajo `work/local/`.
+- No se instaló en el iPhone físico, ni se probaron servicios/datos reales mediante envíos, ni se cambiaron firma, push o versiones nativas. La instalación requiere Run del usuario.

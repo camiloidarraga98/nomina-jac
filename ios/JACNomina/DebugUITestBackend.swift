@@ -122,6 +122,15 @@ private final class FixtureProtocol: URLProtocol {
                 let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: headers)!
                 client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed); client?.urlProtocol(self, didLoad: body); client?.urlProtocolDidFinishLoading(self); return
             }
+            if request.url?.path == "/api/mobile/contracts" {
+                Self.lock.lock();defer {Self.lock.unlock()}
+                guard request.httpMethod == "POST",request.value(forHTTPHeaderField:"Authorization") == "Bearer "+String(repeating:"f",count:43),request.value(forHTTPHeaderField:"Cookie") == nil else {throw URLError(.userAuthenticationRequired)}
+                if Self.reader {let r=HTTPURLResponse(url:request.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!;client?.urlProtocol(self,didReceive:r,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:Data("{\"error\":\"CRM solo administradores\"}".utf8));client?.urlProtocolDidFinishLoading(self);return}
+                let input=try Self.body(request);var draft=ContractDraft();draft.municipality=input["municipality"].text;draft.eventDate=input["eventDate"].text
+                let name=draft.filename.addingPercentEncoding(withAllowedCharacters:.urlPathAllowed)!
+                let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+name])!
+                client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:Data(base64Encoded:Self.pdf)!);client?.urlProtocolDidFinishLoading(self);return
+            }
             if request.url?.path == "/api/crm/file" {
                 Self.lock.lock();defer {Self.lock.unlock()}
                 let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems ?? [],id=q.first{$0.name=="file"}?.value ?? ""

@@ -41,7 +41,8 @@
     "vaul": "^1.1.2",
     "zod": "^3.25.76",
     "pdf-lib": "^1.17.1",
-    "fflate": "^0.8.2"
+    "fflate": "^0.8.2",
+    "pdfjs-dist": "6.4.299"
   },
   "devDependencies": {
     "@cloudflare/vite-plugin": "1.37.1",

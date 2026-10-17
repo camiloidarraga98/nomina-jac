@@ -3,6 +3,8 @@ import UserNotifications
 import AVFoundation
 import ImageIO
 import CryptoKit
+import PDFKit
+import CoreText
 #if os(iOS)
 import UIKit
 @testable import JACNomina
@@ -1950,4 +1952,127 @@ final class PayrollClientTests: XCTestCase {
     }
     #endif
 
+}
+
+extension PayrollClientTests {
+    private func contractDraftFixture()->ContractDraft {
+        var d=ContractDraft();d.company="EMPRESA FICTICIA JAC SAS";d.nit="900000001-0";d.representative="ANA MARÍA PRUEBA GÓMEZ";d.identity="100000001"
+        d.eventDate="2026-10-31";d.venue="Escenario ficticio";d.municipality="Pereira";d.department="Risaralda";d.showTime="23:00";d.price=140000001;d.deposited=10000000;d.halfDeadline="2026-10-20"
+        return d
+    }
+    func testContractDraftMatchesWebInputsFilenameAndHalfPaymentRules() throws {
+        var d=contractDraftFixture(),payload=try d.payload()
+        XCTAssertEqual(d.finalDate,"2026-10-26");XCTAssertEqual(d.price/2,70000000.5)
+        XCTAssertEqual(d.filename,"Contrato JAC - Pereira - 31 de octubre 2026.pdf")
+        XCTAssertEqual(Set(payload.fields.keys),Set(["company","nit","representative","identity","eventDate","venue","municipality","department","showTime","price","deposited","halfDeadline"]))
+        XCTAssertEqual(payload["deposited"].number,10000000);XCTAssertEqual(payload["company"].text,"EMPRESA FICTICIA JAC SAS")
+        d.price=10.5;XCTAssertThrowsError(try d.payload());d.price=140000000;d.deposited=70000001;XCTAssertThrowsError(try d.payload())
+        d.deposited=0;d.halfDeadline="2026-10-27";XCTAssertThrowsError(try d.payload());d.halfDeadline="2026-10-26";_ = try d.payload()
+        d.showTime="25:00";XCTAssertThrowsError(try d.payload());d.showTime="23:00";d.eventDate="2026-02-30";XCTAssertThrowsError(try d.payload())
+        d.eventDate="2026-10-31";d.company="Nombre\nOmitido";XCTAssertThrowsError(try d.payload())
+        d.company="FUNDACIÓN FICTICIA";d.municipality="../Pereira";XCTAssertFalse(d.filename.contains("/"));payload=try d.payload();XCTAssertFalse(payload.fields.keys.contains("rut"),"El PDF original del RUT nunca entra en el POST")
+    }
+    @MainActor func testContractUsesBearerOnlyAndPrivateTemporaryUTF8PDF() async throws {
+        let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://contracts.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false),draft=contractDraftFixture()
+        var calls=0
+        MockProtocol.handler={request in
+            calls += 1;XCTAssertEqual(request.url?.path,"/api/mobile/contracts");XCTAssertEqual(request.httpMethod,"POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField:"Authorization"),"Bearer "+self.token);XCTAssertNil(request.value(forHTTPHeaderField:"Cookie"));XCTAssertEqual(request.value(forHTTPHeaderField:"Content-Type"),"application/json")
+            let body=try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(request));XCTAssertEqual(body["company"].text,draft.company);XCTAssertNil(body.fields["rut"])
+            let name="Contrato JAC - Soracá - 31 de octubre 2026.pdf".addingPercentEncoding(withAllowedCharacters:.urlPathAllowed)!
+            return(HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+name])!,Data("%PDF-1.4\nCONTRATO FICTICIO\n%%EOF".utf8))
+        }
+        defer{MockProtocol.handler=nil;try? client.clearSession()}
+        let file=try await client.createContract(draft)
+        XCTAssertEqual(file.url.lastPathComponent,"Contrato JAC - Soracá - 31 de octubre 2026.pdf");XCTAssertTrue(file.url.path.hasPrefix(TemporaryDocuments.root.path));XCTAssertTrue(FileManager.default.fileExists(atPath:file.url.path));XCTAssertEqual(calls,1)
+        let scope=OfflineResponseCache.scope(origin:client.baseURL.absoluteString,token:token)
+        XCTAssertFalse(client.offlineCache.entries(scope).contains{$0.url.contains("contracts")})
+        try client.clearSession();XCTAssertFalse(FileManager.default.fileExists(atPath:file.url.path))
+    }
+    @MainActor func testContractRefusesServerDenialInvalidDocumentAndOfflineWrite() async throws {
+        let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://contract-denied.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false),draft=contractDraftFixture()
+        defer{MockProtocol.handler=nil;try? client.clearSession()}
+        let old=try TemporaryDocuments.save(Data("private".utf8),filename:"old.pdf")
+        MockProtocol.handler={r in(HTTPURLResponse(url:r.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"error\":\"Acceso CRM retirado\"}".utf8))}
+        do{_ = try await client.createContract(draft);XCTFail("No se permite crear sin acceso")}catch{guard case APIError.forbidden=error else{return XCTFail(error.localizedDescription)}}
+        XCTAssertFalse(FileManager.default.fileExists(atPath:old.url.path));XCTAssertEqual(vault.token,token)
+        MockProtocol.handler={r in(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf"])!,Data("<html>Incorrecto</html>".utf8))}
+        do{_ = try await client.createContract(draft);XCTFail("No se acepta contenido ajeno a PDF")}catch{}
+        var calls=0;MockProtocol.handler={_ in calls += 1;throw URLError(.notConnectedToInternet)};client.beginOfflineRestore()
+        do{_ = try await client.createContract(draft);XCTFail("Generación requiere conexión")}catch{}
+        XCTAssertEqual(calls,0,"No se intenta una escritura con la copia offline")
+    }
+    private func rutLayoutFixture(role:String="REPRS LEGAL PRIN",company:String="EMPRESA FICTICIA JAC SAS",document:String="Cédula de Ciudadanía 13")->[RutPageLayout] {
+        func item(_ text:String,_ x:Double,_ y:Double,_ width:Double=100,_ height:Double=8)->RutTextItem {RutTextItem(text:text,x:x,y:y,width:width,height:height)}
+        let first=[item("DIAN",500,10),item("5. Número de Identificación Tributaria",20,100,265),item("6. DV",300,100,30),item("12. Dirección seccional",350,100),item("900000001",30,113,150),item("0",307,113,5),item("24. Tipo de contribuyente",20,180,200),item("35. Razón social",20,220,150),item(company,20,233,300,10),item("36. Nombre comercial",20,250,200),item("41. Dirección principal",20,280,200)]
+        let rep=[item("98. Representación",20,100,200),item("99. Fecha inicio ejercicio representación",300,100,250),item(role,20,113,180),item("100. Tipo de documento",20,127,150),item("101. Número de identificación",180,127,230),item("102. DV",450,127,50),item(document,20,140,140),item("100000001",200,140,180),item("104. Primer apellido",20,155,140),item("105. Segundo apellido",170,155,140),item("106. Primer nombre",320,155,120),item("107. Otros nombres",450,155,130),item("PRUEBA",20,169,100),item("GÓMEZ",170,169,100),item("ANA",320,169,80),item("MARÍA",450,169,90),item("108. Número de Identificación Tributaria",20,185,250)]
+        return[RutPageLayout(width:612,height:792,items:first),RutPageLayout(width:612,height:792,items:rep)]
+    }
+    func testRutReadsLabelledCellsAndFillsOnlyUniquePrincipalWithEditableManualFallback() throws {
+        let extraction=try RutParser.extract(rutLayoutFixture())
+        XCTAssertEqual(extraction.company,"EMPRESA FICTICIA JAC SAS");XCTAssertEqual(extraction.nit,"900000001-0");XCTAssertEqual(extraction.representatives.count,1)
+        let person=try XCTUnwrap(extraction.representatives.first);XCTAssertEqual(person.name,"ANA MARÍA PRUEBA GÓMEZ");XCTAssertEqual(person.identity,"100000001");XCTAssertEqual(person.kind,.principal);XCTAssertEqual(person.documentType,"Cédula de ciudadanía")
+        var draft=ContractDraft();draft.apply(extraction);XCTAssertEqual(draft.representative,person.name);XCTAssertEqual(draft.identity,person.identity)
+        draft.company="CORRECCIÓN MANUAL";XCTAssertEqual(draft.company,"CORRECCIÓN MANUAL")
+        let alternate=try RutParser.extract(rutLayoutFixture(role:"REPRS LEGAL SUPL"));draft.apply(alternate);XCTAssertTrue(draft.representative.isEmpty);XCTAssertTrue(draft.identity.isEmpty);XCTAssertTrue(alternate.warnings.contains{$0.contains("No se encontró un representante legal principal")})
+        let foreign=try RutParser.extract(rutLayoutFixture(document:"Pasaporte 41"));draft.apply(foreign);XCTAssertTrue(draft.identity.isEmpty);XCTAssertTrue(foreign.warnings.contains{$0.contains("distinto")})
+    }
+    func testRutRejectsMixedCompaniesAndNeverChoosesAmongMultiplePrincipals() throws {
+        var pages=rutLayoutFixture();pages.append(contentsOf:rutLayoutFixture(company:"OTRA EMPRESA FICTICIA"));XCTAssertThrowsError(try RutParser.extract(pages))
+        let base=try RutParser.extract(rutLayoutFixture());var multiple=base
+        multiple.representatives.append(RutRepresentative(name:"OTRO FIRMANTE FICTICIO",identity:"100000002",kind:.principal,documentType:"Cédula de ciudadanía"))
+        var draft=ContractDraft();draft.apply(multiple);XCTAssertTrue(draft.representative.isEmpty);XCTAssertTrue(draft.identity.isEmpty)
+        var incomplete=base;incomplete.warnings=["Un representante tiene nombre o identificación incompletos. Revisa esa fila del RUT."];draft.apply(incomplete);XCTAssertTrue(draft.representative.isEmpty);XCTAssertTrue(draft.identity.isEmpty)
+        var alpha=base;alpha.representatives=[RutRepresentative(name:"FIRMANTE FICTICIO",identity:"ABC-123",kind:.principal,documentType:"Cédula de ciudadanía")];draft.apply(alpha);XCTAssertTrue(draft.identity.isEmpty)
+        XCTAssertThrowsError(try RutParser.extract([]));XCTAssertThrowsError(try RutParser.extract([RutPageLayout(width:612,height:792,items:[RutTextItem(text:"DIAN Otro documento",x:10,y:10,width:200,height:10)])]))
+    }
+    func testRutPDFKitReadsFictitiousLocalPDFWithNoOriginalInContractPayload() throws {
+        let buffer=NSMutableData(),consumer=try XCTUnwrap(CGDataConsumer(data:buffer)),font=CTFontCreateWithName("Helvetica" as CFString,8,nil)
+        var box=CGRect(x:0,y:0,width:612,height:792)
+        let context=try XCTUnwrap(CGContext(consumer:consumer,mediaBox:&box,nil))
+        for page in rutLayoutFixture() {
+            context.beginPDFPage(nil);context.textMatrix = .identity
+            for item in page.items {
+                let text=NSAttributedString(string:item.text,attributes:[NSAttributedString.Key(kCTFontAttributeName as String):font])
+                context.textPosition=CGPoint(x:item.x,y:792-item.y-8);CTLineDraw(CTLineCreateWithAttributedString(text),context)
+            }
+            context.endPDFPage()
+        }
+        context.closePDF()
+        let file=try TemporaryDocuments.save(buffer as Data,filename:"RUT completamente ficticio.pdf");defer{TemporaryDocuments.remove(file)}
+        let extraction=try RutParser.read(file.url)
+        XCTAssertEqual(extraction.company,"EMPRESA FICTICIA JAC SAS");XCTAssertEqual(extraction.nit,"900000001-0");XCTAssertEqual(extraction.representatives.first?.name,"ANA MARÍA PRUEBA GÓMEZ")
+        var draft=contractDraftFixture();draft.apply(extraction)
+        XCTAssertEqual(try draft.payload()["representative"].text,"ANA MARÍA PRUEBA GÓMEZ")
+        XCTAssertLessThan(try JSONEncoder().encode(draft.payload()).count,8192)
+        XCTAssertThrowsError(try RutParser.read(URL(fileURLWithPath:"/not-a-real-file.invalid/RUT.pdf")))
+    }
+}
+
+private final class ContractDelayedProtocol:URLProtocol {
+    private static let lock=NSLock()
+    private static var held:ContractDelayedProtocol?
+    static func reset(){lock.lock();held=nil;lock.unlock()}
+    static func pending()->ContractDelayedProtocol? {lock.lock();defer{lock.unlock()};return held}
+    override class func canInit(with request:URLRequest)->Bool {request.url?.host?.hasSuffix(".invalid") == true}
+    override class func canonicalRequest(for request:URLRequest)->URLRequest {request}
+    override func startLoading(){Self.lock.lock();Self.held=self;Self.lock.unlock()}
+    override func stopLoading(){}
+    func reply() {client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf"])!,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:Data("%PDF-1.4\nFICTICIO\n%%EOF".utf8));client?.urlProtocolDidFinishLoading(self)}
+}
+extension PayrollClientTests {
+    @MainActor func testContractLatePDFCannotSurviveLogout() async throws {
+        ContractDelayedProtocol.reset();let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[ContractDelayedProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://contract-late.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false)
+        let draft=contractDraftFixture(),task=Task{try await client.createContract(draft)}
+        for _ in 0..<100 {if ContractDelayedProtocol.pending() != nil {break};try await Task.sleep(for:.milliseconds(10))}
+        let pending=try XCTUnwrap(ContractDelayedProtocol.pending());try client.clearSession();pending.reply()
+        do{_ = try await task.value;XCTFail("Un PDF de la sesión anterior no debe instalarse tras cerrar sesión")}catch{XCTAssertTrue(error is CancellationError)}
+        XCTAssertNil(vault.token);ContractDelayedProtocol.reset()
+    }
 }
