@@ -212,6 +212,7 @@ struct MacCRMHomeView: View {
                             sectionButton("Shows", symbol:"music.mic", value:"shows")
                             sectionButton("Semana", symbol:"calendar", value:"weekly")
                             sectionButton("Empresarios", symbol:"person.2", value:"contacts")
+                            sectionButton("Contratos", symbol:"doc.text", value:"contracts")
                             Spacer()
                             if busy { ProgressView().controlSize(.small).accessibilityLabel("Actualizando CRM") }
                             if store.isOffline { Label("Copia sin conexión",systemImage:"wifi.slash").font(.caption).foregroundStyle(.secondary) }
@@ -219,11 +220,13 @@ struct MacCRMHomeView: View {
                         if let error { HStack { InlineError(message: error); Spacer(); Button("Reintentar") { Task { await load() } } } }
                     }.padding(.horizontal,24).padding(.top,22).padding(.bottom,14)
                     if section == "shows" { shows }
+                    else if section == "contracts" {CRMContractsHome()}
                     else { List { if section == "weekly" { CRMWeeklyView() } else { CRMContactsView() } }.jacSurface() }
                 }.background(JACTheme.canvas).navigationTitle("CRM")
                     .modifier(MacCRMSearch(text:$search,enabled:section == "shows"))
                     .toolbar {
                         ToolbarItemGroup(placement: .primaryAction) {
+                            if section != "contracts" {
                             Button { editor = CRMEditorRequest(kind: .payment, record: .null, feed: feed) } label: { Label("Registrar abono", systemImage: "plus.circle") }
                                 .labelStyle(.titleAndIcon).disabled(!canWrite).accessibilityIdentifier("crm.quickPayment")
                             Button { editor = CRMEditorRequest(kind: .create, record: .null, feed: feed) } label: { Label("Nuevo show", systemImage: "plus") }
@@ -232,6 +235,7 @@ struct MacCRMHomeView: View {
                                 Button("Actualizar shows de Calendar") { Task { await load(sync: true) } }.disabled(!canWrite)
                                 Button("Sincronizar abonos pendientes") { Task { await syncSheets() } }.disabled(!canWrite || !feed["sheets"]["ready"].flag)
                             } label: { Image(systemName: "ellipsis.circle") }.help("Más opciones del CRM").accessibilityIdentifier("crm.add")
+                            }
                         }
                     }
                     .focusedSceneValue(\.macRefresh, { Task { await load(sync: !store.isOffline) } })

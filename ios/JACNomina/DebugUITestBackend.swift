@@ -43,12 +43,13 @@ private final class FixtureProtocol: URLProtocol {
     static var alerts: [JSONValue] = []
     static var deletedNotices = Set<String>()
     static var attachments: [String: Data] = [:]
+    static var contracts:[JSONValue]=[]
     static var readsToCancel = Set<String>()
     static var offline = false
     static var slowAgenda = false
     static var slowedWorkspace = false
     static var slowedMedia = false
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; contracts=ProcessInfo.processInfo.arguments.contains("--uitest-contract-archive") ? [.object(["id":.string("11111111-1234-4234-8234-111111111111"),"filename":.string("Contrato JAC - Pereira - 31 de octubre 2026.pdf"),"municipality":.string("Pereira"),"company":.string("EMPRESA FICTICIA JAC SAS"),"eventDate":.string("2026-10-31"),"price":.number(140000000),"showId":.null,"showTitle":.string(""),"version":.number(1)])]:[]; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func seedOfflineContent() {
         lock.lock(); defer { lock.unlock() }
         var alert = itinerary
@@ -124,10 +125,25 @@ private final class FixtureProtocol: URLProtocol {
             }
             if request.url?.path == "/api/mobile/contracts" {
                 Self.lock.lock();defer {Self.lock.unlock()}
-                guard request.httpMethod == "POST",request.value(forHTTPHeaderField:"Authorization") == "Bearer "+String(repeating:"f",count:43),request.value(forHTTPHeaderField:"Cookie") == nil else {throw URLError(.userAuthenticationRequired)}
+                guard request.value(forHTTPHeaderField:"Authorization") == "Bearer "+String(repeating:"f",count:43),request.value(forHTTPHeaderField:"Cookie") == nil else {throw URLError(.userAuthenticationRequired)}
                 if Self.reader {let r=HTTPURLResponse(url:request.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!;client?.urlProtocol(self,didReceive:r,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:Data("{\"error\":\"CRM solo administradores\"}".utf8));client?.urlProtocolDidFinishLoading(self);return}
-                let input=try Self.body(request);var draft=ContractDraft();draft.municipality=input["municipality"].text;draft.eventDate=input["eventDate"].text
-                let name=draft.filename.addingPercentEncoding(withAllowedCharacters:.urlPathAllowed)!
+                let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)?.queryItems ?? []
+                let fileId=q.first{$0.name=="id"}?.value
+                let command=request.httpMethod == "POST" ? try Self.body(request):.null
+                if fileId == nil && command["action"].text != "save" && !(request.httpMethod == "POST" && command["action"].isNull) {
+                    var data:JSONValue
+                    if command["action"].text == "link" {
+                        guard let index=Self.contracts.firstIndex(where:{$0["id"].text==command["id"].text}),Self.contracts[index]["version"] == command["version"] else {throw URLError(.badServerResponse)}
+                        Self.contracts[index]["showId"]=command["showId"];Self.contracts[index]["showTitle"] = .string(CRMFixture.shows.first{$0["id"]==command["showId"]}?["title"].text ?? "");Self.contracts[index]["version"] = .number(command["version"].number+1);data = .object(["ok":.bool(true)])
+                    } else if q.first(where:{$0.name=="view"})?.value == "shows" {data = .object(["shows":.array(CRMFixture.shows),"next":.null])}
+                    else {data = .object(["contracts":.array(Self.contracts),"next":.null])}
+                    let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!;client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:try JSONEncoder().encode(data));client?.urlProtocolDidFinishLoading(self);return
+                }
+                let input=command["action"].text == "save" ? command["input"]:command;var draft=ContractDraft();draft.municipality=input["municipality"].text;draft.eventDate=input["eventDate"].text
+                let existing=Self.contracts.first{$0["id"].text==fileId}
+                let filename=existing?["filename"].text ?? draft.filename
+                if command["action"].text == "save" && !Self.contracts.contains(where:{$0["id"]==command["id"]}) {Self.contracts.insert(.object(["id":command["id"],"filename":.string(filename),"municipality":input["municipality"],"company":input["company"],"eventDate":input["eventDate"],"price":input["price"],"showId":command["showId"],"showTitle":.string(CRMFixture.shows.first{$0["id"]==command["showId"]}?["title"].text ?? ""),"version":.number(1)]),at:0)}
+                let name=filename.addingPercentEncoding(withAllowedCharacters:.urlPathAllowed)!
                 let response=HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf","Content-Disposition":"attachment; filename*=UTF-8''"+name])!
                 client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:Data(base64Encoded:Self.pdf)!);client?.urlProtocolDidFinishLoading(self);return
             }

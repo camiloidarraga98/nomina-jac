@@ -332,3 +332,7 @@ Verificación 0.9.3 (13): simulador local ios-gestures37-native-style.xcresult T
 ## Fotografía 0.19.0 (31)
 
 Mismo proyecto: subidas directas a Drive con control final JAC, reproducción nativa por rangos y caché cifrada limitada para fotos abiertas. Se conservan descargas offline por carpeta y Guardar en Fotos. Ver [transferencias](../docs/PHOTOGRAPHY_TRANSFER.md). Para actualizar tu teléfono, Run en JACNomina sobre tu iPhone; no necesitas descargar otro proyecto. Firma personal y co.jacmusic.nomina conservados; push continúa suspendido. Build Release sin firma y pruebas locales con fixtures verificados; instalación física pendiente de Run.
+
+## Archivo de contratos · 17 de octubre de2026
+
+CRM → Contratos permite crear con RUT/manual, guardar automáticamente, abrir el archivo compartido y asignar a un show. PDF abierto disponible en la caché privada sin conexión; edición requiere red.137unitarias(136aprobadas,1condición física omitida) y recorrido UI completo aprobados, Release compilado. Se mantiene este proyecto/firma/bundle/push; instalar con Run. Ver docs/CONTRACTS.md.

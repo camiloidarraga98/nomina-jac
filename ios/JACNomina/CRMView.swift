@@ -45,7 +45,7 @@ struct CRMHomeView:View {
         Group {
             if crm.denied || store.overview?.user.hasSection(.crm) != true { ContentUnavailableView("CRM no disponible",systemImage:"lock",description:Text(crm.message ?? "Solo administradores de JAC.")) }
             else { Group {
-              if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractForm() } }
+              if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractsHome() } }
               else { List {
                 if let error { InlineError(message:error) }
                 if store.isOffline { Text("Sin conexión · última información descargada. Los cambios necesitan internet.").font(.footnote).foregroundStyle(.secondary) }
@@ -343,7 +343,7 @@ struct CRMFilesView:View {
     var body:some View { Group {
         if let error { InlineError(message:error) }
         ForEach(files.crmItems) { item in Button { Task { busy=true;defer {busy=false};do {let file=try item.value.decoded(NoticeAttachment.self);let result=try await store.client.crmFile(owner:owner,file:file,version:version,contact:contact);previous=result;document=result} catch {crm.reject(error);self.error=store.reportReadFailure(error)} } } label:{ Label(item.value["filename"].text,systemImage:"doc.text") }.disabled(busy).accessibilityIdentifier("crm.file."+item.id) }
-    }.onChange(of:crm.denied){_,denied in if denied {document=nil}}.sheet(item:$document,onDismiss:{if let previous {TemporaryDocuments.remove(previous);self.previous=nil}}) { file in NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Documento").jacInlineTitle().toolbar {ToolbarItem(placement:.confirmationAction){Button("Listo"){document=nil}}} } } }
+    }.onChange(of:crm.denied){_,denied in if denied {document=nil}}.sheet(item:$document,onDismiss:{if let previous {TemporaryDocuments.remove(previous);self.previous=nil}}) { file in NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Documento").jacInlineTitle().toolbar {ToolbarItem(placement:.confirmationAction){Button("Listo"){document=nil}.accessibilityIdentifier("contracts.preview.close")}} } } }
 }
 struct CRMPlanView:View {
     @EnvironmentObject private var store:PayrollStore
@@ -452,7 +452,8 @@ struct CRMContactView:View {
 }
 
 // Contracts reuse the private server template; the phone only keeps an editable
-// draft in memory. The RUT itself never leaves this device or enters the cache.
+// draft in memory. Generated PDFs enter the private server archive. The RUT
+// itself never leaves this device or enters the cache.
 struct ContractDraft: Sendable {
     var company="",nit="",representative="",identity=""
     var eventDate=CalendarClock.day(CalendarClock.calendar.date(byAdding:.day,value:14,to:Date()) ?? Date())
@@ -491,10 +492,102 @@ struct ContractDraft: Sendable {
     }
 }
 
+struct CRMContractSelection:Identifiable { let value:JSONValue;var id:String {value["id"].text} }
+
+struct CRMContractsHome:View {
+    @EnvironmentObject private var store:PayrollStore
+    @EnvironmentObject private var crm:CRMStore
+    @State private var contracts:[JSONValue]=[]
+    @State private var next:Int?
+    @State private var busy=false
+    @State private var creating=false
+    @State private var assigning:CRMContractSelection?
+    @State private var document:ExportedDocument?
+    @State private var ownedDocument:ExportedDocument?
+    @State private var error:String?
+    @State private var active=true
+    @State private var operation:Task<Void,Never>?
+    var body:some View {
+        List {
+            Section {
+                Button {creating=true} label:{Label("Crear contrato",systemImage:"plus")}.buttonStyle(JACPrimaryButtonStyle()).disabled(store.isOffline).accessibilityIdentifier("contracts.create")
+                Text("Los contratos generados se guardan aquí y se pueden asignar a un show del CRM.").font(.footnote).foregroundStyle(.secondary)
+            }
+            if let error { Section {InlineError(message:error);Button("Reintentar"){Task{await load()}}} }
+            Section("Contratos guardados") {
+                if contracts.isEmpty {if busy {ProgressView("Consultando contratos…")} else {Text("Aquí aparecerán los contratos que generes a partir de ahora.").foregroundStyle(.secondary)}}
+                ForEach(contracts.map{CRMContractSelection(value:$0)}) { item in
+                    let row=item.value
+                    VStack(alignment:.leading,spacing:10) {
+                        Label(row["municipality"].text+" · "+CalendarClock.dayLabel(row["eventDate"].text),systemImage:"doc.text").font(.headline)
+                        Text(row["company"].text).font(.subheadline)
+                        Text(CRMFields.money(row["price"].number)).font(.subheadline).foregroundStyle(JACTheme.action)
+                        Text(row["showTitle"].text.isEmpty ? (row["showId"].isNull ? "Sin show asignado":"Show retirado del CRM"):"Show: "+row["showTitle"].text).font(.caption).foregroundStyle(.secondary)
+                        HStack {Button("Abrir PDF"){open(row)}.accessibilityIdentifier("contracts.open."+row["id"].text);Spacer();Button("Asignar show"){assigning=CRMContractSelection(value:row)}.disabled(store.isOffline).accessibilityIdentifier("contracts.assign."+row["id"].text)}.buttonStyle(.bordered)
+                    }.padding(.vertical,8)
+                }
+                if next != nil {Button("Ver más contratos"){Task{await load(more:true)}}.disabled(busy)}
+            }
+        }.jacSurface().privacySensitive().task{active=true;await load()}.refreshable{await load()}
+            .onDisappear{active=false;operation?.cancel();clearDocument()}
+            .onChange(of:crm.denied){_,denied in if denied {contracts=[];document=nil;creating=false;assigning=nil;clearDocument()} }
+            .sheet(isPresented:$creating,onDismiss:{Task{await load()}}){NavigationStack {CRMContractForm().navigationTitle("Crear contrato").jacInlineTitle().toolbar{ToolbarItem(placement:.jacLeading){Button("Listo"){creating=false}.accessibilityIdentifier("contracts.form.close")}}}.environmentObject(crm)
+                #if os(macOS)
+                .frame(minWidth:620,minHeight:700)
+                #endif
+            }
+            .sheet(item:$assigning,onDismiss:{Task{await load()}}){CRMContractAssignment(contract:$0.value).environmentObject(crm)
+                #if os(macOS)
+                .frame(minWidth:520,minHeight:400)
+                #endif
+            }
+            .sheet(item:$document,onDismiss:clearDocument){file in NavigationStack {DocumentPreview(url:file.url).privacySensitive().navigationTitle("Contrato JAC").jacInlineTitle().toolbar{ToolbarItem(placement:.jacLeading){Button("Listo"){document=nil}.accessibilityIdentifier("contracts.preview.close")};ToolbarItem(placement:.jacTrailing){ShareLink(item:file.url){Image(systemName:"square.and.arrow.up")}.accessibilityLabel("Compartir contrato")}}}}
+    }
+    private func load(more:Bool=false) async {
+        guard !busy,!crm.denied else{return};if !more,contracts.isEmpty,let saved=store.client.cached(JSONValue.self,path:"api/mobile/contracts",query:[URLQueryItem(name:"offset",value:"0")]) {contracts=saved["contracts"].elements;next=saved["next"].isNull ? nil:Int(saved["next"].number)};busy=true;defer{busy=false}
+        do{let data=try await store.client.contractArchive(query:["offset":String(more ? (next ?? 0):0)]);guard active,!Task.isCancelled else{return};contracts=more ? contracts+data["contracts"].elements:data["contracts"].elements;next=data["next"].isNull ? nil:Int(data["next"].number);error=nil}
+        catch{guard active,!RutParser.cancelled(error) else{return};crm.reject(error);if crm.denied {contracts=[]};self.error=error.localizedDescription}
+    }
+    private func open(_ row:JSONValue){operation?.cancel();operation=Task{do{let file=try await store.client.archivedContract(id:row["id"].text,filename:row["filename"].text);guard active,!Task.isCancelled else{TemporaryDocuments.remove(file);return};clearDocument();ownedDocument=file;document=file}catch{if active,!RutParser.cancelled(error){crm.reject(error);self.error=error.localizedDescription}}}}
+    private func clearDocument(){document=nil;if let ownedDocument {TemporaryDocuments.remove(ownedDocument);self.ownedDocument=nil}}
+}
+
+struct CRMContractShowPicker:View {
+    @EnvironmentObject private var store:PayrollStore
+    @State private var query=""
+    @State private var shows:[JSONValue]=[]
+    @State private var next:Int?
+    @State private var error:String?
+    @Binding var selection:String
+    var body:some View {Group {
+        TextField("Buscar show por nombre o fecha",text:$query).accessibilityIdentifier("contracts.show.search")
+        Picker("Show del CRM",selection:$selection){Text("Sin asignar").tag("");if !selection.isEmpty && !shows.contains(where:{$0["id"].text==selection}) {Text("Show seleccionado").tag(selection)};ForEach(shows.map{CRMContractSelection(value:$0)}){item in let s=item.value;Text(s["title"].text+" · "+CalendarClock.dayLabel(s["showDate"].text)).tag(s["id"].text)}}.accessibilityIdentifier("contracts.show.picker")
+        if next != nil {Button("Más shows"){Task{await load(more:true)}}}
+        if let error {Text(error).font(.footnote).foregroundStyle(.red)}
+    }.task(id:query){do{try await Task.sleep(for:.milliseconds(250));await load()}catch{}}
+    }
+    private func load(more:Bool=false) async {do{let data=try await store.client.contractArchive(query:["view":"shows","q":query,"offset":String(more ? (next ?? 0):0)]);guard !Task.isCancelled else{return};shows=more ? shows+data["shows"].elements:data["shows"].elements;next=data["next"].isNull ? nil:Int(data["next"].number);error=nil}catch{if !RutParser.cancelled(error){self.error=error.localizedDescription}}}
+}
+
+struct CRMContractAssignment:View {
+    @EnvironmentObject private var store:PayrollStore
+    @EnvironmentObject private var crm:CRMStore
+    @Environment(\.dismiss) private var dismiss
+    let contract:JSONValue
+    @State private var showId=""
+    @State private var busy=false
+    @State private var error:String?
+    var body:some View {NavigationStack {Form {Section {Text(contract["filename"].text).font(.headline);CRMContractShowPicker(selection:$showId);Text("La asignación no cambia el PDF ni los valores del show.").font(.footnote).foregroundStyle(.secondary)};if let error {InlineError(message:error)}}.disabled(busy).navigationTitle("Asignar show").jacInlineTitle().toolbar{ToolbarItem(placement:.jacLeading){Button("Cancelar"){dismiss()}.disabled(busy)};ToolbarItem(placement:.jacTrailing){Button("Guardar"){Task{await save()}}.disabled(busy || store.isOffline).accessibilityIdentifier("contracts.assign.save")}}.privacySensitive().onAppear{showId=contract["showId"].text}}}
+    private func save() async {busy=true;defer{busy=false};do{try await store.client.linkContract(id:contract["id"].text,showId:showId.isEmpty ? nil:showId,version:Int(contract["version"].number));dismiss()}catch{crm.reject(error);self.error=error.localizedDescription}}
+}
+
 struct CRMContractForm:View {
     @EnvironmentObject private var store:PayrollStore
     @EnvironmentObject private var crm:CRMStore
     @State private var draft=ContractDraft()
+    @State private var showId=""
+    @State private var requestID=UUID().uuidString
+    @State private var priorPayload=""
     @State private var importing=false
     @State private var busy=false
     @State private var error:String?
@@ -532,6 +625,7 @@ struct CRMContractForm:View {
                 TextField("Representante legal",text:$draft.representative).accessibilityIdentifier("contracts.representative")
                 TextField("Cédula de ciudadanía",text:$draft.identity).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("contracts.identity")
             }.disabled(busy)
+            Section("Show vinculado (opcional)") { CRMContractShowPicker(selection:$showId) }.disabled(busy)
             Section("Presentación") {
                 JACDatePicker("Día del evento",selection:dateBinding("eventDate"),in:dateRange,displayedComponents:.date).accessibilityIdentifier("contracts.eventDate")
                 TextField("Sitio exacto del evento",text:$draft.venue).accessibilityIdentifier("contracts.venue")
@@ -552,7 +646,7 @@ struct CRMContractForm:View {
             }.disabled(busy)
             Section {
                 Button { generate() } label:{ HStack {Label(busy ? "Generando PDF…":"Crear contrato PDF",systemImage:"doc.text");Spacer();if busy {ProgressView()} } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || reading || store.isOffline).accessibilityIdentifier("contracts.generate")
-                Text("Conserva la plantilla de JAC. Los importes se escriben en letras y números; el pago final es el 50%, cinco días antes del show.").font(.footnote).foregroundStyle(.secondary)
+                Text("El PDF se guarda en Contratos. Conserva la plantilla de JAC. Los importes se escriben en letras y números; el pago final es el 50%, cinco días antes del show.").font(.footnote).foregroundStyle(.secondary)
             }
         }.jacSurface().privacySensitive()
             .toolbar {
@@ -571,7 +665,7 @@ struct CRMContractForm:View {
             }
             .sheet(item:$document,onDismiss:clearDocument) { file in NavigationStack {
                 DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle("Contrato JAC").jacInlineTitle()
-                    .toolbar {ToolbarItem(placement:.jacLeading){Button("Listo"){document=nil}};ToolbarItem(placement:.jacTrailing){ShareLink(item:file.url){Image(systemName:"square.and.arrow.up")}.accessibilityLabel("Compartir contrato").accessibilityIdentifier("contracts.share")}}
+                    .toolbar {ToolbarItem(placement:.jacLeading){Button("Listo"){document=nil}.accessibilityIdentifier("contracts.preview.close")};ToolbarItem(placement:.jacTrailing){ShareLink(item:file.url){Image(systemName:"square.and.arrow.up")}.accessibilityLabel("Compartir contrato").accessibilityIdentifier("contracts.share")}}
             } }
             .onAppear {active=true}
             .onDisappear {active=false;operation?.cancel();operation=nil;clearDocument()}
@@ -597,7 +691,7 @@ struct CRMContractForm:View {
         JACPlatform.endEditing();busy=true;error=nil;operation?.cancel()
         operation=Task {
             defer{busy=false}
-            do {let next=try await store.client.createContract(draft);guard active,!Task.isCancelled else {TemporaryDocuments.remove(next);return};clearDocument();ownedDocument=next;document=next}
+            do {let encoder=JSONEncoder();encoder.outputFormatting=[.sortedKeys];let payload=String(decoding:try encoder.encode(draft.payload()),as:UTF8.self)+showId;if payload != priorPayload {requestID=UUID().uuidString;priorPayload=payload};let next=try await store.client.createContract(draft,id:requestID,showId:showId.isEmpty ? nil:showId);guard active,!Task.isCancelled else {TemporaryDocuments.remove(next);return};clearDocument();ownedDocument=next;document=next}
             catch {if active,!RutParser.cancelled(error){crm.reject(error);self.error=error.localizedDescription}}
         }
     }

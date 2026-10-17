@@ -9,7 +9,7 @@ import CrmCreateForm,{type CrmCalendar} from './crm-create-form';
 import {crmFilePayload,type CrmFile} from './crm-files';
 import CrmAttachments from './crm-attachments';
 import CrmContactInput,{protectCrmContactSuggestions} from './crm-contact-input';
-import CrmContractForm from './crm-contract-form';
+import CrmContracts from './crm-contract-archive';
 import {CrmContacts,CrmWeekly,CrmShowWorkspace,type CrmRequest,type CrmContactChoice} from './crm-workspace';
 import {crmMoney,type CrmShow} from '@/lib/crm-core';
 import {agendaDate} from '@/lib/calendar-core';
@@ -45,7 +45,7 @@ export default function CrmPanel(){
  return <div className="crm">
   {error&&<p className="message error" role="alert">{error}</p>}{notice&&<p className="message success" role="status">{notice}</p>}
   <div className="crm-tabs" role="tablist" aria-label="Secciones del CRM">{([['shows','Shows y abonos'],['weekly','Resumen semanal'],['contacts','Empresarios'],['contracts','Contratos']] as const).map(([key,label])=><button key={key} role="tab" aria-selected={section===key} onClick={()=>setSection(key)}>{label}</button>)}</div>
-  {section==='contracts'&&<CrmContractForm/>}
+  {section==='contracts'&&<CrmContracts/>}
   {section==='weekly'&&feed&&<CrmWeekly api={featureApi} openShow={(s,tab)=>void open(s,tab)}/>}
   {section==='contacts'&&feed&&<CrmContacts api={featureApi} onChanged={()=>void load()} openShow={s=>void open(s)}/>}
   {section==='shows'&&<>

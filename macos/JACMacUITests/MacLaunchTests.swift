@@ -218,4 +218,18 @@ final class MacLaunchTests:XCTestCase {
         XCTAssertFalse(app.buttons["management.crm"].exists);XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         shot(app,"mac-permisos-lector")
     }
+    @MainActor func testContractArchiveShowsNativePDFAndAssignmentMenu() {
+        let app=fixture(["--uitest-contract-archive"])
+        click(app,"mac.nav.crm");click(app,"crm.section.contracts")
+        XCTAssertTrue(app.buttons["contracts.create"].waitForExistence(timeout:10))
+        let id="11111111-1234-4234-8234-111111111111"
+        click(app,"contracts.assign."+id)
+        XCTAssertTrue(app.descendants(matching:.any)["contracts.show.picker"].waitForExistence(timeout:10))
+        click(app,"contracts.show.picker")
+        let option=app.menuItems.matching(NSPredicate(format:"label BEGINSWITH %@","PEREIRA · Show ficticio")).firstMatch
+        XCTAssertTrue(option.waitForExistence(timeout:10));option.click();click(app,"contracts.assign.save")
+        XCTAssertTrue(app.staticTexts["Show: PEREIRA · Show ficticio"].waitForExistence(timeout:10))
+        click(app,"contracts.open."+id);XCTAssertTrue(app.buttons["Compartir contrato"].waitForExistence(timeout:10));shot(app,"mac-contratos-archivo-pdf-ficticio")
+    }
+
 }

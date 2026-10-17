@@ -2076,3 +2076,56 @@ extension PayrollClientTests {
         XCTAssertNil(vault.token);ContractDelayedProtocol.reset()
     }
 }
+
+extension PayrollClientTests {
+    @MainActor func testArchivedContractsUseBearerAndKeepSaveIdentityAndAssociation() async throws {
+        let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://contract-archive.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false)
+        let id=UUID().uuidString,show=UUID().uuidString;var actions:[String]=[]
+        MockProtocol.handler={r in
+            XCTAssertEqual(r.value(forHTTPHeaderField:"Authorization"),"Bearer "+self.token);XCTAssertNil(r.value(forHTTPHeaderField:"Cookie"))
+            if r.httpMethod == "POST" {
+                let body=try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(r));actions.append(body["action"].text);XCTAssertEqual(body["id"].text,id);XCTAssertEqual(body["showId"].text,show)
+                if body["action"].text == "save" {XCTAssertEqual(body["input"]["company"].text,"EMPRESA FICTICIA JAC SAS");return(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf"])!,Data("%PDF-1.4\nFICTICIO\n%%EOF".utf8))}
+                XCTAssertEqual(body["version"].number,3)
+            }
+            return(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"contracts\":[],\"next\":null}".utf8))
+        }
+        defer{MockProtocol.handler=nil;try? client.clearSession()}
+        let file=try await client.createContract(contractDraftFixture(),id:id,showId:show);TemporaryDocuments.remove(file)
+        _ = try await client.contractArchive();try await client.linkContract(id:id,showId:show,version:3)
+        XCTAssertEqual(actions,["save","link"])
+    }
+    @MainActor func testArchivedContractDownloadValidatesPDFAndRevocationRemovesTemporary() async throws {
+        let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://archive-document.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false)
+        defer{MockProtocol.handler=nil;try? client.clearSession()}
+        MockProtocol.handler={r in(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf"])!,Data("%PDF-1.4\nFICTICIO\n%%EOF".utf8))}
+        let file=try await client.archivedContract(id:UUID().uuidString,filename:"../../Contrato privado.pdf");XCTAssertEqual(file.url.lastPathComponent,"Contrato privado.pdf")
+        MockProtocol.handler={r in(HTTPURLResponse(url:r.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"error\":\"Permiso retirado\"}".utf8))}
+        do{_ = try await client.contractArchive();XCTFail("La revocación debe impedir leer el archivo")}catch{guard case APIError.forbidden=error else{return XCTFail(error.localizedDescription)}}
+        XCTAssertFalse(FileManager.default.fileExists(atPath:file.url.path));XCTAssertEqual(vault.token,token)
+    }
+}
+
+extension PayrollClientTests {
+    @MainActor func testArchivedContractLastReadAvailableOfflineAnd403NeverFallsBack() async throws {
+        let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://contracts-offline.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false)
+        defer{MockProtocol.handler=nil;try? client.clearSession()}
+        var calls=0
+        MockProtocol.handler={r in calls += 1;return(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf"])!,Data("%PDF-1.4\nFICTICIO\n%%EOF".utf8))}
+        let id=UUID().uuidString,first=try await client.archivedContract(id:id,filename:"Contrato.pdf");TemporaryDocuments.remove(first)
+        client.beginOfflineRestore();MockProtocol.handler={_ in calls += 1;throw URLError(.notConnectedToInternet)}
+        let saved=try await client.archivedContract(id:id,filename:"Contrato.pdf");XCTAssertEqual(calls,1);XCTAssertTrue(FileManager.default.fileExists(atPath:saved.url.path))
+        // Revalidate explicitly: a forbidden response must discard this copy.
+        let online=PayrollClient(baseURL:client.baseURL,vault:vault,configuration:config,offlineCache:client.offlineCache,automaticallyDownloadOffline:false)
+        MockProtocol.handler={r in(HTTPURLResponse(url:r.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"error\":\"CRM retirado\"}".utf8))}
+        do{_ = try await online.archivedContract(id:id,filename:"Contrato.pdf");XCTFail("No debe usar PDF cacheado ante 403")}catch{}
+        XCTAssertFalse(FileManager.default.fileExists(atPath:saved.url.path))
+        let scope=OfflineResponseCache.scope(origin:client.baseURL.absoluteString,token:token);XCTAssertFalse(client.offlineCache.entries(scope).contains{$0.url.contains("contracts")})
+    }
+}

@@ -403,7 +403,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testCRMContractsRUTEditableFieldsManualEntryAndPDFPreview() {
-        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Contratos")
+        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Contratos");tap(app,"contracts.create")
         XCTAssertTrue(app.buttons["contracts.rut.upload"].waitForExistence(timeout:10))
         XCTAssertTrue(app.textFields["contracts.company"].exists,"Los campos manuales deben existir sin cargar RUT")
         tap(app,"contracts.rut.fixture")
@@ -424,8 +424,16 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Contrato JAC"].waitForExistence(timeout:15));XCTAssertTrue(app.buttons["contracts.share"].exists)
         let pdfText=app.descendants(matching:.any).matching(NSPredicate(format:"label CONTAINS %@","Itinerario simulado")).firstMatch
         XCTAssertTrue(pdfText.waitForExistence(timeout:15),"La vista previa debe mostrar el contenido PDF, no solo su barra de navegación")
-        attachScreen(app,name:"contrato-nativo-pdf-ficticio");tap(app,"Listo")
+        attachScreen(app,name:"contrato-nativo-pdf-ficticio");tap(app,"contracts.preview.close")
         XCTAssertTrue(app.buttons["contracts.generate"].waitForExistence(timeout:10))
+        tap(app,"contracts.form.close")
+        let open=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","contracts.open.")).firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout:10),"El PDF generado debe aparecer en el archivo")
+        let assign=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","contracts.assign.")).firstMatch
+        assign.tap();tap(app,"contracts.show.picker");let option=app.buttons.matching(NSPredicate(format:"label BEGINSWITH %@","PEREIRA · Show ficticio")).firstMatch;XCTAssertTrue(option.waitForExistence(timeout:10));option.tap()
+        tap(app,"contracts.assign.save")
+        XCTAssertTrue(app.staticTexts["Show: PEREIRA · Show ficticio"].waitForExistence(timeout:10))
+        open.tap();XCTAssertTrue(app.navigationBars["Contrato JAC"].waitForExistence(timeout:10));XCTAssertTrue(pdfText.waitForExistence(timeout:15));attachScreen(app,name:"contratos-archivo-nativo-ficticio")
     }
 
     @MainActor private func fixture(_ arguments: [String] = []) -> XCUIApplication {

@@ -1,4 +1,21 @@
-# Contratos de presentación · web
+# Contratos de presentación · web, iPhone y Mac
+
+
+## Archivo compartido y shows · 17 de octubre de 2026
+
+CRM → Contratos muestra **Contratos guardados** y un botón **Crear contrato**. Las versiones nuevas de web/iPhone/Mac guardan automáticamente el PDF al generarlo; se puede abrir de nuevo y asignar, cambiar o retirar su asociación con un show ya existente. El selector busca por nombre o fecha, incluye shows históricos y pagina los resultados. No crea eventos, abonos o precios; tampoco marca un contrato como firmado. La asignación es solo una referencia: el PDF conserva exactamente los datos de su generación. Si Calendar/CRM retira un show, el contrato permanece disponible y puede reasignarse.
+
+Los contratos anteriores descargados antes de esta función no se pueden recuperar automáticamente: nunca se habían almacenado. El archivo comienza con los contratos que se generen desde esta actualización. Los formularios antiguos que envían solo los campos conservan su generación sin archivo por compatibilidad; actualizar las apps para usar el guardado.
+
+Migración aditiva `0026_crm_contracts`: metadatos, instantánea de campos, relación opcional, revisión y reserva idempotente. PDF privado en el **BUCKET existente**, bajo `crm/contracts/`, separado de Fotografía. No se guarda el RUT. No hay nuevas conexiones, secretos ni dependencias. Acceso compartido únicamente para administradores con CRM; API web con sesión propia/origen y API nativa con Bearer exclusivo. Guardas SQL y revalidación antes/después de R2; el listado omite claves, instantáneas de identidad y registros pendientes. Respuestas privadas/no-store. PDF inmutable, UUID estable del formulario, hash normalizado y actor; reintentos idénticos recuperan el mismo PDF, colisiones rechazan cambios. Reserva con arrendamiento y clave por intento, recuperación ante fallos y CAS para asignaciones simultáneas.
+
+La web permite abrir el PDF o asignarlo desde la fila del archivo. iPhone/Mac incorporan el mismo archivo y creador nativos; Mac añade Contratos a su barra interna del CRM. Campos/RUT siguen editables y mantienen privacidad. La lista consultada y los PDF abiertos se conservan en la caché nativa privada ya existente, separada por sesión/origen y retirada al cerrar sesión o confirmar revocación. Sin fallback ante 403. Se requiere red para crear/reasignar; un documento todavía no abierto no tiene copia offline. Misma carpeta/proyectos Xcode, bundle, firma y push suspendido.
+
+Archivos principales: `lib/contract-archive.ts`, rutas de contratos web/móvil, `app/crm-contract-archive.tsx`, formulario/estilos existentes, migración0026, `CRMView.swift`, `PayrollClient.swift` y `MacWorkspaceViews.swift`. Pruebas con D1 en memoria/R2 simulado y fixtures `.invalid`, sin generar contratos reales ni tocar shows reales.
+
+Comprobación de esta actualización:122pruebas Node aprobadas (contratos/archivo/CRM y regresiones obligatorias/RUT); TypeScript y build web correctos. iPhone137unitarias ejecutadas,136aprobadas y1condición física omitida; recorrido completo UI con RUT/edición/regresoHome/generación/archivo/asignación/reapertura aprobado. Mac125unitarias aprobadas; su ejecutor UI no pudo inicializar automatización en dos intentos, por lo que se comprobó directamente una instancia DEBUG `.invalid`: archivo visible, selección de show, guardado y PDF renderizado nativamente, con captura `outputs/contratos-archivo-mac.png`. Release iPhone y Mac universal compilados. Informes bajo `work/local/contracts-archive-*`; capturas web y Mac con datos ficticios. Sin instalación nueva en iPhone físico.
+
+## Generador original (antecedente)
 
 Disponible para administradores con acceso al CRM, en CRM → Contratos (`/crm?seccion=contratos`). El formulario genera y descarga un PDF; no firma un documento nuevo, no envía mensajes, no crea eventos y no modifica precios, abonos ni datos de producción.
 

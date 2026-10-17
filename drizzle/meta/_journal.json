@@ -183,6 +183,13 @@
       "when": 1792179421822,
       "tag": "0025_photography_r2_new_collection",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1792275934854,
+      "tag": "0026_crm_contracts",
+      "breakpoints": true
     }
   ]
 }

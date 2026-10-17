@@ -287,7 +287,7 @@ final class PayrollClient: ObservableObject {
     }
     private func cacheable(_ path: String, query: [URLQueryItem]) -> Bool {
         if path == "api/calendar" { return !query.contains { $0.name == "action" } }
-        return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file", "api/media"].contains(path)
+        return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file", "api/mobile/contracts", "api/media"].contains(path)
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false) async throws -> (Data, HTTPURLResponse) {
@@ -353,7 +353,7 @@ final class PayrollClient: ObservableObject {
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }
             if let scope, (body == nil || path == "api/crm" || path == "api/mobile/contracts"), [403, 404, 410].contains(response.statusCode) {
                 if path.hasPrefix("api/notices"), let id = query.first(where: { ["id", "item"].contains($0.name) })?.value { removeCachedNotice(id, scope: scope) }
-                else { let prefix=(path.hasPrefix("api/crm") || path == "api/mobile/contracts") && response.statusCode == 403 ? "/api/crm":"/"+path;offlineCache.remove(scope) { URL(string: $0.url)?.path.hasPrefix(prefix) == true } }
+                else { let prefix=(path.hasPrefix("api/crm") || path == "api/mobile/contracts") && response.statusCode == 403 ? "/api/crm":"/"+path;offlineCache.remove(scope) { URL(string: $0.url)?.path.hasPrefix(prefix) == true || (prefix == "/api/crm" && URL(string:$0.url)?.path == "/api/mobile/contracts") } }
                 cacheGeneration += 1; syncTask?.cancel(); syncTask = nil; syncingOffline = false
                 offlineSyncMessage = "Se conserva lo descargado. Quedan datos o adjuntos por actualizar."
                 TemporaryDocuments.clear(); self.cacheRevision += 1
@@ -384,7 +384,7 @@ final class PayrollClient: ObservableObject {
     private func saveOffline(_ data: Data, response: HTTPURLResponse, key: String, revision: Int, scope: AgendaCacheScope) throws {
         guard let url = response.url else { return }
         let mime = response.mimeType ?? "application/json"
-        if url.path == "/api/notices/file" || url.path == "/api/notices/pdf" || url.path == "/api/expenses/file" || url.path == "/api/crm/file" {
+        if (url.path == "/api/mobile/contracts" && mime == "application/pdf") || url.path == "/api/notices/file" || url.path == "/api/notices/pdf" || url.path == "/api/expenses/file" || url.path == "/api/crm/file" {
             guard data.count <= 10 * 1024 * 1024, (try? NoticeUpload.mime(data)) == mime else { throw APIError.message("No se recibió un adjunto válido para guardar.") }
         } else if !url.path.hasSuffix("/export"), (try? JSONDecoder().decode(JSONValue.self, from: data)) == nil { throw APIError.message("No se recibió información válida para guardar.") }
         if url.path == "/api/expenses", let feed = try? decoder.decode(TravelExpenseFeed.self, from: data) {
@@ -631,8 +631,9 @@ final class PayrollClient: ObservableObject {
         return try decoder.decode(JSONValue.self,from:data)
     }
     func crmUploads(_ files:[NoticeUpload]) throws -> JSONValue { try travelUploads(files) }
-    func createContract(_ input:ContractDraft) async throws -> ExportedDocument {
-        let payload=try input.payload()
+    func createContract(_ input:ContractDraft,id:String? = nil,showId:String? = nil) async throws -> ExportedDocument {
+        let fields=try input.payload()
+        let payload:JSONValue = id.map { .object(["action":.string("save"),"id":.string($0),"showId":showId.map(JSONValue.string) ?? .null,"input":fields]) } ?? fields
         guard try hasSession() else {throw APIError.unauthorized}
         let (data,response)=try await request(path:"api/mobile/contracts",body:payload,document:true,forceNetwork:true,nativeBearer:true)
         guard !Task.isCancelled,permissionUser?.hasSection(.crm) != false else {throw CancellationError()}
@@ -644,6 +645,20 @@ final class PayrollClient: ObservableObject {
         let received=encoded?.removingPercentEncoding
         let filename=received.flatMap { name in name == (name as NSString).lastPathComponent && !name.contains("\\") && !name.unicodeScalars.contains(where:{$0.value < 32 || $0.value == 127}) && name.hasSuffix(".pdf") ? name:nil } ?? input.filename
         return try TemporaryDocuments.save(data,filename:filename)
+    }
+    func contractArchive(query:[String:String] = [:]) async throws -> JSONValue {
+        let (data,_)=try await request(path:"api/mobile/contracts",query:query.map{URLQueryItem(name:$0.key,value:$0.value)},forceNetwork:!usingOfflineCopy,nativeBearer:true)
+        return try decoder.decode(JSONValue.self,from:data)
+    }
+    func linkContract(id:String,showId:String?,version:Int) async throws {
+        _ = try await request(path:"api/mobile/contracts",body:.object(["action":.string("link"),"id":.string(id),"showId":showId.map(JSONValue.string) ?? .null,"version":.number(Double(version))]),forceNetwork:true,nativeBearer:true)
+    }
+    func archivedContract(id:String,filename:String) async throws -> ExportedDocument {
+        let (data,response)=try await request(path:"api/mobile/contracts",query:[URLQueryItem(name:"id",value:id)],document:true,forceNetwork:!usingOfflineCopy,nativeBearer:true)
+        guard !Task.isCancelled,permissionUser?.hasSection(.crm) != false else {throw CancellationError()}
+        guard response.mimeType == "application/pdf",data.count <= 5*1024*1024,data.starts(with:Data("%PDF-".utf8)) else {throw APIError.invalid("No se recibió un contrato PDF válido.")}
+        let safe=(filename as NSString).lastPathComponent
+        return try TemporaryDocuments.save(data,filename:safe.hasSuffix(".pdf") ? safe:"Contrato JAC.pdf")
     }
     func crmFile(owner:String,file:NoticeAttachment,version:Int,contact:Bool) async throws -> ExportedDocument {
         let query=[URLQueryItem(name:contact ? "contact":"id",value:owner),URLQueryItem(name:"file",value:file.id)]

@@ -101,3 +101,7 @@ Las pruebas y capturas locales quedan en `work/local/mac-native-*.xcresult` y `w
 ## Fotografía 1.6.0 (8)
 
 La misma app incorpora subida directa limitada a cada archivo, reproducción progresiva y caché privada para fotos. Conserva sesión, permisos y copia offline cifrada. Ver [transferencias y verificación](../docs/PHOTOGRAPHY_TRANSFER.md). App universal compilada y firma estricta comprobada en outputs/JAC Music.app; cerrar y reabrir la instancia anterior para usar esta versión.
+
+## Contratos y archivo compartido · 17 de octubre de2026
+
+Nueva pestaña Contratos dentro de CRM, con el mismo creador RUT/manual, guardado automático del PDF y asignación a shows. Consulta/compartición nativa; la última lista y los PDF abiertos conservan su caché privada por sesión.125unitarias aprobadas y recorrido directo de archivo/asignación/PDF con una instancia `.invalid`; el ejecutor UI de Xcode agotó la inicialización de automatización en dos intentos. Release universal compilado para actualizar `outputs/JAC Music.app`; cerrar/reabrir la instancia anterior para cargarlo. Ver docs/CONTRACTS.md.
