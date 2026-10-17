@@ -21,9 +21,18 @@ private final class FakeNotificationPermission: NotificationPermissionProviding 
 }
 private final class MemorySession: SessionStoring {
     var token: String?
-    func load() throws -> String? { token }
+    var locked = false
+    func load() throws -> String? { if locked { throw APIError.message("Llavero bloqueado de prueba.") }; return token }
     func save(_ token: String) throws { self.token = token }
     func clear() throws { token = nil }
+}
+@MainActor private final class ScriptedUploadTransport: MediaUploadTransporting {
+    var handler: ((URLRequest, Data, String) throws -> (Data, URLResponse))?
+    var calls = 0
+    func send(_ request: URLRequest, body: Data, key: String, progress: @escaping @MainActor (Int64) -> Void) async throws -> (Data, URLResponse) {
+        calls += 1; progress(Int64(body.count)); return try handler!(request, body, key)
+    }
+    func cancelAll() {}
 }
 private struct DeniedMediaPhotosWriter:MediaPhotosWriting {
     @MainActor func authorize() async throws {throw APIError.invalid("Permiso de Fotos rechazado en prueba.")}
@@ -54,6 +63,23 @@ private final class MockProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+#if os(iOS)
+private final class RestartUploadProtocol: URLProtocol {
+    static let lock=NSLock()
+    static var count=0
+    static func reset(){lock.lock();count=0;lock.unlock()}
+    static func started()->Int{lock.lock();defer{lock.unlock()};return count}
+    override class func canInit(with request:URLRequest)->Bool{true}
+    override class func canonicalRequest(for request:URLRequest)->URLRequest{request}
+    override func startLoading(){
+        Self.lock.lock();Self.count += 1;let n=Self.count;Self.lock.unlock()
+        if n == 1 {return}
+        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!,cacheStoragePolicy:.notAllowed)
+        client?.urlProtocol(self,didLoad:Data("second-transfer".utf8));client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading(){}
+}
+#endif
 private final class CRMDelayedProtocol:URLProtocol {
     static let lock=NSLock()
     static var held:CRMDelayedProtocol?
@@ -1824,5 +1850,104 @@ final class PayrollClientTests: XCTestCase {
         do { try await client.submitExpense(id:expenseID,concept:"Taxi",amount:1,date:"2026-10-08",note:"",files:[NoticeUpload(filename:"No.pdf",data:Data("invalid".utf8))]);XCTFail("Archivo inválido") } catch {}
         XCTAssertEqual(commands.count,count,"Un archivo inválido no se envía")
     }
+
+    @MainActor func testUnlockAfterBackgroundLaunchRestoresSavedSessionAndOfflineWorkspace() async throws {
+        let vault=MemorySession();vault.token=token
+        let location=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache=OfflineResponseCache(root:location)
+        let fixture=UITestBackend.client();let workspace=try await fixture.workspace()
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let preparing=PayrollClient(baseURL:base,vault:vault,configuration:config,offlineCache:cache,automaticallyDownloadOffline:false)
+        preparing.rememberWorkspace(workspace)
+        vault.locked=true
+        let restored=PayrollClient(baseURL:base,vault:vault,configuration:config,offlineCache:cache,automaticallyDownloadOffline:false)
+        let store=PayrollStore(client:restored)
+        XCTAssertFalse(store.hasSavedSession);XCTAssertNil(store.overview)
+        vault.locked=false
+        MockProtocol.handler={_ in throw URLError(.notConnectedToInternet)}
+        defer{MockProtocol.handler=nil;try? FileManager.default.removeItem(at:location)}
+        await store.restore()
+        XCTAssertTrue(store.hasSavedSession);XCTAssertEqual(store.overview?.user.id,workspace.user.id)
+        XCTAssertNotNil(store.workspace);XCTAssertTrue(store.isOffline);XCTAssertEqual(vault.token,token)
+    }
+    @MainActor func testUploadBackgroundControlAndSmallPhotoReceiptUseSameIDAfterExpiredPart() async throws {
+        let vault = MemorySession(); vault.token = token
+        let transport = ScriptedUploadTransport()
+        let client = PayrollClient(baseURL: base, vault: vault, automaticallyDownloadOffline: false, mediaUploadTransport: transport)
+        let source = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".jpg")
+        let bytes = Data([0xff,0xd8,0xff,0xe0,1,2,3,4]); try bytes.write(to: source)
+        defer { try? FileManager.default.removeItem(at: source) }
+        let file = try MediaLocalFile.stage(source, quality: .original); defer { file.remove() }
+        var puts = 0, starts = 0, statuses = 0, receivedReceipt = false
+        let etag = "\"" + String(repeating: "a", count: 32) + "\""
+        func signed() -> String {
+            var p = URLComponents(string: "https://" + String(repeating:"1",count:32) + ".r2.cloudflarestorage.com/jac-fotografia/originals/" + file.id)!
+            p.queryItems = [URLQueryItem(name:"uploadId",value:"fixture-parts"),URLQueryItem(name:"partNumber",value:"1"),URLQueryItem(name:"X-Amz-Algorithm",value:"AWS4-HMAC-SHA256"),URLQueryItem(name:"X-Amz-Credential",value:String(repeating:"2",count:32)+"/20261017/auto/s3/aws4_request"),URLQueryItem(name:"X-Amz-Date",value:"20261017T120000Z"),URLQueryItem(name:"X-Amz-Expires",value:"300"),URLQueryItem(name:"X-Amz-SignedHeaders",value:"content-length;content-type;host"),URLQueryItem(name:"X-Amz-Signature",value:String(repeating:"a",count:64))]
+            return p.url!.absoluteString
+        }
+        transport.handler = { request, payload, key in
+            XCTAssertFalse(key.contains(self.token))
+            if request.url?.host == self.base.host {
+                XCTAssertEqual(request.value(forHTTPHeaderField:"Cookie"),"__Host-jac_session="+self.token)
+                let body = try JSONDecoder().decode(JSONValue.self,from:payload)
+                XCTAssertEqual(body["id"].text,file.id)
+                if body["action"].text == "start" { starts += 1 } else { statuses += 1 }
+                let done = puts == 2
+                if done {
+                    XCTAssertEqual(body["partReceipt"]["etag"].text,etag)
+                    XCTAssertEqual(body["partReceipt"]["partNumber"].number,1)
+                    XCTAssertEqual(body["partReceipt"]["size"].number,Double(bytes.count)); receivedReceipt = true
+                } else { XCTAssertEqual(body["partReceipt"],.null) }
+                var state: JSONValue = .object(["id":.string(file.id),"provider":.string("r2"),"offset":.number(done ? Double(bytes.count):0),"chunkSize":.number(8*1024*1024),"complete":.bool(done)])
+                if !done { state["uploadURL"] = .string(signed()) }
+                return (try JSONEncoder().encode(state),HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:nil)!)
+            }
+            puts += 1; XCTAssertEqual(payload,bytes)
+            for header in ["Cookie","Authorization","Origin"] {XCTAssertNil(request.value(forHTTPHeaderField:header))}
+            return (Data(),HTTPURLResponse(url:request.url!,statusCode:puts == 1 ? 403:200,httpVersion:nil,headerFields:["ETag":etag])!)
+        }
+        let provider = try await client.uploadMediaOriginal(file,parentID:"jac_r2_root") {_,_ in}
+        XCTAssertEqual(provider,"r2");XCTAssertTrue(receivedReceipt);XCTAssertEqual(starts,1);XCTAssertEqual(statuses,2);XCTAssertEqual(puts,2)
+    }
+    #if os(iOS)
+    @MainActor func testBackgroundTransportUsesFileBodyAndBoundsJACOrigin() async throws {
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let transport = MediaBackgroundTransport(identifier:"fixture-"+UUID().uuidString,root:root,origin:base,configuration:config)
+        defer { transport.cancelAll(); MockProtocol.handler = nil; try? FileManager.default.removeItem(at:root) }
+        var request = URLRequest(url:base.appendingPathComponent("api/media/upload")); request.httpMethod="POST"
+        request.setValue("__Host-jac_session="+token,forHTTPHeaderField:"Cookie");request.setValue(base.absoluteString,forHTTPHeaderField:"Origin")
+        request.setValue("application/json",forHTTPHeaderField:"Content-Type")
+        let payload=Data("{\"id\":\"fixture\"}".utf8),expected=Data("{\"complete\":true}".utf8)
+        MockProtocol.handler = { req in
+            XCTAssertEqual(try MockProtocol.requestBody(req),payload)
+            return(HTTPURLResponse(url:req.url!,statusCode:200,httpVersion:nil,headerFields:nil)!,expected)
+        }
+        XCTAssertTrue(MediaBackgroundTransport.allowed(request,origin:base))
+        var other=request;other.url=URL(string:"https://attacker.invalid/api/media/upload");XCTAssertFalse(MediaBackgroundTransport.allowed(other,origin:base))
+        other=request;other.url=base.appendingPathComponent("api/users");XCTAssertFalse(MediaBackgroundTransport.allowed(other,origin:base))
+        let (received,response)=try await transport.send(request,body:payload,key:"fixture-control") {_ in}
+        XCTAssertEqual(received,expected);XCTAssertEqual((response as? HTTPURLResponse)?.statusCode,200)
+        XCTAssertEqual((try? FileManager.default.contentsOfDirectory(atPath:root.path)) ?? [],[])
+    }
+    @MainActor func testBackgroundTransportCancelThenRestartSameBodyDoesNotCancelReplacement() async throws {
+        RestartUploadProtocol.reset()
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[RestartUploadProtocol.self]
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let transport=MediaBackgroundTransport(identifier:"restart-"+UUID().uuidString,root:root,origin:base,configuration:config)
+        defer{transport.cancelAll();try? FileManager.default.removeItem(at:root)}
+        var request=URLRequest(url:base.appendingPathComponent("api/media/upload"));request.httpMethod="POST"
+        request.setValue("__Host-jac_session="+token,forHTTPHeaderField:"Cookie");request.setValue(base.absoluteString,forHTTPHeaderField:"Origin")
+        let payload=Data("same part".utf8)
+        let first=Task{try await transport.send(request,body:payload,key:"same-key"){_ in}}
+        let limit=Date().addingTimeInterval(5)
+        while RestartUploadProtocol.started()==0 && Date()<limit {try await Task.sleep(for:.milliseconds(10))}
+        XCTAssertEqual(RestartUploadProtocol.started(),1)
+        first.cancel();transport.cancelAll()
+        let (data,_)=try await transport.send(request,body:payload,key:"same-key"){_ in}
+        XCTAssertEqual(data,Data("second-transfer".utf8));XCTAssertEqual(RestartUploadProtocol.started(),2)
+        _=try? await first.value
+    }
+    #endif
 
 }

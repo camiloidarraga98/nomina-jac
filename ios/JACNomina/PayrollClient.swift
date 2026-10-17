@@ -29,6 +29,11 @@ private final class NoRedirects: NSObject, URLSessionTaskDelegate {
     }
 }
 
+@MainActor protocol MediaUploadTransporting: AnyObject {
+    func send(_ request: URLRequest, body: Data, key: String, progress: @escaping @MainActor (Int64) -> Void) async throws -> (Data, URLResponse)
+    func cancelAll()
+}
+
 private final class MediaUploadObserver: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
     private let callback: @MainActor (Int64) -> Void
     private let lock=NSLock();private var active=true
@@ -126,6 +131,7 @@ final class PayrollClient: ObservableObject {
     private let vault: SessionStoring
     private let session: URLSession
     private let mediaSession: URLSession
+    private let mediaUploadTransport: MediaUploadTransporting?
     private let decoder = JSONDecoder()
     let offlineCache: OfflineResponseCache
     let mediaOffline: MediaOfflineCache
@@ -146,10 +152,11 @@ final class PayrollClient: ObservableObject {
     private var cookieName: String { "__Host-jac_session" }
     private var origin: String { baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
 
-    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil, offlineCache: OfflineResponseCache? = nil, mediaOffline: MediaOfflineCache? = nil, automaticallyDownloadOffline: Bool? = nil) {
+    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil, offlineCache: OfflineResponseCache? = nil, mediaOffline: MediaOfflineCache? = nil, automaticallyDownloadOffline: Bool? = nil, mediaUploadTransport: MediaUploadTransporting? = nil) {
         precondition(baseURL.scheme == "https" && baseURL.host != nil && baseURL.path.isEmpty && baseURL.user == nil && baseURL.query == nil)
         self.baseURL = baseURL
         self.vault = vault ?? KeychainSessionStore(account: baseURL.host!)
+        self.mediaUploadTransport = mediaUploadTransport
         self.agendaCache = agendaCache ?? AgendaOfflineCache()
         self.automaticOfflineSync = automaticallyDownloadOffline ?? !baseURL.host!.hasSuffix(".invalid")
         self.offlineCache = offlineCache ?? OfflineResponseCache(root: baseURL.host!.hasSuffix(".invalid") ? FileManager.default.temporaryDirectory.appendingPathComponent("offline-fixture-" + UUID().uuidString) : nil)
@@ -170,6 +177,15 @@ final class PayrollClient: ObservableObject {
     }
 
     func hasSession() throws -> Bool { try vault.load() != nil }
+    // Only the active upload queue receives this separate Keychain store. The
+    // ordinary login item keeps its existing WhenUnlocked protection.
+    func makeMediaUploadClient(vault uploadVault: SessionStoring, transport: MediaUploadTransporting?) throws -> PayrollClient {
+        guard permissionUser?.canUploadMedia == true, let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { throw APIError.unauthorized }
+        try uploadVault.save(token)
+        let client = PayrollClient(baseURL: baseURL, vault: uploadVault, automaticallyDownloadOffline: false, mediaUploadTransport: transport)
+        client.permissionUser = permissionUser
+        return client
+    }
     func agendaScope() throws -> AgendaCacheScope? {
         guard let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { return nil }
         return AgendaCacheScope(origin: origin, token: token)
@@ -768,7 +784,18 @@ final class PayrollClient: ObservableObject {
     }
     private func mediaUploadCommand(_ fields: [String: JSONValue]) async throws -> MediaUploadState {
         guard permissionUser?.canUploadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene permiso para subir contenido.")}
-        let (data, _) = try await request(path: "api/media/upload", body: .object(fields), forceNetwork: true)
+        let data: Data
+        if let mediaUploadTransport {
+            let (base, token, generation) = try mediaRequest(path: "api/media/upload", query: [], method: "POST")
+            var command = base; command.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            let payload = try encoder.encode(JSONValue.object(fields))
+            let (bytes, raw) = try await mediaUploadTransport.send(command, body: payload, key: "control:" + (try mediaScope())!.id + ":" + (fields["id"]?.text ?? "") + ":" + (fields["action"]?.text ?? ""), progress: { _ in })
+            _ = try validateMediaResponse(raw, data: bytes, token: token, generation: generation)
+            data = bytes
+        } else {
+            (data, _) = try await request(path: "api/media/upload", body: .object(fields), forceNetwork: true)
+        }
         return try decoder.decode(MediaUploadState.self, from: data)
     }
     private func mediaRequest(path: String, query: [URLQueryItem], method: String = "GET") throws -> (URLRequest, String, Int) {
@@ -797,11 +824,14 @@ final class PayrollClient: ObservableObject {
         return response
     }
     func uploadMedia(_ file: MediaLocalFile, parentID: String, transferred: @escaping (Int64) -> Void = {_ in}, progress: @escaping (Int64, Int64) -> Void) async throws {
+        if try await uploadMediaOriginal(file, parentID: parentID, transferred: transferred, progress: progress) == "r2" { try await uploadMediaThumbnail(file) }
+    }
+    func uploadMediaOriginal(_ file: MediaLocalFile, parentID: String, transferred: @escaping (Int64) -> Void = {_ in}, progress: @escaping (Int64, Int64) -> Void) async throws -> String? {
         guard !usingOfflineCopy else { throw APIError.invalid("Conéctate para subir fotos y videos.") }
         let stamp = try mediaAccessStamp()
         var plan = try await mediaUploadCommand(["action": .string("start"), "transport": .string("direct"), "id": .string(file.id), "parentId": .string(parentID), "filename": .string(file.name), "mimeType": .string(file.mimeType), "size": .number(Double(file.size)), "imageLimit": .number(Double(file.imageLimit))])
         try plan.validate(for: file); progress(plan.offset, file.size)
-        let handle = try FileHandle(forReadingFrom: file.url); defer { try? handle.close() }; var compatible = false
+        let handle = try FileHandle(forReadingFrom: file.url); defer { try? handle.close() }; var compatible = false, expiredRetries = 0
         while !plan.complete {
             try Task.checkCancellation()
             try handle.seek(toOffset: UInt64(plan.offset))
@@ -810,22 +840,32 @@ final class PayrollClient: ObservableObject {
             let (legacyRequest, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "id", value: file.id), URLQueryItem(name: "offset", value: String(plan.offset))] + (plan.uploadURL == nil ? [] : [URLQueryItem(name: "transport", value: "direct")]), method: "PUT")
             let previous = plan.offset
             var transmitted:Int64=0
-            let observer=MediaUploadObserver {sent in
+            let onTransferred: @MainActor (Int64) -> Void = {sent in
                 guard stamp == (try? self.mediaAccessStamp()),!Task.isCancelled else{return}
                 let value=min(Int64(count),max(transmitted,sent));transferred(value-transmitted);transmitted=value
                 progress(previous+value,file.size)
             }
+            let observer=MediaUploadObserver(onTransferred)
             defer {observer.stop()}
+            var expiredSignedPart = false
             do {
                 guard stamp == (try mediaAccessStamp()) else { throw CancellationError() }
                 if let url = plan.uploadURL, !compatible {
                     let direct = try Self.directMediaRequest(url, mime: file.mimeType, offset: previous, count: count, total: file.size)
-                    let (_, raw) = try await mediaSession.upload(for: direct, from: chunk, delegate:observer)
+                    let raw: URLResponse
+                    if let mediaUploadTransport { (_, raw) = try await mediaUploadTransport.send(direct, body: chunk, key: "part:" + (try mediaScope())!.id + ":" + file.id + ":" + String(previous), progress: onTransferred) }
+                    else { (_, raw) = try await mediaSession.upload(for: direct, from: chunk, delegate:observer) }
                     observer.stop()
+                    expiredSignedPart = plan.provider == "r2" && (raw as? HTTPURLResponse)?.statusCode == 403
                     guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
                     guard let response = raw as? HTTPURLResponse, (200..<300).contains(response.statusCode) || response.statusCode == 308 else { throw APIError.message("El almacenamiento no confirmó la transferencia. Reintenta para consultar su avance.") }
                     transferred(Int64(count)-transmitted)
-                    plan = try await mediaUploadCommand(["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)])
+                    var confirmation: [String: JSONValue] = ["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)]
+                    if plan.provider == "r2", previous == 0, Int64(count) == file.size,
+                       let etag = response.value(forHTTPHeaderField: "ETag"), etag.range(of: "^\"[a-fA-F0-9]{32}\"$", options: .regularExpression) != nil {
+                        confirmation["partReceipt"] = .object(["partNumber": .number(1), "etag": .string(etag), "size": .number(Double(count))])
+                    }
+                    plan = try await mediaUploadCommand(confirmation)
                 } else {
                     let (data, raw) = try await mediaSession.upload(for: legacyRequest, from: chunk, delegate:observer)
                     observer.stop()
@@ -843,18 +883,26 @@ final class PayrollClient: ObservableObject {
                 plan = try await mediaUploadCommand(["action": .string("status"), "transport": .string("direct"), "id": .string(file.id)])
                 try plan.validate(for: file)
                 if plan.provider != "r2", plan.uploadURL != nil, !compatible, plan.offset == previous { compatible = true; continue }
+                if expiredSignedPart, plan.provider == "r2", plan.offset == previous, expiredRetries < 2 { expiredRetries += 1; continue }
                 guard plan.offset > previous else { throw error }
             }
+            expiredRetries = 0
             try plan.validate(for: file)
             guard plan.offset > previous else { throw APIError.message("La subida no avanzó. Reintenta el mismo archivo.") }
             progress(plan.offset, file.size)
         }
-        if plan.provider == "r2", let thumbnail = await MediaThumbnail.jpeg(for: file) {
+        return plan.provider
+    }
+    func uploadMediaThumbnail(_ file: MediaLocalFile) async throws {
+        let stamp = try mediaAccessStamp()
+        if let thumbnail = await MediaThumbnail.jpeg(for: file) {
             guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
             let (request, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "thumbnail", value: "1"), URLQueryItem(name: "id", value: file.id)], method: "PUT")
             var upload = request; upload.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
             do {
-                let (data, response) = try await mediaSession.upload(for: upload, from: thumbnail)
+                let data: Data, response: URLResponse
+                if let mediaUploadTransport { (data, response) = try await mediaUploadTransport.send(upload, body: thumbnail, key: "thumbnail:" + (try mediaScope())!.id + ":" + file.id, progress: { _ in }) }
+                else { (data, response) = try await mediaSession.upload(for: upload, from: thumbnail) }
                 _ = try validateMediaResponse(response, data: data, token: token, generation: generation)
             } catch {
                 if error is CancellationError { throw error }

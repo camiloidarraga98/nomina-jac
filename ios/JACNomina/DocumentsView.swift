@@ -390,7 +390,15 @@ struct MediaGalleryView: View {
     @State private var uploadNotice: String?
     @State private var importing = false
     @State private var importTask: Task<Void, Never>?
+    #if os(iOS)
+    @ObservedObject private var persistentUploads = MediaUploadQueue.shared
+    @State private var handingOffUploads = false
+    @State private var uploadRefreshPending = false
+    @State private var galleryVisible = false
+    private var uploading: Bool { handingOffUploads }
+    #else
     @State private var uploading = false
+    #endif
     @State private var uploadTask: Task<Void, Never>?
     @State private var error: String?
     @State private var generation = UUID()
@@ -441,6 +449,9 @@ struct MediaGalleryView: View {
                 if let error { InlineError(message: error) }
                 if mediaIsOffline { Label("Sin conexión · Puedes consultar los archivos descargados.", systemImage: "wifi.slash").font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.offline.status") }
                 if loading && feed == nil { ProgressView("Cargando carpetas…").frame(maxWidth: .infinity) }
+                #if os(iOS)
+                if !persistentUploads.jobs.isEmpty { persistentUploadPanel }
+                #endif
                 if let feed {
                     if !feed.connected {
                         ContentUnavailableView("Preparando el archivo de Fotografía", systemImage: "externaldrive.badge.questionmark", description: Text("El archivo privado de JAC se administra en Configuración general → Servicios conectados."))
@@ -491,6 +502,14 @@ struct MediaGalleryView: View {
             }
             .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
             .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline { Task { await reload() } } }
+            #if os(iOS)
+            .onAppear { galleryVisible = true }
+            .onChange(of: persistentUploads.revision) { _, _ in
+                uploadRefreshPending = true
+                refreshAfterUploads()
+            }
+            .onChange(of: persistentUploads.uploading) { _, running in if !running { refreshAfterUploads() } }
+            #endif
             .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
             .alert("Eliminar carpeta",isPresented:$deletionConfirmation) {
                 Button("Cancelar",role:.cancel){deletingFolder=nil}
@@ -518,7 +537,20 @@ struct MediaGalleryView: View {
             }
             .jacFileDrop(enabled: !compactGallery && writable && !uploading && !importing) { urls in importTask?.cancel(); importTask = Task { await readFiles(urls);if uploadDestination == nil && !queue.isEmpty {if parentID == feed?.root?.id {choosingDestination=true}else{uploadDestination=feed?.folder}} } }
             .jacRefreshCommand { Task { await reload() } }
-            .onDisappear {if fullscreenPhotos == nil || store.overview?.user.id != user.id {deletionTask?.cancel();uploadTask?.cancel(); importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false; queue.forEach { $0.remove() }; clearPreview()}}
+            .onDisappear {
+                #if os(iOS)
+                galleryVisible = false
+                #endif
+                if fullscreenPhotos == nil || store.overview?.user.id != user.id {
+                    deletionTask?.cancel()
+                    #if os(macOS)
+                    uploadTask?.cancel()
+                    #endif
+                    importTask?.cancel(); folderTransfer.cancel(); openingTask?.cancel(); generation = UUID(); loadingFolder=nil;loading=false
+                    discardStagedUploads()
+                    clearPreview()
+                }
+            }
     }
     #if os(iOS)
     private var inlineFolders: some View {
@@ -688,6 +720,75 @@ struct MediaGalleryView: View {
             }
         }.padding(18).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18))
     }
+    #if os(iOS)
+    private var persistentUploadPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            TimelineView(.periodic(from: .now, by: 0.5)) { _ in
+                let jobs = persistentUploads.jobs
+                let total = jobs.reduce(Int64(0)) { $0 + $1.size }
+                let sent = jobs.reduce(Double(0)) { $0 + Double($1.size) * ($1.completed ? 1 : $1.progress) }
+                let done = jobs.filter(\.completed).count
+                let fraction = total > 0 ? min(done == jobs.count ? 1 : 0.99, sent / Double(total)) : 0
+                HStack(spacing: 18) {
+                    ZStack {
+                        Circle().stroke(JACTheme.action.opacity(0.12), lineWidth: 8)
+                        Circle().trim(from: 0, to: fraction).stroke(JACTheme.action, style: StrokeStyle(lineWidth: 8, lineCap: .round)).rotationEffect(.degrees(-90))
+                        Text("\(Int(fraction * 100))%").font(.title3.bold()).monospacedDigit()
+                    }.frame(width: 76, height: 76)
+                        .accessibilityElement(children: .ignore).accessibilityLabel("Progreso general de subida").accessibilityValue("\(Int(fraction * 100)) por ciento").accessibilityIdentifier("media.upload.progress")
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(persistentUploads.uploading ? "Subiendo al archivo" : done == jobs.count ? "Archivos subidos" : "Subida en pausa").font(.headline)
+                        Text("\(done) de \(jobs.count) completados").font(.subheadline).foregroundStyle(.secondary)
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(sent), countStyle: .file) + " de " + ByteCountFormatter.string(fromByteCount: total, countStyle: .file)).font(.caption).foregroundStyle(.secondary)
+                        if persistentUploads.uploading {
+                            let rate = persistentUploads.meter.rate()
+                            Text(rate > 0 ? ByteCountFormatter.string(fromByteCount: Int64(rate), countStyle: .file) + "/s" : "Esperando transferencia…").font(.subheadline.bold()).monospacedDigit().foregroundStyle(JACTheme.action).accessibilityIdentifier("media.upload.speed")
+                        }
+                    }
+                    Spacer(minLength: 0)
+                }
+            }
+            if let notice = persistentUploads.notice { Text(notice).font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.queue.status") }
+            if persistentUploads.uploading { Text("Puedes seguir usando JAC mientras termina la subida.").font(.footnote).foregroundStyle(.secondary) }
+            DisclosureGroup("Ver archivos") {
+                ForEach(persistentUploads.jobs) { job in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 10) {
+                            Image(systemName: job.completed ? "checkmark.circle.fill" : job.mimeType.hasPrefix("video/") ? "video" : "photo").foregroundStyle(job.completed ? .green : JACTheme.action)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(job.name).font(.subheadline).lineLimit(2)
+                                Text(job.destination.name).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                            }
+                            Spacer(minLength: 8)
+                            if !persistentUploads.uploading { Button { persistentUploads.remove(id: job.id) } label: { Image(systemName: "xmark.circle") }.buttonStyle(.plain).accessibilityLabel("Quitar " + job.name).accessibilityIdentifier("media.queue.remove." + job.id) }
+                        }
+                        if let failure = job.error { Text(failure).font(.footnote).foregroundStyle(.red) }
+                        else if !job.completed { ProgressView(value: job.progress).tint(JACTheme.action) }
+                    }.accessibilityIdentifier("media.queue.job." + job.id)
+                }
+            }
+            if persistentUploads.uploading {
+                Button("Detener subida") { persistentUploads.stop() }.buttonStyle(.bordered).accessibilityIdentifier("media.upload.stop")
+            } else if persistentUploads.jobs.contains(where: { !$0.completed || $0.error != nil }) {
+                Button("Reintentar pendientes") { persistentUploads.retry() }.buttonStyle(.borderedProminent).disabled(store.isOffline || !user.canUploadMedia).accessibilityIdentifier("media.upload.retry")
+            } else {
+                Button("Ocultar completados") { for job in persistentUploads.jobs { persistentUploads.remove(id: job.id) } }.buttonStyle(.bordered).accessibilityIdentifier("media.upload.clear")
+            }
+        }.padding(18).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18))
+    }
+    private func refreshAfterUploads() {
+        guard galleryVisible, uploadRefreshPending, !persistentUploads.uploading else { return }
+        uploadRefreshPending = false
+        Task { await reload() }
+    }
+    #endif
+    private func discardStagedUploads() {
+        #if os(iOS)
+        // enqueue owns the staged files only after its durable handoff returns.
+        guard !handingOffUploads else { return }
+        #endif
+        queue.forEach { $0.remove() }; queue = []
+    }
     private func reload() async {
         guard !uploading, loadingFolder != folderID else { return }
         let expected = UUID(), requestedFolder = folderID; generation = expected
@@ -708,7 +809,7 @@ struct MediaGalleryView: View {
             guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
             if let previous=feed?.collectionID,previous != result.collectionID {expandedFolders=[];clearPreview()}
             feed = result; var seen = Set<String>(); items = MediaGalleryOrder.sorted(all.filter { seen.insert($0.id).inserted });thumbnailEpoch=UUID(); error = nil;mediaIsOffline=false
-            if !result.canRead || !result.connected { items = []; expandedFolders=[];uploadComposition=nil;clearPreview(); queue.forEach { $0.remove() }; queue = [] }
+            if !result.canRead || !result.connected { items = []; expandedFolders=[];uploadComposition=nil;clearPreview(); discardStagedUploads() }
             // A live gallery does not grant unrelated financial permissions.
             // Join session revalidation before restoring write controls.
             if store.isOffline { try? await store.refreshAutomatically() }
@@ -756,7 +857,7 @@ struct MediaGalleryView: View {
     private func thumbnailDenied(_ failure:Error) {
         generation=UUID();loadingFolder=nil;loading=false;expandedFolders=[];openingTask?.cancel();clearPreview()
         if failure is MediaFolderRemoved || failure is MediaFileRemoved {if compactGallery {Task {await reload()}}else{navigate(to:"")};return}
-        items=[];feed=nil;queue.forEach{$0.remove()};queue=[];uploadDestination=nil;uploadComposition=nil;error=store.reportReadFailure(failure)
+        items=[];feed=nil;discardStagedUploads();uploadDestination=nil;uploadComposition=nil;error=store.reportReadFailure(failure)
     }
     private func readFiles(_ urls: [URL]) async {
         guard writable, !uploading, !importing, let stamp = try? store.client.mediaAccessStamp() else { return }; importing = true; defer { importing = false; importTask = nil }
@@ -781,6 +882,21 @@ struct MediaGalleryView: View {
         }
     }
     private func uploadAll() async {
+        #if os(iOS)
+        guard writable, !handingOffUploads, let target = uploadDestination, compactGallery || target.id == parentID else { error = "Elige la carpeta del show antes de subir los archivos."; return }
+        handingOffUploads = true; error = nil; uploadNotice = nil
+        defer {
+            handingOffUploads = false; uploadTask = nil
+            if !galleryVisible { discardStagedUploads() }
+        }
+        let files = queue.filter { !completed.contains($0.id) }
+        do {
+            try await persistentUploads.enqueue(files, destination: target, client: store.client)
+            let adopted = Set(files.map(\.id))
+            queue.removeAll { adopted.contains($0.id) }; completed = []; progress = [:]; uploadErrors = [:]
+            if queue.isEmpty { uploadDestination = nil }
+        } catch { if let message = store.reportReadFailure(error) { self.error = message } }
+        #else
         guard writable,!uploading,let target=uploadDestination,compactGallery || target.id == parentID else {error="Elige la carpeta del show antes de subir los archivos.";return};uploading = true; error = nil; uploadNotice = nil
         defer {
             if !completed.isEmpty { uploadNotice = "\(completed.count) archivos subidos." }
@@ -797,6 +913,7 @@ struct MediaGalleryView: View {
                 if let file=iterator.next(){group.addTask {@MainActor in await uploadOne(file,destination:destination)}}
             }
         }
+        #endif
     }
     private func uploadOne(_ file:MediaLocalFile,destination:String) async -> Bool {
         guard !Task.isCancelled else{return false}

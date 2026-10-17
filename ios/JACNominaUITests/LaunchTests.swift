@@ -2,6 +2,37 @@ import XCTest
 import UIKit
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testPhotoUploadQueueSurvivesLeavingGalleryAndGoingHome() {
+        let app=XCUIApplication()
+        app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=calendar,alerts,media,mediaUpload","--uitest-slow-media-upload"]
+        app.launch()
+        app.tabBars.buttons["Fotografía"].tap()
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:20))
+        tap(app,"media.add")
+        let field=app.textFields["media.folder.name"];XCTAssertTrue(field.waitForExistence(timeout:10));field.tap();field.typeText("Cola ficticia")
+        tap(app,"media.fixture");tap(app,"media.upload")
+        XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10))
+        app.tabBars.buttons["Agenda"].tap()
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:10))
+        XCUIDevice.shared.press(.home)
+        Thread.sleep(forTimeInterval:6)
+        app.activate()
+        XCTAssertTrue(app.wait(for:.runningForeground,timeout:10))
+        let mediaTab=app.tabBars.buttons["Fotografía"]
+        let ready=XCTNSPredicateExpectation(predicate:NSPredicate(format:"hittable == true"),object:mediaTab)
+        XCTAssertEqual(XCTWaiter.wait(for:[ready],timeout:10),.completed)
+        mediaTab.tap()
+        XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10))
+        XCTAssertTrue(app.staticTexts["2 de 2 completados"].waitForExistence(timeout:20))
+        let folder=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Cola ficticia")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout:20))
+        if folder.value as? String != "Abierta" { folder.tap() }
+        XCTAssertEqual(folder.value as? String,"Abierta")
+        let photo=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch
+        let video=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mov")).firstMatch
+        XCTAssertTrue(photo.waitForExistence(timeout:20));XCTAssertTrue(video.waitForExistence(timeout:20))
+        attachScreen(app,name:"fotografia-cola-conservada-al-salir")
+    }
     @MainActor func testVisiblePhotoThumbnailsWakeWhenSlowSessionRestoresOnline() {
         let app=XCUIApplication(),base=["--uitest-payroll","--uitest-media-only","--uitest-offline-content"]
         app.launchArguments=base+["--uitest-reset-content","--uitest-reset-media"];app.launch()

@@ -44,7 +44,13 @@ beforeEach(async()=>{
   const upload=multiparts.get(uploadId);
   if(direct){assert.ok(upload);const bytes=new Uint8Array(await r.arrayBuffer());upload.parts.set(Number(url.searchParams.get('partNumber')),bytes);return new Response(null,{headers:{ETag:'"'+'a'.repeat(32)+'"'}});}
   if(uploadId&&r.method==='GET'){if(!upload)return new Response(null,{status:404});return new Response('<ListPartsResult><IsTruncated>false</IsTruncated>'+[...upload.parts].sort(([a],[b])=>a-b).map(([n,b])=>'<Part><PartNumber>'+n+'</PartNumber><Size>'+b.length+'</Size><ETag>"'+'a'.repeat(32)+'"</ETag></Part>').join('')+'</ListPartsResult>');}
-  if(uploadId&&r.method==='POST'){assert.ok(upload);const bytes=new Uint8Array([...upload.parts.values()].reduce((n,b)=>n+b.length,0));let p=0;for(const b of upload.parts.values()){bytes.set(b,p);p+=b.length;}objects.set(key,{bytes,mime:upload.mime,request:upload.request});multiparts.delete(uploadId);if(loseComplete){loseComplete=false;throw new Error('simulated lost completion response');}return new Response('<CompleteMultipartUploadResult><Key>'+key+'</Key></CompleteMultipartUploadResult>');}
+  if(uploadId&&r.method==='POST'){
+   if(!upload)return new Response('<Error><Code>NoSuchUpload</Code></Error>',{status:404});
+   const xml=await r.text(),parts=[...xml.matchAll(/<Part><PartNumber>(\d+)<\/PartNumber><ETag>(.*?)<\/ETag><\/Part>/g)].map(match=>({number:Number(match[1]),etag:match[2].replaceAll('&quot;','"')}));
+   if(!parts.length||parts.some((part,index)=>!upload.parts.has(part.number)||part.etag!=='"'+'a'.repeat(32)+'"'||index>0&&part.number<=parts[index-1].number))return new Response('<Error><Code>InvalidPart</Code></Error>',{status:400});
+   const bytes=new Uint8Array(parts.reduce((count,part)=>count+upload.parts.get(part.number).length,0));let offset=0;for(const part of parts){const data=upload.parts.get(part.number);bytes.set(data,offset);offset+=data.length;}
+   objects.set(key,{bytes,mime:upload.mime,request:upload.request});multiparts.delete(uploadId);if(loseComplete){loseComplete=false;throw new Error('simulated lost completion response');}return new Response('<CompleteMultipartUploadResult><Key>'+key+'</Key></CompleteMultipartUploadResult>');
+  }
   if(uploadId&&r.method==='DELETE'){multiparts.delete(uploadId);return new Response(null,{status:204});}
   if(r.method==='PUT'){objects.set(key,{bytes:new Uint8Array(await r.arrayBuffer()),mime:r.headers.get('content-type')});return new Response(null);}
   const object=objects.get(key);if(!object)return new Response(null,{status:404});const headers={'content-type':object.mime,'content-length':String(object.bytes.length),...(object.request?{'x-amz-meta-jac-request':object.request}:{})};if(r.method==='HEAD')return new Response(null,{headers});
@@ -62,6 +68,57 @@ const feed=(folder='',session=photoToken)=>m.gallery.GET(req('/api/media'+(folde
 async function folder(){const r=await api({action:'createFolder',id:crypto.randomUUID(),parentId:m.R2_ROOT,name:'Show ficticio',date:'2026-10-16'});assert.equal(r.status,200);return (await r.json()).folder.id;}
 async function start(bytes=jpeg,parentId=m.R2_ROOT,id=crypto.randomUUID(),mimeType='image/jpeg'){const data={action:'start',transport:'direct',id,parentId,filename:mimeType==='image/png'?'Foto.png':'Foto.jpg',mimeType,size:bytes.length};const r=await command(data);assert.equal(r.status,200);return {data,plan:await r.json(),bytes};}
 async function send(upload){const p=upload.plan,bytes=upload.bytes.slice(p.offset,Math.min(p.offset+p.chunkSize,upload.bytes.length));await m.sendMediaDirectChunk(p.uploadURL,upload.data.mimeType,new Blob([bytes]),p.offset,upload.bytes.length,new AbortController().signal);const r=await command({action:'status',transport:'direct',id:p.id});return r;}
+const partReceipt=(upload,extra={})=>({partNumber:1,etag:'"'+'a'.repeat(32)+'"',size:upload.bytes.length,...extra});
+async function sendPart(upload){await m.sendMediaDirectChunk(upload.plan.uploadURL,upload.data.mimeType,new Blob([upload.bytes]),0,upload.bytes.length,new AbortController().signal);}
+const receiptStatus=(upload,receipt=partReceipt(upload),session=photoToken)=>command({action:'status',transport:'direct',id:upload.data.id,partReceipt:receipt},session);
+
+test('a confirmed single-part receipt removes two S3 roundtrips but keeps final metadata and signature validation',async()=>{
+ await activate();const legacy=await start();await sendPart(legacy);let before=calls.length;
+ assert.equal((await command({action:'status',id:legacy.data.id})).status,200);const oldCalls=calls.slice(before);assert.deepEqual(oldCalls.map(call=>call.method),['HEAD','GET','POST','HEAD','GET']);
+ const upload=await start();await sendPart(upload);before=calls.length;
+ const response=await receiptStatus(upload);assert.equal(response.status,200);const done=await response.json(),fastCalls=calls.slice(before);
+ assert.equal(done.complete,true);assert.equal(done.offset,jpeg.length);assert.deepEqual(fastCalls.map(call=>call.method),['POST','HEAD','GET']);assert.equal(fastCalls.some(call=>call.url.searchParams.has('max-parts')),false);
+ assert.equal(oldCalls.length-fastCalls.length,2);assert.deepEqual(objects.get('originals/'+upload.data.id).bytes,jpeg);
+ const beforeRetry=calls.length;assert.deepEqual(await (await receiptStatus(upload)).json(),done);assert.equal(calls.length,beforeRetry,'The ready state remains idempotent');
+});
+test('malformed receipts and multi-part uploads cannot activate the one-part fast path',async()=>{
+ await activate();const upload=await start(),before=calls.length;
+ for(const receipt of [null,[],{},[partReceipt(upload)],partReceipt(upload,{partNumber:2}),partReceipt(upload,{etag:'unquoted'}),partReceipt(upload,{etag:'"<xml>"'}),partReceipt(upload,{size:'17'}),partReceipt(upload,{parts:[]})])assert.equal((await receiptStatus(upload,receipt)).status,400);
+ assert.equal((await receiptStatus(upload,partReceipt(upload,{size:jpeg.length+1}))).status,422);assert.equal(calls.length,before);
+ const large=await start(new Uint8Array(8*1024*1024+1));const afterStart=calls.length;assert.equal((await receiptStatus(large)).status,422);assert.equal(calls.length,afterStart);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,0);
+});
+test('a forged well-formed ETag is not authorization and legacy reconciliation still confirms the real part',async()=>{
+ await activate();const upload=await start();await sendPart(upload);
+ assert.equal((await receiptStatus(upload,partReceipt(upload,{etag:'"'+'b'.repeat(32)+'"'}))).status,502);assert.equal(objects.size,0);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,0);
+ const confirmed=await command({action:'status',id:upload.data.id});assert.equal(confirmed.status,200);assert.equal((await confirmed.json()).complete,true);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,1);assert.deepEqual(objects.get('originals/'+upload.data.id).bytes,jpeg);
+});
+test('a lost one-part completion response is recovered by verified object metadata without another multipart',async()=>{
+ await activate();const upload=await start();await sendPart(upload);loseComplete=true;const before=calls.length;
+ const response=await receiptStatus(upload);assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.deepEqual(calls.slice(before).map(call=>call.method),['POST','HEAD','GET']);assert.equal(multiparts.size,0);assert.equal(objects.size,1);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,1);
+});
+test('NoSuchUpload after a completed object and interrupted database commit resumes the same catalogue entry',async()=>{
+ await activate();const upload=await start();await sendPart(upload);let interrupted=false;
+ beforeQuery=query=>{if(!interrupted&&query.text.startsWith('UPDATE jac_media_operations SET offset=')&&query.args[1]==='ready'){interrupted=true;throw new Error('simulated interrupted state commit');}};
+ assert.equal((await receiptStatus(upload)).status,503);assert.equal(interrupted,true);assert.equal(objects.size,1);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,1);
+ beforeQuery=undefined;const before=calls.length,response=await receiptStatus(upload);assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.deepEqual(calls.slice(before).map(call=>call.method),['POST','HEAD','GET']);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,1);
+});
+test('receipt finalization still rejects changed size, MIME, request identity and an invalid media signature',async()=>{
+ await activate();
+ for(const change of ['size','mime','request','signature']){
+  const upload=await start();await sendPart(upload);const multipart=multiparts.get(new URL(upload.plan.uploadURL).searchParams.get('uploadId'));
+  if(change==='size')multipart.parts.set(1,jpeg.slice(0,-1));if(change==='mime')multipart.mime='image/png';if(change==='request')multipart.request=crypto.randomUUID();if(change==='signature')multipart.parts.set(1,new Uint8Array(jpeg.length));
+  assert.equal((await receiptStatus(upload)).status,422,change);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,0,change);
+ }
+});
+test('single-part receipt finalization preserves ownership, live revocation and the final SQL session guard',async()=>{
+ await activate();let upload=await start();await sendPart(upload);let before=calls.length;
+ assert.equal((await receiptStatus(upload,partReceipt(upload),token)).status,403);assert.equal(calls.length,before);
+ hook=request=>{if(request.method==='POST'&&new URL(request.url).searchParams.has('uploadId'))sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(photographer);};
+ assert.equal((await receiptStatus(upload)).status,403);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,0);hook=undefined;
+ sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(photographer);upload=await start();await sendPart(upload);let fired=false;
+ beforeQuery=query=>{if(!fired&&query.text.startsWith('INSERT OR IGNORE INTO jac_media_r2_entries')){fired=true;sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(photographer);}};
+ assert.equal((await receiptStatus(upload)).status,409);assert.equal(fired,true);assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_r2_entries').get().n,0);
+});
 
 test('activation starts empty, discards only the Photography Drive connection, and never reads Drive',async()=>{
  const gmail='unrelated-existing-cipher';sql.prepare("INSERT OR REPLACE INTO payroll_gmail(id,credentials,updated_at) VALUES('jac',?,?)").run(gmail,stamp);

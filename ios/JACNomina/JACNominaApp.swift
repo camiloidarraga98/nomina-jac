@@ -43,6 +43,7 @@ struct JACNominaApp: App {
             .task {
                 guard !Self.isUnitTestHost else { return }
                 await store.restore()
+                await store.resumeMediaUploads()
                 store.prefetchMediaRoot()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(30)) } catch { return }
@@ -51,11 +52,18 @@ struct JACNominaApp: App {
                     if UIApplication.shared.applicationState == .active && store.hasSavedSession { try? await store.refreshAutomatically() }
                 }
             }
-            .onChange(of: scenePhase) { _, value in if value == .active && store.hasSavedSession && !Self.isUnitTestHost { Task { try? await store.refreshAutomatically() } } }
+            .onChange(of: scenePhase) { _, value in
+                guard value == .active, !Self.isUnitTestHost, store.hasSavedSession || (try? store.client.hasSession()) == true else { return }
+                Task {
+                    if !store.hasSavedSession { await store.restore() }
+                    else { try? await store.refreshAutomatically() }
+                    await store.resumeMediaUploads()
+                }
+            }
             .onChange(of: connectivity.connected) { old, new in
                 guard store.hasSavedSession && !Self.isUnitTestHost else { return }
                 if new == false { store.client.beginOfflineRestore() }
-                if old == false && new == true { Task { try? await store.refreshAutomatically() } }
+                if old == false && new == true { Task { try? await store.refreshAutomatically(); await store.resumeMediaUploads() } }
             }
             .onChange(of: store.isOffline) { old, new in if old && !new && !Self.isUnitTestHost { store.prefetchMediaRoot() } }
             .onChange(of: store.overview?.user.id) { _, _ in if !Self.isUnitTestHost { store.prefetchMediaRoot() } }

@@ -107,9 +107,36 @@ async function publish(c:Context,row:Upload,claim:string){
  await database().prepare(`INSERT OR IGNORE INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,thumbnail_key,actor_id,payload_hash,created_at,modified_at) SELECT ?,?,?,?,?,?,'',?,?,?,? WHERE ${same(c)} AND ${availableSQL(row.parent_id)} AND EXISTS(SELECT 1 FROM jac_media_operations WHERE id=? AND claim=? AND connection_version=? AND status='pending')`).bind(row.drive_id,row.parent_id,row.name,row.mime_type,row.size,objectKey(row),c.g.actorID,row.payload_hash,now,now,...c.g.bindings,row.id,claim,c.config.version).run();
  const found=await entry(row.drive_id);if(found?.payload_hash!==row.payload_hash||found.object_key!==objectKey(row))throw new MediaFailure('No se pudo publicar el archivo.',409);await update(c,row,claim,row.size,'ready',row.session_payload);return state(c,(await operation(row.id))!);
 }
-export async function r2Status(g:MediaGuard,id:unknown){
- const c=await context(g),row=await own(c,id);if(row.status==='ready')return state(c,row);if(!row.session_payload)throw new MediaFailure('Prepara primero la subida.',409);const claim=await lock(c,row);
+type SinglePartReceipt={partNumber:1;etag:string;size:number};
+function singlePartReceipt(input:unknown,row:Upload):SinglePartReceipt|undefined {
+ if(input===undefined)return;
+ if(!input||typeof input!=='object'||Array.isArray(input))throw new MediaFailure('El recibo de la parte no es válido.');
+ const value=input as Record<string,unknown>;
+ if(Object.keys(value).length!==3||!['partNumber','etag','size'].every(key=>Object.hasOwn(value,key))||value.partNumber!==1||typeof value.etag!=='string'||!/^"[a-f0-9]{32}"$/i.test(value.etag)||typeof value.size!=='number'||!Number.isSafeInteger(value.size)||value.size<=0)throw new MediaFailure('El recibo de la parte no es válido.');
+ if(row.size>MEDIA_DIRECT_CHUNK_SIZE||value.size!==row.size||(row.status!=='ready'&&row.offset!==0))throw new MediaFailure('Este recibo no corresponde a un archivo de una sola parte.',422);
+ return value as SinglePartReceipt;
+}
+async function completeParts(c:Context,row:Upload,id:string,parts:{number:number;etag:string}[]){
+ const xml='<CompleteMultipartUpload>'+parts.map(p=>'<Part><PartNumber>'+p.number+'</PartNumber><ETag>'+xmlEscape(p.etag)+'</ETag></Part>').join('')+'</CompleteMultipartUpload>',response=await call(c,'POST',objectKey(row),{uploadId:id},{'content-type':'application/xml'},xml);await checked(response);const result=await r2XML(response);if(!result.includes('<CompleteMultipartUploadResult')||result.includes('<Error>'))throw new MediaFailure('R2 no confirmó el archivo final.',502);
+}
+export async function r2Status(g:MediaGuard,id:unknown,partReceipt?:unknown){
+ const c=await context(g),row=await own(c,id),receipt=singlePartReceipt(partReceipt,row);if(row.status==='ready')return state(c,row);if(!row.session_payload)throw new MediaFailure('Prepara primero la subida.',409);const claim=await lock(c,row);
  try{
+  if(receipt){
+   // The receipt is only a completion hint. R2 must accept its real ETag, and
+   // the final size/MIME/request metadata/signature still authorize publication.
+   // Keep multipart: a used part capability cannot overwrite a ready original.
+   try{await completeParts(c,row,await uploadID(row),[{number:receipt.partNumber,etag:receipt.etag}]);}
+   catch(error){
+    if(!(error instanceof MediaFailure)||![404,502,503].includes(error.status))throw error;
+    // A lost completion response (or NoSuchUpload on retry) may already have
+    // committed the immutable object. Recover by its server-owned key only.
+    if(await finalObject(c,row))return await publish(c,row,claim);
+    throw error;
+   }
+   if(!await finalObject(c,row))throw new MediaFailure('R2 todavía no confirmó el archivo final.',502);
+   return await publish(c,row,claim);
+  }
   // A successful completion whose response was lost is recovered by its fixed
   // object key and metadata, without a second file or trusting client offsets.
   if(await finalObject(c,row))return await publish(c,row,claim);
@@ -121,7 +148,7 @@ export async function r2Status(g:MediaGuard,id:unknown){
   }
   let offset=0;for(const [index,part]of parts.entries()){const expected=Math.min(MEDIA_DIRECT_CHUNK_SIZE,row.size-offset);if(part.number!==index+1||part.size!==expected||expected<=0)throw new MediaFailure('Una parte no coincide con el archivo seleccionado.',422);offset+=part.size;}
   if(offset<row.offset)throw new MediaFailure('El progreso cambió. Reintenta la subida.',409);
-  if(offset===row.size){const xml='<CompleteMultipartUpload>'+parts.map(p=>'<Part><PartNumber>'+p.number+'</PartNumber><ETag>'+xmlEscape(p.etag)+'</ETag></Part>').join('')+'</CompleteMultipartUpload>',response=await call(c,'POST',objectKey(row),{uploadId:id},{'content-type':'application/xml'},xml);await checked(response);const result=await r2XML(response);if(!result.includes('<CompleteMultipartUploadResult')||result.includes('<Error>'))throw new MediaFailure('R2 no confirmó el archivo final.',502);if(!await finalObject(c,row))throw new MediaFailure('R2 todavía no confirmó el archivo final.',502);return await publish(c,row,claim);}
+  if(offset===row.size){await completeParts(c,row,id,parts);if(!await finalObject(c,row))throw new MediaFailure('R2 todavía no confirmó el archivo final.',502);return await publish(c,row,claim);}
   await update(c,row,claim,offset,'pending',row.session_payload);return state(c,(await operation(row.id))!);
  }finally{await unlock(row.id,claim);}
 }

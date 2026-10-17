@@ -35,6 +35,7 @@ final class PayrollStore: ObservableObject {
         client.onSessionInvalidated = { [weak self] in
             guard let self else { return }
             self.cancelAutomaticReads()
+            self.revokeMediaUploads()
             self.forgetAgenda(); self.overview = nil; self.workspace = nil; self.pending = nil; self.notice = nil; self.hasSavedSession = false
         }
         offlineChanges = client.$usingOfflineCopy.removeDuplicates().sink { [weak self] value in self?.offlineMode = value }
@@ -46,6 +47,12 @@ final class PayrollStore: ObservableObject {
             if overview == nil { overview = PayrollOverview(version: 0, company: "JAC", user: record.user, periods: [], employees: []) }
             restoring = false
         }
+        #if os(iOS)
+        if !Self.isUnitTestHost {
+            MediaUploadQueue.shared.bind(client)
+            Task { await self.resumeMediaUploads() }
+        }
+        #endif
     }
     var isAgendaOnly: Bool { overview != nil && workspace == nil }
     func cachedAgenda(month: String, userID: String) -> SavedAgenda? {
@@ -83,7 +90,17 @@ final class PayrollStore: ObservableObject {
     func restore() async {
         defer { restoring = false }
         TemporaryDocuments.clear()
-        do { if try client.hasSession() { try await refreshAutomatically() } }
+        do {
+            if try client.hasSession() {
+                hasSavedSession = true
+                if overview == nil, let cached = client.cachedWorkspace() {
+                    client.beginOfflineRestore()
+                    workspace = cached; overview = cached.overview
+                    client.rememberWorkspace(cached)
+                }
+                try await refreshAutomatically()
+            }
+        }
         catch { if !AgendaOfflineCache.isUnavailable(error) { reportReadFailure(error) } }
     }
     func signIn(username: String, password: String, keepSignedIn: Bool = false) async {
@@ -129,6 +146,31 @@ final class PayrollStore: ObservableObject {
         automaticRefresh?.task.cancel(); automaticRefresh = nil
         mediaPrefetch?.cancel(); mediaPrefetch = nil; prefetchedMediaScope = nil
     }
+    func resumeMediaUploads() async {
+        #if os(iOS)
+        guard !Self.isUnitTestHost else { return }
+        let uploads = MediaUploadQueue.shared
+        uploads.bind(client)
+        if let user = overview?.user, !user.canUploadMedia { uploads.revoke(); return }
+        // A cached workspace at startup does not mean the network is down.
+        // The queue retains its jobs while the current session is validated.
+        await uploads.restore()
+        #endif
+    }
+    private func revokeMediaUploads() {
+        #if os(iOS)
+        if !Self.isUnitTestHost { MediaUploadQueue.shared.revoke() }
+        #endif
+    }
+    #if os(iOS)
+    private static var isUnitTestHost: Bool {
+        #if DEBUG
+        Bundle.allBundles.contains { $0.bundleURL.lastPathComponent == "JACNominaTests.xctest" }
+        #else
+        false
+        #endif
+    }
+    #endif
     @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
         // A restricted control workspace deliberately uses revision zero and
         // contains no payroll. Revoking that module must replace older private
@@ -136,10 +178,17 @@ final class PayrollStore: ObservableObject {
         let payrollRevoked = workspace?.user.hasSection(.payroll) == true && !result.user.hasSection(.payroll)
         guard payrollRevoked || result.version >= (workspace?.version ?? 0) else { return false }
         if let savedAgenda, savedAgenda.user != result.user || !result.user.hasSection(.calendar) { forgetAgenda() }
-        workspace = result; overview = result.overview; hasSavedSession = true; client.rememberWorkspace(result); return true
+        if let previous = overview?.user, previous != result.user { revokeMediaUploads() }
+        if !result.user.canUploadMedia { revokeMediaUploads() }
+        workspace = result; overview = result.overview; hasSavedSession = true; client.rememberWorkspace(result)
+        #if os(iOS)
+        if !Self.isUnitTestHost { Task { await self.resumeMediaUploads() } }
+        #endif
+        return true
     }
     func signOut() async {
         cancelAutomaticReads()
+        revokeMediaUploads()
         JACNotifications.shared.stop()
         forgetAgenda()
         busy = true
@@ -151,7 +200,7 @@ final class PayrollStore: ObservableObject {
     }
     func report(_ failure: Error) {
         if failure is CancellationError { return }
-        if let apiError = failure as? APIError, case .unauthorized = apiError { forgetAgenda(); overview = nil; workspace = nil; pending = nil; notice = nil; TemporaryDocuments.clear() }
+        if let apiError = failure as? APIError, case .unauthorized = apiError { revokeMediaUploads(); forgetAgenda(); overview = nil; workspace = nil; pending = nil; notice = nil; TemporaryDocuments.clear() }
         if let apiError = failure as? APIError, case .forbidden = apiError, isAgendaOnly { forgetAgenda(); overview = nil }
         error = failure.localizedDescription
     }

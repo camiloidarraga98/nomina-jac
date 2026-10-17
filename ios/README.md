@@ -1,3 +1,5 @@
+> Subidas · iPhone/iPad0.27.0(40): cola guardada independiente del menú, transferencias del sistema en segundo plano y miniaturas separadas para reducir la espera. Forzar el cierre requiere reabrir para retomar. Mismo proyecto/firma, actualizar con Run. Ver [cola y límites de iOS](../docs/IPHONE_BACKGROUND_UPLOADS.md).
+
 > Fotos · iPhone0.26.0(39): visor a pantalla completa con swipe continuo, precarga y reutilización de fotos vistas; círculo con progreso real mientras carga. Mismo proyecto/firma, actualizar con Run. Ver [visor y caché](../docs/IPHONE_PHOTO_VIEWER.md).
 
 > Fotografía · iPhone0.25.0(38): carpetas desplegables en la misma pantalla, una sola hoja para nombre/archivos y deslizar sobre las fotos. Mismo proyecto y firma; actualizar con Run. Ver [uso y comprobaciones](../docs/IPHONE_PHOTOGRAPHY_SIMPLE.md).

@@ -143,6 +143,10 @@ struct NotificationSettingsView: View {
 @MainActor
 final class JACPushDelegate: NSObject, UIApplicationDelegate, UNUserNotificationCenterDelegate {
     func application(_ application: UIApplication, didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil) -> Bool { if JACNotifications.shared.pushAvailable { UNUserNotificationCenter.current().delegate = self }; return true }
+    func application(_ application: UIApplication, handleEventsForBackgroundURLSession identifier: String, completionHandler: @escaping () -> Void) {
+        MediaBackgroundTransport.handleEvents(identifier: identifier, completion: completionHandler)
+        Task { await MediaUploadQueue.shared.restore(background: true) }
+    }
     func application(_ application: UIApplication, didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) { let value = deviceToken.map { String(format: "%02x", $0) }.joined(); Task { await JACNotifications.shared.register(value) } }
     func application(_ application: UIApplication, didFailToRegisterForRemoteNotificationsWithError error: Error) { guard JACNotifications.shared.pushAvailable else { return }; JACNotifications.shared.message = "No se pudo registrar el iPhone. Revisa Push Notifications y la firma de Apple Developer en Xcode." }
     nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification, withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) { completionHandler([.banner, .sound]) }
