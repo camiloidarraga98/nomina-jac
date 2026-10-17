@@ -11,7 +11,11 @@ const uuid=z.string().uuid();
 export const contractSaveInput=z.object({action:z.literal('save'),id:uuid,showId:uuid.nullable(),input:contractInput}).strict();
 const linkInput=z.object({action:z.literal('link'),id:uuid,showId:uuid.nullable(),version:z.number().int().positive()}).strict();
 type Row={id:string;actor_id:string;request_hash:string;filename:string;company:string;municipality:string;event_date:string;price:number;show_id:string|null;state:string;file_key:string;write_nonce:string;lease_until:string;version:number;created_at:string;show_title?:string|null;show_date?:string|null};
-async function authorize(u:AccessUser,g:CrmGuard){if(!canCrm(u)||!await guardActive(g))throw new CrmFailure('Tu sesión o tus permisos cambiaron.',403);}
+async function authorize(u:AccessUser,g:CrmGuard){
+ // crmStoredGuard binds session, user and clock. Renew the clock at every
+ // boundary, including after a slow R2 write; expiry must not use request time.
+ g.bindings=[g.bindings[0],g.bindings[1],new Date().toISOString()];
+ if(!canCrm(u)||!await guardActive(g))throw new CrmFailure('Tu sesión o tus permisos cambiaron.',403);}
 const showGate=(id:string|null)=>id===null?'1':"EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND source_state NOT IN ('deleted','deleting'))";
 const showBindings=(id:string|null)=>id===null?[]:[id];
 const publicRow=(r:Row)=>({id:r.id,filename:r.filename,company:r.company,municipality:r.municipality,eventDate:r.event_date,price:r.price,showId:r.show_id,showTitle:r.show_title||'',showDate:r.show_date||'',version:r.version,createdAt:r.created_at});
@@ -54,6 +58,7 @@ export async function saveContract(u:AccessUser,g:CrmGuard,raw:unknown){
  if(prior.write_nonce!==nonce)throw new CrmFailure('El contrato se está guardando. Reintenta en unos instantes.',409);
  try{
   await env.BUCKET.put(key,pdf,{httpMetadata:{contentType:'application/pdf'}});
+  await authorize(u,g);
   const done=await db.prepare(`UPDATE jac_crm_contracts SET state='ready',updated_at=? WHERE id=? AND state='pending' AND write_nonce=? AND ${showGate(v.showId)} AND ${g.sql}`).bind(new Date().toISOString(),v.id,nonce,...showBindings(v.showId),...g.bindings).run();
   if(!done.meta.changes){await authorize(u,g);throw new CrmFailure('El show cambió. El contrato no se guardó.',409);}
  }catch(error){await db.prepare("UPDATE jac_crm_contracts SET state='failed' WHERE id=? AND state='pending' AND write_nonce=?").bind(v.id,nonce).run();await env.BUCKET.delete(key).catch(()=>{});throw error;}

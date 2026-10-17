@@ -74,3 +74,10 @@ test('permisos y revocación antes/después de R2 bloquean archivos y guardado; 
  const b=await actor(),blocked=crypto.randomUUID();beforePut=()=>sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(b.id);assert.equal((await create(b,blocked)).status,403);beforePut=null;assert.equal(sql.prepare('SELECT state FROM jac_crm_contracts WHERE id=?').get(blocked).state,'failed');assert.equal([...objects.keys()].some(k=>k.includes(blocked)),false);
  const c=await actor();assert.equal((await get(c,'?offset=-1')).status,400);assert.equal((await create(c,crypto.randomUUID(),crypto.randomUUID())).status,409);
 });
+
+test('sesión que vence durante la escritura R2 no publica un contrato ni permite abrirlo',async()=>{
+ reset();const a=await actor(),id=crypto.randomUUID();
+ beforePut=async()=>{await new Promise(r=>setTimeout(r,25));sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE id=?').run(new Date(Date.now()-1).toISOString(),m.tokenHash(a.token));};
+ try{assert.equal((await create(a,id)).status,403);}finally{beforePut=null;}
+ assert.equal(sql.prepare('SELECT state FROM jac_crm_contracts WHERE id=?').get(id).state,'failed');assert.equal([...objects.keys()].some(k=>k.includes(id)),false);
+});
