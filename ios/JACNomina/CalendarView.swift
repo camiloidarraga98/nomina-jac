@@ -33,17 +33,17 @@ struct CalendarView: View {
     var body: some View {
         let byDay = visible.map { CalendarClock.eventsByDay($0.events, days: $0.days) } ?? [:]
         return NavigationStack {
-            List {
-                if let notice { Section { Label(notice, systemImage: "checkmark.circle").foregroundStyle(JACTheme.action) } }
-                if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
+            AgendaPage {
+                if let notice { AgendaSection { Label(notice, systemImage: "checkmark.circle").foregroundStyle(JACTheme.action) } }
+                if let error { AgendaSection { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
                 if visible == nil, let offlineMessage {
-                    Section {
+                    AgendaSection {
                         ContentUnavailableView("Mes sin descargar", systemImage: "wifi.slash", description: Text(offlineMessage))
                         if store.savedAgenda != nil { Button("Volver a la agenda descargada") { month = store.preferredAgendaMonth; day = month == CalendarClock.month(Date()) ? CalendarClock.day(Date()) : month + "-01" } }
                     }
                 }
                 if let connection = visible?.connection, !connection.connected || connection.selected == nil {
-                    Section {
+                    AgendaSection {
                         Text("Conecta Google y selecciona el calendario de Jhon Alex.").font(.footnote).foregroundStyle(.secondary)
                         if live {
                             if user.isOwner { Button("Preparar conexión") { settings = true }.accessibilityIdentifier("agenda.configure") }
@@ -51,15 +51,15 @@ struct CalendarView: View {
                         }
                     }
                 }
-                if loading && visible == nil { Section { ProgressView("Consultando agenda…") } }
+                if loading && visible == nil { AgendaSection { ProgressView("Consultando agenda…") } }
                 if visible == nil || visible?.connection.connected != true || visible?.connection.selected == nil {
-                    Section { agendaActions }
+                    AgendaSection { agendaActions }
                 }
                 if let visible, visible.connection.connected, visible.connection.selected != nil {
-                    Section { Picker("Vista de agenda", selection: $mode) { Text("Mes").tag("Mes"); Text("Próximos").tag("Próximos") }.pickerStyle(.segmented).accessibilityIdentifier("agenda.mode") }
+                    AgendaSection { Picker("Vista de agenda", selection: $mode) { Text("Mes").tag("Mes"); Text("Próximos").tag("Próximos") }.pickerStyle(.segmented).accessibilityIdentifier("agenda.mode") }
                     if mode == "Mes" {
                         if wideTablet {
-                            Section {
+                            AgendaSection {
                                 HStack(alignment: .top, spacing: 28) {
                                     VStack(spacing: 12) { monthPanel(visible, byDay: byDay) }.frame(minWidth: 350, maxWidth: 490)
                                     VStack(alignment: .leading, spacing: 18) {
@@ -69,25 +69,25 @@ struct CalendarView: View {
                                 }.padding(.vertical, 8).accessibilityElement(children: .contain).accessibilityIdentifier("ipad.agenda.columns")
                             }
                         } else {
-                            Section { monthPanel(visible, byDay: byDay) }
-                            Section(CalendarClock.dayLabel(day).capitalized) { dayEvents(byDay) }
+                            AgendaSection { monthPanel(visible, byDay: byDay) }
+                            AgendaSection(title:CalendarClock.dayLabel(day).capitalized) { dayEvents(byDay) }
                         }
                     } else {
-                        Section { agendaActions }
-                        Section {
+                        AgendaSection { agendaActions }
+                        AgendaSection {
                             Text("Próximos 90 días · hasta " + CalendarClock.dayLabel(visible.upcomingUntil)).font(.caption).foregroundStyle(.secondary)
                             if visible.upcoming.isEmpty { Text("No hay eventos programados en los próximos 90 días.").foregroundStyle(.secondary) }
                             ForEach(visible.upcoming) { item in Button { event = item } label: { AgendaEventRow(event: item, showsDay: true) }.buttonStyle(.plain).accessibilityIdentifier("agenda.upcoming.\(item.id)") }
                         }
                     }
                     if offlineMessage != nil || store.isOffline {
-                        Section { Label(offlineMessage ?? "Sin conexión · Copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
+                        AgendaSection { Label(offlineMessage ?? "Sin conexión · Copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
                     }
                     if let warning = store.agendaStorageWarning {
-                        Section { Text(warning).font(.footnote).foregroundStyle(.secondary) }
+                        AgendaSection { Text(warning).font(.footnote).foregroundStyle(.secondary) }
                     }
                     if live && user.isOwner && visible.canEditEvents != true {
-                        Section { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
+                        AgendaSection { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
                     }
                 }
             }.background { GeometryReader { geometry in Color.clear.onAppear { contentWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in contentWidth = width } }.allowsHitTesting(false) }.jacSurface().navigationTitle("Agenda").jacInlineTitle().refreshable { await refresh() }.jacRefreshCommand { Task { await refresh() } }
@@ -208,13 +208,13 @@ struct AgendaEventDetail: View {
     var onEdit: (() -> Void)? = nil
     var body: some View {
         NavigationStack {
-            List {
-                Section { Text(event.title).font(.title2.bold()); Label(CalendarClock.dayLabel(event.firstDay).capitalized, systemImage: "calendar"); Label(event.timeLabel, systemImage: "clock"); Text("Hora de Colombia").font(.caption).foregroundStyle(.secondary) }
-                if event.allDay, let last = CalendarClock.date(event.end), let end = CalendarClock.calendar.date(byAdding: .day, value: -1, to: last), CalendarClock.day(end) != event.start { Section { Text("Hasta " + CalendarClock.dayLabel(CalendarClock.day(end))) } }
-                if !event.location.isEmpty { Section("Lugar") { Text(event.location).textSelection(.enabled) } }
-                if !event.description.isEmpty { Section("Descripción") { Text(event.description).textSelection(.enabled) } }
-                if let onEdit { Section { Button("Editar evento", action: onEdit).buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("agenda.edit") } }
-                if let url = event.googleURL { Section { Link("Ver en Google Calendar", destination: url) } }
+            AgendaPage {
+                AgendaSection { Text(event.title).font(.title2.bold()); Label(CalendarClock.dayLabel(event.firstDay).capitalized, systemImage: "calendar"); Label(event.timeLabel, systemImage: "clock"); Text("Hora de Colombia").font(.caption).foregroundStyle(.secondary) }
+                if event.allDay, let last = CalendarClock.date(event.end), let end = CalendarClock.calendar.date(byAdding: .day, value: -1, to: last), CalendarClock.day(end) != event.start { AgendaSection { Text("Hasta " + CalendarClock.dayLabel(CalendarClock.day(end))) } }
+                if !event.location.isEmpty { AgendaSection(title:"Lugar") { Text(event.location).textSelection(.enabled) } }
+                if !event.description.isEmpty { AgendaSection(title:"Descripción") { Text(event.description).textSelection(.enabled) } }
+                if let onEdit { AgendaSection { Button("Editar evento", action: onEdit).buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("agenda.edit") } }
+                if let url = event.googleURL { AgendaSection { Link("Ver en Google Calendar", destination: url) } }
             }.jacSurface().navigationTitle("Evento").jacInlineTitle().toolbar { ToolbarItem(placement: .confirmationAction) { Button("Listo") { dismiss() } } }
         }
     }
@@ -355,5 +355,32 @@ struct AgendaEventEditor: View {
         do { let result = try await store.client.saveAgendaEvent(draft, revision: session.revision, event: session.event, requestID: session.id); dismiss(); await onSaved(result) }
         catch is CancellationError { }
         catch { self.error = error.localizedDescription; store.report(error) }
+    }
+}
+
+private struct AgendaPage<Content:View>:View {
+    private let content:Content
+    init(@ViewBuilder content:()->Content){self.content=content()}
+    var body:some View {
+        #if os(iOS)
+        ScrollView {LazyVStack(alignment:.leading,spacing:18){content}.padding(18).frame(maxWidth:1160).frame(maxWidth:.infinity)}
+        #else
+        List {content}
+        #endif
+    }
+}
+private struct AgendaSection<Content:View>:View {
+    private let title:String?
+    private let content:Content
+    init(title:String?=nil,@ViewBuilder content:()->Content){self.title=title;self.content=content()}
+    var body:some View {
+        #if os(iOS)
+        VStack(alignment:.leading,spacing:14) {
+            if let title {Text(title).font(.headline)}
+            content
+        }.frame(maxWidth:.infinity,alignment:.leading).padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:18))
+        #else
+        if let title {Section(title){content}}else{Section{content}}
+        #endif
     }
 }

@@ -1,3 +1,5 @@
+> Agenda · iPhone/iPad0.24.1(37): corregido el cierre de listas al abrir eventos en iOS26.6.1. Misma navegación, permisos y copia offline. Versión instalada y recorrido ficticio confirmado por Camilo en su iPhone; ver [diagnóstico y verificación](../docs/IOS_AGENDA_EVENT_DETAIL_LAYOUT.md).
+
 > Fotografía: dos subidas simultáneas, círculo general y velocidad reciente; corregida la preparación de carpetas R2 para descarga privada y Fotos. Misma app/proyecto, sin activar push. Ver [comprobaciones y límites](../docs/PHOTOGRAPHY_UPLOAD_PERFORMANCE.md).
 
 > Carpetas de Fotografía: los administradores pueden eliminarlas desde su menú, con confirmación y limpieza retomable de contenido/caché. Ver [guía de eliminación](../docs/PHOTOGRAPHY_FOLDER_DELETE.md). Mismo proyecto; usa Run para actualizar.

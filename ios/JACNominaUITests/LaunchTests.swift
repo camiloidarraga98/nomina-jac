@@ -89,6 +89,25 @@ final class LaunchTests: XCTestCase {
         app.tabBars.buttons["Gestión"].tap();XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.employees"].exists);XCTAssertFalse(app.buttons["management.crm"].exists)
         attachScreen(app,name:"secciones-hibridas-sin-finanzas")
     }
+    @MainActor func testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=calendar,alerts,media,mediaUpload","--uitest-media-r2"];app.launch()
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20))
+        for title in ["Agenda","Alertas","Fotografía","Gestión"] {XCTAssertTrue(app.tabBars.buttons[title].exists)}
+        for title in ["Quincena","Itinerarios","Pases"] {XCTAssertFalse(app.tabBars.buttons[title].exists)}
+        let formatter=DateFormatter();formatter.calendar=Calendar(identifier:.gregorian);formatter.timeZone=TimeZone(identifier:"America/Bogota");formatter.dateFormat="yyyy-MM-dd"
+        let current=formatter.string(from:Date()),prefix=String(current.prefix(8))
+        for (index,menu) in ["Fotografía","Alertas","Gestión"].enumerated() {
+            app.tabBars.buttons[menu].tap()
+            if menu=="Fotografía" {XCTAssertTrue(app.buttons["media.item.r2_media-day"].waitForExistence(timeout:15))}
+            if menu=="Gestión" {XCTAssertTrue(app.buttons["management.account"].waitForExistence(timeout:10));tap(app,"management.account");for _ in 0..<4 {if app.buttons["Cerrar sesión"].exists {break};app.swipeUp()};XCTAssertTrue(app.buttons["Cerrar sesión"].waitForExistence(timeout:10))}
+            app.tabBars.buttons["Agenda"].tap();let cell=app.buttons["agenda.day."+prefix+String(format:"%02d",index+1)]
+            XCTAssertTrue(cell.waitForExistence(timeout:15));cell.tap();XCTAssertEqual(cell.value as? String,"Seleccionado");XCTAssertTrue(app.wait(for:.runningForeground,timeout:5))
+            app.buttons["Hoy"].tap();tap(app,"agenda.event.fixture-concert");XCTAssertTrue(app.staticTexts["Concierto simulado"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["agenda.edit"].exists);tap(app,"Listo");XCTAssertTrue(app.wait(for:.runningForeground,timeout:5))
+        }
+        XCUIDevice.shared.press(.home);app.activate();XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:15));let today=app.buttons["agenda.day."+current];today.tap();XCTAssertEqual(today.value as? String,"Seleccionado")
+        tap(app,"agenda.event.fixture-concert");XCTAssertTrue(app.staticTexts["Concierto simulado"].waitForExistence(timeout:10));app.buttons["Listo"].tap()
+        app.tabBars.buttons["Fotografía"].tap();app.tabBars.buttons["Agenda"].tap();XCTAssertTrue(app.buttons["agenda.day."+current].waitForExistence(timeout:10));attachScreen(app,name:"alex-agenda-fechas-cambio-menu")
+    }
     @MainActor func testCalendarOnlyAndAlertsOnlyAccountsStayInTheirOwnSections() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=calendar"];app.launch()
         XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20));XCTAssertTrue(app.tabBars.buttons["Agenda"].exists)
