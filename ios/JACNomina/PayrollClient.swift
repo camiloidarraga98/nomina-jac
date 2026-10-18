@@ -823,11 +823,12 @@ final class PayrollClient: ObservableObject {
         do {
             let (data, response) = try await request(path: "api/media", query: query, forceNetwork: forceNetwork)
             if !forceNetwork, response.value(forHTTPHeaderField: "X-JAC-Offline") != nil, let saved = mediaOffline.loadFeed(folder, scope: scope) { return saved }
-            let feed = try decoder.decode(MediaFeed.self, from: data)
+            var feed = try decoder.decode(MediaFeed.self, from: data)
             try Task.checkCancellation()
             guard generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
-            if feed.connected && feed.canRead { mediaOffline.allow(scope); try mediaOffline.saveFeed(feed, key: folder, append: !pageToken.isEmpty, scope: scope) }
+            if feed.connected && feed.canRead { mediaOffline.allow(scope); feed = try mediaOffline.saveFeed(feed, key: folder, append: !pageToken.isEmpty, scope: scope) }
             else { mediaOffline.clear(scope); TemporaryDocuments.clear() }
+            if let deleted=feed.deletedFiles,!deleted.isEmpty {cacheRevision += 1}
             return feed
         } catch {
             if !forceNetwork, AgendaOfflineCache.isUnavailable(error), let saved = cachedMedia(folder: folder) { return saved }
@@ -841,6 +842,18 @@ final class PayrollClient: ObservableObject {
         let result=try decoder.decode(MediaFolderDeletion.self,from:data)
         guard result.id==folder.id,result.complete != nil,result.removed>=0,!result.parentId.isEmpty else{throw APIError.invalid("No se pudo confirmar la carpeta eliminada.")}
         if let scope=try mediaScope(){try mediaOffline.removeFolders([folder.id],scope:scope)}
+        return result
+    }
+    func deleteMediaFileStep(_ item:MediaItem) async throws -> MediaFolderDeletion {
+        guard permissionUser?.canDeleteMedia != false else {throw APIError.forbidden("Solo un administrador puede eliminar fotos.")}
+        guard !usingOfflineCopy else {throw APIError.invalid("Conéctate para eliminar una foto.")}
+        var body:[String:JSONValue]=["action":.string("deleteFile"),"id":.string(item.id)]
+        if !item.modifiedAt.isEmpty {body["revision"] = .string(item.modifiedAt)}
+        let (data,_)=try await request(path:"api/media",body:.object(body))
+        let result=try decoder.decode(MediaFolderDeletion.self,from:data)
+        guard result.id==item.id,result.complete != nil,result.removed>=0,!result.parentId.isEmpty else {throw APIError.invalid("No se pudo confirmar la foto eliminada.")}
+        if let scope=try mediaScope() {try mediaOffline.removeFile(item,scope:scope)}
+        mediaRootRead?.task.cancel();mediaRootRead=nil;cacheGeneration += 1;cacheRevision += 1
         return result
     }
     func createMediaFolder(id: String, parentID: String, name: String, date: String) async throws -> MediaFolder {
@@ -1095,6 +1108,7 @@ final class PayrollClient: ObservableObject {
         let count = (try temporary.resourceValues(forKeys: [.fileSizeKey])).fileSize ?? 0
         guard count > 0, Int64(count) == item.size, response.mimeType == item.mimeType else { throw APIError.invalid("No se recibió una foto o video válido.") }
         try Task.checkCancellation()
+        if let scope=try mediaScope(),mediaOffline.isDeleted(item.id,scope:scope) {throw MediaFileRemoved()}
         return try TemporaryDocuments.move(temporary, filename: MediaLocalFile.safeName(item.name))
     }
 
@@ -1120,7 +1134,7 @@ final class PayrollClient: ObservableObject {
                 guard cursor.isEmpty || seenPages.insert(cursor).inserted else { throw APIError.message("No se pudo completar el listado. Actualiza la carpeta.") }
             } while !cursor.isEmpty
             if let feed = lastFeed, let scope = try mediaScope() {
-                let complete = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: folderItems, nextPageToken: nil,provider:feed.provider,collectionID:feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders)
+                let complete = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: folderItems, nextPageToken: nil,provider:feed.provider,collectionID:feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders,deletedFiles:feed.deletedFiles,pendingFileDeletions:feed.pendingFileDeletions)
                 try mediaOffline.pinFeed(complete, key: current, scope: scope)
             }
         }
@@ -1130,7 +1144,7 @@ final class PayrollClient: ObservableObject {
     func saveMediaOffline(_ item: MediaItem) async throws {
         guard permissionUser?.canReadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a Fotografía.")}
         guard let scope = try mediaScope() else { throw APIError.unauthorized }
-        if mediaOffline.hasFile(item, scope: scope) { return }
+        if mediaOffline.hasFile(item, scope: scope) {if !usingOfflineCopy {try await validateMediaItem(item)};try mediaOffline.pinFile(item,scope:scope);cacheRevision += 1;return}
         let generation = cacheGeneration
         guard MediaStorageReview.freeBytes > item.size * 2 + 64 * 1024 * 1024 else { throw APIError.invalid("No hay espacio suficiente para descargar y cifrar este archivo. Libera espacio e inténtalo de nuevo.") }
         let document = try await downloadMediaDocument(item); defer { TemporaryDocuments.remove(document) }
@@ -1139,6 +1153,7 @@ final class PayrollClient: ObservableObject {
         do { try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() } }
         catch { if scope.id != (try mediaScope())?.id { cache.clear(scope) }; throw error }
         guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { cache.clear(scope); throw CancellationError() }
+        try mediaOffline.pinFile(item,scope:scope);cacheRevision += 1
     }
 
     func startGmail() async throws -> GmailStart {

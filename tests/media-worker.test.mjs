@@ -256,6 +256,21 @@ test('Workerd starts a fresh R2-only gallery, publishes direct bytes, serves pri
  }finally{await mf.dispose();}
 });
 
+test('Workerd removes one selected R2 original and thumbnail while preserving its folder and a second photo',async()=>{
+ const {mf,db,state,call}=await fixture();try{
+  await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0})});await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({action:'activateNewCollection',version:1})});
+  const first=crypto.randomUUID(),second=crypto.randomUUID(),revision='2026-10-18T12:00:00Z';state.s3={parts:new Map(),objects:new Map()};
+  for(const id of [first,second]){const key='originals/'+id,thumbnail='thumbnails/'+id+'.jpg';
+   await db.prepare('INSERT INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,thumbnail_key,actor_id,payload_hash,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)').bind('r2_'+id,'jac_r2_root','Foto.jpg','image/jpeg',17,key,thumbnail,photoID,'fixture',revision,revision).run();
+   for(const name of [key,thumbnail])state.s3.objects.set(name,{bytes:new Uint8Array(17),mime:'image/jpeg'});
+  }
+  const body=JSON.stringify({action:'deleteFile',id:'r2_'+first,revision});assert.equal((await call('/api/media',{role:'photo',method:'POST',body})).status,403);
+  const response=await call('/api/media',{role:'owner',method:'POST',body});assert.equal(response.status,200);assert.equal((await response.json()).complete,true);assert.equal(state.s3.objects.size,2);
+  const feed=await (await call('/api/media',{role:'owner'})).json();assert.deepEqual(feed.items.map(i=>i.id),['r2_'+second]);assert.deepEqual(feed.deletedFiles,['r2_'+first]);
+  assert.equal((await call('/api/media/file?id=r2_'+first+'&metadata=1',{role:'photo'})).status,410);
+  assert.equal((await call('/api/media',{role:'owner',method:'POST',body})).status,200);
+ }finally{await mf.dispose();}
+});
 test('Workerd deletes only an administrator-selected R2 subtree and refuses root or photographer deletion',async()=>{
  const {mf,db,state,call}=await fixture();try{
   await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0})});await call('/api/media/storage',{role:'owner',method:'POST',body:JSON.stringify({action:'activateNewCollection',version:1})});

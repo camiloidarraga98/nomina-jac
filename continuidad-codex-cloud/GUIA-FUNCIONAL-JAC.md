@@ -204,6 +204,8 @@ En ajustes/menú se elige **hasta 2 MB, 4 MB, 6 MB o Sin compresión** para imá
 
 ### Descargar, guardar y eliminar
 
+Actualización del 18 de octubre: cada **foto individual** tiene opciones para descargar el original, guardarla sin conexión en ese dispositivo/navegador y eliminarla con confirmación administrativa. El borrado conserva carpeta y otras fotos; el permiso de subida no concede eliminación. Las apps fijan la foto en su copia cifrada; la web agrega una vista de fotos guardadas que puede reabrirse sin internet. Las acciones de carpetas descritas abajo se conservan. Véase [acciones individuales](../docs/PHOTOGRAPHY_INDIVIDUAL_PHOTOS.md) para límites y verificaciones. Fuentes nativas preparadas para pull/Xcode; compilación Apple y publicación Cloudflare pendientes, sin afirmar instalación o despliegue.
+
 En el menú contextual/selección de carpeta, sin botones grandes permanentes:
 
 - **Disponible sin conexión:** descarga a la caché privada de JAC para consultar allí; separada por sesión y protegida.

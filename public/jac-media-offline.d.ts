@@ -1,0 +1,10 @@
+import type {MediaItem} from '../lib/media-core';
+type Folder={id:string;name:string};
+export function clearMediaOffline():Promise<void>;
+export function connectMediaOffline(collection?:string):Promise<void>;
+export function fetchMediaPhoto(item:MediaItem,signal?:AbortSignal):Promise<Blob>;
+export function saveMediaPhoto(item:MediaItem,blob:Blob,breadcrumbs:Folder[],collection:string):Promise<void>;
+export function listMediaOffline():Promise<{item:MediaItem;breadcrumbs:Folder[]}[]>;
+export function readMediaPhoto(id:string):Promise<{item:MediaItem;blob:Blob}|null>;
+export function removeMediaOffline(ids:string[]):Promise<void>;
+export function reconcileMediaOffline(feed:{deletedFiles?:string[];deletedFolders?:string[]}):Promise<void>;

@@ -119,6 +119,7 @@ struct MediaInlineFolder: View {
                                 }
                                 .buttonStyle(.plain).disabled(disabled || opening != nil)
                                 .accessibilityIdentifier("media.item." + item.id)
+                                .overlay(alignment:.topTrailing){if item.kind=="image" {MediaPhotoMenu(item:item,client:store.client,canDelete:store.overview?.user.canDeleteMedia == true && feed.canDelete == true).padding(6)}}
                             }
                         }
                     }
@@ -154,6 +155,9 @@ struct MediaInlineFolder: View {
             stopRead(); clearContent(); loadedPages = 1
             if stamp != nil && isExpanded { startRead() }
         }
+        .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
+            if let saved=store.client.cachedMedia(folder:folder.id) {items=uniqueSorted(saved.items)}
+        }
         .onChange(of: store.isOffline) { previous, current in
             if previous && !current && offline && isExpanded { startRead() }
         }
@@ -170,7 +174,7 @@ struct MediaInlineFolder: View {
                            nextPageToken: source.nextPageToken, provider: source.provider,
                            collectionID: source.collectionID, canDelete: source.canDelete,
                            pendingDeletions: source.pendingDeletions,
-                         deletedFolders: source.deletedFolders)
+                         deletedFolders: source.deletedFolders,deletedFiles:source.deletedFiles,pendingFileDeletions:source.pendingFileDeletions)
     }
 
     private func stopRead() {

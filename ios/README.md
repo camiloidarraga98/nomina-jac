@@ -1,3 +1,5 @@
+> Fotografías individuales: menú de cada foto y del visor para descargar, guardar sin conexión o eliminar con confirmación administrativa. Se conservan las acciones de carpetas, la firma, el bundle y push suspendido. Fuentes preparadas desde Cloud; compilación y pruebas Apple pendientes en tu Mac con este mismo proyecto. Ver [acciones individuales](../docs/PHOTOGRAPHY_INDIVIDUAL_PHOTOS.md).
+
 > Contratos y RUT: CRM → Contratos, con Subir RUT primero, campos editables y entrada manual. PDF con la plantilla JAC y compartir desde el teléfono. Lectura del RUT local; generación requiere internet. Mismo proyecto y firma, usa Run para instalar. Ver [uso y comprobaciones](../docs/CONTRACTS.md).
 
 > Subidas · iPhone/iPad0.27.0(40): cola guardada independiente del menú, transferencias del sistema en segundo plano y miniaturas separadas para reducir la espera. Forzar el cierre requiere reabrir para retomar. Mismo proyecto/firma, actualizar con Run. Ver [cola y límites de iOS](../docs/IPHONE_BACKGROUND_UPLOADS.md).

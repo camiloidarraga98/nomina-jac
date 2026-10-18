@@ -536,6 +536,14 @@ enum MediaFixture {
             if r2Fixture {feed["provider"] = .string("r2");feed["collectionID"] = .string("jac-r2-new-20261016")}
             return (200,r2Value(feed))
         }
+        if parts.path=="/api/media",request.httpMethod=="POST",let input=try? JSONDecoder().decode(JSONValue.self,from:bytes(request)),input["action"].text=="deleteFile" {
+            guard administrator else{return(403,.object(["error":.string("Solo administradores")]))}
+            let id=input["id"].text
+            guard let parent=items.first(where:{$0.value.contains{$0["id"].text==id && $0["kind"].text != "folder"}})?.key,let selected=items[parent]?.first(where:{$0["id"].text==id}) else{return(404,.object(["error":.string("Foto no disponible")]))}
+            guard input["revision"].text==selected["modifiedAt"].text else{return(409,.object(["error":.string("Revisión cambió")]))}
+            files.removeValue(forKey:id);items[parent]?.removeAll{$0["id"].text==id}
+            return(200,.object(["id":.string(id),"parentId":.string(parent),"name":selected["name"],"removed":.number(1),"complete":.bool(true),"waiting":.bool(false)]))
+        }
         if parts.path=="/api/media",request.httpMethod=="POST",let input=try? JSONDecoder().decode(JSONValue.self,from:bytes(request)),input["action"].text=="deleteFolder" {
             guard administrator else{return(403,.object(["error":.string("Solo administradores")]))}
             let target=input["id"].text;guard target != "media-root" else{return(400,.object(["error":.string("No eliminar raíz")]))}

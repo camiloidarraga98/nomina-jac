@@ -47,7 +47,7 @@ test('el servidor definitivo retira todas las entradas temporales del traslado',
 
 test('CSS, JavaScript, logo, manifest y service worker salen del binding público con su tipo correcto',async()=>{
  const before=globalThis.__cfCalls,calls=[];
- const files=new Map([['/assets/app.css','text/css'],['/assets/app.js','application/javascript'],['/jac-music-logo.png','image/png'],['/jac-app-icon.png','image/png'],['/favicon.svg','image/svg+xml'],['/manifest.webmanifest','application/manifest+json'],['/jac-push-sw.js','application/javascript'],['/licenses/pdfjs-LICENSE.txt','text/plain']]);
+ const files=new Map([['/assets/app.css','text/css'],['/assets/app.js','application/javascript'],['/jac-music-logo.png','image/png'],['/jac-app-icon.png','image/png'],['/favicon.svg','image/svg+xml'],['/manifest.webmanifest','application/manifest+json'],['/jac-push-sw.js','application/javascript'],['/jac-media-offline.js','application/javascript'],['/fotografia-offline.html','text/html'],['/licenses/pdfjs-LICENSE.txt','text/plain']]);
  const env={JAC_READY:'1',ASSETS:{async fetch(request){const path=new URL(request.url).pathname;calls.push([request.method,path]);return new Response(request.method==='HEAD'?null:'public-file',{headers:{'Content-Type':files.get(path)}});}}};
  for(const [path,type] of files)for(const method of ['GET','HEAD']){
   const r=await m.worker.fetch(new Request('https://staging.example.invalid'+path,{method}),env,{});

@@ -203,6 +203,82 @@ enum MediaThumbnail {
         #endif
     }
 }
+// Shared by iPhone, iPad and Mac. The selected item is frozen for each action,
+// including a deletion retry, even if the viewer advances to another photo.
+struct MediaPhotoMenu: View {
+    let item:MediaItem
+    let client:PayrollClient
+    let canDelete:Bool
+    var resuming=false
+    @EnvironmentObject private var store:PayrollStore
+    @State private var confirmation=false
+    @State private var busy=false
+    @State private var message:String?
+    @State private var failure:String?
+    @State private var document:ExportedDocument?
+    @State private var ownedDocument:ExportedDocument?
+    @State private var operation:Task<Void,Never>?
+    @State private var pinned=false
+    var body:some View {
+        Menu {
+            if !resuming {
+                Button {perform(.download)} label:{Label("Descargar foto",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.photo.download")
+                Button {perform(.offline)} label:{Label(pinned ? "Disponible sin conexión":"Guardar sin conexión",systemImage:pinned ? "checkmark.circle":"arrow.down.circle")}.disabled(pinned).accessibilityIdentifier("media.photo.offline")
+            }
+            if canDelete {
+                Divider()
+                Button(role:.destructive) {confirmation=true} label:{Label(resuming ? "Continuar eliminación":"Eliminar foto",systemImage:"trash")}.disabled(store.isOffline).accessibilityIdentifier("media.photo.delete")
+            }
+        } label:{Image(systemName:"ellipsis.circle.fill").font(.title2).symbolRenderingMode(.palette).foregroundStyle(JACTheme.action,Color.white).frame(width:44,height:44).contentShape(Rectangle())}
+            .buttonStyle(.plain).disabled(busy).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.photo.options."+item.id)
+            .onAppear {updatePinned()}
+            .onReceive(client.$cacheRevision) {_ in updatePinned()}
+            .overlay {if busy {ProgressView().controlSize(.small)}}
+            .alert(confirmation ? "Eliminar foto":"Fotografía",isPresented:Binding(get:{confirmation || message != nil || failure != nil},set:{if !$0 {confirmation=false;message=nil;failure=nil}})) {
+                if confirmation {
+                    Button("Cancelar",role:.cancel){confirmation=false}
+                    Button("Eliminar foto",role:.destructive){confirmation=false;perform(.delete)}.accessibilityIdentifier("media.photo.delete.confirm")
+                } else {
+                    Button("Aceptar",role:.cancel){message=nil;failure=nil}
+                    if failure != nil && resuming {Button("Reintentar"){perform(.delete)}}
+                }
+            } message:{Text(confirmation ? "¿Estás seguro de eliminar «\(item.name)» de Fotografía? Se eliminará para todo el equipo.":failure ?? message ?? "")}
+            .sheet(item:$document,onDismiss:clearDocument) {file in
+                NavigationStack {DocumentPreview(url:file.url).privacySensitive().navigationTitle(item.name).jacInlineTitle()
+                    .toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){document=nil}}
+                        #if os(iOS)
+                        ToolbarItem(placement:.confirmationAction){ShareLink(item:file.url){Label("Guardar en Archivos o compartir",systemImage:"square.and.arrow.up")}}
+                        #endif
+                    }
+                }
+            }
+            .onDisappear {operation?.cancel();operation=nil;clearDocument()}
+    }
+    private enum Action {case download,offline,delete}
+    private func updatePinned(){pinned=(try? client.mediaScope()).map{client.mediaOffline.isPinned(item,scope:$0)} ?? false}
+    private func clearDocument(){if let ownedDocument {TemporaryDocuments.remove(ownedDocument)};ownedDocument=nil}
+    private func perform(_ action:Action){
+        guard !busy else{return};let selected=item,stamp=try? client.mediaAccessStamp();busy=true;failure=nil
+        operation=Task {
+            defer{busy=false;operation=nil}
+            do {
+                switch action {
+                case .download:
+                    let file=try await client.mediaDocument(selected)
+                    guard !Task.isCancelled,stamp == (try? client.mediaAccessStamp()) else {TemporaryDocuments.remove(file);throw CancellationError()}
+                    ownedDocument=file;document=file
+                case .offline:
+                    try await client.saveMediaOffline(selected);try Task.checkCancellation();updatePinned();message="Foto disponible sin conexión en este \(JACDevice.name)."
+                case .delete:
+                    var result:MediaFolderDeletion
+                    repeat {result=try await client.deleteMediaFileStep(selected);try Task.checkCancellation();if result.complete != true {try await Task.sleep(for:.milliseconds(result.waiting == true ? 1000:100))}}while result.complete != true
+                    message="Foto eliminada."
+                }
+            }catch{if let text=store.reportReadFailure(error){failure=text}}
+        }
+    }
+}
+
 struct MediaFolderRemoved: LocalizedError {var errorDescription:String? {"Esta carpeta se eliminó de Fotografía."}}
 struct MediaFolderDeletion: Codable, Identifiable {
     let id:String
@@ -227,6 +303,8 @@ struct MediaFeed: Codable {
     var canDelete: Bool? = nil
     var pendingDeletions: [MediaFolderDeletion]? = nil
     var deletedFolders: [String]? = nil
+    var deletedFiles: [String]? = nil
+    var pendingFileDeletions: [MediaFolderDeletion]? = nil
 }
 struct MediaUploadState: Decodable {
     let id: String
@@ -462,6 +540,9 @@ struct MediaGalleryView: View {
                         if user.canDeleteMedia,let pending=feed.pendingDeletions,!pending.isEmpty {
                             VStack(alignment:.leading,spacing:12) {ForEach(pending) {job in HStack {Text("Eliminación pendiente: "+job.name).font(.footnote);Spacer();Button("Continuar eliminación") {deletingFolder=MediaFolder(id:job.id,name:job.name);deletionConfirmed=true;beginFolderDeletion()}.disabled(deleting).accessibilityIdentifier("media.delete.resume."+job.id)}}}.padding(14).background(.orange.opacity(0.08),in:RoundedRectangle(cornerRadius:14))
                         }
+                        if user.canDeleteMedia,let jobs=feed.pendingFileDeletions {
+                            ForEach(jobs) {job in HStack{Text("Eliminación pendiente: "+job.name).font(.footnote);Spacer();MediaPhotoMenu(item:MediaItem(id:job.id,name:job.name,mimeType:"image/jpeg",kind:"image",size:0,modifiedAt:"",thumbnailAvailable:false),client:store.client,canDelete:true,resuming:true)}}
+                        }
                         if !compactGallery && writable && uploadDestination?.id == parentID { uploadActions }
                         if importing { HStack { ProgressView("Preparando archivos…"); Spacer(); Button("Cancelar preparación") { importTask?.cancel() } } }
                         if let uploadNotice { Label(uploadNotice, systemImage: "checkmark.circle").font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.upload.status") }
@@ -509,6 +590,9 @@ struct MediaGalleryView: View {
             }
             .onChange(of: persistentUploads.uploading) { _, running in if !running { refreshAfterUploads() } }
             #endif
+            .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
+                if let saved=store.client.cachedMedia(folder:folderID) {items=MediaGalleryOrder.sorted(saved.items);thumbnailEpoch=UUID()}
+            }
             .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
             .alert("Eliminar carpeta",isPresented:$deletionConfirmation) {
                 Button("Cancelar",role:.cancel){deletingFolder=nil}
@@ -561,6 +645,7 @@ struct MediaGalleryView: View {
             LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:12) {
                 ForEach(items.filter { $0.kind != "folder" }) {item in
                     Button {open(item)} label:{MediaTile(item:item,client:store.client,offline:store.isOffline,opening:opening==item.id,epoch:thumbnailEpoch,denied:thumbnailDenied)}.buttonStyle(.plain).disabled(opening != nil || uploading).accessibilityIdentifier("media.item."+item.id)
+                        .overlay(alignment:.topTrailing){if item.kind=="image" {MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true).padding(6)}}
                 }
             }
         }
@@ -572,6 +657,7 @@ struct MediaGalleryView: View {
                                 VStack(alignment:.leading,spacing:0) {
                                     Button { open(item) } label: { MediaTile(item: item, client: store.client, offline: store.isOffline, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
                                         .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
+                                    if item.kind == "image" {HStack{Spacer();MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true)}.padding(8)}
                                     if item.kind == "folder" {
                                         HStack {Text("Carpeta del equipo").font(.caption).foregroundStyle(.secondary);Spacer(minLength:6)
                                             Menu {folderCommands(MediaFolder(id:item.id,name:item.name))} label:{Image(systemName:"ellipsis.circle").font(.title3).padding(4)}.buttonStyle(.plain).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.options."+item.id)
@@ -825,7 +911,7 @@ struct MediaGalleryView: View {
     private func open(_ item: MediaItem,in context:MediaFeed?=nil) {
         if item.kind == "folder" { navigate(to: item.id); return }
         if compactGallery,item.kind == "image",let source=context ?? feed {
-            let whole=MediaFeed(connected:source.connected,canRead:source.canRead,canUpload:source.canUpload,canConnect:source.canConnect,root:source.root,folder:source.folder,breadcrumbs:source.breadcrumbs,items:context?.items ?? items,nextPageToken:source.nextPageToken,provider:source.provider,collectionID:source.collectionID,canDelete:source.canDelete,pendingDeletions:source.pendingDeletions,deletedFolders:source.deletedFolders)
+            let whole=MediaFeed(connected:source.connected,canRead:source.canRead,canUpload:source.canUpload,canConnect:source.canConnect,root:source.root,folder:source.folder,breadcrumbs:source.breadcrumbs,items:context?.items ?? items,nextPageToken:source.nextPageToken,provider:source.provider,collectionID:source.collectionID,canDelete:source.canDelete,pendingDeletions:source.pendingDeletions,deletedFolders:source.deletedFolders,deletedFiles:source.deletedFiles,pendingFileDeletions:source.pendingFileDeletions)
             fullscreenPhotos=MediaPhotoPresentation(selected:item,feed:whole);return
         }
         guard opening == nil else { return }; opening = item.id
@@ -1201,12 +1287,14 @@ final class MediaPhotoViewer: ObservableObject {
 }
 private struct MediaPreviewSheet: View {
     let preview: MediaPreview
+    let client:PayrollClient
+    let canDelete:Bool
     @StateObject private var photos: MediaPhotoViewer
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
     @State private var player: AVPlayer?
     init(preview: MediaPreview, photos: [MediaItem], feed: MediaFeed?, client: PayrollClient, denied: @escaping (Error)->Void) {
-        self.preview=preview
+        self.preview=preview;self.client=client;self.canDelete=feed?.canDelete == true
         _photos=StateObject(wrappedValue:MediaPhotoViewer(selected:preview.item,document:preview.document,items:photos,token:feed?.nextPageToken ?? "",folderID:feed?.folder?.id ?? "",collectionID:feed?.collectionID,load:{try await client.mediaDocument($0)},page:{try await client.media(folder:feed?.folder?.id ?? "",pageToken:$0)},denied:denied))
     }
     var body: some View {
@@ -1246,8 +1334,9 @@ private struct MediaPreviewSheet: View {
             })
             #endif
             .privacySensitive().navigationTitle(preview.item.kind=="image" ? photos.selected.name : preview.item.name).jacInlineTitle()
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() }.accessibilityIdentifier("media.preview.close") } }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() }.accessibilityIdentifier("media.preview.close") };ToolbarItem(placement:.confirmationAction){if preview.item.kind=="image" {MediaPhotoMenu(item:photos.selected,client:client,canDelete:canDelete && client.accessUser?.canDeleteMedia == true).id(photos.selected.id)}} }
         }.onChange(of: phase) { _, value in if value != .active { player?.pause() } }
+        .onReceive(client.$cacheRevision) {_ in if let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(photos.selected.id,scope:scope) {photos.stop();dismiss()}}
         .onDisappear {photos.stop();player?.pause()}
         #if os(macOS)
         .frame(minWidth: 720, minHeight: 520)
@@ -1357,6 +1446,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         var collectionID: String?
         var deletedFolders: [String]?
         var deletedFiles: [String]?
+        var pinnedFiles: [String: MediaItem]?
     }
     let root: URL
     private let lock = NSRecursiveLock()
@@ -1393,7 +1483,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         try sealed.write(to: indexFile(scope), options: JACFileSecurity.writeOptions)
         try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: indexFile(scope).path)
     }
-    func saveFeed(_ feed: MediaFeed, key: String, append: Bool, scope: AgendaCacheScope) throws {
+    @discardableResult func saveFeed(_ feed: MediaFeed, key: String, append: Bool, scope: AgendaCacheScope) throws -> MediaFeed {
         lock.lock(); defer { lock.unlock() }
         var index = readIndex(scope), result = feed
         if let previous = index.collectionID, feed.collectionID == nil, previous.hasPrefix("jac-r2-") { throw CancellationError() }
@@ -1405,8 +1495,17 @@ final class MediaOfflineCache: @unchecked Sendable {
         }
         if let previous = index.feeds[key], append {
             var seen = Set<String>()
-            result = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: (previous.items + feed.items).filter { seen.insert($0.id).inserted }, nextPageToken: feed.nextPageToken, provider: feed.provider, collectionID: feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders)
+            result = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: (previous.items + feed.items).filter { seen.insert($0.id).inserted }, nextPageToken: feed.nextPageToken, provider: feed.provider, collectionID: feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders,deletedFiles:feed.deletedFiles,pendingFileDeletions:feed.pendingFileDeletions)
         }
+        let deletedFiles=Set(index.deletedFiles ?? []).union(feed.deletedFiles ?? [])
+        for id in deletedFiles {
+            if let file=index.files.removeValue(forKey:id) {try? FileManager.default.removeItem(at:encryptedFile(file,scope:scope))}
+            index.pinnedFiles?.removeValue(forKey:id);index.previewAccess?.removeValue(forKey:id)
+        }
+        index.deletedFiles=Array(deletedFiles)
+        index.feeds=index.feeds.mapValues{filteredFeed($0,removed:deletedFiles)}
+        index.downloads=index.downloads.mapValues{filteredFeed($0,removed:deletedFiles)}
+        result=filteredFeed(result,removed:deletedFiles)
         let removed=Set(index.deletedFolders ?? []).union(feed.deletedFolders ?? [])
         if !removed.isEmpty {pruneFolders(removed,index:&index,scope:scope)}
         if result.breadcrumbs.contains(where:{removed.contains($0.id)}) {try writeIndex(index,scope:scope);throw MediaFolderRemoved()}
@@ -1414,15 +1513,16 @@ final class MediaOfflineCache: @unchecked Sendable {
         index.feeds[key] = result
         if let id = feed.folder?.id { index.feeds[id] = result }
         try writeIndex(index, scope: scope)
+        return filteredFeed(feed,removed:removed.union(deletedFiles))
     }
     private func filteredFeed(_ feed:MediaFeed,removed:Set<String>)->MediaFeed {
-        MediaFeed(connected:feed.connected,canRead:feed.canRead,canUpload:feed.canUpload,canConnect:feed.canConnect,root:feed.root,folder:feed.folder,breadcrumbs:feed.breadcrumbs,items:feed.items.filter{!removed.contains($0.id)},nextPageToken:feed.nextPageToken,provider:feed.provider,collectionID:feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:Array(removed))
+        MediaFeed(connected:feed.connected,canRead:feed.canRead,canUpload:feed.canUpload,canConnect:feed.canConnect,root:feed.root,folder:feed.folder,breadcrumbs:feed.breadcrumbs,items:feed.items.filter{!removed.contains($0.id)},nextPageToken:feed.nextPageToken,provider:feed.provider,collectionID:feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders,deletedFiles:feed.deletedFiles,pendingFileDeletions:feed.pendingFileDeletions)
     }
     private func pruneFolders(_ removed:Set<String>,index:inout Index,scope:AgendaCacheScope) {
         let feeds=Array(index.feeds.values)+Array(index.downloads.values)
         let affected=feeds.filter {feed in removed.contains(feed.folder?.id ?? "") || feed.breadcrumbs.contains{removed.contains($0.id)}}
         let fileIDs=Set(index.deletedFiles ?? []).union(affected.flatMap{$0.items.filter{$0.kind != "folder"}.map(\.id)})
-        for id in fileIDs {if let item=index.files.removeValue(forKey:id){try? FileManager.default.removeItem(at:encryptedFile(item,scope:scope))};index.previewAccess?.removeValue(forKey:id)}
+        for id in fileIDs {if let item=index.files.removeValue(forKey:id){try? FileManager.default.removeItem(at:encryptedFile(item,scope:scope))};index.previewAccess?.removeValue(forKey:id);index.pinnedFiles?.removeValue(forKey:id)}
         func keep(_ feed:MediaFeed)->Bool {!removed.contains(feed.folder?.id ?? "") && !feed.breadcrumbs.contains{removed.contains($0.id)}}
         index.feeds=index.feeds.filter{keep($0.value)}.mapValues{filteredFeed($0,removed:removed)}
         index.downloads=index.downloads.filter{keep($0.value)}.mapValues{filteredFeed($0,removed:removed)}
@@ -1444,10 +1544,25 @@ final class MediaOfflineCache: @unchecked Sendable {
         guard index.collectionID == feed.collectionID else { throw CancellationError() }
         let removed=Set(index.deletedFolders ?? [])
         guard !feed.breadcrumbs.contains(where:{removed.contains($0.id)}) else{throw MediaFolderRemoved()}
-        let clean=filteredFeed(feed,removed:removed)
+        let clean=filteredFeed(feed,removed:removed.union(index.deletedFiles ?? []))
         index.downloads[key] = clean
         if let id = feed.folder?.id { index.downloads[id] = clean }
         try writeIndex(index, scope: scope)
+    }
+    func pinFile(_ item:MediaItem,scope:AgendaCacheScope) throws {
+        lock.lock();defer{lock.unlock()}
+        var index=readIndex(scope)
+        guard hasFile(item,scope:scope),!(index.deletedFiles ?? []).contains(item.id),!revoked.contains(scope.id) else {throw MediaFileRemoved()}
+        index.pinnedFiles=(index.pinnedFiles ?? [:]).merging([item.id:item]){_,new in new}
+        index.previewAccess?.removeValue(forKey:item.id)
+        try writeIndex(index,scope:scope)
+    }
+    func isDeleted(_ id:String,scope:AgendaCacheScope) -> Bool {
+        lock.lock();defer{lock.unlock()};return (readIndex(scope).deletedFiles ?? []).contains(id)
+    }
+    func isPinned(_ item:MediaItem,scope:AgendaCacheScope) -> Bool {
+        lock.lock();defer{lock.unlock()}
+        return hasFile(item,scope:scope) && (readIndex(scope).pinnedFiles?[item.id] != nil || readIndex(scope).downloads.values.contains{$0.items.contains{$0.id==item.id}})
     }
     func hasFile(_ item: MediaItem, scope: AgendaCacheScope) -> Bool {
         lock.lock(); defer { lock.unlock() }
@@ -1464,7 +1579,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         guard !revoked.contains(scope.id) else { return }
         var index = readIndex(scope)
-        index.files.removeValue(forKey: item.id); index.previewAccess?.removeValue(forKey: item.id)
+        index.files.removeValue(forKey: item.id); index.previewAccess?.removeValue(forKey: item.id);index.pinnedFiles?.removeValue(forKey:item.id)
         index.deletedFiles = Array(Set(index.deletedFiles ?? []).union([item.id]))
         func withoutFile(_ feed: MediaFeed) -> MediaFeed {
             MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload,
@@ -1472,7 +1587,7 @@ final class MediaOfflineCache: @unchecked Sendable {
                       breadcrumbs: feed.breadcrumbs, items: feed.items.filter { $0.id != item.id },
                       nextPageToken: feed.nextPageToken, provider: feed.provider,
                       collectionID: feed.collectionID, canDelete: feed.canDelete,
-                      pendingDeletions: feed.pendingDeletions, deletedFolders: feed.deletedFolders)
+                      pendingDeletions: feed.pendingDeletions, deletedFolders: feed.deletedFolders,deletedFiles:feed.deletedFiles,pendingFileDeletions:feed.pendingFileDeletions)
         }
         index.feeds = index.feeds.mapValues(withoutFile)
         index.downloads = index.downloads.mapValues(withoutFile)
@@ -1514,7 +1629,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         var index = readIndex(scope); index.files[item.id] = item
         if preview { index.previewAccess = (index.previewAccess ?? [:]).merging([item.id: Date().timeIntervalSince1970]) { _, new in new } }
         else { index.previewAccess?.removeValue(forKey: item.id) }
-        let pinned = Set(index.downloads.values.flatMap { $0.items.map(\.id) })
+        let pinned = Set(index.downloads.values.flatMap { $0.items.map(\.id) }).union(index.pinnedFiles?.keys.map{$0} ?? [])
         var automatic = (index.previewAccess ?? [:]).filter { !pinned.contains($0.key) }
         var total = automatic.keys.reduce(Int64(0)) { $0 + (index.files[$1]?.size ?? 0) }
         for id in automatic.sorted(by: { $0.value < $1.value }).map(\.key) where total > 128 * 1024 * 1024 {
@@ -1558,7 +1673,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         guard let saved = index.files[item.id], saved.modifiedAt == item.modifiedAt,
               saved.size == item.size, saved.mimeType == item.mimeType,
               !(index.deletedFiles ?? []).contains(item.id) else { throw CancellationError() }
-        let pinned = index.downloads.values.contains { $0.items.contains { $0.id == item.id } }
+        let pinned = index.pinnedFiles?[item.id] != nil || index.downloads.values.contains { $0.items.contains { $0.id == item.id } }
         if !pinned, let previous = index.previewAccess?[item.id], accessedAt - previous >= 30 {
             index.previewAccess?[item.id] = accessedAt
             // Recency is best effort: a full disk must not prevent opening an

@@ -8,9 +8,10 @@ struct MediaFullscreenPhotoView:View {
     @Environment(\.scenePhase) private var phase
     private let client:PayrollClient
     private let stamp:String?
+    private let canDelete:Bool
 
     init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,denied:@escaping(Error)->Void) {
-        self.client=client
+        self.client=client;self.canDelete=feed.canDelete == true
         let expected=try? client.mediaAccessStamp();stamp=expected
         _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaDocument($0,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == (try? client.mediaAccessStamp())},denied:denied))
     }
@@ -22,6 +23,7 @@ struct MediaFullscreenPhotoView:View {
         }
         .safeAreaInset(edge:.top,spacing:0) {
             HStack {
+                if let item=photos.selected {MediaPhotoMenu(item:item,client:client,canDelete:canDelete && store.overview?.user.canDeleteMedia == true).id(item.id)}
                 Spacer()
                 Button {photos.stop();dismiss()} label:{Image(systemName:"xmark").font(.body.weight(.semibold)).foregroundStyle(.white).frame(width:44,height:44).background(.black.opacity(0.45),in:Circle())}
                     .accessibilityLabel("Listo").accessibilityIdentifier("media.preview.close")
@@ -53,6 +55,7 @@ struct MediaFullscreenPhotoView:View {
         }
         .onChange(of:phase) {_,value in if value == .active {photos.refreshAuthorization()}}
         .onChange(of:try? client.mediaAccessStamp()) {_,value in if value != stamp {photos.stop();dismiss()}}
+        .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {photos.stop();dismiss()}}
         .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {photos.stop();dismiss()}}
         .onDisappear {photos.stop()}
     }

@@ -21,7 +21,7 @@ class Query {
 }
 globalThis.__r2Fixture={DB:{prepare:text=>new Query(text),batch:async queries=>{sql.exec('BEGIN');try{const out=queries.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'separate-r2-fixture-auth-key-2026',PAYROLL_MAIL_KEY:Buffer.alloc(32,9).toString('base64url')};
 globalThis.__r2Headers=new Headers();
-const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as uploads from './app/api/media/upload/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
+const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as offline from './app/api/media/offline/route';export * as uploads from './app/api/media/upload/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/r2-fixture-')),file=dir+'/fixture.mjs';await writeFile(file,bundled.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const ownerID=await m.bootstrapOwner('independent-new-gallery-owner','fixture'),photographer=crypto.randomUUID(),stamp=new Date().toISOString();
 sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,media_only,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(photographer,'new-photo','photo@example.invalid','Fotógrafo ficticio','fixture','[]',1,stamp,stamp);
@@ -258,4 +258,59 @@ test('permission/configuration changes during deletion stop further actions and 
  sql.prepare('UPDATE jac_media_r2_entries SET object_key=? WHERE id=?').run('originals/'+done.id,done.fileId);
  hook=r=>{if(new URL(r.url).searchParams.has('delete')){sql.exec("UPDATE jac_media_r2_connection SET version=version+1 WHERE id='jac'");return new Response('<DeleteResult/>');}};
  assert.equal((await api({action:'deleteFolder',id:target},token)).status,403);hook=undefined;const seen=calls.length;assert.equal((await api({action:'deleteFolder',id:target},token)).status,409);assert.equal(calls.length,seen);
+});
+
+test('individual deletion requires administrator, same origin and observed revision and cannot target a folder',async()=>{
+ await activate();const parent=await folder(),done=await (await send(await start(jpeg,parent))).json(),photo=(await (await feed(parent)).json()).items[0],body={action:'deleteFile',id:photo.id,revision:photo.modifiedAt},before=calls.length;
+ assert.equal((await api(body)).status,403);
+ assert.equal((await m.gallery.POST(req('/api/media',body,token,'POST',{origin:'https://foreign.invalid'}))).status,403);
+ assert.equal((await api({...body,revision:'stale'},token)).status,409);
+ assert.equal((await api({action:'deleteFile',id:parent,revision:photo.modifiedAt},token)).status,400);
+ assert.equal((await api({action:'deleteFile',id:m.R2_ROOT},token)).status,400);
+ assert.equal(calls.length,before);assert.equal(objects.has('originals/'+done.id),true);
+});
+test('individual deletion removes exactly one original and thumbnail, is idempotent and cannot be republished',async()=>{
+ await activate();const parent=await folder(),upload=await start(jpeg,parent),done=await (await send(upload)).json();
+ await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'));
+ const kept=await (await send(await start(jpeg,parent))).json(),photo=(await (await feed(parent)).json()).items.find(p=>p.id===done.fileId),body={action:'deleteFile',id:photo.id,revision:photo.modifiedAt};
+ const response=await api(body,token);assert.equal(response.status,200);const result=await response.json();assert.equal(result.complete,true);assert.equal(result.removed,1);
+ assert.equal(objects.size,1);assert.equal(objects.has('originals/'+kept.id),true);
+ assert.deepEqual(await (await api(body,token)).json(),result);
+ const after=await (await feed(parent)).json();assert.deepEqual(after.items.map(p=>p.id),[kept.fileId]);assert.deepEqual(after.deletedFiles,[photo.id]);
+ for(const suffix of ['', '&metadata=1','&thumbnail=1'])assert.equal((await m.files.GET(req('/api/media/file?id='+photo.id+suffix,undefined,token,'GET'))).status,410);
+ assert.equal((await command({action:'status',id:upload.data.id})).status,410);
+ assert.equal((await command(upload.data)).status,410);
+ assert.equal((await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'))).status,410);
+});
+test('a lost individual S3 deletion stays hidden and resumable by another administrator without a second original',async()=>{
+ await activate();const done=await (await send(await start())).json(),photo=(await (await feed()).json()).items[0];loseDelete=true;
+ assert.equal((await api({action:'deleteFile',id:photo.id,revision:photo.modifiedAt},token)).status,502);
+ const pending=await (await feed('',token)).json();assert.equal(pending.items.length,0);assert.equal(pending.pendingFileDeletions[0].id,done.fileId);
+ assert.equal((await (await feed()).json()).pendingFileDeletions.length,0);
+ const second=crypto.randomUUID();sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(second,'photo-delete-admin','photo-delete-admin@example.invalid','Admin ficticio','fixture',JSON.stringify(['administrator']),stamp,stamp);
+ const result=await api({action:'deleteFile',id:photo.id},await m.makeSession(second));assert.equal(result.status,200);assert.equal((await result.json()).complete,true);assert.equal(objects.size,0);
+});
+test('a thumbnail in flight cannot revive a photo tombstoned during its S3 request',async()=>{
+ await activate();const upload=await start(),done=await (await send(upload)).json();let intercepted=false;
+ hook=async r=>{if(r.method==='PUT'&&new URL(r.url).pathname.includes('/thumbnails/')){
+  hook=undefined;intercepted=true;const photo=(await (await feed()).json()).items[0];const response=await api({action:'deleteFile',id:photo.id,revision:photo.modifiedAt},token);assert.equal(response.status,200);assert.equal((await response.json()).waiting,true);
+ }};
+ assert.equal((await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'))).status,403);assert.equal(intercepted,true);
+ assert.equal((await api({action:'deleteFile',id:done.fileId},token)).status,200);assert.equal(objects.size,0);assert.equal(sql.prepare('SELECT 1 FROM jac_media_r2_entries WHERE id=?').get(done.fileId),undefined);
+});
+test('an invalid object key, partial delete, redirect or revoked session never reports individual deletion success',async()=>{
+ await activate();const upload=await start(),done=await (await send(upload)).json(),photo=(await (await feed()).json()).items[0],body={action:'deleteFile',id:photo.id,revision:photo.modifiedAt};
+ sql.prepare('UPDATE jac_media_r2_entries SET object_key=? WHERE id=?').run('originals/'+crypto.randomUUID(),photo.id);const before=calls.length;assert.equal((await api(body,token)).status,409);assert.equal(calls.length,before);
+ sql.prepare('UPDATE jac_media_r2_entries SET object_key=? WHERE id=?').run('originals/'+done.id,photo.id);
+ hook=r=>new URL(r.url).searchParams.has('delete')?new Response(null,{status:307,headers:{location:'https://foreign.invalid'}}):undefined;assert.equal((await api(body,token)).status,502);
+ hook=r=>new URL(r.url).searchParams.has('delete')?new Response('<DeleteResult><Error/></DeleteResult>'):undefined;assert.equal((await api(body,token)).status,502);
+ hook=r=>{if(new URL(r.url).searchParams.has('delete')){sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(ownerID);return new Response('<DeleteResult/>');}};assert.equal((await api(body,token)).status,403);
+ assert.equal(sql.prepare("SELECT status FROM jac_media_operations WHERE id=?").get('r2-delete:'+photo.id).status,'pending');
+});
+test('offline encryption capabilities are session scoped, require media access and never expose login or application secrets',async()=>{
+ const read=async session=>m.offline.GET(req('/api/media/offline',undefined,session,'GET'));
+ const first=await read(photoToken);assert.equal(first.status,200);assert.match(first.headers.get('cache-control'),/no-store/);const context=await first.json();
+ assert.match(context.scope,/^[A-Za-z0-9_-]{43}$/);assert.match(context.key,/^[A-Za-z0-9_-]{43}$/);assert.ok(!JSON.stringify(context).includes(photoToken));
+ assert.deepEqual(await (await read(photoToken)).json(),context);const another=await m.makeSession(photographer);assert.notDeepEqual(await (await read(another)).json(),context);
+ sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('[]',photographer);assert.equal((await read(photoToken)).status,403);assert.equal((await read('invalid')).status,401);
 });

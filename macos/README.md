@@ -6,6 +6,8 @@
 
 # JAC Music para Mac
 
+Fotos individuales: menú por imagen y en el visor para descargar, guardar sin conexión o eliminar con confirmación administrativa. Mantiene carpeta y demás archivos, con copia cifrada por sesión. Las fuentes compartidas están preparadas para pull y este mismo proyecto; compilación/pruebas Xcode pendientes en tu Mac. Ver [acciones individuales](../docs/PHOTOGRAPHY_INDIVIDUAL_PHOTOS.md).
+
 ## Fotografía R2 · Mac 1.7.0 (9)
 
 Mismo proyecto JACMac y misma outputs/JAC Music.app. Archivo nuevo R2, sin importar contenido histórico de Drive, con subidas directas reanudables y miniaturas nativas. Se renueva solo la copia cifrada de Fotografía al recibir la nueva colección; sesión, demás módulos y privacidad se conservan. Cierra y vuelve a abrir la app para ejecutar el binario actualizado. Ver docs/PHOTOGRAPHY_R2_MIGRATION.md para estado publicado y verificación.

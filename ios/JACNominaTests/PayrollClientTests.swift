@@ -499,6 +499,32 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertThrowsError(try reopened.saveFile(source.url,item:one,scope:scope));XCTAssertThrowsError(try reopened.saveFeed(feeds[1],key:target.id,append:false,scope:scope));XCTAssertThrowsError(try reopened.pinFeed(feeds[1],key:target.id,scope:scope))
         try reopened.saveFeed(feeds[0],key:base.id,append:false,scope:scope);XCTAssertEqual(reopened.loadFeed(base.id,scope:scope)?.items.map(\.id),[other.id]);let document=try XCTUnwrap(reopened.document(kept,scope:scope));defer{TemporaryDocuments.remove(document)};XCTAssertEqual(try Data(contentsOf:document.url),MediaFixture.photo)
     }
+    func testIndividuallyPinnedPhotoSurvivesReopenAndRemoteDeletionRetiresOnlyThatPhoto() throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer {try? FileManager.default.removeItem(at:root)}
+        let cache=MediaOfflineCache(root:root),scope=AgendaCacheScope(origin:"https://photo-actions.invalid/media-offline-v1",token:String(repeating:"f",count:43)),folder=MediaFolder(id:"jac_r2_root",name:"Fotografía")
+        func photo(_ id:String)->MediaItem {MediaItem(id:id,name:id+".png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"fixture",thumbnailAvailable:true)}
+        let one=photo("one-photo"),two=photo("two-photo"),feed=MediaFeed(connected:true,canRead:true,canUpload:true,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:[one,two],nextPageToken:nil,provider:"r2",collectionID:"jac-r2-test")
+        try cache.saveFeed(feed,key:"",append:false,scope:scope)
+        let source=try TemporaryDocuments.save(MediaFixture.photo,filename:"Fixture.png");defer{TemporaryDocuments.remove(source)}
+        for item in [one,two] {try cache.saveFile(source.url,item:item,scope:scope,preview:true)}
+        XCTAssertFalse(cache.isPinned(one,scope:scope));try cache.pinFile(one,scope:scope)
+        let reopened=MediaOfflineCache(root:root);XCTAssertTrue(reopened.isPinned(one,scope:scope));XCTAssertFalse(reopened.isPinned(two,scope:scope))
+        var removed=feed;removed.deletedFiles=[one.id]
+        let safe=try reopened.saveFeed(removed,key:"",append:false,scope:scope)
+        XCTAssertEqual(safe.items.map(\.id),[two.id]);XCTAssertFalse(reopened.hasFile(one,scope:scope));XCTAssertTrue(reopened.hasFile(two,scope:scope))
+        XCTAssertNil(try reopened.document(one,scope:scope));XCTAssertThrowsError(try reopened.pinFile(one,scope:scope));XCTAssertThrowsError(try reopened.saveFile(source.url,item:one,scope:scope))
+        let stale=try reopened.saveFeed(feed,key:"",append:false,scope:scope);XCTAssertEqual(stale.items.map(\.id),[two.id])
+        let document=try XCTUnwrap(reopened.document(two,scope:scope));defer{TemporaryDocuments.remove(document)};XCTAssertEqual(try Data(contentsOf:document.url),MediaFixture.photo)
+    }
+    @MainActor func testIndividualPhotoDeletionUsesCurrentRevisionAndPreservesOtherPhotosAndSession() async throws {
+        let client=UITestBackend.client();_=try await client.workspace();let root=try await client.media(),folder=try XCTUnwrap(root.items.first{$0.kind=="folder"})
+        let feed=try await client.media(folder:folder.id),photo=try XCTUnwrap(feed.items.first{$0.kind=="image"})
+        try await client.saveMediaOffline(photo);let scope=try XCTUnwrap(client.mediaScope());XCTAssertTrue(client.mediaOffline.isPinned(photo,scope:scope))
+        let result=try await client.deleteMediaFileStep(photo);XCTAssertEqual(result.id,photo.id);XCTAssertEqual(result.complete,true)
+        XCTAssertFalse(client.mediaOffline.hasFile(photo,scope:scope));XCTAssertFalse(client.cachedMedia(folder:folder.id)?.items.contains{$0.id==photo.id} ?? true)
+        XCTAssertNotNil(client.cachedWorkspace());let workspace=try await client.workspace();XCTAssertTrue(workspace.user.canReadMedia)
+    }
     @MainActor func testNativeFolderDeletionUsesJACAndKeepsSessionAndOtherModules() async throws {
         let client=UITestBackend.client();_ = try await client.workspace();let root=try await client.media(),folder=try XCTUnwrap(root.items.first{$0.kind=="folder"});_ = try await client.media(folder:folder.id)
         let result=try await client.deleteMediaFolderStep(MediaFolder(id:folder.id,name:folder.name));XCTAssertEqual(result.id,folder.id);XCTAssertEqual(result.complete,true);XCTAssertNil(client.cachedMedia(folder:folder.id));XCTAssertFalse(client.cachedMedia()?.items.contains{$0.id==folder.id} ?? true)
