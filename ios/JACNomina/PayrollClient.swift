@@ -143,6 +143,8 @@ final class PayrollClient: ObservableObject {
     private var syncTask: Task<Void, Never>?
     private var storageFailures = 0
     private var crmGeneration = 0
+    private var deletedContractIDs = Set<String>()
+    private var contractDocuments: [String: [ExportedDocument]] = [:]
     private var cacheGeneration = 0
     private var noticeInvalidations: [String: Int] = [:]
     private var permissionUser: PayrollUser?
@@ -202,6 +204,7 @@ final class PayrollClient: ObservableObject {
         try agendaCache.save(record, scope: scope)
     }
     func clearSession() throws {
+        deletedContractIDs=[];contractDocuments=[:]
         mediaRootRead?.task.cancel(); mediaRootRead = nil
         syncTask?.cancel(); syncTask = nil
         cacheGeneration += 1
@@ -328,7 +331,7 @@ final class PayrollClient: ObservableObject {
         do { (data, rawResponse) = try await session.data(for: request) }
         catch {
             guard sentToken == (try vault.load()), generation == cacheGeneration else { throw CancellationError() }
-            if path.hasPrefix("api/crm"),body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
+            if path.hasPrefix("api/crm") || path == "api/mobile/contracts",body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
             if AgendaOfflineCache.isUnavailable(error) {
                 usingOfflineCopy = true
                 if let saved, let response = saved.response, !forceNetwork { return (try authorizedNoticeData(saved.data,path:path), response) }
@@ -344,7 +347,7 @@ final class PayrollClient: ObservableObject {
             if sentToken == (try vault.load()) { try clearSession() }
             throw APIError.unauthorized
         }
-        if path.hasPrefix("api/crm"),body == nil,crmReadGeneration != crmGeneration,!(400..<500).contains(response.statusCode) {throw CancellationError()}
+        if path.hasPrefix("api/crm") || path == "api/mobile/contracts",body == nil,crmReadGeneration != crmGeneration,!(400..<500).contains(response.statusCode) {throw CancellationError()}
         if [500, 502, 503, 504].contains(response.statusCode), let saved, let result = saved.response, !forceNetwork {
             usingOfflineCopy = true; return (try authorizedNoticeData(saved.data,path:path), result)
         }
@@ -648,7 +651,7 @@ final class PayrollClient: ObservableObject {
         let payload:JSONValue = id.map { .object(["action":.string("save"),"id":.string($0),"showId":showId.map(JSONValue.string) ?? .null,"input":fields]) } ?? fields
         guard try hasSession() else {throw APIError.unauthorized}
         let (data,response)=try await request(path:"api/mobile/contracts",body:payload,document:true,forceNetwork:true,nativeBearer:true)
-        guard !Task.isCancelled,permissionUser?.hasSection(.crm) != false else {throw CancellationError()}
+        guard !Task.isCancelled,permissionUser?.hasSection(.crm) != false,id.map({!deletedContractIDs.contains($0)}) ?? true else {throw CancellationError()}
         guard response.mimeType == "application/pdf",data.count <= 5*1024*1024,data.starts(with:Data("%PDF-".utf8)) else {throw APIError.invalid("No se recibió un contrato PDF válido.")}
         // Decode the UTF-8 filename supplied by the same generator as the web.
         // Neither a header nor a municipality may choose a filesystem path.
@@ -656,7 +659,9 @@ final class PayrollClient: ObservableObject {
         let encoded=disposition.components(separatedBy:"filename*=UTF-8''").dropFirst().first?.components(separatedBy:";").first
         let received=encoded?.removingPercentEncoding
         let filename=received.flatMap { name in name == (name as NSString).lastPathComponent && !name.contains("\\") && !name.unicodeScalars.contains(where:{$0.value < 32 || $0.value == 127}) && name.hasSuffix(".pdf") ? name:nil } ?? input.filename
-        return try TemporaryDocuments.save(data,filename:filename)
+        let document=try TemporaryDocuments.save(data,filename:filename)
+        if let id {contractDocuments[id,default:[]].append(document)}
+        return document
     }
     func contractArchive(query:[String:String] = [:]) async throws -> JSONValue {
         let (data,_)=try await request(path:"api/mobile/contracts",query:query.map{URLQueryItem(name:$0.key,value:$0.value)},forceNetwork:!usingOfflineCopy,nativeBearer:true)
@@ -665,12 +670,30 @@ final class PayrollClient: ObservableObject {
     func linkContract(id:String,showId:String?,version:Int) async throws {
         _ = try await request(path:"api/mobile/contracts",body:.object(["action":.string("link"),"id":.string(id),"showId":showId.map(JSONValue.string) ?? .null,"version":.number(Double(version))]),forceNetwork:true,nativeBearer:true)
     }
+    func deleteArchivedContract(id:String,version:Int) async throws {
+        _ = try await request(path:"api/mobile/contracts",body:.object(["action":.string("delete"),"id":.string(id),"confirmation":.string(id),"version":.number(Double(version))]),forceNetwork:true,nativeBearer:true)
+        crmGeneration += 1;deletedContractIDs.insert(id)
+        for document in contractDocuments.removeValue(forKey:id) ?? [] {TemporaryDocuments.remove(document)}
+        if let scope=try offlineScope() {
+            for entry in offlineCache.entries(scope) {
+                guard let parts=URLComponents(string:entry.url),parts.path == "/api/mobile/contracts" else {continue}
+                if parts.queryItems?.contains(where:{$0.name == "id" && $0.value == id}) == true {offlineCache.remove(scope){$0.key == entry.key};continue}
+                guard let saved=offlineCache.load(scope,key:entry.key),var feed=try? decoder.decode(JSONValue.self,from:saved.data),case .array = feed["contracts"] else {continue}
+                feed["contracts"] = .array(feed["contracts"].elements.filter{$0["id"].text != id})
+                do {try offlineCache.save(OfflineResponse(key:saved.key,url:saved.url,headers:saved.headers,data:JSONEncoder().encode(feed),receivedAt:saved.receivedAt,revision:saved.revision),scope:scope)}
+                catch {offlineCache.remove(scope){$0.key == entry.key}}
+            }
+        }
+        cacheRevision += 1
+    }
     func archivedContract(id:String,filename:String) async throws -> ExportedDocument {
+        guard !deletedContractIDs.contains(id) else {throw APIError.message("Contrato no disponible.")}
         let (data,response)=try await request(path:"api/mobile/contracts",query:[URLQueryItem(name:"id",value:id)],document:true,forceNetwork:!usingOfflineCopy,nativeBearer:true)
-        guard !Task.isCancelled,permissionUser?.hasSection(.crm) != false else {throw CancellationError()}
+        guard !Task.isCancelled,permissionUser?.hasSection(.crm) != false,!deletedContractIDs.contains(id) else {throw CancellationError()}
         guard response.mimeType == "application/pdf",data.count <= 5*1024*1024,data.starts(with:Data("%PDF-".utf8)) else {throw APIError.invalid("No se recibió un contrato PDF válido.")}
         let safe=(filename as NSString).lastPathComponent
-        return try TemporaryDocuments.save(data,filename:safe.hasSuffix(".pdf") ? safe:"Contrato JAC.pdf")
+        let document=try TemporaryDocuments.save(data,filename:safe.hasSuffix(".pdf") ? safe:"Contrato JAC.pdf")
+        contractDocuments[id,default:[]].append(document);return document
     }
     func crmFile(owner:String,file:NoticeAttachment,version:Int,contact:Bool) async throws -> ExportedDocument {
         let query=[URLQueryItem(name:contact ? "contact":"id",value:owner),URLQueryItem(name:"file",value:file.id)]

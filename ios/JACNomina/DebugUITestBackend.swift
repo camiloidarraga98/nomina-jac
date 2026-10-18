@@ -149,7 +149,10 @@ private final class FixtureProtocol: URLProtocol {
                 let command=request.httpMethod == "POST" ? try Self.body(request):.null
                 if fileId == nil && command["action"].text != "save" && !(request.httpMethod == "POST" && command["action"].isNull) {
                     var data:JSONValue
-                    if command["action"].text == "link" {
+                    if command["action"].text == "delete" {
+                        guard let index=Self.contracts.firstIndex(where:{$0["id"]==command["id"]}),Self.contracts[index]["version"] == command["version"],command["confirmation"] == command["id"] else {throw URLError(.badServerResponse)}
+                        Self.contracts.remove(at:index);data = .object(["ok":.bool(true)])
+                    } else if command["action"].text == "link" {
                         guard let index=Self.contracts.firstIndex(where:{$0["id"].text==command["id"].text}),Self.contracts[index]["version"] == command["version"] else {throw URLError(.badServerResponse)}
                         Self.contracts[index]["showId"]=command["showId"];Self.contracts[index]["showTitle"] = .string(CRMFixture.shows.first{$0["id"]==command["showId"]}?["title"].text ?? "");Self.contracts[index]["version"] = .number(command["version"].number+1);data = .object(["ok":.bool(true)])
                     } else if q.first(where:{$0.name=="view"})?.value == "shows" {data = .object(["shows":.array(CRMFixture.shows),"next":.null])}
@@ -158,6 +161,9 @@ private final class FixtureProtocol: URLProtocol {
                 }
                 let input=command["action"].text == "save" ? command["input"]:command;var draft=ContractDraft();draft.municipality=input["municipality"].text;draft.eventDate=input["eventDate"].text
                 let existing=Self.contracts.first{$0["id"].text==fileId}
+                if fileId != nil && existing == nil {
+                    let response=HTTPURLResponse(url:request.url!,statusCode:404,httpVersion:nil,headerFields:["Content-Type":"application/json"])!;client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed);client?.urlProtocol(self,didLoad:Data("{\"error\":\"Contrato no disponible\"}".utf8));client?.urlProtocolDidFinishLoading(self);return
+                }
                 let filename=existing?["filename"].text ?? draft.filename
                 if command["action"].text == "save" && !Self.contracts.contains(where:{$0["id"]==command["id"]}) {Self.contracts.insert(.object(["id":command["id"],"filename":.string(filename),"municipality":input["municipality"],"company":input["company"],"eventDate":input["eventDate"],"price":input["price"],"showId":command["showId"],"showTitle":.string(CRMFixture.shows.first{$0["id"]==command["showId"]}?["title"].text ?? ""),"version":.number(1)]),at:0)}
                 let name=filename.addingPercentEncoding(withAllowedCharacters:.urlPathAllowed)!

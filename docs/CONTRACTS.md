@@ -1,5 +1,15 @@
 # Contratos de presentación · web, iPhone y Mac
 
+## Eliminar contratos guardados · 17 de octubre de 2026
+
+CRM → Contratos incorpora una papelera discreta en web, iPhone/iPad y Mac. Pide «¿Estás seguro de que quieres eliminar este contrato?» y permite cancelar. La eliminación es compartida entre administradores del CRM: retira el contrato del archivo y su PDF privado, sin borrar ni modificar el show, sus abonos, precios o comprobantes. Crear, abrir, asignar y leer RUT conservan su comportamiento. Se requiere conexión para eliminar.
+
+El POST exige identificador, confirmación del mismo identificador y versión vigente. Conserva sesión/origen en web y Bearer exclusivo en móvil, guardas de permisos y reloj, y CAS frente a asignaciones concurrentes. Primero se marca `deleted` y se vacían los campos personales, importes y relación del formulario; desde ese momento no se puede listar, abrir, reasignar ni regenerar mediante un reintento antiguo. R2 se elimina después con revalidación de permisos. Si falla la limpieza física, la clave queda privada y pendiente para reintentar en una consulta autorizada posterior; el documento permanece inaccesible. Solo se conserva la identidad mínima del intento, actor, hash y revisión para impedir su recreación. No se necesita migración: se utiliza el estado de la tabla existente.
+
+El cliente nativo retira el contrato de todas sus páginas de archivo guardadas, su PDF y sus temporales protegidos; conserva las otras copias. Descarta respuestas de lista/PDF iniciadas antes del borrado para impedir que reaparezcan en caché. Otros dispositivos conocen el cambio al revalidar por red; las copias que ya se hayan exportado fuera de JAC no se pueden retirar. La web también descarta listados tardíos.
+
+Verificación con datos ficticios: 114 pruebas Node aprobadas, incluido el archivo, las rutas web/móvil y las regresiones obligatorias; TypeScript correcto. iPhone: 146 unitarias ejecutadas, 145 aprobadas y una condición física omitida; dos UI aprobadas (borrado/cancelación/apertura/show conservado y el recorrido existente de RUT/creación). Mac: 134 unitarias aprobadas y comprobación directa DEBUG `.invalid` de cancelar, confirmar, lista vacía y show conservado. Release iPhone y Mac universal compilados. Informes `work/local/contracts-delete-*`; capturas `outputs/contratos-eliminar-confirmacion-web.png`, `outputs/contratos-eliminar-confirmacion-mac.png` y `outputs/contratos-eliminar-mac.png`. Sin eliminar contratos reales durante las pruebas. Publicación y entrega se anotan al cerrar.
+
 
 ## Archivo compartido y shows · 17 de octubre de 2026
 

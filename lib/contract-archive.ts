@@ -10,6 +10,7 @@ import {contractPdf} from './contract-pdf';
 const uuid=z.string().uuid();
 export const contractSaveInput=z.object({action:z.literal('save'),id:uuid,showId:uuid.nullable(),input:contractInput}).strict();
 const linkInput=z.object({action:z.literal('link'),id:uuid,showId:uuid.nullable(),version:z.number().int().positive()}).strict();
+const deleteInput=z.object({action:z.literal('delete'),id:uuid,confirmation:uuid,version:z.number().int().positive()}).strict().refine(v=>v.id===v.confirmation);
 type Row={id:string;actor_id:string;request_hash:string;filename:string;company:string;municipality:string;event_date:string;price:number;show_id:string|null;state:string;file_key:string;write_nonce:string;lease_until:string;version:number;created_at:string;show_title?:string|null;show_date?:string|null};
 async function authorize(u:AccessUser,g:CrmGuard){
  // crmStoredGuard binds session, user and clock. Renew the clock at every
@@ -20,7 +21,7 @@ const showGate=(id:string|null)=>id===null?'1':"EXISTS(SELECT 1 FROM jac_crm_sho
 const showBindings=(id:string|null)=>id===null?[]:[id];
 const publicRow=(r:Row)=>({id:r.id,filename:r.filename,company:r.company,municipality:r.municipality,eventDate:r.event_date,price:r.price,showId:r.show_id,showTitle:r.show_title||'',showDate:r.show_date||'',version:r.version,createdAt:r.created_at});
 export async function contractArchive(u:AccessUser,g:CrmGuard,url:URL){
- await authorize(u,g);const db=database(),offset=Number(url.searchParams.get('offset')||0);if(!Number.isSafeInteger(offset)||offset<0||offset>100000)throw new CrmFailure('Página no válida.');
+ await authorize(u,g);await purgeDeletedContracts(u,g);const db=database(),offset=Number(url.searchParams.get('offset')||0);if(!Number.isSafeInteger(offset)||offset<0||offset>100000)throw new CrmFailure('Página no válida.');
  if(url.searchParams.get('view')==='shows'){
   const q=(url.searchParams.get('q')||'').trim().slice(0,120);
   const rows=await db.prepare(`SELECT id,title,show_date FROM jac_crm_shows WHERE source_state NOT IN ('deleted','deleting') AND (instr(lower(title),lower(?))>0 OR instr(show_date,?)>0) AND ${g.sql} ORDER BY show_date DESC,title,id LIMIT 101 OFFSET ?`).bind(q,q,...g.bindings,offset).all<{id:string;title:string;show_date:string}>();
@@ -41,11 +42,36 @@ export async function linkContract(u:AccessUser,g:CrmGuard,raw:unknown){
  const result=await database().prepare(`UPDATE jac_crm_contracts SET show_id=?,version=version+1,updated_at=? WHERE id=? AND state='ready' AND version=? AND ${showGate(v.showId)} AND ${g.sql}`).bind(v.showId,new Date().toISOString(),v.id,v.version,...showBindings(v.showId),...g.bindings).run();
  await authorize(u,g);if(!result.meta.changes)throw new CrmFailure('El contrato o el show cambió. Actualiza el listado e inténtalo de nuevo.',409);return {ok:true};
 }
+async function purgeDeletedContracts(u:AccessUser,g:CrmGuard,id?:string){
+ await authorize(u,g);
+ const rows=(await database().prepare(`SELECT id,file_key FROM jac_crm_contracts WHERE state='deleted' AND file_key<>'' ${id?'AND id=?':''} AND ${g.sql} LIMIT 5`).bind(...(id?[id]:[]),...g.bindings).all<{id:string;file_key:string}>()).results;
+ for(const row of rows){
+  await authorize(u,g);let removed=false;
+  try{await env.BUCKET.delete(row.file_key);removed=true;}catch{/* Access is already revoked. The next archive read retries only this object. */}
+  await authorize(u,g);
+  if(removed)await database().prepare(`UPDATE jac_crm_contracts SET file_key='' WHERE id=? AND state='deleted' AND file_key=? AND ${g.sql}`).bind(row.id,row.file_key,...g.bindings).run();
+ }
+}
+export async function deleteContract(u:AccessUser,g:CrmGuard,raw:unknown){
+ await authorize(u,g);const p=deleteInput.safeParse(raw);if(!p.success)throw new CrmFailure('Confirma el contrato que quieres eliminar.');const v=p.data,db=database();
+ const get=()=>db.prepare(`SELECT * FROM jac_crm_contracts WHERE id=? AND ${g.sql}`).bind(v.id,...g.bindings).first<Row>();
+ let row=await get();if(!row)throw new CrmFailure('Contrato no disponible.',404);
+ if(row.state!=='deleted'){
+  // The tombstone is committed before touching R2. Keep only replay identity,
+  // version and the pending object key; remove the filled form and association.
+  const result=await db.prepare(`UPDATE jac_crm_contracts SET state='deleted',version=version+1,updated_at=?,input_json='{}',filename='',company='',municipality='',event_date='',price=0,show_id=NULL WHERE id=? AND state='ready' AND version=? AND ${g.sql}`).bind(new Date().toISOString(),v.id,v.version,...g.bindings).run();
+  await authorize(u,g);row=await get();
+  if(!result.meta.changes && !(row?.state==='deleted' && row.version===v.version+1))throw new CrmFailure('El contrato cambió. Actualiza el listado e inténtalo de nuevo.',409);
+ }
+ if(!row || row.state!=='deleted' || row.version!==v.version+1)throw new CrmFailure('El contrato cambió. Actualiza el listado e inténtalo de nuevo.',409);
+ await purgeDeletedContracts(u,g,v.id);await authorize(u,g);return {ok:true,id:v.id};
+}
 export async function saveContract(u:AccessUser,g:CrmGuard,raw:unknown){
  await authorize(u,g);const p=contractSaveInput.safeParse(raw);if(!p.success)throw new CrmFailure(p.error.issues[0]?.message||'Revisa el formulario.');const v=p.data,db=database();
  const canonical=JSON.stringify({input:v.input,showId:v.showId});const hash=Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(canonical)))).map(n=>n.toString(16).padStart(2,'0')).join('');
  const get=()=>db.prepare('SELECT * FROM jac_crm_contracts WHERE id=?').bind(v.id).first<Row>();
  let prior=await get();if(prior&&(prior.actor_id!==u.id||prior.request_hash!==hash))throw new CrmFailure('Ese intento corresponde a otro contrato. Genera un contrato nuevo.',409);
+ if(prior?.state==='deleted')throw new CrmFailure('El contrato fue eliminado. Crea un contrato nuevo.',409);
  if(prior?.state==='ready')return storedContract(u,g,v.id);
  // Generate before reserving storage: invalid or oversized drafts leave no record.
  let pdf:Uint8Array;try{pdf=await contractPdf(v.input);}catch{throw new CrmFailure('Los datos son demasiado extensos para la plantilla. Abrevia los campos conservando su identidad.');}

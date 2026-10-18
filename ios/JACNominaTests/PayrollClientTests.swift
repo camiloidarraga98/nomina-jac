@@ -2212,3 +2212,63 @@ extension PayrollClientTests {
         let scope=OfflineResponseCache.scope(origin:client.baseURL.absoluteString,token:token);XCTAssertFalse(client.offlineCache.entries(scope).contains{$0.url.contains("contracts")})
     }
 }
+
+extension PayrollClientTests {
+    @MainActor func testContractDeletionUsesBearerConfirmationAndEvictsOnlyItsPDFAndEveryCachedPage() async throws {
+        let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://contract-delete-cache.example.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false)
+        defer{MockProtocol.handler=nil;try? client.clearSession()}
+        let id=UUID().uuidString,other=UUID().uuidString
+        let feed:JSONValue = .object(["contracts":.array([.object(["id":.string(id)]),.object(["id":.string(other)])]),"next":.null])
+        var calls=0
+        MockProtocol.handler={r in
+            calls+=1;XCTAssertEqual(r.value(forHTTPHeaderField:"Authorization"),"Bearer "+self.token);XCTAssertNil(r.value(forHTTPHeaderField:"Cookie"))
+            if r.httpMethod == "POST" {
+                let command=try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(r));XCTAssertEqual(command["action"].text,"delete");XCTAssertEqual(command["id"].text,id);XCTAssertEqual(command["confirmation"].text,id);XCTAssertEqual(command["version"].number,7)
+                return(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"ok\":true}".utf8))
+            }
+            if r.url?.query?.contains("id=") == true {return(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf"])!,Data("%PDF-1.4\nFICTICIO\n%%EOF".utf8))}
+            return(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,try JSONEncoder().encode(feed))
+        }
+        _ = try await client.contractArchive(query:["offset":"0"]);_ = try await client.contractArchive(query:["offset":"50"])
+        let first=try await client.archivedContract(id:id,filename:"A.pdf"),second=try await client.archivedContract(id:other,filename:"B.pdf")
+        try await client.deleteArchivedContract(id:id,version:7)
+        XCTAssertFalse(FileManager.default.fileExists(atPath:first.url.path));XCTAssertTrue(FileManager.default.fileExists(atPath:second.url.path))
+        for offset in ["0","50"] {let page=try XCTUnwrap(client.cached(JSONValue.self,path:"api/mobile/contracts",query:[URLQueryItem(name:"offset",value:offset)]));XCTAssertEqual(page["contracts"].elements.map{$0["id"].text},[other])}
+        client.beginOfflineRestore();let before=calls
+        do{_ = try await client.archivedContract(id:id,filename:"A.pdf");XCTFail("Deleted PDF must never return from offline cache.")}catch{}
+        _ = try await client.archivedContract(id:other,filename:"B.pdf");XCTAssertEqual(calls,before)
+    }
+    @MainActor func testContractDeletionConflictOrOfflineKeepsTheAllowedCopy() async throws {
+        let vault=MemorySession();vault.token=token
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let client=PayrollClient(baseURL:URL(string:"https://contract-delete-conflict.example.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false)
+        defer{MockProtocol.handler=nil;try? client.clearSession()}
+        let id=UUID().uuidString;var posts=0
+        MockProtocol.handler={r in
+            if r.httpMethod == "POST" {posts+=1;return(HTTPURLResponse(url:r.url!,statusCode:409,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"error\":\"El contrato cambió\"}".utf8))}
+            return(HTTPURLResponse(url:r.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/pdf"])!,Data("%PDF-1.4\nFICTICIO\n%%EOF".utf8))
+        }
+        let document=try await client.archivedContract(id:id,filename:"A.pdf")
+        do{try await client.deleteArchivedContract(id:id,version:1);XCTFail("Stale delete must fail.")}catch APIError.conflict {}
+        XCTAssertTrue(FileManager.default.fileExists(atPath:document.url.path));client.beginOfflineRestore()
+        do{try await client.deleteArchivedContract(id:id,version:1);XCTFail("Deletion must require internet.")}catch{}
+        XCTAssertEqual(posts,1);_ = try await client.archivedContract(id:id,filename:"A.pdf")
+    }
+    @MainActor func testLateContractListOrPDFCannotRepopulateAfterDeletion() async throws {
+        for document in [false,true] {
+            CRMDelayedProtocol.resetPending();let vault=MemorySession();vault.token=token
+            let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[CRMDelayedProtocol.self]
+            let client=PayrollClient(baseURL:URL(string:"https://late-contract-\(UUID().uuidString.lowercased()).example.invalid")!,vault:vault,configuration:config,automaticallyDownloadOffline:false)
+            let id=UUID().uuidString
+            let reading=Task {if document {_ = try await client.archivedContract(id:id,filename:"Late.pdf")}else{_ = try await client.contractArchive(query:["offset":"0"])}}
+            for _ in 0..<100 {if CRMDelayedProtocol.pending() != nil {break};try await Task.sleep(for:.milliseconds(10))}
+            let held=try XCTUnwrap(CRMDelayedProtocol.pending());try await client.deleteArchivedContract(id:id,version:1)
+            held.respond(Data("{\"contracts\":[{\"id\":\"\(id)\"}],\"next\":null}".utf8))
+            do{try await reading.value;XCTFail("The response before deletion must not restore the contract.")}catch{XCTAssertTrue(error is CancellationError,error.localizedDescription)}
+            XCTAssertNil(client.cached(JSONValue.self,path:"api/mobile/contracts",query:[URLQueryItem(name:"offset",value:"0")]))
+            try client.clearSession();CRMDelayedProtocol.resetPending()
+        }
+    }
+}

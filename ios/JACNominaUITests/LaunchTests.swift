@@ -402,6 +402,20 @@ final class LaunchTests: XCTestCase {
         tap(app,"Semana");XCTAssertTrue(app.staticTexts["Resumen semanal"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["Gastos por fecha de registro"].exists);XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","50.000.000")).firstMatch.exists);attachScreen(app,name:"crm-resumen-semanal-nativo")
     }
 
+    @MainActor func testDeleteArchivedContractRequiresConfirmationAndKeepsShow() {
+        let app=fixture(["--uitest-contract-archive"]),id="11111111-1234-4234-8234-111111111111"
+        app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Contratos")
+        tap(app,"contracts.delete."+id);XCTAssertTrue(app.alerts["Eliminar contrato"].waitForExistence(timeout:10))
+        attachScreen(app,name:"contrato-eliminar-confirmacion-ficticia");tap(app,"contracts.delete.cancel")
+        XCTAssertTrue(app.buttons["contracts.open."+id].exists)
+        tap(app,"contracts.open."+id);XCTAssertTrue(app.navigationBars["Contrato JAC"].waitForExistence(timeout:10));tap(app,"contracts.preview.close")
+        tap(app,"contracts.delete."+id);tap(app,"contracts.delete.confirm")
+        XCTAssertTrue(app.buttons["contracts.open."+id].waitForNonExistence(timeout:10))
+        XCTAssertTrue(app.staticTexts["Aquí aparecerán los contratos que generes a partir de ahora."].exists)
+        tap(app,"Shows");XCTAssertTrue(app.buttons["crm.show.77777777-7777-4777-8777-777777777777"].waitForExistence(timeout:10))
+        tap(app,"Contratos");XCTAssertFalse(app.buttons["contracts.open."+id].exists)
+    }
+
     @MainActor func testCRMContractsRUTEditableFieldsManualEntryAndPDFPreview() {
         let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Contratos");tap(app,"contracts.create")
         XCTAssertTrue(app.buttons["contracts.rut.upload"].waitForExistence(timeout:10))

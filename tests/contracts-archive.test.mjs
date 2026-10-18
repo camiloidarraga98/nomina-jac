@@ -18,9 +18,9 @@ globalThis.__contractMobileEnv={DB:{prepare:s=>new Query(s),batch:async statemen
 globalThis.__contractMobileBeforePdf=null;
 globalThis.__contractMobilePdfCalls=0;
 globalThis.fetch=async()=>{throw new Error('Las pruebas de contratos no permiten servicios externos.');};
-const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * as api from './app/api/mobile/contracts/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {PDFDocument} from 'pdf-lib';"},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'contract-mobile-isolated-platform',setup(b){
+const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * as api from './app/api/mobile/contracts/route';export * as web from './app/api/crm/contract/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {PDFDocument} from 'pdf-lib';"},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'contract-mobile-isolated-platform',setup(b){
  b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'platform'}));
- b.onLoad({filter:/.*/,namespace:'platform'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__contractMobileEnv;export const waitUntil=p=>p.catch(()=>{});':"export const headers=async()=>new Headers({'oai-authenticated-user-email':'camilo@mac2you.co'});",loader:'js'}));
+ b.onLoad({filter:/.*/,namespace:'platform'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__contractMobileEnv;export const waitUntil=p=>p.catch(()=>{});':"export const headers=async()=>globalThis.__contractArchiveHeaders||new Headers({'oai-authenticated-user-email':'camilo@mac2you.co'});",loader:'js'}));
  b.onResolve({filter:/contract-pdf$/},()=>({path:'pdf',namespace:'instrumented'}));
  b.onLoad({filter:/.*/,namespace:'instrumented'},()=>({resolveDir:process.cwd(),contents:"import {contractPdf as original} from './lib/contract-pdf.ts';export async function contractPdf(input){globalThis.__contractMobilePdfCalls++;await globalThis.__contractMobileBeforePdf?.();return original(input);}",loader:'js'}));
 }}]});
@@ -42,11 +42,12 @@ function request(token='',body=fixture,extra={}){
 function reset(){globalThis.__contractMobileBeforePdf=null;globalThis.__contractMobilePdfCalls=0;}
 
 
-const objects=new Map();let beforePut=null,beforeGet=null,failPut=false;
-globalThis.__contractMobileEnv.BUCKET={put:async(key,data)=>{if(beforePut)await beforePut();if(failPut)throw Error('R2 simulado fuera de servicio');objects.set(key,Uint8Array.from(data));},get:async key=>{if(beforeGet)await beforeGet();const bytes=objects.get(key);return bytes?{body:new Response(bytes).body}:null;},delete:async key=>objects.delete(key)};
+const objects=new Map();let beforePut=null,beforeGet=null,beforeDelete=null,failPut=false,failDelete=false;
+globalThis.__contractMobileEnv.BUCKET={put:async(key,data)=>{if(beforePut)await beforePut();if(failPut)throw Error('R2 simulado fuera de servicio');objects.set(key,Uint8Array.from(data));},get:async key=>{const bytes=objects.get(key);if(beforeGet)await beforeGet();return bytes?{body:new Response(bytes).body}:null;},delete:async key=>{if(beforeDelete)await beforeDelete();if(failDelete)throw Error('Borrado R2 simulado fuera de servicio');return objects.delete(key);}};
 const create=(account,id=crypto.randomUUID(),showId=null,input=fixture)=>m.api.POST(request(account.token,{action:'save',id,showId,input}));
 const get=(account,query='')=>m.api.GET(new Request(base+'/api/mobile/contracts'+query,{headers:{authorization:'Bearer '+account.token}}));
 const link=(account,id,showId,version)=>m.api.POST(request(account.token,{action:'link',id,showId,version}));
+const remove=(account,id,version=1,extra={})=>m.api.POST(request(account.token,{action:'delete',id,confirmation:id,version,...extra}));
 function show(title='PEREIRA FICTICIO',date='2020-01-10'){const id=crypto.randomUUID(),now=new Date().toISOString();sql.prepare('INSERT INTO jac_crm_shows (id,calendar_id,event_id,title,municipality,show_date,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,'calendar.invalid',id,title,'Pereira',date,now,now);return id;}
 
 test('guarda PDF exacto, reintento idempotente y listado privado compartido entre administradores',async()=>{
@@ -80,4 +81,56 @@ test('sesión que vence durante la escritura R2 no publica un contrato ni permit
  beforePut=async()=>{await new Promise(r=>setTimeout(r,25));sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE id=?').run(new Date(Date.now()-1).toISOString(),m.tokenHash(a.token));};
  try{assert.equal((await create(a,id)).status,403);}finally{beforePut=null;}
  assert.equal(sql.prepare('SELECT state FROM jac_crm_contracts WHERE id=?').get(id).state,'failed');assert.equal([...objects.keys()].some(k=>k.includes(id)),false);
+});
+
+test('eliminar confirmado retira PDF y formulario sin tocar show, abonos ni otros contratos; no resucita al reintentar guardar',async()=>{
+ reset();const a=await actor(),id=crypto.randomUUID(),other=crypto.randomUUID(),showId=show();await create(a,id,showId);await create(a,other,showId);
+ const showBefore=sql.prepare('SELECT * FROM jac_crm_shows WHERE id=?').get(showId),paymentBefore=sql.prepare('SELECT * FROM jac_crm_payments').all();
+ const key=sql.prepare('SELECT file_key FROM jac_crm_contracts WHERE id=?').get(id).file_key;
+ assert.equal((await remove(a,id)).status,200);assert.equal(objects.has(key),false);
+ const deleted=sql.prepare('SELECT * FROM jac_crm_contracts WHERE id=?').get(id);assert.equal(deleted.state,'deleted');assert.equal(deleted.input_json,'{}');assert.equal(deleted.company,'');assert.equal(deleted.filename,'');assert.equal(deleted.show_id,null);assert.equal(deleted.version,2);
+ assert.equal((await get(a,'?id='+id)).status,404);assert.ok(!(await (await get(a)).json()).contracts.some(c=>c.id===id));assert.equal((await get(a,'?id='+other)).status,200);
+ assert.deepEqual(sql.prepare('SELECT * FROM jac_crm_shows WHERE id=?').get(showId),showBefore);assert.deepEqual(sql.prepare('SELECT * FROM jac_crm_payments').all(),paymentBefore);
+ const generated=globalThis.__contractMobilePdfCalls;assert.equal((await create(a,id,showId)).status,409);assert.equal(globalThis.__contractMobilePdfCalls,generated);assert.equal((await link(a,id,showId,2)).status,409);assert.equal((await remove(a,id)).status,200);
+});
+
+test('borrar exige administrador CRM, confirmación exacta y revisión vigente; carrera con asignación usa CAS',async()=>{
+ reset();const a=await actor(),id=crypto.randomUUID();await create(a,id);const key=sql.prepare('SELECT file_key FROM jac_crm_contracts WHERE id=?').get(id).file_key;
+ const reader=await actor({administrator:false,sections:['calendar']});assert.equal((await remove(reader,id)).status,403);
+ assert.equal((await remove(a,id,1,{confirmation:crypto.randomUUID()})).status,400);assert.equal((await remove(a,id,0)).status,400);assert.equal((await remove(a,crypto.randomUUID())).status,404);
+ assert.equal((await link(a,id,show(),1)).status,200);assert.equal((await remove(a,id,1)).status,409);assert.equal(objects.has(key),true);
+ const replies=await Promise.all([remove(a,id,2),link(a,id,null,2)]);assert.deepEqual(replies.map(r=>r.status).sort(),[200,409]);
+ const row=sql.prepare('SELECT * FROM jac_crm_contracts WHERE id=?').get(id);assert.equal(row.version,3);assert.equal(objects.has(key),row.state==='ready');
+});
+
+test('fallo R2 deja el contrato inaccesible; listado reintenta limpieza y borrado repetido es idempotente',async()=>{
+ reset();const a=await actor(),id=crypto.randomUUID();await create(a,id);const key=sql.prepare('SELECT file_key FROM jac_crm_contracts WHERE id=?').get(id).file_key;
+ failDelete=true;
+ try{assert.equal((await remove(a,id)).status,200);assert.equal(objects.has(key),true);assert.equal((await get(a,'?id='+id)).status,404);assert.ok(!(await (await get(a)).json()).contracts.some(c=>c.id===id));assert.equal((await create(a,id)).status,409);}finally{failDelete=false;}
+ assert.equal((await get(a)).status,200);assert.equal(objects.has(key),false);assert.equal(sql.prepare('SELECT file_key FROM jac_crm_contracts WHERE id=?').get(id).file_key,'');assert.equal((await remove(a,id)).status,200);
+});
+
+test('revocación antes del borrado no toca R2; vencimiento durante la limpieza no devuelve éxito ni permite releer',async()=>{
+ reset();const a=await actor(),id=crypto.randomUUID();await create(a,id);const key=sql.prepare('SELECT file_key FROM jac_crm_contracts WHERE id=?').get(id).file_key;
+ sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(a.id);assert.equal((await remove(a,id)).status,401);assert.equal(objects.has(key),true);assert.equal(sql.prepare('SELECT state FROM jac_crm_contracts WHERE id=?').get(id).state,'ready');
+ const b=await actor(),second=crypto.randomUUID();await create(b,second);
+ beforeDelete=()=>sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE id=?').run(new Date(Date.now()-1).toISOString(),m.tokenHash(b.token));
+ try{assert.equal((await remove(b,second)).status,403);}finally{beforeDelete=null;}
+ assert.equal(sql.prepare('SELECT state FROM jac_crm_contracts WHERE id=?').get(second).state,'deleted');const c=await actor();assert.equal((await get(c,'?id='+second)).status,404);assert.equal((await get(c)).status,200);
+});
+
+test('una lectura R2 iniciada antes de eliminar no puede entregar el PDF anterior',async()=>{
+ reset();const a=await actor(),id=crypto.randomUUID();await create(a,id);
+ beforeGet=async()=>{beforeGet=null;assert.equal((await remove(a,id)).status,200);};
+ try{assert.equal((await get(a,'?id='+id)).status,404);}finally{beforeGet=null;}
+});
+
+test('web elimina por sesión propia y POST con origen validado; GET no borra',async()=>{
+ reset();const a=await actor(),id=crypto.randomUUID();await create(a,id);
+ const cookie='__Host-jac_session='+a.token;globalThis.__contractArchiveHeaders=new Headers({host:new URL(base).host,cookie});
+ const req=origin=>new Request(base+'/api/crm/contract',{method:'POST',headers:{origin,cookie,'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id,confirmation:id,version:1})});
+ try{
+  assert.equal((await m.web.POST(req('https://other.example.invalid'))).status,403);assert.equal((await m.web.GET(new Request(base+'/api/crm/contract?action=delete&id='+id,{headers:{cookie}}))).status,200);assert.equal(sql.prepare('SELECT state FROM jac_crm_contracts WHERE id=?').get(id).state,'ready');
+  const response=await m.web.POST(req(base));assert.equal(response.status,200,await response.clone().text());assert.match(response.headers.get('cache-control'),/no-store/);assert.equal((await m.web.GET(new Request(base+'/api/crm/contract?id='+id,{headers:{cookie}}))).status,404);
+ }finally{globalThis.__contractArchiveHeaders=null;}
 });

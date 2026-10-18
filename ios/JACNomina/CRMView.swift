@@ -501,6 +501,9 @@ struct CRMContractsHome:View {
     @State private var busy=false
     @State private var creating=false
     @State private var assigning:CRMContractSelection?
+    @State private var pendingDelete:CRMContractSelection?
+    @State private var confirmingDelete=false
+    @State private var deleting=false
     @State private var document:ExportedDocument?
     @State private var ownedDocument:ExportedDocument?
     @State private var error:String?
@@ -522,14 +525,18 @@ struct CRMContractsHome:View {
                         Text(row["company"].text).font(.subheadline)
                         Text(CRMFields.money(row["price"].number)).font(.subheadline).foregroundStyle(JACTheme.action)
                         Text(row["showTitle"].text.isEmpty ? (row["showId"].isNull ? "Sin show asignado":"Show retirado del CRM"):"Show: "+row["showTitle"].text).font(.caption).foregroundStyle(.secondary)
-                        HStack {Button("Abrir PDF"){open(row)}.accessibilityIdentifier("contracts.open."+row["id"].text);Spacer();Button("Asignar show"){assigning=CRMContractSelection(value:row)}.disabled(store.isOffline).accessibilityIdentifier("contracts.assign."+row["id"].text)}.buttonStyle(.bordered)
+                        HStack {Button("Abrir PDF"){open(row)}.accessibilityIdentifier("contracts.open."+row["id"].text);Spacer();Button("Asignar show"){assigning=CRMContractSelection(value:row)}.disabled(store.isOffline).accessibilityIdentifier("contracts.assign."+row["id"].text);Button {pendingDelete=item;confirmingDelete=true} label:{Image(systemName:"trash").frame(width:40,height:44)}.buttonStyle(.plain).foregroundStyle(.red).disabled(store.isOffline).accessibilityLabel("Eliminar contrato").accessibilityIdentifier("contracts.delete."+row["id"].text)}.buttonStyle(.bordered).disabled(busy || deleting)
                     }.padding(.vertical,8)
                 }
                 if next != nil {Button("Ver más contratos"){Task{await load(more:true)}}.disabled(busy)}
             }
         }.jacSurface().privacySensitive().task{active=true;await load()}.refreshable{await load()}
             .onDisappear{active=false;operation?.cancel();clearDocument()}
-            .onChange(of:crm.denied){_,denied in if denied {contracts=[];document=nil;creating=false;assigning=nil;clearDocument()} }
+            .onChange(of:crm.denied){_,denied in if denied {contracts=[];document=nil;creating=false;assigning=nil;pendingDelete=nil;confirmingDelete=false;clearDocument()} }
+            .alert("Eliminar contrato",isPresented:$confirmingDelete) {
+                Button("Cancelar",role:.cancel){pendingDelete=nil}.accessibilityIdentifier("contracts.delete.cancel")
+                Button("Eliminar",role:.destructive){if let row=pendingDelete?.value {Task{await remove(row)}}}.accessibilityIdentifier("contracts.delete.confirm")
+            } message:{Text("¿Estás seguro de que quieres eliminar este contrato?")}
             .sheet(isPresented:$creating,onDismiss:{Task{await load()}}){NavigationStack {CRMContractForm().navigationTitle("Crear contrato").jacInlineTitle().toolbar{ToolbarItem(placement:.jacLeading){Button("Listo"){creating=false}.accessibilityIdentifier("contracts.form.close")}}}.environmentObject(crm)
                 #if os(macOS)
                 .frame(minWidth:620,minHeight:700)
@@ -548,6 +555,11 @@ struct CRMContractsHome:View {
         catch{guard active,!RutParser.cancelled(error) else{return};crm.reject(error);if crm.denied {contracts=[]};self.error=error.localizedDescription}
     }
     private func open(_ row:JSONValue){operation?.cancel();operation=Task{do{let file=try await store.client.archivedContract(id:row["id"].text,filename:row["filename"].text);guard active,!Task.isCancelled else{TemporaryDocuments.remove(file);return};clearDocument();ownedDocument=file;document=file}catch{if active,!RutParser.cancelled(error){crm.reject(error);self.error=error.localizedDescription}}}}
+    private func remove(_ row:JSONValue) async {
+        guard !deleting,!busy,!store.isOffline else{return};deleting=true;defer{deleting=false}
+        do {try await store.client.deleteArchivedContract(id:row["id"].text,version:Int(row["version"].number));guard active else{return};contracts.removeAll{$0["id"] == row["id"]};pendingDelete=nil;await load()}
+        catch {guard active,!RutParser.cancelled(error) else{return};crm.reject(error);self.error=error.localizedDescription}
+    }
     private func clearDocument(){document=nil;if let ownedDocument {TemporaryDocuments.remove(ownedDocument);self.ownedDocument=nil}}
 }
 
