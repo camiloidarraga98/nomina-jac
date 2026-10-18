@@ -1,4 +1,7 @@
 import Foundation
+import CryptoKit
+import Combine
+import Network
 
 struct AgendaCalendar: Codable, Identifiable {
     let id: String
@@ -45,7 +48,7 @@ struct AgendaEvent: Codable, Identifiable {
         return from < next && to > date
     }
 }
-struct AgendaData: Decodable {
+struct AgendaData: Codable {
     let connection: AgendaConnection
     let month: String
     let monthLabel: String
@@ -57,6 +60,75 @@ struct AgendaData: Decodable {
     let updatedAt: String
     let timeZone: String
     let canEditEvents: Bool?
+}
+
+struct SavedAgenda: Codable {
+    let data: AgendaData
+    let receivedAt: Date
+}
+struct AgendaOfflineRecord: Codable {
+    let schema: Int
+    let user: PayrollUser
+    var months: [SavedAgenda]
+    var latest: SavedAgenda? { months.max { $0.receivedAt < $1.receivedAt } }
+    func month(_ month: String) -> SavedAgenda? { months.first { $0.data.month == month } }
+}
+
+struct AgendaCacheScope {
+    let id: String
+    let key: SymmetricKey
+    init(origin: String, token: String) {
+        let salt = Data(("co.jacmusic.nomina.agenda.v1:" + origin).utf8)
+        id = SHA256.hash(data: salt + Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
+        key = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: Data(token.utf8)), salt: salt, info: Data("offline-agenda".utf8), outputByteCount: 32)
+    }
+}
+
+// Only calendar data and the minimal account identity are persisted. The key
+// derives from the session kept in Keychain and is never written to this file.
+final class AgendaOfflineCache {
+    let root: URL
+    static let maximumBytes = 4 * 1024 * 1024
+    init(root: URL? = nil) {
+        self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACAgendaOffline", isDirectory: true)
+    }
+    func file(_ scope: AgendaCacheScope) -> URL { root.appendingPathComponent(scope.id + ".sealed") }
+    func load(_ scope: AgendaCacheScope) -> AgendaOfflineRecord? {
+        guard let bytes = try? Data(contentsOf: file(scope)), bytes.count <= Self.maximumBytes + 1024,
+              let box = try? AES.GCM.SealedBox(combined: bytes),
+              let decoded = try? AES.GCM.open(box, using: scope.key),
+              let record = try? JSONDecoder().decode(AgendaOfflineRecord.self, from: decoded),
+              record.schema == 1, !record.months.isEmpty, record.months.count <= 6 else { return nil }
+        return record
+    }
+    func save(_ record: AgendaOfflineRecord, scope: AgendaCacheScope) throws {
+        let bytes = try JSONEncoder().encode(record)
+        guard bytes.count <= Self.maximumBytes else { throw APIError.message("La agenda supera el tamaño de la copia local.") }
+        let sealed = try AES.GCM.seal(bytes, using: scope.key).combined!
+        let manager = FileManager.default
+        try manager.createDirectory(at: root, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: root.path)
+        var folder = root, values = URLResourceValues(); values.isExcludedFromBackup = true
+        try folder.setResourceValues(values)
+        let target = file(scope)
+        try sealed.write(to: target, options: JACFileSecurity.writeOptions)
+        try manager.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: target.path)
+    }
+    func remove(_ scope: AgendaCacheScope) { try? FileManager.default.removeItem(at: file(scope)) }
+    static func isUnavailable(_ error: Error) -> Bool {
+        guard let error = error as? URLError else { return false }
+        return [.notConnectedToInternet, .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .internationalRoamingOff, .dataNotAllowed].contains(error.code)
+    }
+}
+
+@MainActor final class AgendaConnectivity: ObservableObject {
+    @Published private(set) var connected: Bool?
+    private let monitor = NWPathMonitor()
+    init() {
+        monitor.pathUpdateHandler = { [weak self] path in Task { @MainActor [weak self] in self?.connected = path.status == .satisfied } }
+        monitor.start(queue: DispatchQueue(label: "co.jacmusic.nomina.agenda.network"))
+    }
+    deinit { monitor.cancel() }
 }
 struct AgendaCalendars: Decodable { let calendars: [AgendaCalendar] }
 struct AgendaMutation: Decodable { let connection: AgendaConnection; let notice: String }
@@ -98,4 +170,75 @@ enum CalendarClock {
         f.formatOptions = [.withInternetDateTime]; return f.date(from: value)
     }
     static func shift(_ month: String, by offset: Int) -> String? { guard let day = date(month + "-01"), let shifted = calendar.date(byAdding: .month, value: offset, to: day) else { return nil }; return self.month(shifted) }
+}
+
+// Shared read-only cache. Each response and the index are authenticated and
+// encrypted with a session-derived key; no password/token is stored on disk.
+struct OfflineResponse: Codable {
+    let key: String
+    let url: String
+    let headers: [String: String]
+    let data: Data
+    let receivedAt: Date
+    let revision: Int
+    var response: HTTPURLResponse? { URL(string: url).flatMap { HTTPURLResponse(url: $0, statusCode: 200, httpVersion: nil, headerFields: headers.merging(["X-JAC-Offline": "1"]) { _, new in new }) } }
+}
+final class OfflineResponseCache {
+    struct Entry: Codable {
+        let key: String; let url: String; let size: Int; let revision: Int
+    }
+    let root: URL
+    static let maximumBytes = 512 * 1024 * 1024
+    static let maximumEntryBytes = 16 * 1024 * 1024
+    init(root: URL? = nil) {
+        self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACOfflineContent", isDirectory: true)
+    }
+    static func scope(origin: String, token: String) -> AgendaCacheScope { AgendaCacheScope(origin: origin + "/offline-content-v1", token: token) }
+    private func folder(_ scope: AgendaCacheScope) -> URL { root.appendingPathComponent(scope.id, isDirectory: true) }
+    func file(_ scope: AgendaCacheScope, key: String) -> URL {
+        folder(scope).appendingPathComponent(SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() + ".sealed")
+    }
+    private func read<T: Decodable>(_ type: T.Type, scope: AgendaCacheScope, key: String) -> T? {
+        let path = file(scope, key: key)
+        guard let size = try? path.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= Self.maximumEntryBytes * 2,
+              let bytes = try? Data(contentsOf: path), let box = try? AES.GCM.SealedBox(combined: bytes),
+              let plain = try? AES.GCM.open(box, using: scope.key, authenticating: Data(key.utf8)) else { return nil }
+        return try? JSONDecoder().decode(type, from: plain)
+    }
+    private func write<T: Encodable>(_ value: T, scope: AgendaCacheScope, key: String) throws {
+        let manager = FileManager.default, directory = folder(scope)
+        try manager.createDirectory(at: directory, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: directory.path)
+        try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: root.path)
+        var excluded = root, values = URLResourceValues(); values.isExcludedFromBackup = true; try excluded.setResourceValues(values)
+        let bytes = try AES.GCM.seal(JSONEncoder().encode(value), using: scope.key, authenticating: Data(key.utf8)).combined!
+        try bytes.write(to: file(scope, key: key), options: JACFileSecurity.writeOptions)
+        try manager.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath:file(scope,key:key).path)
+    }
+    func entries(_ scope: AgendaCacheScope) -> [Entry] { read([Entry].self, scope: scope, key: "index-v1") ?? [] }
+    func load(_ scope: AgendaCacheScope, key: String) -> OfflineResponse? {
+        guard let record = read(OfflineResponse.self, scope: scope, key: key), record.key == key, record.data.count <= Self.maximumEntryBytes else { return nil }
+        return record
+    }
+    func save(_ record: OfflineResponse, scope: AgendaCacheScope) throws {
+        guard record.data.count <= Self.maximumEntryBytes else { throw APIError.message("Este archivo supera el tamaño de la copia sin conexión.") }
+        var index = entries(scope); index.removeAll { $0.key == record.key }
+        guard index.count < 4096, index.reduce(0, { $0 + $1.size }) + record.data.count <= Self.maximumBytes else { throw APIError.message("La copia sin conexión está llena. Algunos archivos necesitan internet.") }
+        if let previous = load(scope, key: record.key),
+           let old = try? JSONDecoder().decode(JSONValue.self, from: previous.data),
+           let new = try? JSONDecoder().decode(JSONValue.self, from: record.data), old["version"].number > new["version"].number { return }
+        try write(record, scope: scope, key: record.key)
+        index.append(Entry(key: record.key, url: record.url, size: record.data.count, revision: record.revision))
+        try write(index, scope: scope, key: "index-v1")
+    }
+    func remove(_ scope: AgendaCacheScope, matching: (Entry) -> Bool) {
+        let index = entries(scope), removed = index.filter(matching)
+        guard !removed.isEmpty else { return }
+        for entry in removed { try? FileManager.default.removeItem(at: file(scope, key: entry.key)) }
+        try? write(index.filter { !matching($0) }, scope: scope, key: "index-v1")
+    }
+    func clear(_ scope: AgendaCacheScope) { try? FileManager.default.removeItem(at: folder(scope)) }
+    func removeOtherSessions(_ scope: AgendaCacheScope) {
+        for path in (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where path.lastPathComponent != scope.id { try? FileManager.default.removeItem(at: path) }
+    }
 }

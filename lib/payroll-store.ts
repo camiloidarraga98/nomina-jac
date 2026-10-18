@@ -12,12 +12,12 @@ export async function readPayroll(){
  if(result[1].results.length)data.periods=result[1].results.map(r=>JSON.parse(String((r as {data:string}).data)) as Period);
  return {data,version:row.version};
 }
-export async function writePayroll(data:PayrollState,version:number,actor:string,extras?:(db:D1Database,nonce:string)=>D1PreparedStatement[],deletingPeriodId?:string){
+export async function writePayroll(data:PayrollState,version:number,actor:string,extras?:(db:D1Database,nonce:string)=>D1PreparedStatement[],deletingPeriodId?:string,guard?:{sql:string;bindings:(string|number)[]}){
  const db=database(),nonce=crypto.randomUUID(),main={...data,periods:[]};
  // Every statement is guarded by this unique nonce. A stale revision cannot write any period.
  const sendCutoff=new Date(Date.now()-120000).toISOString();
  const sendGuard=deletingPeriodId?" AND NOT EXISTS (SELECT 1 FROM payroll_mail_jobs j JOIN payroll_mail_batches b ON b.id=j.batch_id WHERE b.period_id=? AND j.status='sending' AND (j.started_at IS NULL OR j.started_at>?))":'';
- const writes=[db.prepare('UPDATE payroll_state SET data = ?, version = version + 1, updated_at = ?, updated_by = ?, write_nonce = ? WHERE id = ? AND version = ?'+sendGuard).bind(JSON.stringify(main),new Date().toISOString(),actor,nonce,'jac',version,...(deletingPeriodId?[deletingPeriodId,sendCutoff]:[])),db.prepare('DELETE FROM payroll_periods WHERE EXISTS (SELECT 1 FROM payroll_state WHERE id = ? AND write_nonce = ?)').bind('jac',nonce)];
+ const writes=[db.prepare('UPDATE payroll_state SET data = ?, version = version + 1, updated_at = ?, updated_by = ?, write_nonce = ? WHERE id = ? AND version = ?'+sendGuard+(guard?' AND ('+guard.sql+')':'')).bind(JSON.stringify(main),new Date().toISOString(),actor,nonce,'jac',version,...(deletingPeriodId?[deletingPeriodId,sendCutoff]:[]),...(guard?.bindings??[])),db.prepare('DELETE FROM payroll_periods WHERE EXISTS (SELECT 1 FROM payroll_state WHERE id = ? AND write_nonce = ?)').bind('jac',nonce)];
  for(const p of data.periods)writes.push(db.prepare('INSERT INTO payroll_periods (id,data,start) SELECT ?,?,? WHERE EXISTS (SELECT 1 FROM payroll_state WHERE id = ? AND write_nonce = ?)').bind(p.id,JSON.stringify(p),p.start,'jac',nonce));
  if(extras)writes.push(...extras(db,nonce));
  const result=await db.batch(writes);
@@ -25,10 +25,10 @@ export async function writePayroll(data:PayrollState,version:number,actor:string
  return {data,version:version+1};
 }
 
-export async function deletePayrollPeriod(data:PayrollState,version:number,periodId:string,actor:string){
+export async function deletePayrollPeriod(data:PayrollState,version:number,periodId:string,actor:string,guard?:{sql:string;bindings:(string|number)[]}){
  const next={...data,periods:data.periods.filter(p=>p.id!==periodId)};
  return writePayroll(next,version,actor,(db,nonce)=>[
   db.prepare('DELETE FROM payroll_mail_jobs WHERE batch_id IN (SELECT id FROM payroll_mail_batches WHERE period_id=?) AND EXISTS (SELECT 1 FROM payroll_state WHERE id=? AND write_nonce=?)').bind(periodId,'jac',nonce),
   db.prepare('DELETE FROM payroll_mail_batches WHERE period_id=? AND EXISTS (SELECT 1 FROM payroll_state WHERE id=? AND write_nonce=?)').bind(periodId,'jac',nonce),
- ],periodId);
+ ],periodId,guard);
 }

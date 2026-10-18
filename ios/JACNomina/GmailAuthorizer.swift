@@ -1,5 +1,9 @@
 import AuthenticationServices
+#if os(iOS)
 import UIKit
+#else
+import AppKit
+#endif
 
 @MainActor
 final class GmailAuthorizer: NSObject, ASWebAuthenticationPresentationContextProviding {
@@ -37,6 +41,10 @@ final class GmailAuthorizer: NSObject, ASWebAuthenticationPresentationContextPro
         guard items.first(where: { $0.name == "result" })?.value == "connected" else { throw APIError.message("Gmail no quedó conectado. Revisa la cuenta y vuelve a autorizar.") }
     }
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
+        #if os(iOS)
         UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows).first(where: \.isKeyWindow) ?? ASPresentationAnchor()
+        #else
+        NSApp.keyWindow ?? NSApp.mainWindow ?? ASPresentationAnchor()
+        #endif
     }
 }

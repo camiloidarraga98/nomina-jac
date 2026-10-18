@@ -7,17 +7,27 @@ struct AccountView: View {
     var body: some View {
             List {
                 Section {
-                    BrandView().frame(maxWidth: 220).frame(maxWidth: .infinity).padding(.vertical, 10)
-                    Text(user.displayName).font(.title2.weight(.semibold))
+                    VStack(alignment: .leading, spacing: 18) {
+                        HStack {
+                            Text(user.displayName.split(separator: " ").prefix(2).compactMap(\.first).map(String.init).joined()).font(.system(.title2,design:.rounded,weight:.bold))
+                                .frame(width:58,height:58).background(.white.opacity(0.12),in:RoundedRectangle(cornerRadius:20))
+                            Spacer(); BrandView().frame(width:105)
+                        }
+                        Text(user.displayName).font(.system(.title2,design:.rounded,weight:.bold))
+                        Text(user.onlyMedia ? "Fotografía JAC" : user.isOwner ? "Administrador de JAC" : "Equipo JAC").font(.subheadline).foregroundStyle(JACTheme.highlight)
+                    }.foregroundStyle(.white).padding(22).frame(maxWidth:.infinity,alignment:.leading)
+                        .background(LinearGradient(colors:[JACTheme.navy,JACTone.violet.deep],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:24))
+                }.jacStandaloneRow()
+                Section("Tu cuenta") {
                     LabeledContent("Usuario", value: user.username)
                     LabeledContent("Correo", value: user.email).textSelection(.enabled)
-                    LabeledContent("Perfil", value: user.isOwner ? "Administrador" : "Equipo administrativo")
+                    if !store.isAgendaOnly { NavigationLink { ChangePasswordView() } label:{ Label("Cambiar contraseña",systemImage:"key") }.disabled(store.isOffline).accessibilityLabel("Cambiar contraseña") }
                 }
-                Section("Acceso") {
-                    NavigationLink("Cambiar contraseña") { ChangePasswordView() }
-                    Button("Cerrar sesión", role: .destructive) { confirmLogout = true }.disabled(store.busy)
-                }
-                Section("Permisos de tu cuenta") {
+                Section("Secciones de tu cuenta") { ForEach(JACSection.allCases.filter { user.hasSection($0) && $0 != .mediaUpload },id:\.self) { Text($0.title) } }
+                if user.canReadMedia { Section("Fotografía") {
+                    Label(user.canUploadMedia ? "Consultar, crear carpetas y subir fotos o videos" : "Consultar fotos y videos", systemImage: "photo.on.rectangle.angled")
+                } }
+                if !store.isAgendaOnly && user.hasSection(.payroll) { Section("Permisos de tu cuenta") {
                     ForEach(PayrollFormat.permissionNames.keys.sorted(), id: \.self) { permission in
                         LabeledContent(PayrollFormat.permissionNames[permission] ?? permission) {
                             Image(systemName: user.can(permission) ? "checkmark.circle.fill" : "minus.circle")
@@ -25,13 +35,21 @@ struct AccountView: View {
                                 .accessibilityLabel(user.can(permission) ? "Autorizado" : "Sin permiso")
                         }
                     }
+                } }
+                Section("Copia sin conexión") {
+                    if store.isOffline { Label("Consultando la última copia guardada", systemImage: "wifi.slash").font(.footnote) }
+                    if store.client.syncingOffline { ProgressView("Guardando información y adjuntos…") }
+                    if let message = store.client.offlineSyncMessage { Text(message).font(.footnote).accessibilityIdentifier("offline.sync.status") }
+                    Button { Task { try? await store.refresh() } } label: { Label("Actualizar copia",systemImage:"arrow.down.circle").frame(maxWidth:.infinity) }.buttonStyle(JACSecondaryButtonStyle(tone:.teal)).disabled(store.client.syncingOffline).accessibilityIdentifier("offline.sync")
+                    Text("La copia se cifra y se elimina al cerrar sesión. Para modificar datos se necesita conexión.").font(.footnote).foregroundStyle(.secondary)
                 }
+                Section { Button("Cerrar sesión", role: .destructive) { confirmLogout = true }.disabled(store.busy) }
                 Section {
-                    Text("La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
+                    Text(user.onlyMedia ? "Tu cuenta permite trabajar con las fotos y videos de JAC desde esta app." : "La app utiliza las mismas quincenas, cuentas y permisos que la web. Los cálculos y las condiciones históricas se conservan en el servidor.").font(.footnote).foregroundStyle(.secondary)
                 }
             }
-            .jacSurface().navigationTitle("Mi cuenta")
-            .confirmationDialog("¿Cerrar sesión en este iPhone? Los cambios pendientes sin guardar se descartarán.", isPresented: $confirmLogout, titleVisibility: .visible) {
+            .jacSurface().navigationTitle("Mi cuenta").jacInlineTitle()
+            .confirmationDialog("¿Cerrar sesión en este \(JACDevice.name)? Los cambios pendientes sin guardar se descartarán.", isPresented: $confirmLogout, titleVisibility: .visible) {
                 Button("Cerrar sesión", role: .destructive) { Task { await store.signOut() } }
             }
     }
@@ -66,6 +84,6 @@ struct ChangePasswordView: View {
                     }
                 } label: { HStack { Text("Guardar contraseña"); Spacer(); if busy { ProgressView() } } }
             }
-        }.jacSurface().navigationTitle("Contraseña").disabled(busy)
+        }.jacSurface().navigationTitle("Contraseña").disabled(busy || store.isOffline)
     }
 }

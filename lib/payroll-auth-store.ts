@@ -1,15 +1,39 @@
 import {env} from 'cloudflare:workers';
 import {database} from '@/db/raw';
 import {hashPassword,verifyPassword,tokenHash,randomToken,SESSION_SECONDS} from './payroll-auth-crypto';
-import {permissionKeys,defaultPermissionKeys,type AccessUser,type Permission} from './payroll-permissions';
+import {permissionKeys,defaultPermissionKeys,sectionKeys,type AccessUser,type Permission,type SectionKey} from './payroll-permissions';
 export const OWNER_EMAIL='camilo@mac2you.co';
-export type UserRow={id:string;username:string;email:string;name:string;password_hash:string;owner:number;active:number;permissions:string;version:number;created_at:string;updated_at:string};
+export type UserRow={id:string;username:string;email:string;name:string;password_hash:string;owner:number;active:number;itineraries_only?:number;media_only?:number;section_access?:string|null;permissions:string;version:number;created_at:string;updated_at:string};
 export function authKey(){if(!env.PAYROLL_AUTH_KEY)throw new Error('El acceso propio todavía no está preparado.');return env.PAYROLL_AUTH_KEY;}
 export async function ownAuthReady(){return !!await database().prepare('SELECT id FROM payroll_users WHERE owner=1 LIMIT 1').first();}
-export function accessUser(row:UserRow):AccessUser{return {id:row.id,username:row.username,email:row.email,displayName:row.name,fullName:row.name,isOwner:row.owner===1&&row.email===OWNER_EMAIL,permissions:JSON.parse(row.permissions) as Permission[]};}
-export function publicUser(row:UserRow){return {id:row.id,username:row.username,email:row.email,name:row.name,owner:row.owner===1,active:row.active===1,permissions:JSON.parse(row.permissions) as Permission[],version:row.version,ready:!!row.password_hash};}
-export async function authenticatedSession(token:string){if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;const row=await database().prepare('SELECT u.* FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND s.expires_at>? AND u.active=1 AND u.password_hash<>?').bind(tokenHash(token),new Date().toISOString(),'').first<UserRow>();return row?accessUser(row):null;}
-export async function makeSession(userId:string){const token=randomToken(),db=database(),now=new Date().toISOString();const result=await db.batch([db.prepare('DELETE FROM payroll_sessions WHERE expires_at<=?').bind(now),db.prepare('INSERT INTO payroll_sessions (id,user_id,user_version,expires_at) SELECT ?,id,version,? FROM payroll_users WHERE id=? AND active=1 AND password_hash<>?').bind(tokenHash(token),new Date(Date.now()+SESSION_SECONDS*1000).toISOString(),userId,'')]);if(result[1].meta.changes!==1)throw new Error('No se pudo iniciar sesión.');return token;}
+// Stored separately from ordinary permissions; old clients preserve the role
+// when administrator is omitted. The founder's protected owner row is unchanged.
+export const ADMINISTRATOR_ROLE='administrator';
+export function accountAdministrator(row:Pick<UserRow,'owner'|'email'|'permissions'|'itineraries_only'|'media_only'>){return row.media_only!==1&&row.itineraries_only!==1&&((row.owner===1&&row.email===OWNER_EMAIL)||(JSON.parse(row.permissions) as string[]).includes(ADMINISTRATOR_ROLE));}
+const ordinaryPermissions=(row:UserRow)=>(JSON.parse(row.permissions) as string[]).filter((p):p is Permission=>permissionKeys.includes(p as Permission));
+export function storedSections(row:Pick<UserRow,'section_access'>):SectionKey[]|undefined{
+ if(row.section_access==null)return undefined;
+ try{const parsed:unknown=JSON.parse(row.section_access);if(!Array.isArray(parsed)||parsed.some(key=>!sectionKeys.includes(key as SectionKey)))return [];const keys=[...new Set(parsed)] as SectionKey[];return keys.filter(key=>key!=='mediaUpload'||keys.includes('media'));}catch{return [];}
+}
+export function accessUser(row:UserRow):AccessUser{
+ const sections=storedSections(row),isOwner=accountAdministrator(row),limited=!isOwner&&(sections? !sections.includes('payroll'):row.itineraries_only===1||row.media_only===1),mediaOnly=!isOwner&&(sections?limited&&sections.includes('media'):row.media_only===1);
+ return {id:row.id,username:row.username,email:row.email,displayName:row.name,fullName:row.name,isOwner,...(limited?{itinerariesOnly:true}:{}),...(mediaOnly?{mediaOnly:true}:{}),...(sections?{sections}:{}),permissions:limited?[]:ordinaryPermissions(row)};
+}
+export function publicUser(row:UserRow){const user=accessUser(row);return {id:row.id,username:row.username,email:row.email,name:row.name,owner:row.owner===1,administrator:user.isOwner,active:row.active===1,...(user.itinerariesOnly?{itinerariesOnly:true}:{}),...(user.mediaOnly?{mediaOnly:true}:{}),...(user.sections?{sections:user.sections}:{}),permissions:user.permissions,version:row.version,ready:!!row.password_hash};}
+async function sessionAccount(token:string){
+ if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;
+ return database().prepare('SELECT u.*,s.persistent AS session_persistent FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND (s.persistent=1 OR s.expires_at>?) AND u.active=1 AND u.password_hash<>?').bind(tokenHash(token),new Date().toISOString(),'').first<UserRow&{session_persistent:number}>();
+}
+export async function authenticatedSession(token:string){const row=await sessionAccount(token);return row?accessUser(row):null;}
+export async function sessionIsPersistent(token:string){return (await sessionAccount(token))?.session_persistent===1;}
+export async function makeSession(userId:string,persistent=false){
+ const token=randomToken(),db=database(),now=new Date().toISOString();
+ const result=await db.batch([
+  db.prepare('DELETE FROM payroll_sessions WHERE persistent=0 AND expires_at<=?').bind(now),
+  db.prepare('INSERT INTO payroll_sessions (id,user_id,user_version,expires_at,persistent) SELECT ?,id,version,?,? FROM payroll_users WHERE id=? AND active=1 AND password_hash<>?').bind(tokenHash(token),persistent?'':new Date(Date.now()+SESSION_SECONDS*1000).toISOString(),Number(persistent),userId,'')
+ ]);
+ if(result[1].meta.changes!==1)throw new Error('No se pudo iniciar sesión.');return token;
+}
 export async function revokeSession(token:string,deviceId?:unknown){if(token){if(typeof deviceId==='string'&&/^[a-f0-9-]{36}$/.test(deviceId))await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND session_id=?').bind(deviceId,tokenHash(token)).run();await database().prepare('DELETE FROM payroll_sessions WHERE id=?').bind(tokenHash(token)).run();}}
 export async function rateLimit(req:Request,account:string){const now=Date.now(),slot=Math.floor(now/900000),expires=new Date((slot+2)*900000).toISOString();const ip=req.headers.get('cf-connecting-ip')||'unknown';const keys=[['ip:'+ip,30],['account:'+account,10]] as const;const statements=keys.map(([key])=>database().prepare('INSERT INTO payroll_login_limits (id,count,expires_at) VALUES (?,1,?) ON CONFLICT(id) DO UPDATE SET count=count+1 RETURNING count').bind(tokenHash(key+':'+slot),expires));const rows=await database().batch([...statements,database().prepare('DELETE FROM payroll_login_limits WHERE expires_at<=?').bind(new Date(now).toISOString())]);if(keys.some(([,limit],i)=>Number((rows[i].results[0] as {count:number}|undefined)?.count)>limit))throw new Error('RATE_LIMIT');}
 export async function passwordLogin(username:string,password:string){const row=await database().prepare('SELECT * FROM payroll_users WHERE username=? OR email=? LIMIT 1').bind(username,username).first<UserRow>();const key=authKey();const dummy='scrypt-v1:AAAAAAAAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';const valid=verifyPassword(password,row?.password_hash||dummy,key);return row?.active&&row.password_hash&&valid?row:null;}

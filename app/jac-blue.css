@@ -1,0 +1,104 @@
+/* Shared JAC identity: navy + blue, preserving semantic status colours. */
+
+:root {
+  --jac-navy: #062f46;
+  --jac-blue: #006fbd;
+  --jac-blue-hover: #005c9e;
+  --jac-cyan: #009dff;
+  --jac-soft: #e8f3fc;
+  --jac-canvas: #f3f7fb;
+  --jac-ink: #163449;
+  --jac-muted: #5b7184;
+  --jac-line: #d9e5ee;
+}
+
+/* Repeat the app selector to outrank the retained component styles without
+   changing layout or the meaning of success, warning and destructive actions. */
+html:root {
+  --foreground: var(--jac-ink);
+  --primary: var(--jac-blue);
+  --primary-foreground: #fff;
+  --border: var(--jac-line);
+  --input: #cbdbe8;
+  --ring: var(--jac-blue);
+  --accent: var(--jac-soft);
+  --muted: #eef4f9;
+  --muted-foreground: var(--jac-muted);
+  --popover-foreground: var(--jac-ink);
+}
+
+body:has(.app) { background: var(--jac-canvas); color: var(--jac-ink); }
+.app .sidebar { background: var(--jac-navy); color: #eef7ff; }
+.app .workspace-label, .app .sidebar-bottom small { color: #a3bed0; }
+.app .sidebar nav a { color: #c4d8e6; }
+.app .sidebar nav a:hover { background: #10445f; color: #fff; }
+.app .sidebar nav a.active { background: var(--jac-blue); color: #fff; box-shadow: inset 3px 0 var(--jac-cyan); }
+.app .sidebar-bottom { border-color: #31576d; }
+.app .avatar { background: #24516a; }
+.app .topbar { color: var(--jac-muted); border-color: var(--jac-line); }
+.app .topbar b, .app h1, .app h2, .app h3 { color: var(--jac-ink); }
+.app .eyebrow { color: #55758d; }
+.app .muted, .app .panel-note, .app .kpis span, .app .event-description p,
+.app .workspace-footer { color: var(--jac-muted); }
+.app .panel, .app .panel-title, .app .kpis, .app .kpis > div { border-color: var(--jac-line); }
+.app .kpis { box-shadow: 0 3px 16px #062f4605; }
+.app .kpis strong { color: var(--jac-navy); }
+.app .section-tabs a { color: var(--jac-muted); }
+.app .section-tabs a.selected { background: #ddecfa; color: #064f85; }
+.app .date-box { background: var(--jac-soft); color: var(--jac-blue); }
+.app .date-box small { color: #416e90; }
+.app .summary-card { background: var(--jac-navy); color: #fff; }
+.app .summary-card h2 { color: #fff; }
+.app .summary-card .eyebrow { color: #84d6ff; }
+.app .summary-total { border-color: #375e74; }
+.app .summary-card p:not(.eyebrow) { color: #bfd5e4; }
+.app .summary-secondary { color: #e0f1ff !important; border-color: #618ca5 !important; }
+.app .summary-card .summary-foot { color: #aecbdc !important; }
+.app .filters button.selected { background: var(--jac-navy); color: #fff; }
+.app .inline-total { background: var(--jac-soft); color: var(--jac-navy); }
+.app .general-settings-trigger { border-color: var(--jac-line); color: #315a76; }
+.app .general-settings-trigger:hover, .app .general-settings-trigger.active { background: var(--jac-soft); border-color: #8cb5d4; }
+.app th { background: #f4f8fc !important; color: #5a7489 !important; }
+.app td { border-color: #e7eef4 !important; }
+.app tbody tr:hover { background: #f3f8fd !important; }
+
+.primary.primary { background: var(--jac-blue) !important; color: #fff !important; border-color: var(--jac-blue) !important; }
+.primary.primary:hover:not(:disabled) { background: var(--jac-blue-hover) !important; border-color: var(--jac-blue-hover) !important; }
+button:focus-visible, a:focus-visible { outline-color: var(--jac-blue) !important; }
+input[type=checkbox] { accent-color: var(--jac-blue); }
+.toggle [data-state=checked] { background: var(--jac-blue) !important; color: #fff; }
+.payroll-dialog.payroll-dialog { color: var(--jac-ink); }
+.payroll-dialog .field-label, .payroll-dialog .crm-price-fields > .field > span,
+.payroll-dialog .crm-contact-field > label { color: #31536b; }
+.payroll-dialog .inline-total { background: var(--jac-soft); color: var(--jac-navy); }
+.payroll-dialog .crm-contact-menu { border-color: var(--jac-line); box-shadow: 0 12px 30px #062f461a; }
+.payroll-dialog .crm-contact-menu button { color: var(--jac-ink); }
+.payroll-dialog .crm-contact-menu button:hover, .payroll-dialog .crm-contact-menu button.active { background: var(--jac-soft); }
+.payroll-dialog .crm-contact-menu small, .payroll-dialog .crm-contact-menu p,
+.payroll-dialog .crm-contact-selected { color: var(--jac-muted); }
+
+.app .crm-show-row { border-color: var(--jac-line); }
+.app .crm-show-row:hover { background: #f5faff; border-color: #91b9d8; }
+.app .crm-date, .app .crm-contact-card svg { color: var(--jac-blue); }
+.app .crm-show-row small, .app .crm-contact-card span, .app .crm-contact-card small,
+.app .crm-breakdown dt, .app .crm-week-show small { color: var(--jac-muted); }
+.app .crm-tabs, .crm-detail .crm-tabs { background: #eaf1f8; border-color: var(--jac-line); }
+.app .crm-tabs button, .crm-detail .crm-tabs button { color: var(--jac-muted); }
+.app .crm-tabs button[aria-selected=true], .crm-detail .crm-tabs button[aria-selected=true] { color: var(--jac-blue); box-shadow: 0 2px 6px #062f4610; }
+.app .crm-work-card, .app .crm-contact-card, .app .crm-task-card { border-color: var(--jac-line); }
+.app .crm-contact-card:hover, .app .crm-week-show:hover { background: #f5faff; }
+.crm-detail .crm-account-totals > div, .crm-payment-target.crm-payment-target { background: #f0f6fc; border-color: var(--jac-line); }
+.crm-detail .crm-account-totals small, .crm-detail .crm-payment small { color: var(--jac-muted); }
+.crm-detail .crm-account-totals strong { color: var(--jac-navy); }
+.crm-dropzone.crm-dropzone { background: #f5faff; border-color: #a7c7df; color: #315a76; }
+.crm-dropzone.dragging { background: #e5f2fd; border-color: var(--jac-blue); }
+.crm-receipt.crm-receipt:hover { background: var(--jac-soft); }
+.app .agenda-day.chosen { background: var(--jac-blue); border-color: var(--jac-blue); color: #fff; }
+.app .agenda-day.chosen .agenda-dots i { background: #fff; }
+.app .agenda-day.today:not(.chosen) { border-color: var(--jac-blue); color: var(--jac-blue); }
+.app .agenda-dots i { background: var(--jac-cyan); }
+.app .agenda-month-heading h2 { color: var(--jac-navy); }
+.app .agenda-event-date { color: var(--jac-blue); }
+.app .agenda-event:hover { background: #f3f8fd; }
+
+@media print { body:has(.app) { background: #fff; } }

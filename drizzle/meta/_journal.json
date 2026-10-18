@@ -64,6 +64,132 @@
       "when": 1791333016695,
       "tag": "0008_itineraries_notifications",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "6",
+      "when": 1791349720337,
+      "tag": "0009_deleted_alerts",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1791389496035,
+      "tag": "0010_deleted_itineraries",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1791391287660,
+      "tag": "0011_manual_notice_attachments",
+      "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1791391413428,
+      "tag": "0012_manual_upload_token",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1791421694962,
+      "tag": "0013_boarding_passes",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1791422420206,
+      "tag": "0014_itineraries_only_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1791480828404,
+      "tag": "0015_travel_workflows",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "6",
+      "when": 1791484758273,
+      "tag": "0016_persistent_mobile_sessions",
+      "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1791996486959,
+      "tag": "0017_crm_shows",
+      "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "6",
+      "when": 1792008038665,
+      "tag": "0018_crm_creations",
+      "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1792010478597,
+      "tag": "0019_crm_receipt_sequence",
+      "breakpoints": true
+    },
+    {
+      "idx": 20,
+      "version": "6",
+      "when": 1792085724784,
+      "tag": "0020_crm_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "6",
+      "when": 1792161995202,
+      "tag": "0021_photography_gallery",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "6",
+      "when": 1792166415781,
+      "tag": "0022_photography_locations",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "6",
+      "when": 1792167181426,
+      "tag": "0023_user_section_access",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1792177754142,
+      "tag": "0024_photography_r2_connection",
+      "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1792179421822,
+      "tag": "0025_photography_r2_new_collection",
+      "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "6",
+      "when": 1792275934854,
+      "tag": "0026_crm_contracts",
+      "breakpoints": true
     }
   ]
 }

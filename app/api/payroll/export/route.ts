@@ -2,6 +2,7 @@ import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {readPayroll} from '@/lib/payroll-store';
 import {payrollPdf,payrollXlsx,payrollSlipZip} from '@/lib/payroll-export';
 import {can} from '@/lib/payroll-permissions';
+import {payrollReadAuthorized} from '@/lib/payroll-section-guard';
 export const dynamic='force-dynamic';
 export async function GET(req:Request){
  const user=await payrollUser();if(!user)return Response.json({error:'Acceso no autorizado.'},{status:401,headers:payrollHeaders});
@@ -14,6 +15,7 @@ export async function GET(req:Request){
  else if(format==='zip'){bytes=await payrollSlipZip(p);type='application/zip';ext='zip';label='desprendibles';}
  else if(format==='pdf'||format==='slips'){bytes=await payrollPdf(p,employee,format==='slips');type='application/pdf';ext='pdf';label=employee?'desprendible-'+employee:format==='slips'?'desprendibles':'resumen-nomina';}
  else return Response.json({error:'Formato no válido.'},{status:400,headers:payrollHeaders});
+ if(!await payrollReadAuthorized(user))return Response.json({error:'Tu sesión o permiso cambió. Inicia sesión de nuevo.'},{status:403,headers:payrollHeaders});
  return new Response(bytes as BodyInit,{headers:{...payrollHeaders,'Content-Type':type,'Content-Disposition':`attachment; filename="${label}-${p.start}.${ext}"`,'X-Content-Type-Options':'nosniff'}});
  }catch(e){console.error('Payroll export failed',e);return Response.json({error:'No se pudo generar el documento. Intenta de nuevo.'},{status:500,headers:payrollHeaders});}
 }

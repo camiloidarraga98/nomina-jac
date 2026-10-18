@@ -7,7 +7,7 @@ const sql=new DatabaseSync(':memory:');for(const f of (await readdir('drizzle'))
 class Query{constructor(text,args=[]){this.text=text;this.args=args;}bind(...args){return new Query(this.text,args);}execute(){const q=sql.prepare(this.text);if(q.columns().length)return {results:q.all(...this.args),meta:{changes:Number(sql.prepare('SELECT changes() AS n').get().n)}};const out=q.run(...this.args);return {results:[],meta:{changes:Number(out.changes)}};}async run(){return this.execute();}async all(){return this.execute();}async first(){return sql.prepare(this.text).get(...this.args)||null;}}
 const db={prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const r=qs.map(q=>q.execute());sql.exec('COMMIT');return r;}catch(e){sql.exec('ROLLBACK');throw e;}}};
 globalThis.__authEnv={DB:db,PAYROLL_AUTH_KEY:'test-only-key-with-at-least-32-characters',PAYROLL_MAIL_KEY:'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'};globalThis.__authHeaders=new Headers();
-const bundled=await build({stdin:{contents:"export * from './lib/payroll-auth-crypto';export * from './lib/payroll-auth-store';export * from './lib/payroll-access';export * from './lib/payroll-permissions';export * from './lib/payroll-store';export * from './lib/payroll';export * from './lib/payroll-schema';export * as authApi from './app/api/auth/route';export * as usersApi from './app/api/users/route';export * as payrollApi from './app/api/payroll/route';export * as exportApi from './app/api/payroll/export/route';export * as mailApi from './app/api/payroll/email/route';export * as gmailApi from './app/api/payroll/gmail/start/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mock-platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers|next\/navigation)$/},args=>({path:args.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},args=>({contents:args.path==='cloudflare:workers'?'export const env=globalThis.__authEnv;export const waitUntil=()=>{};':args.path==='next/headers'?'export const headers=async()=>globalThis.__authHeaders;':'export const redirect=()=>{throw new Error("redirect");};',loader:'js'}));}}]});
+const bundled=await build({stdin:{contents:"export * from './lib/payroll-auth-crypto';export * from './lib/payroll-auth-store';export * from './lib/payroll-access';export * from './lib/payroll-permissions';export * from './lib/payroll-store';export * from './lib/payroll';export * from './lib/payroll-schema';export * as authApi from './app/api/auth/route';export * as usersApi from './app/api/users/route';export * as payrollApi from './app/api/payroll/route';export * as exportApi from './app/api/payroll/export/route';export * as mailApi from './app/api/payroll/email/route';export * as gmailApi from './app/api/payroll/gmail/start/route';export * as mobileApi from './app/api/mobile/payroll/route';export * as calendarApi from './app/api/calendar/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mock-platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers|next\/navigation)$/},args=>({path:args.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},args=>({contents:args.path==='cloudflare:workers'?'export const env=globalThis.__authEnv;export const waitUntil=()=>{};':args.path==='next/headers'?'export const headers=async()=>globalThis.__authHeaders;':'export const redirect=()=>{throw new Error("redirect");};',loader:'js'}));}}]});
 const m=await import('data:text/javascript;base64,'+Buffer.from(bundled.outputFiles[0].contents).toString('base64'));const base='https://payroll.example.invalid',owner='camilo@mac2you.co',password='12';
 async function call(api,body,{cookie='',email='',origin=base,ip='192.0.2.1',get=false,path=''}={}){globalThis.__authHeaders=new Headers({host:'payroll.example.invalid',cookie,'oai-authenticated-user-email':email});const req=new Request(base+path,{method:get?'GET':'POST',headers:{cookie,origin,'Content-Type':'application/json','cf-connecting-ip':ip},...(get?{}:{body:JSON.stringify(body)})});const r=await (get?api.GET(req):api.POST(req));const out=await r.json();return {r,status:r.status,body:out,cookie:r.headers.get('set-cookie')?.split(';')[0]||''};}
 let ownerCookie='',luisaCookie='',luisaId='';
@@ -111,4 +111,95 @@ test('eliminación exclusiva del propietario limpia cierres y envíos; admite re
  for(const id of [otherId,recreated.id]){result=await call(m.payrollApi,{action:'deletePeriod',periodId:id,confirmation:id,version:current.version},{cookie:ownerCookie});assert.equal(result.status,200);current=result.body;}
  const empty=(await call(m.payrollApi,null,{cookie:ownerCookie,get:true})).body;assert.deepEqual(empty.data.periods,[]);assert.equal(m.stateSchema.safeParse(empty.data).success,true);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_periods').get().n,0);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_batches').get().n,0);
  const fresh=structuredClone(empty.data);fresh.periods.push(m.newPeriod(...removedDates));assert.equal((await call(m.payrollApi,{action:'save',data:fresh,version:empty.version},{cookie:ownerCookie})).status,200);
+});
+
+test('Sin nómina: cuenta limitada conserva Agenda de consulta y bloquea APIs financieras',async()=>{
+ const create=await call(m.usersApi,{action:'create',user:{name:'Alex ficticio',username:'alex-scope-fixture',email:'alex-scope@example.invalid',active:true,itinerariesOnly:true,permissions:['export','payroll']}},{cookie:ownerCookie});assert.equal(create.status,200);
+ let row=sql.prepare("SELECT * FROM payroll_users WHERE username='alex-scope-fixture'").get();assert.equal(row.itineraries_only,1);assert.deepEqual(JSON.parse(row.permissions),[]);
+ sql.prepare('UPDATE payroll_users SET password_hash=? WHERE id=?').run(m.hashPassword('fixture-password',globalThis.__authEnv.PAYROLL_AUTH_KEY),row.id);const cookie='__Host-jac_session='+await m.makeSession(row.id);
+ globalThis.__authHeaders=new Headers({host:'payroll.example.invalid',cookie});const identity=await m.payrollUser();assert.equal(identity.itinerariesOnly,true);assert.equal(m.can(identity,'export'),false);
+ for(const api of [m.payrollApi,m.mailApi,m.exportApi])assert.equal((await call(api,null,{cookie,get:true})).status,403);
+ for(const api of [m.payrollApi,m.mailApi,m.mobileApi,m.calendarApi])assert.equal((await call(api,{action:'anything'},{cookie})).status,403);
+ const agenda=await call(m.calendarApi,null,{cookie,get:true});assert.equal(agenda.status,200);assert.equal(agenda.body.canEditEvents,false);
+ const workspace=await call(m.mobileApi,null,{cookie,get:true,path:'/api/mobile/payroll?workspace=1'});assert.equal(workspace.status,200);assert.deepEqual(workspace.body.data.employees,[]);assert.deepEqual(workspace.body.data.periods,[]);assert.equal(workspace.body.user.itinerariesOnly,true);assert.deepEqual(workspace.body.employees,[]);
+ assert.equal((await call(m.mobileApi,null,{cookie,get:true,path:'/api/mobile/payroll?period=known'})).status,403);
+ let pub=(await call(m.usersApi,null,{cookie:ownerCookie,get:true})).body.users.find(u=>u.id===row.id);assert.equal(pub.itinerariesOnly,true);
+ const oldClient={...pub};delete oldClient.itinerariesOnly;assert.equal((await call(m.usersApi,{action:'update',id:row.id,version:pub.version,user:oldClient},{cookie:ownerCookie})).status,200);assert.equal(sql.prepare('SELECT itineraries_only FROM payroll_users WHERE id=?').get(row.id).itineraries_only,1,'Un cliente antiguo no puede quitar la restricción al guardar');assert.equal((await call(m.payrollApi,null,{cookie,get:true})).status,401,'El cambio de permisos revoca la sesión anterior');
+});
+
+
+test('administración delegada: concesión explícita, sesiones revocadas, clientes antiguos y propietario protegido',async()=>{
+ const ownerId=sql.prepare('SELECT id FROM payroll_users WHERE owner=1').get().id;ownerCookie='__Host-jac_session='+await m.makeSession(ownerId);
+ const fixture={username:'jac-admin-fixture',email:'jac-admin@example.invalid',name:'Jhon ficticio',active:true,itinerariesOnly:true,permissions:[]};
+ assert.equal((await call(m.usersApi,{action:'create',user:fixture},{cookie:ownerCookie})).status,200);
+ let row=sql.prepare('SELECT * FROM payroll_users WHERE username=?').get(fixture.username);
+ assert.equal(m.publicUser(row).administrator,false);assert.equal(m.publicUser(row).ready,false);
+ sql.prepare('UPDATE payroll_users SET password_hash=? WHERE id=?').run(m.hashPassword('fixture',globalThis.__authEnv.PAYROLL_AUTH_KEY),row.id);
+ const old='__Host-jac_session='+await m.makeSession(row.id);
+ const update=(user,version=row.version,cookie=ownerCookie)=>call(m.usersApi,{action:'update',id:row.id,version,user},{cookie});
+ const grant={...m.publicUser(row),administrator:true,itinerariesOnly:false,permissions:[]};
+ assert.equal((await update(grant,row.version,old)).status,403,'Un lector no se puede promover');
+ assert.equal((await update({...grant,itinerariesOnly:true})).status,400);
+ assert.equal((await update({...grant,permissions:['administrator']})).status,400,'El rol no es un permiso ordinario inyectable');
+ assert.equal((await update(grant)).status,200);assert.equal((await call(m.usersApi,null,{cookie:old,get:true})).status,403);
+ row=sql.prepare('SELECT * FROM payroll_users WHERE id=?').get(row.id);assert.equal(row.owner,0);assert.equal(row.itineraries_only,0);assert.ok(JSON.parse(row.permissions).includes(m.ADMINISTRATOR_ROLE));
+ assert.equal((await update(grant,row.version-1)).status,409);
+ let token=await m.makeSession(row.id),cookie='__Host-jac_session='+token;
+ const identity=await m.authenticatedSession(token);assert.equal(identity.isOwner,true);assert.ok(m.permissionKeys.every(p=>m.can(identity,p)));assert.ok(!identity.permissions.includes(m.ADMINISTRATOR_ROLE));
+ assert.equal((await call(m.usersApi,null,{cookie,get:true})).status,200);
+ const workspace=await call(m.mobileApi,null,{cookie,get:true,path:'/api/mobile/payroll?workspace=1'});assert.equal(workspace.status,200);assert.equal(workspace.body.user.isOwner,true);
+ assert.equal((await call(m.mailApi,{action:'configure',clientId:'fixture.apps.googleusercontent.com',clientSecret:'fixture-only-secret'},{cookie})).status,200);
+ assert.equal((await call(m.gmailApi,{}, {cookie})).status,200);
+ assert.equal((await call(m.calendarApi,{action:'connect'},{cookie})).status,200);
+ const founder=sql.prepare('SELECT * FROM payroll_users WHERE owner=1').get();
+ assert.equal((await call(m.usersApi,{action:'update',id:founder.id,version:founder.version,user:{...m.publicUser(founder),active:false}},{cookie})).status,403);
+ const oldClient={...m.publicUser(row)};delete oldClient.administrator;delete oldClient.itinerariesOnly;
+ assert.equal((await update(oldClient)).status,200);assert.equal(await m.authenticatedSession(token),null);
+ row=sql.prepare('SELECT * FROM payroll_users WHERE id=?').get(row.id);assert.equal(m.publicUser(row).administrator,true);
+ token=await m.makeSession(row.id);cookie='__Host-jac_session='+token;
+ assert.equal((await update({...m.publicUser(row),administrator:false,permissions:[]})).status,200);assert.equal(await m.authenticatedSession(token),null);
+ row=sql.prepare('SELECT * FROM payroll_users WHERE id=?').get(row.id);const reader='__Host-jac_session='+await m.makeSession(row.id);
+ assert.equal(m.publicUser(row).administrator,false);assert.equal((await call(m.usersApi,null,{cookie:reader,get:true})).status,403);assert.equal((await call(m.gmailApi,{}, {cookie:reader})).status,403);
+ assert.equal((await call(m.calendarApi,{action:'connect'},{cookie:reader})).status,403);
+ const pending={...fixture,username:'admin-pending-fixture',email:'admin-pending@example.invalid',administrator:true,itinerariesOnly:false};
+ assert.equal((await call(m.usersApi,{action:'create',user:pending},{cookie:ownerCookie})).status,200);
+ const pendingRow=sql.prepare('SELECT * FROM payroll_users WHERE username=?').get(pending.username);assert.equal(m.publicUser(pendingRow).administrator,true);assert.equal(m.publicUser(pendingRow).ready,false);
+ await assert.rejects(()=>m.makeSession(pendingRow.id),/iniciar sesión/);
+});
+
+
+test('sesión persistente optativa: sin caducidad temporal, limpieza compatible, contraseña y cierre manual',async()=>{
+ const id=crypto.randomUUID(),stamp=new Date().toISOString(),username='remember-fixture',password='local-only';
+ sql.prepare('INSERT INTO payroll_users (id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,username,'remember@example.invalid','Sesión ficticia',m.hashPassword(password,globalThis.__authEnv.PAYROLL_AUTH_KEY),'[]',stamp,stamp);
+ const login=keepSignedIn=>call(m.authApi,{action:'login',username,password,...(keepSignedIn===undefined?{}:{keepSignedIn})},{ip:'198.51.100.40'});
+ const regular=await login(),off=await login(false),persistent=await login(true);
+ for(const result of [regular,off,persistent])assert.equal(result.status,200);
+ for(const result of [regular,off])assert.match(result.r.headers.get('set-cookie'),/Max-Age=43200/);
+ assert.doesNotMatch(persistent.r.headers.get('set-cookie'),/Max-Age|Expires/i);
+ assert.match(persistent.r.headers.get('set-cookie'),/HttpOnly; Secure; SameSite=Lax/);
+ const token=persistent.cookie.split('=')[1];assert.equal(await m.sessionIsPersistent(token),true);
+ assert.equal(sql.prepare('SELECT expires_at FROM payroll_sessions WHERE id=?').get(m.tokenHash(token)).expires_at,'');
+ // Model years of elapsed time, then exercise the cleanup run at another login.
+ sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE user_id=?').run('2000-01-01T00:00:00Z',id);
+ assert.equal(await m.authenticatedSession(regular.cookie.split('=')[1]),null);
+ assert.equal((await m.authenticatedSession(token)).id,id);
+ await m.makeSession(id);
+ assert.equal((await m.authenticatedSession(token)).id,id,'La limpieza no elimina una sesión persistente');
+ const changed=await call(m.authApi,{action:'password',currentPassword:password,password:'changed-local-only'},{cookie:persistent.cookie,ip:'198.51.100.41'});
+ assert.equal(changed.status,200);assert.equal(await m.authenticatedSession(token),null);
+ const renewed=changed.cookie.split('=')[1];assert.equal(await m.sessionIsPersistent(renewed),true);
+ assert.doesNotMatch(changed.r.headers.get('set-cookie'),/Max-Age|Expires/i);
+ assert.equal((await call(m.authApi,{action:'logout'},{cookie:changed.cookie})).status,200);
+ assert.equal(await m.authenticatedSession(renewed),null);
+});
+
+test('sesiones persistentes respetan revocación de acceso, desactivación y restablecimiento',async()=>{
+ const id=crypto.randomUUID(),stamp=new Date().toISOString();
+ sql.prepare('INSERT INTO payroll_users (id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,'revoke-remember','revoke-remember@example.invalid','Revocación ficticia',m.hashPassword('local-only',globalThis.__authEnv.PAYROLL_AUTH_KEY),'[]',stamp,stamp);
+ let token=await m.makeSession(id,true);sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(id);
+ assert.equal(await m.authenticatedSession(token),null);assert.equal(await m.sessionIsPersistent(token),false);
+ token=await m.makeSession(id,true);sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(id);assert.equal(await m.authenticatedSession(token),null);
+ sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(id);token=await m.makeSession(id,true);
+ await m.inviteUser(id);assert.equal(await m.authenticatedSession(token),null);
+ await assert.rejects(()=>m.makeSession(id,true),/iniciar sesión/);
 });

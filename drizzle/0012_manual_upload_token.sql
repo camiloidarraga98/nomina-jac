@@ -1,0 +1,1 @@
+ALTER TABLE `jac_notices` ADD `upload_token` text DEFAULT '' NOT NULL;

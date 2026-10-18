@@ -7,7 +7,7 @@ import {AGENDA_TIME_ZONE,CALENDAR_ACCOUNT,CALENDAR_SCOPE,agendaMonth,agendaDate,
 export type CalendarCredentials={clientId:string;clientSecret:string;refreshToken:string;scopes?:string[]};
 export type CalendarConfig={credentials:string;connected_email:string;calendar_id:string;calendar_name:string;timezone:string;version:number};
 type GoogleOAuthError='invalid_grant'|'invalid_client'|'unauthorized_client'|'invalid_scope'|'access_denied';
-export class CalendarFailure extends Error {constructor(message:string,public status=400,public googleError?:GoogleOAuthError){super(message);}}
+export class CalendarFailure extends Error {constructor(message:string,public status=400,public googleError?:GoogleOAuthError,public discardCachedAgenda=false){super(message);}}
 export async function calendarConfig(){return database().prepare('SELECT credentials,connected_email,calendar_id,calendar_name,timezone,version FROM payroll_calendar WHERE id=?').bind('jac').first<CalendarConfig>();}
 export async function calendarClientCredentials(){
  const row=await database().prepare('SELECT credentials FROM payroll_gmail WHERE id=?').bind('jac').first<{credentials:string}>();
@@ -35,8 +35,8 @@ async function googleResponse(response:Response) {
   const disabled=['accessNotConfigured','serviceDisabled'].includes(reason||'');
   const oauthError=typeof e==='string'&&['invalid_grant','invalid_client','unauthorized_client','invalid_scope','access_denied'].includes(e)?e as GoogleOAuthError:undefined;
   if(response.status===412)throw new CalendarFailure('Otra persona modificó este evento. Cierra el formulario, actualiza Agenda y abre la versión actual antes de guardar.',409);
-  if(response.status===404||response.status===410)throw new CalendarFailure('El evento ya no está disponible. Actualiza Agenda.',404);
-  throw new CalendarFailure(disabled?'Activa Google Calendar API en el proyecto de Google utilizado por JAC.':response.status===401||e==='invalid_grant'?'Google requiere que vuelvas a conectar Agenda.':response.status===403?'Google no concedió acceso al calendario. Revisa la autorización y activa Google Calendar API.':response.status===429?'Google limitó las consultas. Espera un momento y actualiza.':'No pudimos consultar Google Calendar. Intenta actualizar.',502,oauthError);
+  if(response.status===404||response.status===410)throw new CalendarFailure('El evento ya no está disponible. Actualiza Agenda.',404,undefined,true);
+  throw new CalendarFailure(disabled?'Activa Google Calendar API en el proyecto de Google utilizado por JAC.':response.status===401||e==='invalid_grant'?'Google requiere que vuelvas a conectar Agenda.':response.status===403?'Google no concedió acceso al calendario. Revisa la autorización y activa Google Calendar API.':response.status===429?'Google limitó las consultas. Espera un momento y actualiza.':'No pudimos consultar Google Calendar. Intenta actualizar.',502,oauthError,response.status===401||response.status===403||!!oauthError);
  }
  return body;
 }
@@ -120,6 +120,41 @@ export function validateAgendaDraft(value:unknown):AgendaEventDraft{
  return draft.allDay?draft:{...draft,start:new Date(draft.start).toISOString(),end:new Date(draft.end).toISOString()};
 }
 const eventPath=(c:CalendarConfig,id?:string)=>'calendars/'+encodeURIComponent(c.calendar_id)+'/events'+(id?'/'+encodeURIComponent(id):'');
+// An empty month is not evidence of deletion: events may have moved. Verify
+// each missing ID against the same accessible calendar before reconciling CRM.
+export async function inspectAgendaEvents(calendarId:string,revision:number,ids:string[]){
+ const c=await calendarConfig();if(!c||c.calendar_id!==calendarId||c.version!==revision)throw new CalendarFailure('El calendario cambió. Actualiza antes de continuar.',409);
+ const token=await accessToken(c),access=await googleGet('users/me/calendarList/'+encodeURIComponent(c.calendar_id),token,{fields:'id,accessRole'});
+ if(access.id!==calendarId||!['reader','writer','owner'].includes(String(access.accessRole)))throw new CalendarFailure('Google no confirmó el acceso al calendario.',403);
+ const found=new Map<string,AgendaEvent|null>();
+ for(let offset=0;offset<ids.length;offset+=5)await Promise.all(ids.slice(offset,offset+5).map(async id=>{
+  const response=await calendarGoogleFetch('https://www.googleapis.com/calendar/v3/'+eventPath(c,id),{headers:{Authorization:'Bearer '+token}});
+  if(response.status===404||response.status===410){found.set(id,null);return;}
+  const raw=await googleResponse(response),event=normalizeAgendaEvent(raw);
+  if(raw.status==='cancelled'&&raw.id===id)found.set(id,null);
+  else if(event?.id===id)found.set(id,event);
+  else throw new CalendarFailure('Google no confirmó el estado del evento. Intenta actualizar.',502);
+ }));
+ const current=await calendarConfig();if(!current||current.version!==c.version||current.calendar_id!==c.calendar_id||current.credentials!==c.credentials)throw new CalendarFailure('El calendario cambió. Actualiza antes de continuar.',409);
+ return found;
+}
+export async function deleteAgendaEvent(calendarId:string,revision:number,eventId:string,etag:string,authorize:()=>Promise<boolean>){
+ if(!eventId||eventId.length>1024||!etag||etag.length>1024||/[\r\n]/.test(etag))throw new CalendarFailure('Actualiza el evento antes de eliminarlo.');
+ const c=await calendarConfig();if(!c||c.calendar_id!==calendarId||c.version!==revision)throw new CalendarFailure('El calendario cambió. Actualiza antes de eliminar.',409);
+ const secret=await decryptMail<CalendarCredentials>(c.credentials,mailKey());if(!secret.scopes?.includes(CALENDAR_SCOPE))throw new CalendarFailure('Agenda requiere permiso para editar eventos.',403);
+ const token=await accessToken(c);if(!await selectedCalendarAccess(c,token))throw new CalendarFailure('Este calendario solo permite consultar.',403);
+ const url=new URL('https://www.googleapis.com/calendar/v3/'+eventPath(c,eventId));
+ const response=await calendarGoogleFetch(url,{headers:{Authorization:'Bearer '+token}});
+ const absent=response.status===404||response.status===410,raw=absent?null:await googleResponse(response),event=raw?normalizeAgendaEvent(raw):null,cancelled=raw?.status==='cancelled'&&raw.id===eventId;
+ if(!absent&&!cancelled&&(!event||event.id!==eventId||!event.editable))throw new CalendarFailure('Este evento se debe eliminar desde Google Calendar.',409);
+ if(event&&event.etag!==etag)throw new CalendarFailure('El evento cambió en Calendar. Actualiza y confirma su nueva versión antes de eliminar.',409);
+ const current=await calendarConfig();if(!current||current.version!==c.version||current.credentials!==c.credentials||current.calendar_id!==calendarId)throw new CalendarFailure('El calendario cambió. Actualiza antes de eliminar.',409);
+ if(!await authorize())throw new CalendarFailure('Tu sesión o el show cambió. Actualiza antes de eliminar.',403);
+ if(absent||cancelled)return;
+ url.searchParams.set('sendUpdates','none');
+ const removed=await calendarGoogleFetch(url,{method:'DELETE',headers:{Authorization:'Bearer '+token,'If-Match':etag}});
+ if(removed.status!==204&&removed.status!==404&&removed.status!==410)await googleResponse(removed);
+}
 export async function saveAgendaEvent(action:'createEvent'|'updateEvent',input:Record<string,unknown>,authorize:()=>Promise<boolean>){
  const draft=validateAgendaDraft(input.event),revision=Number(input.revision),c=await calendarConfig();
  if(!c||!c.calendar_id||c.version!==revision)throw new CalendarFailure('La conexión o el calendario cambió. Actualiza Agenda antes de guardar.',409);

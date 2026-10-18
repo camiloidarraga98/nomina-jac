@@ -1,17 +1,39 @@
 import Foundation
 
-struct PayrollUser: Decodable, Equatable {
+enum JACSection: String, CaseIterable, Codable {
+    case payroll, calendar, itineraries, alerts, boarding, media, mediaUpload, crm
+    var title: String { switch self { case .payroll: "Nómina"; case .calendar: "Agenda"; case .itineraries: "Itinerarios"; case .alerts: "Alertas"; case .boarding: "Pases de abordar"; case .media: "Fotografía · consultar"; case .mediaUpload: "Fotografía · subir y crear carpetas"; case .crm: "CRM · solo administradores" } }
+}
+struct PayrollUser: Codable, Equatable {
     let id: String
     let email: String
     let username: String
     let displayName: String
     let isOwner: Bool
     let permissions: [String]
+    var itinerariesOnly: Bool? = nil
+    var mediaOnly: Bool? = nil
+    var sections: [String]? = nil
 
-    func can(_ permission: String) -> Bool { isOwner || permissions.contains(permission) }
+    func hasSection(_ section: JACSection) -> Bool {
+        if isOwner && mediaOnly != true && itinerariesOnly != true { return true }
+        if let sections { return sections.allSatisfy {JACSection(rawValue:$0) != nil} && sections.contains(section.rawValue) && (section != .crm || isOwner) && (section != .mediaUpload || sections.contains(JACSection.media.rawValue)) }
+        if section == .crm { return false }
+        if mediaOnly == true { return section == .media || section == .mediaUpload }
+        if itinerariesOnly == true { return [.calendar,.itineraries,.alerts,.boarding].contains(section) }
+        return [.payroll,.calendar,.itineraries,.alerts,.boarding].contains(section)
+    }
+    var canReadMedia: Bool { hasSection(.media) }
+    var canUploadMedia: Bool { hasSection(.mediaUpload) }
+    var canDeleteMedia: Bool { canReadMedia && hasSection(.crm) }
+    var hasNotices: Bool { hasSection(.itineraries) || hasSection(.alerts) || hasSection(.boarding) }
+    var onlyMedia: Bool { canReadMedia && !JACSection.allCases.contains { $0 != .media && $0 != .mediaUpload && hasSection($0) } }
+    func permitsNotice(_ kind: String) -> Bool { kind == "boarding_pass" ? hasSection(.boarding) : kind == "itinerary" ? hasSection(.itineraries) : kind == "alert" && hasSection(.alerts) }
+    var firstDestination: String { hasSection(.payroll) ? "payroll" : hasSection(.calendar) ? "agenda" : hasSection(.itineraries) || hasSection(.boarding) ? "itineraries" : hasSection(.alerts) ? "alerts" : canReadMedia ? "media" : "management" }
+    func can(_ permission: String) -> Bool { hasSection(.payroll) && (isOwner || permissions.contains(permission)) }
 }
 
-struct PayrollOverview: Decodable {
+struct PayrollOverview: Codable {
     let version: Int
     let company: String
     let user: PayrollUser
@@ -19,7 +41,7 @@ struct PayrollOverview: Decodable {
     let employees: [Employee]
 }
 
-struct PeriodSummary: Decodable, Identifiable {
+struct PeriodSummary: Codable, Identifiable {
     let id: String
     let start: String
     let end: String
@@ -57,7 +79,7 @@ struct PeriodDetail: Decodable {
     }
 }
 
-struct Employee: Decodable, Identifiable {
+struct Employee: Codable, Identifiable {
     let id: String
     let name: String
     let document: String
@@ -97,6 +119,7 @@ struct PayrollShow: Decodable, Identifiable {
     let date: String
     let name: String
     let sale: Double
+    var promotional: Bool? = nil
     let participants: [Participant]
 }
 
@@ -136,7 +159,18 @@ struct PayrollRoute: Decodable, Identifiable {
     }
 }
 
+struct PayrollCommissionShow: Decodable, Identifiable {
+    let id: String; let name: String; let date: String; let promotional: Bool
+    let sale: Double; let musicians: Double; let technical: Double; let drivers: Double
+    let expenses: Double; let cost: Double; let deductible: Double
+}
+struct PayrollCamiloCommission: Decodable {
+    let rate: Double; let sales: Double; let costs: Double; let promotionalCosts: Double
+    let balance: Double; let base: Double; let amount: Double?
+    let shows: [PayrollCommissionShow]; let issues: [String]; let unlinkedKilometers: Double
+}
 struct PayrollCalculation: Decodable {
+    var camiloCommission: PayrollCamiloCommission? = nil
     let rows: [PayrollPayment]
     let sale: Double
     let total: Double

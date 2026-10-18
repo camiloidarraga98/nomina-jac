@@ -42,7 +42,7 @@ struct PayrollEnvelope: Decodable {
     let mailNotice: String?
 }
 
-struct PayrollWorkspace: Decodable {
+struct PayrollWorkspace: Codable {
     let data: JSONValue
     let version: Int
     let user: PayrollUser
@@ -50,6 +50,14 @@ struct PayrollWorkspace: Decodable {
     let periods: [PeriodSummary]
     let employees: [Employee]
     var overview: PayrollOverview { PayrollOverview(version: version, company: company, user: user, periods: periods, employees: employees) }
+    var restrictedForSections: PayrollWorkspace {
+        guard !user.hasSection(.payroll) else {return self}
+        return PayrollWorkspace(controlUser:user,version:version,company:company)
+    }
+    private init(controlUser: PayrollUser, version: Int, company: String) {
+        self.user=controlUser;self.version=version;self.company=company;periods=[];employees=[]
+        data = .object(["employees":.array([]),"periods":.array([]),"concepts":.array([]),"settings":.object(["company":.string(company)])])
+    }
     init(envelope: PayrollEnvelope, user: PayrollUser) throws {
         data = envelope.data; version = envelope.version; self.user = user
         company = data["settings"]["company"].text
@@ -64,7 +72,7 @@ struct PayrollWorkspace: Decodable {
 }
 
 enum PayrollEditorKind: String {
-    case period, employee, concept, settings, show, movement, hours, route, periodEmployee, periodSettings
+    case period, employee, concept, settings, show, showExpense, movement, hours, route, periodEmployee, periodSettings
     var title: String {
         switch self {
         case .period: return "Nueva quincena"
@@ -72,6 +80,7 @@ enum PayrollEditorKind: String {
         case .concept: return "Concepto reutilizable"
         case .settings: return "Parámetros de nómina"
         case .show: return "Show y honorarios"
+        case .showExpense: return "Gasto del show"
         case .movement: return "Novedad"
         case .hours: return "Horas y salarios"
         case .route: return "Kilometraje"
@@ -122,7 +131,10 @@ struct PayrollEditorSession: Identifiable {
         case .show:
             let excluded = Set(detail?.record["excludedEmployees"].elements.map(\.text) ?? [])
             let participants = employees.filter { ["musicos", "tecnica"].contains($0.category) && !excluded.contains($0.id) }
-            return .object(["id": .string(id), "date": .string(detail?.period.start ?? ""), "name": .string(""), "sale": .number(0), "participants": .array(participants.map { .object(["employeeId": .string($0.id), "amount": .number($0.showRate)]) })])
+            return .object(["id": .string(id), "date": .string(detail?.period.start ?? ""), "name": .string(""), "sale": .number(0), "promotional": .bool(false), "participants": .array(participants.map { .object(["employeeId": .string($0.id), "amount": .number($0.showRate)]) })])
+        case .showExpense:
+            let show = detail?.period.shows.first
+            return .object(["id": .string(id), "showId": .string(show?.id ?? ""), "date": .string(show?.date ?? detail?.period.start ?? ""), "category": .string("tiquetes"), "concept": .string(""), "amount": .number(0), "note": .string("")])
         case .movement:
             let concept = workspace.data["concepts"].elements.first ?? .object([:])
             return .object(["id": .string(id), "employeeId": .string(employees.first?.id ?? ""), "concept": .string(concept["name"].text), "kind": .string(concept["kind"].text.isEmpty ? "servicio" : concept["kind"].text), "amount": .number(concept["amount"].number), "quantity": .number(1), "note": .string("")])
@@ -149,7 +161,13 @@ struct UserDirectory: Decodable { let configured: Bool; let users: [ManagedUser]
 struct ManagedUser: Codable, Identifiable {
     let id: String; var username: String; var email: String; var name: String
     let owner: Bool; var active: Bool; var permissions: [String]; let version: Int; let ready: Bool
+    var administrator: Bool? = nil
+    var itinerariesOnly: Bool? = nil
+    var mediaOnly: Bool? = nil
+    var sections: [String]? = nil
+    var effectiveSections: [String] { PayrollUser(id:id,email:email,username:username,displayName:name,isOwner:owner || administrator == true,permissions:permissions,itinerariesOnly:itinerariesOnly,mediaOnly:mediaOnly,sections:sections).sectionsForEditor }
 }
+extension PayrollUser { var sectionsForEditor: [String] { JACSection.allCases.filter { hasSection($0) && $0 != .crm }.map(\.rawValue) } }
 struct InvitationResult: Decodable { let activationPath: String; let notice: String }
 struct GmailStart: Decodable { let url: URL; let nonce: String }
 struct PayrollMail: Decodable {

@@ -3,7 +3,20 @@ export const ITINERARY_CHANNEL='C0C6V85SRL6';
 export const APP_TOPIC='co.jacmusic.nomina';
 export const MAX_PDF_BYTES=10*1024*1024;
 export class NoticeFailure extends Error {constructor(message:string,public status=400){super(message);}}
-export type Notice={id:string;kind:'itinerary'|'alert';title:string;body:string;filename:string;size:number;createdAt:string;read:boolean};
+export type NoticeAttachment={id:string;filename:string;mimeType:string;size:number};
+export type Notice={revision?:number;updatedAt?:string;changeSummary?:string;confirmed?:boolean;receipts?:{userId:string;name:string;confirmed:boolean;confirmedAt:string}[];id:string;kind:'itinerary'|'alert'|'boarding_pass';travelDate?:string;title:string;body:string;filename:string;size:number;createdAt:string;read:boolean;attachments?:NoticeAttachment[]};
+export type PushContent={title:string;body:string};
+export function noticePushContent(notice:Pick<Notice,'kind'|'title'|'body'|'revision'|'changeSummary'>):PushContent{
+ if(notice.kind==='boarding_pass')return {title:'JAC · Pase de abordar',body:'Ya está disponible tu pase de abordar. Abre JAC para consultarlo.'};
+ if(notice.kind==='itinerary'&&(notice.revision??1)>1)return {title:'JAC · Itinerario actualizado',body:notice.changeSummary||'Consulta la nueva versión de tu itinerario.'};
+ if(notice.kind==='itinerary')return {title:'JAC',body:'Ya llegó tu itinerario para el día de hoy'};
+ const content={title:notice.title,body:notice.body};
+ // Leave room for the ID and transport metadata within Web Push/APNs limits.
+ if(new TextEncoder().encode(JSON.stringify(content)).length<=2800)return content;
+ const characters=Array.from(content.body);let low=0,high=characters.length;
+ while(low<high){const mid=Math.ceil((low+high)/2);if(new TextEncoder().encode(JSON.stringify({...content,body:characters.slice(0,mid).join('')+'…'})).length<=2800)low=mid;else high=mid-1;}
+ return {...content,body:characters.slice(0,low).join('')+'…'};
+}
 export type WebSubscription={endpoint:string;keys:{p256dh:string;auth:string}};
 export type PushCredentials={apns?:{teamId:string;keyId:string;privateKey:string};slack?:{token:string;signingSecret:string};web?:{publicKey:string;privateKey:JsonWebKey}};
 export const base64url=(bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
@@ -50,11 +63,11 @@ async function appleAuthorization(credentials:NonNullable<PushCredentials['apns'
  }
  return cached.token;
 }
-export async function applePushRequest(token:string,environment:string,credentials:NonNullable<PushCredentials['apns']>,id:string){
+export async function applePushRequest(token:string,environment:string,credentials:NonNullable<PushCredentials['apns']>,id:string,content:PushContent={title:'JAC',body:'Tienes un aviso nuevo. Abre JAC para consultarlo.'}){
  if(!/^[a-f0-9]{64,200}$/.test(token)||!['sandbox','production'].includes(environment))throw new NoticeFailure('El registro del iPhone no es válido.');
  const authorization=await appleAuthorization(credentials);
  const url='https://'+(environment==='sandbox'?'api.sandbox.push.apple.com':'api.push.apple.com')+'/3/device/'+token;
- return {url,options:{method:'POST',headers:{Authorization:'bearer '+authorization,'Content-Type':'application/json','apns-topic':APP_TOPIC,'apns-push-type':'alert','apns-priority':'10','apns-id':id,'apns-collapse-id':id,'apns-expiration':String(Math.floor(Date.now()/1000)+86400)},body:JSON.stringify({aps:{alert:{title:'JAC',body:'Tienes un aviso nuevo. Abre JAC para consultarlo.'},sound:'default'},noticeId:id}),redirect:'manual',signal:AbortSignal.timeout(8000)} satisfies RequestInit};
+ return {url,options:{method:'POST',headers:{Authorization:'bearer '+authorization,'Content-Type':'application/json','apns-topic':APP_TOPIC,'apns-push-type':'alert','apns-priority':'10','apns-id':id,'apns-collapse-id':id,'apns-expiration':String(Math.floor(Date.now()/1000)+86400)},body:JSON.stringify({aps:{alert:content,sound:'default'},noticeId:id}),redirect:'manual',signal:AbortSignal.timeout(8000)} satisfies RequestInit};
 }
 export async function verifySlack(raw:string,timestamp:string,signature:string,secret:string){
  if(!/^\d{10}$/.test(timestamp)||Math.abs(Date.now()/1000-Number(timestamp))>300||!/^v0=[a-f0-9]{64}$/.test(signature))return false;

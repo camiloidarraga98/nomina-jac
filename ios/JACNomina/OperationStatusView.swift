@@ -28,10 +28,37 @@ struct OperationStatusSection: View {
                         Text("Copia de tus cambios pendientes").font(.headline)
                         ShareLink("Guardar o compartir copia", item: file.url)
                     }.padding().jacSurface().navigationTitle("Copia de cambios")
-                        .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Listo") { backup = nil } } }
+                        .toolbar { ToolbarItem(placement: .jacLeading) { Button("Listo") { backup = nil } } }
                 }
             }
         }
+    }
+}
+
+
+// Shared presentation only. The cache, session and write restrictions still use
+// their existing state; checking a saved session is not a confirmed outage.
+struct ConnectionStatusIcon:View {
+    @EnvironmentObject private var store:PayrollStore
+    private var checking:Bool {store.isOffline && store.checkingConnection}
+    private var status:String {checking ? "Comprobando":store.isOffline ? "Sin conexión":"Conectado"}
+    private var label:String {checking ? "Comprobando conexión":store.isOffline ? "Sin conexión · Copia guardada":"Conectado con JAC"}
+    var body:some View {
+        Image(systemName:store.isOffline && !checking ? "wifi.slash":"wifi")
+            .font(.system(size:15,weight:.medium))
+            .foregroundStyle(store.isOffline ? Color.secondary:JACTheme.action)
+            .frame(width:26,height:28)
+            .accessibilityLabel(label).accessibilityValue(status)
+            .accessibilityIdentifier("connection.status").help(label)
+    }
+}
+extension View {
+    @ViewBuilder func jacConnectionStatus(shown:Bool=true)->some View {
+        #if os(iOS)
+        self.toolbar {if shown {ToolbarItem(placement:.jacTrailing){ConnectionStatusIcon()}}}
+        #else
+        self
+        #endif
     }
 }
 
@@ -89,7 +116,7 @@ struct RecordDateField: View {
     let start: String
     let end: String
     var body: some View {
-        DatePicker(title, selection: Binding(get: { PayrollDates.parse(record[key].text) }, set: { record[key] = .string(PayrollDates.iso($0)) }), in: PayrollDates.parse(start)...PayrollDates.parse(end), displayedComponents: .date)
+        JACDatePicker(title, selection: Binding(get: { PayrollDates.parse(record[key].text) }, set: { record[key] = .string(PayrollDates.iso($0)) }), in: PayrollDates.parse(start)...PayrollDates.parse(end), displayedComponents: .date)
     }
 }
 

@@ -23,7 +23,7 @@ final class KeychainSessionStore: SessionStoring {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            throw APIError.message("No se pudo leer la sesión segura de este iPhone.")
+            throw APIError.message("No se pudo leer la sesión segura de este \(JACDevice.name).")
         }
         return value
     }
@@ -42,5 +42,30 @@ final class KeychainSessionStore: SessionStoring {
     func clear() throws {
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else { throw APIError.message("No se pudo cerrar la sesión local.") }
+    }
+}
+
+
+enum JACFileSecurity {
+    static var directoryAttributes:[FileAttributeKey:Any] {
+        #if os(iOS)
+        [.protectionKey:FileProtectionType.complete]
+        #else
+        [.posixPermissions:0o700]
+        #endif
+    }
+    static var fileAttributes:[FileAttributeKey:Any] {
+        #if os(iOS)
+        [.protectionKey:FileProtectionType.complete]
+        #else
+        [.posixPermissions:0o600]
+        #endif
+    }
+    static var writeOptions:Data.WritingOptions {
+        #if os(iOS)
+        [.atomic,.completeFileProtection]
+        #else
+        [.atomic]
+        #endif
     }
 }

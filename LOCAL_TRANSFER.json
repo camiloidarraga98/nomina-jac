@@ -1,0 +1,30 @@
+{
+  "source_site_commit": "73b2cc223907d0c80b03beae92d16cf9bcc95a3c",
+  "published_site_version": 25,
+  "production_url": "https://jhonalexcastano.com",
+  "native_version": "0.5.0/build 6",
+  "application_files_match_source": true,
+  "changes": [
+    "Documentación de continuidad local",
+    "Ayudante para crear claves y configuración local"
+  ],
+  "unchanged": [
+    "Lógica de aplicación",
+    "package.json",
+    "package-lock.json",
+    "ios/JACNomina.xcodeproj",
+    "Migraciones 0000 a 0008"
+  ],
+  "verified_here": [
+    "Sintaxis y repetición segura del ayudante local",
+    "Migraciones D1 locales en la carpeta de Vite",
+    "Formulario de acceso en localhost con dependencias preparadas"
+  ],
+  "pending_on_mac": [
+    "Descargar y abrir en Codex Local",
+    "Instalación nueva de dependencias: incidencia heredada de lockfile",
+    "Compilación y firma Xcode",
+    "Acceso del plugin Sites"
+  ],
+  "real_keys_or_local_database_included": false
+}

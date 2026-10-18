@@ -2,7 +2,7 @@ import {database} from '@/db/raw';
 import {startMailOauth,finishMailOauth,mailKey} from './payroll-mail';
 import {encryptMail,decryptMail,base64Url,GMAIL_CALLBACK} from './payroll-mail-core';
 import {sessionToken,tokenHash} from './payroll-auth-crypto';
-import {isOwnerEmail} from './payroll-policy';
+import {accountAdministrator,type UserRow} from './payroll-auth-store';
 import type {AccessUser} from './payroll-permissions';
 
 type NativeContext={kind:'native-gmail';state:string;url:string;actor:string;userId:string;sessionId:string;nonce:string;guardHash?:string};
@@ -12,12 +12,12 @@ const browserCookie='__Host-jac_native_gmail';
 export const nativeGmailCookie=(value:string,maxAge=600)=>`${browserCookie}=${value}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age=${maxAge}`;
 
 async function activeOwner(context:NativeContext){
- const row=await database().prepare('SELECT u.id,u.email,u.owner FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND s.expires_at>? AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(context.sessionId,new Date().toISOString(),'',context.userId).first<{id:string;email:string;owner:number}>();
- return !!row&&row.owner===1&&isOwnerEmail(row.email)&&row.email===context.actor;
+ const row=await database().prepare('SELECT u.* FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND (s.persistent=1 OR s.expires_at>?) AND u.active=1 AND u.password_hash<>? AND u.id=?').bind(context.sessionId,new Date().toISOString(),'',context.userId).first<UserRow>();
+ return !!row&&accountAdministrator(row)&&row.email===context.actor;
 }
 
 export async function startNativeMailOauth(user:AccessUser,cookies:string){
- if(!user.isOwner||user.legacy||!isOwnerEmail(user.email))throw new Error('Solo Camilo puede conectar Gmail.');
+ if(!user.isOwner||user.legacy||user.itinerariesOnly||user.mediaOnly)throw new Error('Solo un administrador puede conectar Gmail.');
  const token=sessionToken(cookies,true);if(!valid(token))throw new Error('Inicia sesión de nuevo.');
  const oauth=await startMailOauth(user.email),ticket=random(),nonce=random();
  const context:NativeContext={kind:'native-gmail',...oauth,actor:user.email,userId:user.id,sessionId:tokenHash(token),nonce};

@@ -3,7 +3,11 @@ export const categoryNames:Record<Category,string>={musicos:'Músicos',tecnica:'
 export const hourNames=['Recargo nocturno','Recargo dominical diurno','Recargo dominical nocturno','Extra diurna','Extra nocturna','Extra dominical diurna','Extra dominical nocturna'];
 export type Employee={id:string;name:string;document:string;role:string;category:Category;active:boolean;showRate:number;kmRate:number;fixedService:number;withholding:number;ica:number;salary:number;transport:number;pension:boolean;health:boolean;cycle:'quincenal'|'mensual';monthlyHalf:1|2;nonSalary:number;contributionBase:number;incomeTax:number;solidarity:number;deleted?:boolean;email?:string};
 export type Concept={id:string;name:string;amount:number;kind:'servicio'|'reintegro'|'salarial'|'descuento'};
-export type Show={id:string;date:string;name:string;sale:number;participants:{employeeId:string;amount:number}[]};
+export type Show={id:string;date:string;name:string;sale:number;promotional?:boolean;crmShowId?:string;crmVersion?:number;participants:{employeeId:string;amount:number}[]};
+export const showExpenseNames={tiquetes:'Tiquetes',hoteles:'Hoteles',alimentacion:'Alimentación',otros:'Otros gastos'};
+export type ShowExpense={id:string;showId:string;date:string;category:keyof typeof showExpenseNames;concept:string;amount:number;note:string};
+export type CommissionShow={id:string;name:string;date:string;promotional:boolean;sale:number;musicians:number;technical:number;drivers:number;expenses:number;cost:number;deductible:number};
+export type CamiloCommission={rate:number;sales:number;costs:number;promotionalCosts:number;balance:number;base:number;amount:number|null;shows:CommissionShow[];issues:string[];unlinkedKilometers:number};
 export type Movement={id:string;employeeId:string;concept:string;kind:Concept['kind'];quantity:number;amount:number;note:string};
 export type Hours={employeeId:string;counts:number[];days:number;vacations:number;note:string};
 export type LegacyRoute={id:string;employeeId:string;date:string;name:string;km:number;rate:number};
@@ -13,12 +17,12 @@ export type Route=LegacyRoute|ShowRoute|ExtraRoute;
 export const routeDrivers=(r:Route)=>'drivers' in r?r.drivers:[{employeeId:r.employeeId,rate:r.rate}];
 export function legacyRoutesForShow(p:Period,show:Show):LegacyRoute[]{return p.routes.filter((r):r is LegacyRoute=>'employeeId' in r&&r.date===show.date&&(r.name.trim().toLocaleLowerCase('es')===show.name.trim().toLocaleLowerCase('es')||p.shows.filter(s=>s.date===show.date).length===1));}
 export function setShowRoute(p:Period,r:ShowRoute){const show=p.shows.find(s=>s.id===r.showId);if(!show)throw new Error('El show no existe.');const old=new Set(legacyRoutesForShow(p,show).map(x=>x.id));p.routes=p.routes.filter(x=>!old.has(x.id)&&!('showId' in x&&x.showId===r.showId));p.routes.push({...r,date:show.date,name:show.name});}
-export function updateShow(p:Period,s:Show){const i=p.shows.findIndex(x=>x.id===s.id);if(i<0)p.shows.push(s);else p.shows[i]=s;p.routes=p.routes.map(r=>'showId' in r&&r.showId===s.id?{...r,date:s.date,name:s.name}:r);}
-export function removeShow(p:Period,id:string){p.shows=p.shows.filter(s=>s.id!==id);p.routes=p.routes.filter(r=>!('showId' in r&&r.showId===id));}
+export function updateShow(p:Period,s:Show){const i=p.shows.findIndex(x=>x.id===s.id);if(i<0)p.shows.push(s);else p.shows[i]={...s,...(s.crmShowId===undefined&&p.shows[i].crmShowId?{crmShowId:p.shows[i].crmShowId,crmVersion:p.shows[i].crmVersion}:{}),...(s.promotional===undefined&&p.shows[i].promotional!==undefined?{promotional:p.shows[i].promotional}:{})};p.routes=p.routes.map(r=>'showId' in r&&r.showId===s.id?{...r,date:s.date,name:s.name}:r);}
+export function removeShow(p:Period,id:string){p.shows=p.shows.filter(s=>s.id!==id);p.routes=p.routes.filter(r=>!('showId' in r&&r.showId===id));if(p.showExpenses)p.showExpenses=p.showExpenses.filter(e=>e.showId!==id);}
 export type Item={concept:string;quantity:number;rate:number;amount:number;kind:'ingreso'|'deduccion'|'reintegro';reference?:string};
 export type PayrollRow={employeeId:string;name:string;document:string;role:string;category:Category;gross:number;reimbursements:number;deductions:number;net:number;items:Item[]};
-export type Snapshot={rows:PayrollRow[];sale:number;total:number;gross:number;deductions:number;reimbursements:number;company:string;nit:string;start:string;end:string;closedAt:string;closedBy:string;settings:Settings;employees:Employee[]};
-export type Period={id:string;start:string;end:string;status:'abierta'|'cerrada';shows:Show[];movements:Movement[];hours:Hours[];routes:Route[];excludedEmployees:string[];snapshot?:Snapshot;revisions?:Snapshot[];calculationBase?:{employees:Employee[];settings:Settings};ownerOnly?:boolean;reopenedAt?:string;reopenedBy?:string};
+export type Snapshot={camiloCommission?:CamiloCommission;rows:PayrollRow[];sale:number;total:number;gross:number;deductions:number;reimbursements:number;company:string;nit:string;start:string;end:string;closedAt:string;closedBy:string;settings:Settings;employees:Employee[]};
+export type Period={id:string;start:string;end:string;status:'abierta'|'cerrada';shows:Show[];showExpenses?:ShowExpense[];movements:Movement[];hours:Hours[];routes:Route[];excludedEmployees:string[];snapshot?:Snapshot;revisions?:Snapshot[];calculationBase?:{employees:Employee[];settings:Settings};ownerOnly?:boolean;reopenedAt?:string;reopenedBy?:string};
 export type Settings={company:string;nit:string;hourDivisor:number;hourFactors:number[]};
 export type PayrollState={employees:Employee[];concepts:Concept[];settings:Settings;periods:Period[]};
 export const isRehearsalConcept=(name:string)=>name.trim().normalize('NFC').toLocaleLowerCase('es')==='ensayo';
@@ -37,6 +41,28 @@ export const shortMonth=(date:string)=>['ene.','feb.','mar.','abr.','may.','jun.
 export function closedDate(date:string){const parts=new Intl.DateTimeFormat('en-GB',{timeZone:'America/Bogota',year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(date));const v=(type:string)=>parts.find(p=>p.type===type)?.value;return `${v('day')}/${v('month')}/${v('year')} ${v('hour')}:${v('minute')}`;}
 export function periodLabel(p:Pick<Period,'start'|'end'>){return `${Number(p.start.slice(-2))}–${Number(p.end.slice(-2))} ${months[Number(p.start.slice(5,7))-1]} de ${p.start.slice(0,4)}`;}
 export function newPeriod(start:string,end:string):Period{return {id:crypto.randomUUID(),start,end,status:'abierta',shows:[],movements:[],hours:[],routes:[],excludedEmployees:[]};}
+function commissionForPeriod(state:PayrollState,p:Period):CamiloCommission {
+ const issues:string[]=[],payable=(id:string)=>state.employees.find(e=>e.id===id&&e.active&&!e.deleted&&!p.excludedEmployees.includes(id));
+ const shows:CommissionShow[]=p.shows.map(s=>{
+  let musicians=0,technical=0,drivers=0;
+  for(const part of s.participants){const e=payable(part.employeeId);if(e?.category==='musicos')musicians+=part.amount;else if(e?.category==='tecnica')technical+=part.amount;else if(e?.category==='conductores')drivers+=part.amount;}
+  return {id:s.id,name:s.name,date:s.date,promotional:s.promotional===true,sale:s.sale,musicians:round(musicians),technical:round(technical),drivers:round(drivers),expenses:round((p.showExpenses||[]).filter(e=>e.showId===s.id).reduce((v,e)=>v+e.amount,0)),cost:0,deductible:0};
+ });
+ const byShow=new Map(shows.map(s=>[s.id,s])),legacyMatches=new Map<string,CommissionShow[]>();
+ for(const show of p.shows)for(const route of legacyRoutesForShow(p,show)){const list=legacyMatches.get(route.id)||[];list.push(byShow.get(show.id)!);legacyMatches.set(route.id,list);}
+ let unlinkedKilometers=0;
+ for(const route of p.routes){
+  if('kind' in route)continue;
+  const value=round(routeDrivers(route).reduce((v,d)=>v+(payable(d.employeeId)?.category==='conductores'?round(route.km*d.rate):0),0));
+  const matches='showId' in route?(byShow.has(route.showId)?[byShow.get(route.showId)!]:[]):legacyMatches.get(route.id)||[];
+  if(matches.length===1)matches[0].drivers=round(matches[0].drivers+value);
+  else if(matches.length>1&&value>0)issues.push('El recorrido '+route.name+' coincide con varios shows. Vincúlalo a uno solo para calcular la comisión.');
+  else unlinkedKilometers=round(unlinkedKilometers+value);
+ }
+ for(const row of shows){row.cost=round(row.musicians+row.technical+row.drivers+row.expenses);row.deductible=row.promotional?0:row.cost;}
+ const sales=round(shows.reduce((v,s)=>v+s.sale,0)),costs=round(shows.reduce((v,s)=>v+s.deductible,0)),promotionalCosts=round(shows.filter(s=>s.promotional).reduce((v,s)=>v+s.cost,0)),balance=round(sales-costs),base=Math.max(0,balance);
+ return {rate:0.05,sales,costs,promotionalCosts,balance,base,amount:issues.length?null:round(base*0.05),shows,issues,unlinkedKilometers};
+}
 export function calculate(state:PayrollState,p:Period):Omit<Snapshot,'closedAt'|'closedBy'|'employees'>{
  if(p.status==='cerrada'&&p.snapshot)return p.snapshot;
  p=normalizeRehearsalMovements(p);
@@ -77,7 +103,7 @@ export function calculate(state:PayrollState,p:Period):Omit<Snapshot,'closedAt'|
    rows.push(makeRow(e,'administracion',items));
   }
  }
- return {rows,sale:round(p.shows.reduce((v,s)=>v+s.sale,0)),total:round(rows.reduce((v,r)=>v+r.net,0)),gross:round(rows.reduce((v,r)=>v+r.gross,0)),deductions:round(rows.reduce((v,r)=>v+r.deductions,0)),reimbursements:round(rows.reduce((v,r)=>v+r.reimbursements,0)),company:state.settings.company,nit:state.settings.nit,start:p.start,end:p.end,settings:structuredClone(state.settings)};
+ return {camiloCommission:commissionForPeriod(state,p),rows,sale:round(p.shows.reduce((v,s)=>v+s.sale,0)),total:round(rows.reduce((v,r)=>v+r.net,0)),gross:round(rows.reduce((v,r)=>v+r.gross,0)),deductions:round(rows.reduce((v,r)=>v+r.deductions,0)),reimbursements:round(rows.reduce((v,r)=>v+r.reimbursements,0)),company:state.settings.company,nit:state.settings.nit,start:p.start,end:p.end,settings:structuredClone(state.settings)};
 }
 function makeRow(e:Employee,category:Category,items:Item[]):PayrollRow{const sum=(k:Item['kind'])=>round(items.filter(x=>x.kind===k).reduce((v,x)=>v+x.amount,0));const gross=sum('ingreso'),reimbursements=sum('reintegro'),deductions=sum('deduccion');return {employeeId:e.id,name:e.name,document:e.document,role:e.role,category,gross,reimbursements,deductions,net:round(gross+reimbursements-deductions),items};}
 export function closeIssues(state:PayrollState,p:Period):string[]{

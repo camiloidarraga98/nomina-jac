@@ -26,20 +26,20 @@ struct UsersView: View {
                     LabeledContent("Estado", value: user.active ? (user.ready ? "Activo" : "Pendiente de activación") : "Inactivo")
                     if user.owner { Label("Administrador · permisos completos", systemImage: "person.badge.key") }
                     else {
-                        Text(user.permissions.compactMap { PayrollFormat.permissionNames[$0] }.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
-                        Button("Editar cuenta y permisos") { editor = UserEditorSession(user: user) }.disabled(busy)
-                        if user.active { Button(user.ready ? "Restablecer contraseña" : "Generar invitación") { selectedInvite = user }.disabled(busy) }
+                        Text(user.effectiveSections.compactMap { JACSection(rawValue:$0)?.title }.joined(separator: " · ")).font(.footnote).foregroundStyle(.secondary)
+                        Button("Editar cuenta y permisos") { editor = UserEditorSession(user: user) }.disabled(busy || store.isOffline)
+                        if user.active { Button(user.ready ? "Restablecer contraseña" : "Generar invitación") { selectedInvite = user }.disabled(busy || store.isOffline) }
                     }
                 }
             }
             if busy { Section { ProgressView() } }
-        }.jacSurface().navigationTitle("Usuarios y permisos").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Usuarios y permisos").jacInlineTitle()
             .task { await load() }.refreshable { await load() }
             .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .jacTrailing) {
                     Button {
                         editor = UserEditorSession(user: ManagedUser(id: "", username: "", email: "", name: "", owner: false, active: true, permissions: ["export"], version: 1, ready: false))
-                    } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Crear usuario").disabled(busy)
+                    } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Crear usuario").disabled(busy || store.isOffline)
                 }
             }.sheet(item: $editor) { session in UserEditorView(user: session.user) { Task { invitation = nil; await load() } } }
             .confirmationDialog("¿Generar un enlace para \(selectedInvite?.name ?? "esta cuenta")?", isPresented: Binding(get: { selectedInvite != nil }, set: { if !$0 { selectedInvite = nil } }), titleVisibility: .visible) {
@@ -48,7 +48,7 @@ struct UsersView: View {
     }
     private func load() async {
         guard !busy else { return }; busy = true; defer { busy = false }
-        do { users = try await store.client.users().users } catch { store.report(error) }
+        if users.isEmpty, let saved = store.client.cached(UserDirectory.self, path: "api/users") { users = saved.users }; do { users = try await store.client.users().users } catch { store.reportReadFailure(error) }
     }
     private func invite(_ user: ManagedUser) async {
         guard !busy else { return }; busy = true; invitation = nil; defer { busy = false }
@@ -79,20 +79,34 @@ struct UserEditorView: View {
                     TextField("Correo", text: $user.email).keyboardType(.emailAddress).textInputAutocapitalization(.never).autocorrectionDisabled()
                     Toggle("Cuenta activa", isOn: $user.active)
                 }
+                Section("Secciones disponibles") {
+                    ForEach(JACSection.allCases.filter { $0 != .crm },id:\.self) { section in
+                        Toggle(section.title,isOn:Binding(get:{user.sections?.contains(section.rawValue) == true},set:{enabled in
+                            var selected=user.sections ?? user.effectiveSections;selected.removeAll{$0 == section.rawValue}
+                            if enabled {selected.append(section.rawValue)}
+                            if section == .mediaUpload && enabled && !selected.contains("media") {selected.append("media")}
+                            if section == .media && !enabled {selected.removeAll{$0 == "mediaUpload"}}
+                            if section == .payroll && !enabled {user.permissions.removeAll{$0 != "administrator"}}
+                            user.sections=selected
+                        })).disabled(user.administrator == true).accessibilityIdentifier("users.section."+section.rawValue)
+                    }
+                    LabeledContent("CRM",value:user.administrator == true ? "Administrador" : "Solo administradores")
+                }
                 Section {
                     ForEach(["payroll", "staff", "rules", "close", "send", "export", "modifyClosed"], id: \.self) { permission in
                         Toggle(PayrollFormat.permissionNames[permission] ?? permission, isOn: Binding(get: { user.permissions.contains(permission) }, set: { enabled in
                             user.permissions.removeAll { $0 == permission }; if enabled { user.permissions.append(permission) }
-                        }))
+                        })).disabled(user.sections?.contains("payroll") != true).accessibilityIdentifier("users.permission."+permission)
                     }
                 } header: { Text("Permisos") } footer: {
                     Text("Modificar cierres es un permiso independiente. Guardar cambios invalida las sesiones e invitaciones anteriores.")
                 }
-            }.jacSurface().navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").navigationBarTitleDisplayMode(.inline)
+            }.jacSurface().navigationTitle(user.id.isEmpty ? "Nuevo usuario" : "Editar usuario").jacInlineTitle()
+                .onAppear { if user.sections == nil || user.administrator == true {user.sections=user.effectiveSections} }
                 .disabled(busy || user.owner)
                 .toolbar {
-                    ToolbarItem(placement: .topBarLeading) { Button("Cancelar") { dismiss() }.disabled(busy) }
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .jacLeading) { Button("Cancelar") { dismiss() }.disabled(busy) }
+                    ToolbarItem(placement: .jacTrailing) {
                         Button("Guardar") {
                             busy = true; error = nil
                             Task {
@@ -100,7 +114,7 @@ struct UserEditorView: View {
                                 do { _ = try await store.client.updateUser(user); onSaved(); dismiss() }
                                 catch { self.error = error.localizedDescription; store.report(error) }
                             }
-                        }.disabled(busy || user.owner || user.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || user.username.isEmpty || user.email.isEmpty)
+                        }.disabled(busy || store.isOffline || user.owner || user.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || user.username.isEmpty || user.email.isEmpty)
                     }
                 }.interactiveDismissDisabled(busy).scrollDismissesKeyboard(.interactively)
         }

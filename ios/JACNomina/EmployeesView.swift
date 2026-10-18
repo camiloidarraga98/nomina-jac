@@ -3,6 +3,7 @@ import SwiftUI
 struct EmployeesView: View {
     @EnvironmentObject private var store: PayrollStore
     let overview: PayrollOverview
+    var embedded = false
     @State private var search = ""
     @State private var includeInactive = false
     @State private var includeDeleted = false
@@ -14,7 +15,9 @@ struct EmployeesView: View {
         }.sorted { $0.name < $1.name }
     }
     var body: some View {
-        NavigationStack {
+        Group { if embedded { content } else { NavigationStack { content } } }
+    }
+    private var content: some View {
             List {
                 OperationStatusSection()
                 Section { Toggle("Incluir personas inactivas", isOn: $includeInactive); Toggle("Incluir personas eliminadas", isOn: $includeDeleted) }
@@ -38,14 +41,13 @@ struct EmployeesView: View {
                 .refreshable { try? await store.refresh() }
                 .toolbar {
                     if overview.user.can("staff") {
-                        ToolbarItem(placement: .topBarTrailing) {
+                        ToolbarItem(placement: .jacTrailing) {
                             Button {
                                 if let w = store.workspace { editor = PayrollEditorSession(kind: .employee, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.employee, workspace: w)) }
                             } label: { Image(systemName: "person.badge.plus") }.accessibilityLabel("Agregar persona").accessibilityIdentifier("employee.create").disabled(!store.canWrite)
                         }
                     }
                 }.sheet(item: $editor) { PayrollEditorView(session: $0) }
-        }
     }
 }
 struct EmployeeDetailView: View {
@@ -72,7 +74,7 @@ struct EmployeeDetailView: View {
                     }
                 }
             }
-        }.jacSurface().navigationTitle("Personal").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle("Personal").jacInlineTitle()
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
             .confirmationDialog("¿Eliminar esta persona del personal vigente?", isPresented: $confirmDelete, titleVisibility: .visible) {
                 Button("Eliminar persona", role: .destructive) { Task { _ = await store.action("deleteEmployee", employeeID: employeeID) } }

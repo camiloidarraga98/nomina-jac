@@ -1,0 +1,1 @@
+ALTER TABLE `payroll_users` ADD `itineraries_only` integer DEFAULT 0 NOT NULL;

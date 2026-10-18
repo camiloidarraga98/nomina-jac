@@ -10,13 +10,13 @@ final class PeriodWorkspace: ObservableObject {
     func load(_ id: String, store: PayrollStore) async {
         guard !store.hasPending else { return }
         if loading { reloadRequested = true; return }
+        if detail == nil { detail = store.client.cached(PeriodDetail.self, path: "api/mobile/payroll", query: [URLQueryItem(name: "period", value: id)]) }
         loading = true; error = nil
         defer { loading = false }
         repeat {
             reloadRequested = false
             do { detail = try await store.client.detail(periodID: id); error = nil }
-            catch is CancellationError { return }
-            catch { self.error = error.localizedDescription; store.report(error); return }
+            catch { self.error = store.reportReadFailure(error); return }
         } while reloadRequested && !store.hasPending
     }
 }
@@ -24,6 +24,7 @@ final class PeriodWorkspace: ObservableObject {
 struct PeriodDetailView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.dynamicTypeSize) private var typeSize
     let periodID: String
     let user: PayrollUser
     @StateObject private var period = PeriodWorkspace()
@@ -32,20 +33,30 @@ struct PeriodDetailView: View {
     @State private var category = ""
     @State private var action: String?
     @State private var editor: PayrollEditorSession?
+    @State private var selectedActivity: ActivityKind?
     var body: some View {
         List {
             OperationStatusSection()
             if let error = period.error { Section { InlineError(message: error); Button("Volver a intentar") { Task { await load() } } } }
             if let d = period.detail {
                 Section {
-                    Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(JACTheme.lime)
-                    Text(PayrollFormat.money(d.calculation.total)).font(.largeTitle.weight(.bold)).minimumScaleFactor(0.6).lineLimit(1)
-                    Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta", systemImage: d.period.isClosed ? "lock.fill" : "pencil")
-                    if d.record["ownerOnly"].flag { Text("Corrección con condiciones históricas").font(.caption).foregroundStyle(.orange) }
-                    if let closedAt = d.calculation.closedAt { LabeledContent("Fecha de cierre", value: PayrollFormat.timestamp(closedAt)) }
-                    if !d.record["snapshot"]["closedBy"].text.isEmpty { LabeledContent("Cerrado por", value: d.record["snapshot"]["closedBy"].text) }
-                    if !d.record["revisions"].elements.isEmpty { LabeledContent("Versiones de cierre conservadas", value: "\(d.record["revisions"].elements.count)") }
-                }.foregroundStyle(.white).listRowBackground(JACTheme.forest)
+                    VStack(alignment:.leading,spacing:16) {
+                        HStack { Label("JAC · NÓMINA",systemImage:"waveform").font(.caption2.weight(.bold)).tracking(1.5);Spacer();Image(systemName:d.period.isClosed ? "lock.shield":"wallet.pass").font(.title3) }.foregroundStyle(JACTheme.highlight)
+                        Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(.white.opacity(0.8))
+                        Text(PayrollFormat.money(d.calculation.total)).font(.system(.largeTitle,design:.rounded,weight:.bold)).minimumScaleFactor(0.6).lineLimit(1).monospacedDigit()
+                        Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta",systemImage:d.period.isClosed ? "lock.fill":"pencil").font(.caption.weight(.semibold))
+                            .padding(.horizontal,12).padding(.vertical,7).background(.white.opacity(0.12),in:Capsule())
+                    }.padding(24).foregroundStyle(.white).frame(maxWidth:.infinity,alignment:.leading)
+                        .background(LinearGradient(colors:[JACTheme.navy,JACTone.blue.deep],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:24))
+                }.jacStandaloneRow()
+                if d.record["ownerOnly"].flag || d.calculation.closedAt != nil || !d.record["revisions"].elements.isEmpty || !d.record["snapshot"]["closedBy"].text.isEmpty {
+                    Section("Datos del cierre") {
+                        if d.record["ownerOnly"].flag { Text("Corrección con condiciones históricas").font(.caption).foregroundStyle(.orange) }
+                        if let closedAt = d.calculation.closedAt { LabeledContent("Fecha de cierre",value:PayrollFormat.timestamp(closedAt)) }
+                        if !d.record["snapshot"]["closedBy"].text.isEmpty { LabeledContent("Cerrado por",value:d.record["snapshot"]["closedBy"].text) }
+                        if !d.record["revisions"].elements.isEmpty { LabeledContent("Versiones de cierre conservadas",value:"\(d.record["revisions"].elements.count)") }
+                    }
+                }
                 Section {
                     Picker("Vista de la quincena", selection: $section) {
                         Text("Pagos").tag("pagos"); Text("Actividad").tag("actividad"); Text("Documentos").tag("documentos")
@@ -54,19 +65,22 @@ struct PeriodDetailView: View {
                 if section == "pagos" { payments(d) }
                 else if section == "actividad" {
                     Section {
-                        ForEach(ActivityKind.allCases) { kind in
-                            NavigationLink { ActivityView(kind: kind, user: user).environmentObject(period) } label: { Label(kind.title, systemImage: kind.symbol) }
-                                .accessibilityIdentifier("activity.\(kind.rawValue)")
-                        }
-                    }
+                        LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:12),count:typeSize.isAccessibilitySize ? 1:2),spacing:12) {
+                            ForEach(ActivityKind.allCases) { kind in
+                                Button { selectedActivity = kind } label:{ JACAccessCard(title:kind.title,subtitle:"Consultar y gestionar",symbol:kind.symbol,tone:kind == .shows ? .blue:.teal) }
+                                    .accessibilityIdentifier("activity.\(kind.rawValue)")
+                            }
+                        }.buttonStyle(.plain)
+                    }.jacStandaloneRow()
                 } else { DocumentsSection(detail: d, user: user) }
                 operations(d)
             } else if period.loading { Section { ProgressView("Consultando quincena…") } }
-        }.jacSurface().navigationTitle(period.detail?.period.title ?? "Quincena").navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle(period.detail?.period.title ?? "Quincena").jacInlineTitle()
             .task { await load() }
             .onChange(of: store.workspace?.version) { _, _ in Task { await load() } }
             .refreshable { await load() }
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
+            .navigationDestination(item:$selectedActivity) { kind in ActivityView(kind:kind,user:user).environmentObject(period) }
             .confirmationDialog(confirmationTitle, isPresented: Binding(get: { action != nil }, set: { if !$0 { action = nil } }), titleVisibility: .visible) {
                 if let selected = action {
                     Button(selected == "close" ? "Cerrar quincena" : selected == "reopen" ? "Reabrir para corregir" : "Eliminar definitivamente", role: selected == "deletePeriod" ? .destructive : nil) {
@@ -104,6 +118,7 @@ struct PeriodDetailView: View {
             AmountRow(title: "Ingresos", value: d.calculation.gross); AmountRow(title: "Descuentos", value: d.calculation.deductions)
             AmountRow(title: "Reintegros", value: d.calculation.reimbursements); AmountRow(title: "Ventas de shows", value: d.calculation.sale)
         }
+        if let commission = d.calculation.camiloCommission { CamiloCommissionSection(value: commission) }
         Section("Pagos del equipo") {
             TextField("Buscar persona o cargo", text: $search).accessibilityIdentifier("payments.search")
             Picker("Grupo", selection: $category) { Text("Todos").tag(""); ForEach(PayrollChoices.categories, id: \.0) { Text($0.1).tag($0.0) } }
@@ -151,4 +166,35 @@ struct AmountRow: View {
     let title: String
     let value: Double
     var body: some View { LabeledContent { Text(PayrollFormat.money(value)).monospacedDigit().multilineTextAlignment(.trailing) } label: { Text(title) } }
+}
+
+struct CamiloCommissionSection: View {
+    let value: PayrollCamiloCommission
+    var body: some View {
+        Section("Comisión de Camilo · 5%") {
+            AmountRow(title: "Ventas de todos los shows", value: value.sales)
+            AmountRow(title: "Costos descontados", value: value.costs)
+            AmountRow(title: "Costos promocionales excluidos", value: value.promotionalCosts)
+            AmountRow(title: "Base de comisión", value: value.base)
+            if let amount = value.amount { AmountRow(title: "Comisión para revisión", value: amount).accessibilityIdentifier("commission.amount") }
+            else { Text("Pendiente de revisión de recorridos").foregroundStyle(.orange) }
+            if value.balance < 0 { Text("Los costos superan las ventas: comisión en cero, sin saldo al próximo corte.").font(.footnote) }
+            Text("Calculada por el servidor. No se agrega como pago a la nómina. Excluye salarios, honorarios fijos, novedades, reintegros y recorridos extra.").font(.footnote).foregroundStyle(.secondary)
+            ForEach(value.issues, id: \.self) { Text($0).font(.footnote).foregroundStyle(.orange) }
+            if value.unlinkedKilometers > 0 { AmountRow(title: "Kilómetros sin show, no descontados", value: value.unlinkedKilometers) }
+            DisclosureGroup("Costos por show") {
+                ForEach(value.shows) { show in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(show.name + (show.promotional ? " · Promocional" : "")).font(.headline)
+                        Text(PayrollFormat.date(show.date)).font(.caption).foregroundStyle(.secondary)
+                        AmountRow(title: "Ventas", value: show.sale)
+                        AmountRow(title: "Músicos", value: show.musicians); AmountRow(title: "Técnica", value: show.technical)
+                        AmountRow(title: "Conductores / km", value: show.drivers); AmountRow(title: "Gastos", value: show.expenses)
+                        AmountRow(title: "Costo total", value: show.cost); AmountRow(title: "Resultado del show", value: show.sale - show.cost)
+                        AmountRow(title: "Costo descontado", value: show.deductible)
+                    }.padding(.vertical, 6)
+                }
+            }
+        }
+    }
 }

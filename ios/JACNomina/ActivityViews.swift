@@ -1,11 +1,11 @@
 import SwiftUI
 
 enum ActivityKind: String, CaseIterable, Identifiable {
-    case shows, movements, routes, hours
+    case shows, movements, expenses, routes, hours
     var id: String { rawValue }
-    var title: String { ["shows": "Shows y honorarios", "movements": "Novedades y descuentos", "routes": "Recorridos y kilómetros", "hours": "Horas y salarios"][rawValue]! }
-    var symbol: String { ["shows": "music.mic", "movements": "plusminus.circle", "routes": "car", "hours": "clock"][rawValue]! }
-    var editorKind: PayrollEditorKind { switch self { case .shows: return .show; case .movements: return .movement; case .routes: return .route; case .hours: return .hours } }
+    var title: String { ["shows": "Shows y honorarios", "movements": "Novedades y descuentos", "expenses": "Gastos por show", "routes": "Recorridos y kilómetros", "hours": "Horas y salarios"][rawValue]! }
+    var symbol: String { ["shows": "music.mic", "movements": "plusminus.circle", "expenses": "receipt", "routes": "car", "hours": "clock"][rawValue]! }
+    var editorKind: PayrollEditorKind { switch self { case .shows: return .show; case .movements: return .movement; case .expenses: return .showExpense; case .routes: return .route; case .hours: return .hours } }
 }
 struct ActivityView: View {
     @EnvironmentObject private var store: PayrollStore
@@ -20,21 +20,21 @@ struct ActivityView: View {
             if let d = period.detail {
                 if let error = period.error { Section { InlineError(message: error) } }
                 if d.period.isClosed { Section { Label("Consulta de un cierre", systemImage: "lock.fill") } }
-                switch kind { case .shows: shows(d); case .movements: movements(d); case .routes: routes(d); case .hours: hours(d) }
+                switch kind { case .shows: shows(d); case .movements: movements(d); case .expenses: expenses(d); case .routes: routes(d); case .hours: hours(d) }
             }
-        }.jacSurface().navigationTitle(kind.title).navigationBarTitleDisplayMode(.inline)
+        }.jacSurface().navigationTitle(kind.title).jacInlineTitle()
             .toolbar {
                 if let d = period.detail, canEdit(d), kind != .hours {
-                    ToolbarItem(placement: .topBarTrailing) {
+                    ToolbarItem(placement: .jacTrailing) {
                         Button { edit(nil, detail: d) } label: { Image(systemName: "plus") }
                             .accessibilityLabel(kind == .routes ? "Agregar kilometraje extra" : "Agregar registro")
-                            .accessibilityIdentifier("activity.add").disabled(!store.canWrite)
+                            .accessibilityIdentifier("activity.add").disabled(!store.canWrite || (kind == .expenses && d.period.shows.isEmpty))
                     }
                 }
             }.refreshable { await reload() }
             .onChange(of: store.workspace?.version) { _, _ in Task { await reload() } }
             .sheet(item: $editor) { PayrollEditorView(session: $0) }
-            .confirmationDialog(kind == .shows ? "¿Eliminar el show y su recorrido compartido?" : "¿Eliminar este registro?", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }), titleVisibility: .visible) {
+            .confirmationDialog(kind == .shows ? "¿Eliminar el show, su recorrido y sus gastos vinculados?" : "¿Eliminar este registro?", isPresented: Binding(get: { removal != nil }, set: { if !$0 { removal = nil } }), titleVisibility: .visible) {
                 if let id = removal, let d = period.detail {
                     Button("Eliminar", role: .destructive) { Task { _ = await store.remove(kind: kind.editorKind.rawValue, id: id, detail: d) }; removal = nil }
                 }
@@ -60,10 +60,25 @@ struct ActivityView: View {
         ForEach(d.period.shows) { show in
             Section(show.name) {
                 LabeledContent("Fecha", value: PayrollFormat.date(show.date)); AmountRow(title: "Venta", value: show.sale)
+                if show.promotional == true { Label("Promocional", systemImage: "tag") }
                 ForEach(show.participants, id: \.employeeId) { AmountRow(title: d.employeeName($0.employeeId), value: $0.amount) }
                 if let record = d.record["shows"].elements.first(where: { $0["id"].text == show.id }) { recordActions(record, detail: d) }
             }
         }
+    }
+    @ViewBuilder private func expenses(_ d: PeriodDetail) -> some View {
+        let records = d.record["showExpenses"].elements
+        if records.isEmpty { Section { Text(d.period.shows.isEmpty ? "Agrega un show antes de registrar sus gastos." : "Sin gastos de show registrados.").foregroundStyle(.secondary) } }
+        ForEach(Array(records.enumerated()), id: \.offset) { _, record in
+            Section(record["concept"].text) {
+                LabeledContent("Show", value: d.period.shows.first { $0.id == record["showId"].text }?.name ?? "").accessibilityElement(children: .combine).accessibilityIdentifier("expense.linkedShow")
+                LabeledContent("Tipo", value: ["tiquetes":"Tiquetes","hoteles":"Hoteles","alimentacion":"Alimentación","otros":"Otros gastos"][record["category"].text] ?? record["category"].text)
+                LabeledContent("Fecha", value: PayrollFormat.date(record["date"].text)); AmountRow(title: "Valor", value: record["amount"].number)
+                if !record["note"].text.isEmpty { Text(record["note"].text).font(.footnote) }
+                recordActions(record, detail: d)
+            }
+        }
+        if let commission = d.calculation.camiloCommission { CamiloCommissionSection(value: commission) }
     }
     @ViewBuilder private func movements(_ d: PeriodDetail) -> some View {
         if d.period.movements.isEmpty { Section { Text("Sin novedades registradas.").foregroundStyle(.secondary) } }
