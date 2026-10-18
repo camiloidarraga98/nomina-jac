@@ -1,12 +1,11 @@
 import application from './index';
-import {targetTransfer} from '../lib/hosting-transfer';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
 
 export default {
   async fetch(request:Request,env:DeploymentEnv,ctx:Parameters<typeof application.fetch>[2]){
     const url=new URL(request.url);
-    if(url.pathname==='/_jac/transfer')return targetTransfer(request,env);
+    if(['/_jac/transfer','/migracion','/api/hosting-transfer','/api/hosting-transfer-inventory'].includes(url.pathname))return new Response(null,{status:404,headers:{'Cache-Control':'no-store'}});
     if(url.pathname==='/_jac/health'){
       return Response.json({service:'JAC',ready:env.JAC_READY==='1'},{headers:{'Cache-Control':'no-store','X-Robots-Tag':'noindex, nofollow'}});
     }

@@ -1,3 +1,7 @@
+# Estado actual · 18 de octubre de2026
+
+Producción ya está en la cuenta Cloudflare de JAC, con el mismo dominio y datos. La fuente se conserva en el repositorio privado `camiloidarraga98/nomina-jac`; no hay Actions ni PR. Continúa en esta misma carpeta del Mac y el mismo proyecto Xcode. Consulta `docs/CLOUDFLARE_MIGRATION.md` para recursos, comprobaciones y publicación. Las instrucciones históricas de Sites que siguen no son el destino de publicación actual. No reinstalar el proyecto ni copiar datos de localhost sobre producción.
+
 # Continuar JAC desde tu Mac
 
 Comprobación local del 6 de octubre de 2026: consulta `docs/MAC_LOCAL_VERIFICADO.md` para los resultados, las incidencias de simulador y el estado de firma. En este Mac Node/npm están instalados dentro de `work/local/toolchain`, sin modificar el PATH global. Usa `scripts/local-env.sh` antes de los comandos, por ejemplo `scripts/local-env.sh npm run dev -- --host 127.0.0.1`.

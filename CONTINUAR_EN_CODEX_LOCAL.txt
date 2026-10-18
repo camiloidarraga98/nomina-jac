@@ -1,3 +1,7 @@
+# Estado actual · 18 de octubre de2026
+
+Producción ya está en la cuenta Cloudflare de JAC, con el mismo dominio y datos. La fuente se conserva en el repositorio privado `camiloidarraga98/nomina-jac`; no hay Actions ni PR. Continúa en esta misma carpeta del Mac y el mismo proyecto Xcode. Consulta `docs/CLOUDFLARE_MIGRATION.md` para recursos, comprobaciones y publicación. Las instrucciones históricas de Sites que siguen no son el destino de publicación actual. No reinstalar el proyecto ni copiar datos de localhost sobre producción.
+
 Continuemos el proyecto Nómina JAC Music desde esta carpeta en mi Mac. Quiero edición, manejo de Codex, pruebas y compilaciones locales, sin Codex Cloud, GitHub ni GitHub Actions.
 
 Lee AGENTS.md, docs/PROJECT_CONTEXT.md, EMPIEZA_AQUI.md, ios/README.md y docs/ITINERARIES_PUSH_SETUP.md. El paquete parte de la fuente del Site versión 25, commit 73b2cc223907d0c80b03beae92d16cf9bcc95a3c, y mantiene sus archivos de aplicación. Conserva funciones, cálculos, permisos, Agenda, correo, logo y nombre JAC. Producción es https://jhonalexcastano.com, Site appgprj_6aa0260b82a88191a47960614238350a, con DB y BUCKET existentes.

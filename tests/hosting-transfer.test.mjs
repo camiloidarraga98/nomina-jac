@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const dir=await mkdtemp(join(tmpdir(),'jac-transfer-test-')),out=join(dir,'module.mjs');
-await build({stdin:{contents:"export * from './lib/hosting-transfer';export * from './lib/hosting-cutover';export {POST as sourceApi} from './app/api/hosting-transfer/route';export {POST as inventoryApi} from './app/api/hosting-transfer-inventory/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',outfile:out,plugins:[{name:'fake',setup(b){
+await build({stdin:{contents:"export * from './lib/hosting-transfer';export * from './lib/hosting-cutover';export {POST as sourceApi} from './tests/fixtures/hosting-transfer/source-route';export {POST as inventoryApi} from './tests/fixtures/hosting-transfer/inventory-route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',outfile:out,plugins:[{name:'fake',setup(b){
  b.onResolve({filter:/^cloudflare:workers$/},()=>({path:'env',namespace:'fake'}));
  b.onResolve({filter:/^@\/lib\/payroll-auth-store$/},()=>({path:'auth',namespace:'fake'}));
  b.onLoad({filter:/.*/,namespace:'fake'},a=>({contents:a.path==='env'?'export const env=globalThis.__transferTestEnv;':'export const OWNER_EMAIL="camilo@mac2you.co";export async function authenticatedSession(token){return globalThis.__transferUsers.get(token)||null;}'}));

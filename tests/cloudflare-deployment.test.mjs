@@ -36,6 +36,15 @@ test('solo la activación explícita de ejecución entrega las peticiones a la a
  assert.deepEqual(await h.json(),{service:'JAC',ready:true});
 });
 
+test('el servidor definitivo retira todas las entradas temporales del traslado',async()=>{
+ const before=globalThis.__cfCalls;
+ for(const env of [{},{JAC_READY:'1'}])for(const path of ['/_jac/transfer','/migracion','/api/hosting-transfer','/api/hosting-transfer-inventory']){
+  const r=await m.worker.fetch(new Request('https://staging.example.invalid'+path,{method:'POST'}),env,{});
+  assert.equal(r.status,404);assert.equal(r.headers.get('Cache-Control'),'no-store');
+ }
+ assert.equal(globalThis.__cfCalls,before);
+});
+
 test('Cloudflare independiente rechaza identidad de Sites falsificada y conserva el perfil original',async()=>{
  globalThis.__cfHeaders=new Headers({'oai-authenticated-user-email':'camilo@mac2you.co'});
  globalThis.__cfTestEnv.JAC_HOSTING='cloudflare';assert.equal(await m.getChatGPTUser(),null);

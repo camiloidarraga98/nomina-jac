@@ -8,7 +8,7 @@
   "scripts": {
     "install:ci": "npm ci --no-audit --no-fund",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
-    "build": "vinext build",
+    "build": "JAC_HOSTING=cloudflare vinext build",
     "build:cloudflare": "JAC_HOSTING=cloudflare vinext build",
     "dev:cloudflare": "JAC_HOSTING=cloudflare vite",
     "deploy:cloudflare": "wrangler deploy --config dist/server/wrangler.json --keep-vars",
@@ -17,7 +17,8 @@
     "test": "npm run build && node --test tests/payroll*.test.mjs",
     "lint": "bash scripts/sites-env.sh -- eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "test:payroll": "node --test tests/payroll.test.mjs"
+    "test:payroll": "node --test tests/payroll.test.mjs",
+    "build:sites": "JAC_HOSTING=sites vinext build"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
