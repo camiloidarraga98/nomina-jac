@@ -426,7 +426,7 @@ struct MediaGalleryView: View {
             VStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
                 if compactGallery {
-                    if user.canUploadMedia { HStack { Spacer(); Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(!writable || uploading || !queue.isEmpty).accessibilityIdentifier("media.add") } }
+                    HStack {ConnectionStatusIcon();Spacer();if user.canUploadMedia {Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(!writable || uploading || !queue.isEmpty).accessibilityIdentifier("media.add")}}
                 } else {
                 VStack(alignment:.leading,spacing:12) {
                     Text(feed?.folder?.id == feed?.root?.id ? "Cada show, en imágenes." : feed?.folder?.name ?? "Fotos y videos de JAC").font(.system(.title2,design:.rounded,weight:.bold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading).accessibilityIdentifier("media.heading")
@@ -447,7 +447,6 @@ struct MediaGalleryView: View {
                 }
                 #endif
                 if let error { InlineError(message: error) }
-                if mediaIsOffline { Label("Sin conexión · Puedes consultar los archivos descargados.", systemImage: "wifi.slash").font(.footnote).foregroundStyle(.secondary).accessibilityIdentifier("media.offline.status") }
                 if loading && feed == nil { ProgressView("Cargando carpetas…").frame(maxWidth: .infinity) }
                 #if os(iOS)
                 if !persistentUploads.jobs.isEmpty { persistentUploadPanel }
@@ -482,7 +481,7 @@ struct MediaGalleryView: View {
                     }
                 }
             }.padding(18).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
-        }.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle()
+        }.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle().jacConnectionStatus(shown:!compactGallery)
             #if os(iOS)
             .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
             #endif

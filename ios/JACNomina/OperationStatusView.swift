@@ -6,7 +6,6 @@ struct OperationStatusSection: View {
     @State private var backup: ExportedDocument?
     @State private var heldBackup: ExportedDocument?
     var body: some View {
-        if store.isOffline { Section { Label("Sin conexión · Consulta de la copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("offline.copy") } }
         if let error = store.error { Section { InlineError(message: error) } }
         if let notice = store.notice { Section { Label(notice, systemImage: "checkmark.circle").foregroundStyle(.green) } }
         if let pending = store.pending {
@@ -33,6 +32,33 @@ struct OperationStatusSection: View {
                 }
             }
         }
+    }
+}
+
+
+// Shared presentation only. The cache, session and write restrictions still use
+// their existing state; checking a saved session is not a confirmed outage.
+struct ConnectionStatusIcon:View {
+    @EnvironmentObject private var store:PayrollStore
+    private var checking:Bool {store.isOffline && store.checkingConnection}
+    private var status:String {checking ? "Comprobando":store.isOffline ? "Sin conexión":"Conectado"}
+    private var label:String {checking ? "Comprobando conexión":store.isOffline ? "Sin conexión · Copia guardada":"Conectado con JAC"}
+    var body:some View {
+        Image(systemName:store.isOffline && !checking ? "wifi.slash":"wifi")
+            .font(.system(size:15,weight:.medium))
+            .foregroundStyle(store.isOffline ? Color.secondary:JACTheme.action)
+            .frame(width:26,height:28)
+            .accessibilityLabel(label).accessibilityValue(status)
+            .accessibilityIdentifier("connection.status").help(label)
+    }
+}
+extension View {
+    @ViewBuilder func jacConnectionStatus(shown:Bool=true)->some View {
+        #if os(iOS)
+        self.toolbar {if shown {ToolbarItem(placement:.jacTrailing){ConnectionStatusIcon()}}}
+        #else
+        self
+        #endif
     }
 }
 

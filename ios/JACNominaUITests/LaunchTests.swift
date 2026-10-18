@@ -521,6 +521,11 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textFields["login.username"].exists)
         XCTAssertFalse(app.buttons["period.create"].isEnabled)
+        let signal=app.descendants(matching:.any)["connection.status"]
+        XCTAssertTrue(signal.waitForExistence(timeout:5))
+        let offlineSignal=XCTNSPredicateExpectation(predicate:NSPredicate(format:"value == %@","Sin conexión"),object:signal)
+        XCTAssertEqual(XCTWaiter.wait(for:[offlineSignal],timeout:10),.completed)
+        XCTAssertFalse(app.descendants(matching:.any)["offline.copy"].exists)
         tap(app, "period.fixture-period")
         XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 5))
         for _ in 0..<8 { if app.buttons["period.close"].exists { break }; app.swipeUp() }
@@ -567,6 +572,10 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 3), "El arranque debe mostrar la copia antes de que termine la red lenta")
         XCTAssertFalse(app.textFields["login.username"].exists)
         XCTAssertFalse(app.buttons["period.create"].isEnabled)
+        let signal=app.descendants(matching:.any)["connection.status"]
+        XCTAssertTrue(signal.waitForExistence(timeout:5));XCTAssertEqual(signal.value as? String,"Comprobando")
+        XCTAssertFalse(app.descendants(matching:.any)["offline.copy"].exists)
+        XCTAssertFalse(app.staticTexts["Sin conexión · Consulta de la copia guardada"].exists)
         attachScreen(app, name: "copia-completa-mientras-revalida-sesion")
         let writable = NSPredicate { _, _ in app.buttons["period.create"].exists && app.buttons["period.create"].isEnabled }
         let resumed = XCTNSPredicateExpectation(predicate: writable, object: app)
@@ -575,6 +584,7 @@ final class LaunchTests: XCTestCase {
         let hierarchy = XCTAttachment(string: app.debugDescription); hierarchy.name = "estado-de-controles-tras-revalidacion"; hierarchy.lifetime = .keepAlways; add(hierarchy)
         XCTAssertEqual(result, .completed, "Al reconectar se recuperan las acciones autorizadas")
         XCTAssertTrue(app.buttons["period.create"].isEnabled)
+        XCTAssertEqual(signal.value as? String,"Conectado")
     }
 
     @MainActor func testAgendaSurvivesOfflineRelaunchAndDisplaysCacheDuringInternetRefresh() {
@@ -587,9 +597,10 @@ final class LaunchTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 5))
-        let offline = app.descendants(matching: .any)["agenda.offline"]
+        let offline = app.descendants(matching: .any)["connection.status"]
         for _ in 0..<3 { if offline.exists { break }; app.swipeUp() }
         XCTAssertTrue(offline.waitForExistence(timeout: 10))
+        XCTAssertEqual(offline.value as? String,"Sin conexión")
         for _ in 0..<3 { if app.buttons["Mes siguiente"].isHittable { break }; app.swipeDown() }
         XCTAssertFalse(app.buttons["agenda.create"].exists, "Sin conexión la copia es de consulta")
         tap(app, "Mes siguiente")

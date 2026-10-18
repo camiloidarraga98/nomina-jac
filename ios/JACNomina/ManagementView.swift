@@ -60,7 +60,7 @@ struct ManagementView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment:.leading,spacing:24) {
-                    if store.isOffline || store.error != nil || store.notice != nil || store.pending != nil {
+                    if store.error != nil || store.notice != nil || store.pending != nil {
                         VStack(alignment:.leading,spacing:12) { OperationStatusSection() }.padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:20))
                     }
                     JACFeatureBanner(eyebrow:"JAC · Tu equipo",title:"Todo en su lugar.",subtitle:"Herramientas para lo que pasa antes y después del show.",symbol:"slider.horizontal.3",tone:.violet)
@@ -80,7 +80,7 @@ struct ManagementView: View {
                         }
                     }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))}
                 }.padding(18).frame(maxWidth: JACDevice.isPad ? 1050 : .infinity).frame(maxWidth: .infinity)
-            }.jacSurface().navigationTitle("Gestión").jacInlineTitle()
+            }.jacSurface().navigationTitle("Gestión").jacInlineTitle().jacConnectionStatus()
                 .navigationDestination(item:$destination) { target in
                     switch target {
                     case .account:AccountView(user:user)

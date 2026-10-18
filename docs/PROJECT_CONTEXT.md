@@ -1,3 +1,7 @@
+## Indicador de conexión nativo · 17 de octubre de2026
+
+Camilo pidió sustituir el aviso transitorio de falta de conexión por un icono superior. Wi-Fi gris al comprobar, azul conectado y tachado offline en iPhone/iPad/Mac; sin mensajes duplicados, conservando información accionable cuando no hay copia. Solo presentación y marca de comprobación; sesión/caché/guardas sin cambios. Dos recorridos UI específicos aprobados y Release iPhone/Mac universal correctos. Mismo proyecto/firma/bundle/push; usar Run para teléfono físico. Ver docs/CONNECTION_STATUS.md y work/local/connection-icon-*. Web/API/dependencias idénticos a v82; artefacto reutilizado para conservar la fuente en el Site existente. Publicación/respaldo final se anotan al cerrar.
+
 ## Contratos con RUT en web e iPhone — 17 de octubre de 2026
 
 ## Archivo de contratos · 17 de octubre de2026

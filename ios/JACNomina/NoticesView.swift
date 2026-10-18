@@ -127,7 +127,7 @@ struct NoticesView: View {
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             } }
 
-        }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().refreshable { await refresh() }
+        }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().jacConnectionStatus().refreshable { await refresh() }
             .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
             .onChange(of: store.cacheRevision) { _, _ in restoreCached() }
             .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }

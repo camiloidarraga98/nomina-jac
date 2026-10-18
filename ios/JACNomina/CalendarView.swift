@@ -80,9 +80,6 @@ struct CalendarView: View {
                             ForEach(visible.upcoming) { item in Button { event = item } label: { AgendaEventRow(event: item, showsDay: true) }.buttonStyle(.plain).accessibilityIdentifier("agenda.upcoming.\(item.id)") }
                         }
                     }
-                    if offlineMessage != nil || store.isOffline {
-                        AgendaSection { Label(offlineMessage ?? "Sin conexión · Copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("agenda.offline") }
-                    }
                     if let warning = store.agendaStorageWarning {
                         AgendaSection { Text(warning).font(.footnote).foregroundStyle(.secondary) }
                     }
@@ -90,7 +87,7 @@ struct CalendarView: View {
                         AgendaSection { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
                     }
                 }
-            }.background { GeometryReader { geometry in Color.clear.onAppear { contentWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in contentWidth = width } }.allowsHitTesting(false) }.jacSurface().navigationTitle("Agenda").jacInlineTitle().refreshable { await refresh() }.jacRefreshCommand { Task { await refresh() } }
+            }.background { GeometryReader { geometry in Color.clear.onAppear { contentWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in contentWidth = width } }.allowsHitTesting(false) }.jacSurface().navigationTitle("Agenda").jacInlineTitle().jacConnectionStatus().refreshable { await refresh() }.jacRefreshCommand { Task { await refresh() } }
                 .toolbar {
                     if user.isOwner { ToolbarItem(placement:.jacTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) } }
                 }

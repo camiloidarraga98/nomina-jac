@@ -126,7 +126,7 @@ private struct MacWorkspace:View {
                     Image(systemName:"person.crop.circle.fill").font(.title2).foregroundStyle(.secondary)
                     VStack(alignment:.leading,spacing:4) {
                         Text(overview.user.displayName).font(.subheadline.weight(.medium)).lineLimit(1)
-                        Label(store.isOffline ? "Copia sin conexión":"JAC Music",systemImage:store.isOffline ? "wifi.slash":"checkmark.shield").font(.caption).foregroundStyle(.secondary)
+                        Label("JAC Music",systemImage:"checkmark.shield").font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength:0)
                 }.padding(16)
@@ -151,6 +151,7 @@ private struct MacWorkspace:View {
                     }
                 }
             }.id(selected).toolbar {
+                ToolbarItem(placement:.primaryAction){ConnectionStatusIcon()}
                 if selected != .crm && selected != .agenda && selected != .media {
                     ToolbarItem { Button {Task{try? await store.refresh()}} label:{Image(systemName:"arrow.clockwise")}.help("Actualizar información (⌘R)").disabled(store.busy) }
                 }

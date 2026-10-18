@@ -48,7 +48,6 @@ struct CRMHomeView:View {
               if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractsHome() } }
               else { List {
                 if let error { InlineError(message:error) }
-                if store.isOffline { Text("Sin conexión · última información descargada. Los cambios necesitan internet.").font(.footnote).foregroundStyle(.secondary) }
                 Section {
                     JACFeatureBanner(eyebrow:"JAC · CRM",title:"El show empieza aquí.",subtitle:"Ventas, abonos y preparación de cada fecha.",symbol:"briefcase",tone:.violet)
                     ViewThatFits(in:.horizontal) {
@@ -61,7 +60,7 @@ struct CRMHomeView:View {
                 else if section == "weekly" { CRMWeeklyView() }
                 else { CRMContactsView() }
               } }
-            }.jacSurface().navigationTitle(section == "contracts" ? "Contratos":"CRM").jacInlineTitle()
+            }.jacSurface().navigationTitle(section == "contracts" ? "Contratos":"CRM").jacInlineTitle().jacConnectionStatus()
                 .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));if section != "contracts" {await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60)} } catch { break } } }
                 .refreshable { await load(sync:!store.isOffline) }
                 .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }

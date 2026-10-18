@@ -77,7 +77,7 @@ struct PayrollHomeView: View {
                 .safeAreaInset(edge: .bottom) {
                     VStack(alignment: .leading, spacing: 5) {
                         Text(user.displayName).font(.subheadline.weight(.semibold)).lineLimit(2)
-                        Label(store.isOffline ? "Copia sin conexión" : "Tu equipo, conectado", systemImage: store.isOffline ? "wifi.slash" : "person.2")
+                        Label("JAC Music", systemImage:"person.2")
                             .font(.caption).foregroundStyle(.secondary)
                     }.frame(maxWidth: .infinity, alignment: .leading).padding(18).background(.bar).privacySensitive()
                 }
@@ -165,7 +165,7 @@ struct PeriodsView: View {
                         }
                     }
                 }
-            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").jacInlineTitle()
+            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").jacInlineTitle().jacConnectionStatus()
                 .searchable(text: $search, prompt: "Buscar mes o estado")
                 .refreshable { try? await store.refresh() }
                 .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }

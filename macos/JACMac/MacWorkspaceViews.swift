@@ -83,7 +83,7 @@ struct MacManagementView: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 24) {
                     MacPageHeader(title: "Configuración general", subtitle: "Las herramientas de tu equipo, en un solo lugar.", symbol: "gearshape")
-                    if store.error != nil || store.pending != nil || store.notice != nil || store.isOffline {
+                    if store.error != nil || store.pending != nil || store.notice != nil {
                         VStack(alignment: .leading, spacing: 10) { OperationStatusSection() }
                     }
                     settingsGroup("Tu cuenta",items:[.account])
@@ -215,7 +215,6 @@ struct MacCRMHomeView: View {
                             sectionButton("Contratos", symbol:"doc.text", value:"contracts")
                             Spacer()
                             if busy { ProgressView().controlSize(.small).accessibilityLabel("Actualizando CRM") }
-                            if store.isOffline { Label("Copia sin conexión",systemImage:"wifi.slash").font(.caption).foregroundStyle(.secondary) }
                         }.accessibilityIdentifier("crm.sections")
                         if let error { HStack { InlineError(message: error); Spacer(); Button("Reintentar") { Task { await load() } } } }
                     }.padding(.horizontal,24).padding(.top,22).padding(.bottom,14)

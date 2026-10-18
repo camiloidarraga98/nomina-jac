@@ -17,6 +17,7 @@ final class PayrollStore: ObservableObject {
     private var clientChanges: AnyCancellable?
     private var offlineChanges: AnyCancellable?
     @Published private(set) var offlineMode = false
+    @Published private(set) var checkingConnection = false
     private var automaticRefresh: (id: UUID, task: Task<Void, Error>)?
     private var mediaPrefetch: Task<Void, Never>?
     private var prefetchedMediaScope: String?
@@ -27,6 +28,7 @@ final class PayrollStore: ObservableObject {
     init(client: PayrollClient? = nil) {
         let client = client ?? PayrollClient(); self.client = client
         hasSavedSession = (try? client.hasSession()) == true
+        checkingConnection = hasSavedSession
         if hasSavedSession { restoring = false }
         if let cached = client.cachedWorkspace() {
             workspace = cached; overview = cached.overview
@@ -116,8 +118,8 @@ final class PayrollStore: ObservableObject {
     func refreshAutomatically() async throws {
         if let running = automaticRefresh { try await running.task.value; return }
         let id = UUID(), task = Task { try await self.refresh() }
-        automaticRefresh = (id, task)
-        defer { if automaticRefresh?.id == id { automaticRefresh = nil } }
+        automaticRefresh = (id, task); checkingConnection = true
+        defer { if automaticRefresh?.id == id { automaticRefresh = nil; checkingConnection = false } }
         try await task.value
     }
     func refresh() async throws {
@@ -143,7 +145,7 @@ final class PayrollStore: ObservableObject {
         mediaPrefetch = Task { [client] in _ = try? await client.media(forceNetwork: true) }
     }
     private func cancelAutomaticReads() {
-        automaticRefresh?.task.cancel(); automaticRefresh = nil
+        automaticRefresh?.task.cancel(); automaticRefresh = nil; checkingConnection = false
         mediaPrefetch?.cancel(); mediaPrefetch = nil; prefetchedMediaScope = nil
     }
     func resumeMediaUploads() async {
