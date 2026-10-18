@@ -1,5 +1,7 @@
 ## Instrucción más reciente · edición en Codex Cloud · 18 octubre2026
 
+Camilo pidió que el nuevo chat conozca el funcionamiento sin reconstruir la conversación. Leer primero [GUIA-FUNCIONAL-JAC.md](../continuidad-codex-cloud/GUIA-FUNCIONAL-JAC.md): vocabulario, flujos entre módulos, permisos recientes, reglas financieras, fotos R2, contratos/RUT, offline y decisiones aplazadas. Esta guía concentra el estado funcional; los apartados siguientes conservan el historial y sus verificaciones. Mantenerla al cambiar decisiones, sin usarla para sobrescribir cuentas o datos reales. La preparación solo añade documentación, sin modificar aplicación, producción ni configuración personal Xcode.
+
 Camilo pidió continuar TODO el código web/servidor/iPhone/iPad/Mac en un único nuevo chat Codex Cloud conectado al GitHub privado `camiloidarraga98/nomina-jac`. Autoriza ese flujo y sus commits/pushes; sustituye las prohibiciones históricas de tareas Cloud. Compilará las apps Apple en su Mac mediante pull y el mismo Xcode. No habilitar control remoto, SSH o VPN al Mac ni exigir otro chat. Leer `continuidad-codex-cloud/README.md` y su mensaje de continuidad. El entorno Cloud y sus accesos todavía deben comprobarse; no declarar trasladadas sesiones/credenciales ni ejecutado Xcode desde Linux. GitHub Actions y PR siguen sin autorizar; producción sigue en Cloudflare propio, conservando datos/secretos/conexiones. Las demás reglas funcionales y de pruebas continúan vigentes.
 
 ## Flujo vigente · Cloudflare propio y GitHub privado · 18 octubre2026

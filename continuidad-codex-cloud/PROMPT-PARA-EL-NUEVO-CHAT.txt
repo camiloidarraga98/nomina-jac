@@ -4,7 +4,8 @@ REPOSITORIO Y ALCANCE
 Repositorio privado: https://github.com/camiloidarraga98/nomina-jac. Parte de origin/main actual, conservando su historial. Todo el código web, servidor, iPhone/iPad y Mac está en este repositorio. Quiero trabajar desde este único chat Cloud; compilaré las apps Apple en mi Mac con pull y Xcode. No configures control remoto de mi Mac ni abras otros chats. Esta instrucción sustituye las prohibiciones históricas de trabajar en Cloud. GitHub Actions y PR siguen deshabilitados salvo que yo los pida expresamente.
 
 LEE PRIMERO
-AGENTS.md, docs/PROJECT_CONTEXT.md, continuidad-codex-cloud/README.md, docs/CLOUDFLARE_MIGRATION.md, ios/README.md y macos/README.md. Lee después la guía específica del módulo que modifiques. Las instrucciones antiguas sobre publicar en Sites o extraer nomina-jac-cloud.zip son históricas y no describen el entorno actual.
+AGENTS.md, continuidad-codex-cloud/GUIA-FUNCIONAL-JAC.md, docs/PROJECT_CONTEXT.md, continuidad-codex-cloud/README.md, docs/CLOUDFLARE_MIGRATION.md, ios/README.md y macos/README.md. La guía funcional define qué quiero decir con Fotografías, CRM, abonos, gastos, Agenda, contratos, alertas, itinerarios y pases; contiene los flujos, permisos recientes y decisiones ya resueltas. Lee después la guía específica del módulo que modifiques. Las instrucciones antiguas sobre publicar en Sites o extraer nomina-jac-cloud.zip son históricas y no describen el entorno actual.
+No me pidas volver a explicar decisiones ya documentadas ni propongas como nuevas funciones existentes. Aclara solo vacíos o contradicciones reales con lo que pida después. Actualiza la guía funcional cuando acordemos cambios de comportamiento; no restablezcas permisos o datos reales desde un ejemplo de documentación.
 
 ESTADO ACTUAL
 Producción: https://jhonalexcastano.com.

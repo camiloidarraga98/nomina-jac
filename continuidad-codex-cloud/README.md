@@ -2,6 +2,12 @@
 
 Petición vigente de Camilo,18 de octubre2026: toda la edición de web/servidor/iPhone/iPad/Mac desde un nuevo chat Cloud con este GitHub privado. Las compilaciones de Apple se realizan después con pull y Xcode en su Mac. No habilitar acceso remoto, SSH o VPN al Mac. No se requieren dos chats.
 
+## Contexto funcional que debe leer el nuevo chat
+
+**[GUIA-FUNCIONAL-JAC.md](GUIA-FUNCIONAL-JAC.md)** explica el vocabulario de Camilo y el funcionamiento ya implementado: Fotografía R2, CRM y sus bolsas de abonos, Agenda, nómina/comisión/gastos, alertas/itinerarios/pases y contratos/RUT. Incluye relaciones entre módulos, permisos recientes, diferencias por plataforma, decisiones aplazadas y referencias al código/pruebas.
+
+AGENTS.md y el mensaje de inicio exigen esta lectura. El nuevo chat debe conservar y actualizar la guía cuando cambie el producto; no necesita que Camilo vuelva a explicar decisiones resueltas. La conversación y las credenciales no se transfieren automáticamente: el contexto durable es la documentación versionada del repositorio.
+
 ## Abrir el entorno
 
 1. En un nuevo chat selecciona **Work in / Trabajar en → Cloud** y el repositorio privado `camiloidarraga98/nomina-jac`, rama `main`.
@@ -14,7 +20,7 @@ Esta carpeta contiene instrucciones; el código completo ya está en la raíz de
 ## Código, servicios y comprobaciones
 
 - [Estado y recursos Cloudflare](../docs/CLOUDFLARE_MIGRATION.md).
-- [Reglas y contexto funcional](../AGENTS.md), [historial de decisiones](../docs/PROJECT_CONTEXT.md).
+- [Guía funcional y vocabulario](GUIA-FUNCIONAL-JAC.md), [reglas](../AGENTS.md), [historial de decisiones](../docs/PROJECT_CONTEXT.md).
 - [iPhone/iPad](../ios/README.md), [Mac](../macos/README.md).
 - [Permisos](../docs/SECTION_ACCESS.md), [pases privados](../docs/BOARDING_PASSES.md), [notificaciones](../docs/ITINERARIES_PUSH_SETUP.md).
 - [Fotografía R2](../docs/PHOTOGRAPHY_R2_MIGRATION.md), [contratos](../docs/CONTRACTS.md).
