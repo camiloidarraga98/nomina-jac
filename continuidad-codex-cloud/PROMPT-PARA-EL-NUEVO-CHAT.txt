@@ -1,0 +1,45 @@
+Continúa el proyecto existente JAC App / Nómina JAC Music desde Codex Cloud. No es una aplicación nueva.
+
+REPOSITORIO Y ALCANCE
+Repositorio privado: https://github.com/camiloidarraga98/nomina-jac. Parte de origin/main actual, conservando su historial. Todo el código web, servidor, iPhone/iPad y Mac está en este repositorio. Quiero trabajar desde este único chat Cloud; compilaré las apps Apple en mi Mac con pull y Xcode. No configures control remoto de mi Mac ni abras otros chats. Esta instrucción sustituye las prohibiciones históricas de trabajar en Cloud. GitHub Actions y PR siguen deshabilitados salvo que yo los pida expresamente.
+
+LEE PRIMERO
+AGENTS.md, docs/PROJECT_CONTEXT.md, continuidad-codex-cloud/README.md, docs/CLOUDFLARE_MIGRATION.md, ios/README.md y macos/README.md. Lee después la guía específica del módulo que modifiques. Las instrucciones antiguas sobre publicar en Sites o extraer nomina-jac-cloud.zip son históricas y no describen el entorno actual.
+
+ESTADO ACTUAL
+Producción: https://jhonalexcastano.com.
+Cloudflare de JAC: cuenta 9798d1043d57690ffa9aee16c74dfb93, Worker jac-nomina.
+D1: jac-nomina, ID 74f39547-ed41-4456-a4b3-e32b2dd13b03, binding DB.
+R2: jac-documentos privado, binding BUCKET. Fotografía conserva jac-fotografia privado.
+Configuración: deploy/cloudflare/wrangler.json. La corrección de estilos está incluida desde 32d3a9de8466adf836fc8c4622d1ec5832a169e8: con run_worker_first los archivos públicos deben servirse mediante ASSETS.fetch. Conserva esa corrección y la protección de API/documentos privados.
+El Site antiguo queda pausado solo como respaldo; no lo reactives, publiques en él, repitas la migración, crees recursos nuevos ni cambies DNS.
+
+PREPARA Y COMPRUEBA EL ENTORNO
+1. Comprueba repositorio, rama, commit, sistema y Node.js 24 LTS. No presupongas que heredaste las conexiones o credenciales de otro chat.
+2. Instala con npm ci --no-audit --no-fund y el lockfile existente. No uses npm update ni borres el lockfile. Si aparece el fallo heredado de dependencias opcionales WASI, diagnostícalo; cualquier reparación debe ser mínima, conservar las versiones existentes y quedar documentada.
+3. Ejecuta node scripts/prepare-local.mjs para generar claves NUEVAS de desarrollo. No suministres PAYROLL_AUTH_KEY o PAYROLL_MAIL_KEY reales al entorno de pruebas.
+4. Para preparar D1 desechable, usa exclusivamente:
+   npx --no-install wrangler d1 migrations apply site-creator-d1 --local --config work/local/wrangler.json
+   Ese nombre es heredado y corresponde solo al entorno local; nunca uses --remote para preparar pruebas. No sustituyas datos reales por localhost.
+5. Ejecuta:
+   npx --no-install tsc --noEmit
+   node --test tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs tests/cloudflare-deployment.test.mjs
+   npm run build
+6. Ejecuta también las pruebas específicas indicadas en AGENTS.md para los flujos que cambien. Reutiliza resultados cuando sus entradas no hayan cambiado; no hagas comprobaciones ajenas al cambio.
+
+REGLAS FUNCIONALES
+Conserva el nombre/logo/diseño azul JAC, todas las funciones y cálculos, nómina, comisión y gastos por show, CRM/abonos/Sheets, contratos/RUT, Agenda, alertas, Slack, itinerarios, pases privados, Fotografía R2, permisos por sección, sesión persistente, caché/offline y privacidad. Los pases pertenecen a un solo destinatario, sin excepción administradora de lectura. Conserva revisiones, concurrencia, firma de webhooks y operaciones idempotentes.
+Nunca uses producción para pruebas de envíos, importaciones o borrados. No envíes correos, push, eventos Calendar, PDF o publicaciones Slack reales como pruebas. No cierres ni borres quincenas reales.
+
+PUBLICACIÓN WEB Y ACCESOS
+npm run build genera Cloudflare propio; npm run deploy:cloudflare publica el Worker existente con --keep-vars. Conservar secretos de ejecución, DB, BUCKET, Fotografía, dominio y conexiones existentes. PAYROLL_AUTH_KEY y PAYROLL_MAIL_KEY permanecen en Cloudflare; no reemplazarlas ni exportarlas. JAC_READY=1 permanece como activación de ejecución.
+Para publicar desde Cloud, verifica antes el acceso autorizado a la cuenta JAC. Si falta, indica exactamente la conexión o credencial que debo autorizar mediante los ajustes seguros del entorno; nunca pidas pegar claves en el chat, ni las guardes en Git. Tener acceso a GitHub no implica acceso a Cloudflare. Las futuras publicaciones de cambios que solicite siguen autorizadas en jac-nomina, después de comprobarlos; preparar inicialmente el entorno no requiere otro despliegue.
+
+APPS APPLE Y GIT
+Proyecto iPhone/iPad: ios/JACNomina.xcodeproj, esquema JACNomina, bundle co.jacmusic.nomina; es una app universal, no un proyecto iPad distinto. Proyecto Mac: macos/JACMac.xcodeproj, esquema JACMac, bundle co.jacmusic.nomina.mac; comparte fuentes de ios/JACNomina.
+Mantén JAC_PUSH_ENABLED=NO y los entitlements actuales mientras no autorice reactivarlos. No copies Team personal, certificados, .p8, contraseñas, Llavero, perfiles ni estado de Xcode al repositorio.
+Puedes editar las fuentes nativas desde Cloud y versionarlas junto con las web. Si no hay macOS/Xcode, deja expresamente la compilación/pruebas nativas pendientes para mi Mac: no afirmes haberlas ejecutado. No necesito otro ZIP ni proyecto; actualizaré esta misma carpeta mediante git pull y compilaré con Xcode.
+Guarda commits y sube los cambios al repositorio privado, sin force push, PR ni Actions. Usa ramas codex/ cuando corresponda y conserva main como fuente de las actualizaciones terminadas y verificadas. Si falta escritura o hay cambios concurrentes, resuélvelo sin sobrescribir trabajo ajeno. No subas bases, exportaciones reales, .env, .dev.vars, sesiones o credenciales.
+
+PRIMERA TAREA
+Prepara el entorno, verifica las pruebas y el build web y resume qué accesos funcionan realmente y cuáles faltan. No cambies funcionalidades todavía. En adelante, realiza los cambios que pida en las plataformas correspondientes y explica qué cambió, qué verificaste, qué queda por compilar en Xcode y qué commit debo traer con pull. Háblame en español.

@@ -1,3 +1,5 @@
+> HISTÓRICO, sustituido el18/octubre2026. No extraer el ZIP antiguo ni publicar en Sites. Continuar desde main del repositorio y leer `continuidad-codex-cloud/README.md`.
+
 # Continuidad del proyecto
 
 Esta importación inicial contiene el código en `nomina-jac-cloud.zip`. Antes de trabajar, extráelo en la raíz con `python3 -m zipfile -e nomina-jac-cloud.zip .` y lee las instrucciones completas en `AGENTS.md` y `docs/PROJECT_CONTEXT.md` extraídos.

@@ -1,3 +1,7 @@
+## Instrucción más reciente · edición en Codex Cloud · 18 octubre2026
+
+Camilo pidió continuar TODO el código web/servidor/iPhone/iPad/Mac en un único nuevo chat Codex Cloud conectado al GitHub privado `camiloidarraga98/nomina-jac`. Autoriza ese flujo y sus commits/pushes; sustituye las prohibiciones históricas de tareas Cloud. Compilará las apps Apple en su Mac mediante pull y el mismo Xcode. No habilitar control remoto, SSH o VPN al Mac ni exigir otro chat. Leer `continuidad-codex-cloud/README.md` y su mensaje de continuidad. El entorno Cloud y sus accesos todavía deben comprobarse; no declarar trasladadas sesiones/credenciales ni ejecutado Xcode desde Linux. GitHub Actions y PR siguen sin autorizar; producción sigue en Cloudflare propio, conservando datos/secretos/conexiones. Las demás reglas funcionales y de pruebas continúan vigentes.
+
 ## Flujo vigente · Cloudflare propio y GitHub privado · 18 octubre2026
 
 Camilo autorizó trasladar producción a su cuenta Cloudflare y la fuente al repositorio privado existente. Esta instrucción sustituye las reglas históricas de publicación en Sites y prohibición de pushes para el flujo actual. Lee `docs/CLOUDFLARE_MIGRATION.md`. La edición sigue Local/This computer en esta misma carpeta del Mac, con Node24 y Xcode local; no usar Codex Cloud, PR ni GitHub Actions.

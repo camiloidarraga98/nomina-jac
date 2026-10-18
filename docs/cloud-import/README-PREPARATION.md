@@ -1,3 +1,5 @@
+> HISTÓRICO, sustituido el18/octubre2026. No extraer el ZIP antiguo ni publicar en Sites. Continuar desde main del repositorio y leer `continuidad-codex-cloud/README.md`.
+
 # Nómina JAC Music — preparación Cloud
 
 Esta importación contiene el código actual en `nomina-jac-cloud.zip` (159 archivos) y el contexto completo dentro de `docs/PROJECT_CONTEXT.md` en el paquete. Corresponde al commit de producción `0d26668b0b3361e18b5a471f955cbc4e2a682207`.
