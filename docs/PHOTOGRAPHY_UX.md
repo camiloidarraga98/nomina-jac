@@ -1,3 +1,11 @@
+## Selector de subida de Mac · 17 de octubre de2026
+
+Se reemplaza únicamente en macOS la hoja compartida List/NavigationStack/searchable por una ventana propia de680×620puntos: cabecera con cierre, dos tarjetas para crear carpeta o usar la ubicación actual, búsqueda dentro del contenido, filas amplias y pie con Cancelar/Escape. Crear carpeta tiene una hoja compacta de540puntos con nombre y acciones nativas. El recorte provenía de la hoja de560puntos frente al mínimo620de jacSurface, además del buscador en la barra de navegación. Las ramas iPhone/iPad, permisos, UUID, destinos, orden descendente, paginación, lectura/subida y privacidad se conservan.
+
+Cambios de presentación acotados a DocumentsView.swift. Comprobación directa con instancia DEBUG .invalid de Anderson: búsqueda sin coincidencias y por Pereira, creación de carpeta y subida de PNG/MOV ficticios, ambos visibles al terminar. Captura outputs/mac-fotografia-subir.png. Debug Mac y compatibilidad iOS compilan; Release universal y entrega se anotan al cerrar. No se subieron archivos reales ni se modificaron carpetas R2 reales.
+
+También se elimina en web la confirmación automática «Shows de Calendar revisados…» de CrmPanel.detect, tanto al abrir como al pulsar Actualizar. Se conserva sincronización, recarga, estado de progreso, guardas y manejo de errores, y las confirmaciones de guardado de acciones explícitas. Sin cambios de API, dependencias o migraciones. TypeScript y37pruebas obligatorias aprobadas; construcción/publicación exacta al cerrar.
+
 # Fotografía: navegación, miniaturas y carpetas recientes
 
 16 de octubre de 2026. Cambios sobre el ecosistema existente; conserva Drive, cuentas, permisos, privacidad y copia cifrada.

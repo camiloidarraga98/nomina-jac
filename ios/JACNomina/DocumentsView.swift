@@ -986,7 +986,11 @@ private struct MediaUploadDestinationPicker: View {
     @State private var loading=false
     @State private var creating=false
     @State private var error:String?
+    private var matches:[MediaItem] {folders.filter{search.isEmpty || $0.name.localizedCaseInsensitiveContains(search)}}
     var body:some View {
+        #if os(macOS)
+        macPicker
+        #else
         NavigationStack {
             List {
                 Section {
@@ -1009,10 +1013,82 @@ private struct MediaUploadDestinationPicker: View {
                 .task {await load()}
                 .sheet(isPresented:$creating) {MediaFolderEditor(parentID:root.id,parentName:root.name) {folder in selected(folder);dismiss()}}
         }
-        #if os(macOS)
-        .frame(minWidth:560,minHeight:560)
         #endif
     }
+    #if os(macOS)
+    private var macPicker:some View {
+        VStack(spacing:0) {
+            HStack(alignment:.top,spacing:16) {
+                Image(systemName:"square.and.arrow.up").font(.system(size:24,weight:.medium)).foregroundStyle(JACTheme.action)
+                    .frame(width:50,height:50).background(JACTheme.action.opacity(0.09),in:RoundedRectangle(cornerRadius:14))
+                VStack(alignment:.leading,spacing:5) {
+                    Text("Subir fotos y videos").font(.system(size:23,weight:.semibold,design:.rounded)).foregroundStyle(JACTheme.ink)
+                    Text("Elige una carpeta para tus archivos.").font(.subheadline).foregroundStyle(.secondary)
+                }.frame(maxWidth:.infinity,alignment:.leading)
+                Button {dismiss()} label:{Image(systemName:"xmark").font(.system(size:11,weight:.semibold)).frame(width:28,height:28).contentShape(Circle())}.buttonStyle(.plain).foregroundStyle(.secondary).accessibilityLabel("Cerrar").accessibilityIdentifier("media.destination.close")
+            }.padding(24)
+            Divider()
+            VStack(alignment:.leading,spacing:18) {
+                Label(root.name,systemImage:"folder").font(.subheadline).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                HStack(spacing:12) {
+                    macShortcut(title:"Crear carpeta",subtitle:"Para un nuevo evento o día de trabajo",symbol:"folder.badge.plus",primary:true) {creating=true}.accessibilityIdentifier("media.createFolder").disabled(loading || store.isOffline)
+                    macShortcut(title:isRoot ? "Archivo general":"Usar esta carpeta",subtitle:root.name,symbol:"folder.fill",primary:false) {selected(root);dismiss()}.accessibilityIdentifier("media.destination.current")
+                }
+                HStack(spacing:12) {
+                    Text("Carpetas existentes").font(.headline)
+                    Spacer(minLength:8)
+                    HStack(spacing:7) {
+                        Image(systemName:"magnifyingglass").foregroundStyle(.secondary)
+                        TextField("Buscar carpeta",text:$search).textFieldStyle(.plain).accessibilityIdentifier("media.destination.search")
+                        if !search.isEmpty {Button {search=""} label:{Image(systemName:"xmark.circle.fill").foregroundStyle(.secondary)}.buttonStyle(.plain).accessibilityLabel("Limpiar búsqueda")}
+                    }.padding(.horizontal,11).padding(.vertical,9).frame(width:240).background(JACTheme.card,in:RoundedRectangle(cornerRadius:9))
+                        .overlay(RoundedRectangle(cornerRadius:9).strokeBorder(Color.secondary.opacity(0.18)))
+                }
+                if let error {HStack(alignment:.top) {InlineError(message:error);Spacer();Button("Reintentar"){Task{await load()}}}.font(.subheadline)}
+                ScrollView {
+                    LazyVStack(spacing:6) {
+                        if matches.isEmpty && !loading {
+                            VStack(spacing:10) {
+                                Image(systemName:search.isEmpty ? "folder.badge.plus":"magnifyingglass").font(.system(size:30,weight:.light)).foregroundStyle(JACTheme.action.opacity(0.65))
+                                Text(search.isEmpty ? "Tu próximo evento empieza aquí":"No hay carpetas con ese nombre").font(.headline)
+                                Text(search.isEmpty ? "Crea una carpeta para organizar sus fotos y videos.":"Prueba con otro nombre.").font(.subheadline).foregroundStyle(.secondary)
+                            }.frame(maxWidth:.infinity,minHeight:190).padding(.horizontal,16).multilineTextAlignment(.center).accessibilityIdentifier("media.destination.empty")
+                        }
+                        ForEach(matches) {folder in
+                            Button {selected(MediaFolder(id:folder.id,name:folder.name));dismiss()} label:{
+                                HStack(spacing:13) {
+                                    Image(systemName:"folder.fill").font(.system(size:20)).foregroundStyle(JACTheme.action).frame(width:40,height:40).background(JACTheme.action.opacity(0.07),in:RoundedRectangle(cornerRadius:10))
+                                    Text(folder.name).font(.system(size:14,weight:.medium)).foregroundStyle(JACTheme.ink).lineLimit(2).frame(maxWidth:.infinity,alignment:.leading)
+                                    Image(systemName:"chevron.right").font(.system(size:11,weight:.semibold)).foregroundStyle(.tertiary)
+                                }.padding(12).frame(maxWidth:.infinity).background(JACTheme.card,in:RoundedRectangle(cornerRadius:12)).contentShape(RoundedRectangle(cornerRadius:12))
+                            }.buttonStyle(.plain).accessibilityIdentifier("media.destination."+folder.id)
+                        }
+                        if !cursor.isEmpty {Button("Cargar más carpetas"){Task{await load(cursor)}}.disabled(loading).padding(8).accessibilityIdentifier("media.destination.more")}
+                        if loading {ProgressView("Consultando carpetas…").frame(maxWidth:.infinity).padding(24)}
+                    }.padding(1)
+                }.frame(maxWidth:.infinity,maxHeight:.infinity).accessibilityIdentifier("media.destination.list")
+            }.padding(.horizontal,24).padding(.top,20).padding(.bottom,12)
+            Divider()
+            HStack {
+                Text("Después podrás seleccionar tus fotos y videos.").font(.caption).foregroundStyle(.secondary)
+                Spacer()
+                Button("Cancelar"){dismiss()}.keyboardShortcut(.cancelAction).controlSize(.large).accessibilityIdentifier("media.destination.cancel")
+            }.padding(.horizontal,24).padding(.vertical,16).background(JACTheme.card)
+        }.frame(width:680,height:620).background(JACTheme.canvas).privacySensitive()
+            .task {await load()}
+            .sheet(isPresented:$creating) {MediaFolderEditor(parentID:root.id,parentName:root.name) {folder in selected(folder);dismiss()}}
+    }
+    private func macShortcut(title:String,subtitle:String,symbol:String,primary:Bool,action:@escaping()->Void)->some View {
+        Button(action:action) {
+            HStack(alignment:.top,spacing:12) {
+                Image(systemName:symbol).font(.system(size:21,weight:.medium)).frame(width:28)
+                VStack(alignment:.leading,spacing:5) {Text(title).font(.system(size:15,weight:.semibold));Text(subtitle).font(.system(size:12)).foregroundStyle(primary ? Color.white.opacity(0.83):Color.secondary).lineLimit(2).frame(maxWidth:.infinity,alignment:.leading)}
+            }.foregroundStyle(primary ? Color.white:JACTheme.ink).padding(17).frame(maxWidth:.infinity,minHeight:96,alignment:.topLeading)
+                .background(primary ? JACTheme.action:JACTheme.card,in:RoundedRectangle(cornerRadius:14))
+                .overlay(RoundedRectangle(cornerRadius:14).strokeBorder(primary ? Color.clear:Color.secondary.opacity(0.12))).contentShape(RoundedRectangle(cornerRadius:14))
+        }.buttonStyle(.plain)
+    }
+    #endif
     private func load(_ page:String="") async {
         guard !loading else{return};loading=true;defer{loading=false}
         do {
@@ -1034,6 +1110,22 @@ private struct MediaFolderEditor: View {
     @State private var busy = false
     @State private var error: String?
     var body: some View {
+        #if os(macOS)
+        VStack(alignment:.leading,spacing:22) {
+            HStack(spacing:14) {
+                Image(systemName:"folder.badge.plus").font(.system(size:25)).foregroundStyle(JACTheme.action).frame(width:48,height:48).background(JACTheme.action.opacity(0.08),in:RoundedRectangle(cornerRadius:13))
+                VStack(alignment:.leading,spacing:5) {Text("Crear carpeta").font(.system(size:22,weight:.semibold,design:.rounded));Text(parentName.isEmpty ? "Fotografía JAC":parentName).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)}
+            }
+            VStack(alignment:.leading,spacing:9) {
+                Text("Nombre del evento o día de trabajo").font(.subheadline.weight(.medium))
+                TextField("Por ejemplo: Pereira · 18 de octubre",text:$name).textFieldStyle(.roundedBorder).controlSize(.large).accessibilityIdentifier("media.folder.name")
+                Text("La carpeta conservará el nombre que escribas.").font(.caption).foregroundStyle(.secondary)
+            }.disabled(busy || attempted)
+            if let error {InlineError(message:error).fixedSize(horizontal:false,vertical:true)}
+            Divider()
+            HStack {Spacer();Button("Cancelar"){dismiss()}.keyboardShortcut(.cancelAction).disabled(busy);Button(busy ? "Creando…":"Crear carpeta"){Task{await save()}}.buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction).disabled(busy || name.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty || store.isOffline).accessibilityIdentifier("media.folder.save")}.controlSize(.large)
+        }.padding(26).frame(width:540).background(JACTheme.canvas).privacySensitive().interactiveDismissDisabled(busy)
+        #else
         NavigationStack {
             Form {
                 Section("Show o día de trabajo") {
@@ -1046,6 +1138,7 @@ private struct MediaFolderEditor: View {
             }.jacSurface().navigationTitle("Nueva carpeta").jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
         }.interactiveDismissDisabled(busy)
+        #endif
     }
     private func save() async {
         guard !busy else { return }; busy = true; attempted = true; defer { busy = false }

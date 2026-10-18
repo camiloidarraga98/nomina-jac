@@ -1,3 +1,7 @@
+## Fotografía Mac y aviso CRM · 17 de octubre de2026
+
+Camilo pidió corregir la hoja de destino de Fotografía de Mac y quitar el aviso web de shows revisados. Nuevo selector680×620sin recortes y creación de carpeta compacta; búsqueda dentro del contenido y acciones claras. Solo rama macOS de DocumentsView; iPhone/iPad y lógica de carga intactos. Prueba directa .invalid con búsqueda/creación/subida PNG+MOV aprobada y compatibilidad iOS compilada. Web elimina solo setNotice al sincronizar Calendar, conserva errores/flujo. TypeScript y37pruebas obligatorias aprobadas. Ver docs/PHOTOGRAPHY_UX.md, outputs/mac-fotografia-subir.png y work/local/mac-photo-upload-menu-*. Publicación y entrega se anotan al cerrar.
+
 ## Indicador de conexión nativo · 17 de octubre de2026
 
 Camilo pidió sustituir el aviso transitorio de falta de conexión por un icono superior. Wi-Fi gris al comprobar, azul conectado y tachado offline en iPhone/iPad/Mac; sin mensajes duplicados, conservando información accionable cuando no hay copia. Solo presentación y marca de comprobación; sesión/caché/guardas sin cambios. Dos recorridos UI específicos aprobados y Release iPhone/Mac universal correctos. Mismo proyecto/firma/bundle/push; usar Run para teléfono físico. Ver docs/CONNECTION_STATUS.md y work/local/connection-icon-*. Web/API/dependencias idénticos a v82; artefacto reutilizado para conservar la fuente en el Site existente. Publicación/respaldo final se anotan al cerrar.
