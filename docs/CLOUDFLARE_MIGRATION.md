@@ -59,3 +59,11 @@ Se respaldó la zona GoDaddy en `work/local/dns-backup/` antes de copiarla a Clo
 El vínculo SaaS del dominio con Sites se retiró al último paso, después de verificar copia, Worker y certificado. El Site original `appgprj_6aa0260b82a88191a47960614238350a` se conserva pausado, versión89, fuente `af8fb271c16000c059f4df7eaf6186ef0d483f3f`, configuración de ejecución revisión6. Mantiene sus originales y las dos claves; solo conserva `JAC_ORIGIN_FROZEN=1` como control de mantenimiento, sin las capacidades de exportación.
 
 **No descongelar ni volver a apuntar al origen antiguo tras recibir cambios en Cloudflare:** antes haría falta una copia inversa coherente de los registros/documentos posteriores. El respaldo anterior no se actualiza automáticamente. No borrar ni cancelar ese Site como parte de esta migración. El mantenimiento futuro se hace en Cloudflare y en el repositorio privado.
+
+## Corrección de entrega estática · 18 octubre2026
+
+Camilo detectó la página sin estilos después del corte. La comprobación inicial del HTML y la sesión no había comprobado sus dependencias visuales: con `run_worker_first=true`, CSS/JS y archivos públicos llegaban al router de la aplicación, que respondía404 aunque estaban cargados en Assets.
+
+`worker/cloudflare.ts` entrega ahora GET/HEAD de `/assets/`, `/licenses/` y los archivos públicos explícitos de marca/manifest/service worker mediante `env.ASSETS.fetch`. El bloqueo READY se evalúa antes y las API, documentos privados y escrituras siguen pasando por las guardas de la aplicación. No cambió DNS, D1, R2, secretos, dependencias o fuentes nativas. Al agregar nuevos archivos raíz de `public/`, ampliar la lista explícita si corresponde.
+
+43 pruebas incluidas las dos regresiones nuevas, TypeScript y build correctos. Despliegue propio `0ab4badb-288e-458a-89f3-5130448749c5`. Los21 archivos públicos responden200 con bytes idénticos al build; ambas CSS tienen `text/css`. Los dos metadatos internos de construcción permanecen404. Chrome cargó la hoja con361 reglas y el diseño grid del acceso; captura `outputs/jac-estilos-cloudflare-corregidos.jpg`. Sin sesiones nuevas ni acciones con servicios/datos reales de prueba.
