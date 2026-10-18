@@ -9,8 +9,8 @@ También autorizó personalmente la sesión oficial de Wrangler fuera del proyec
 ## Destino preparado
 
 - Cuenta: `jacmusicestudios@gmail.com`, ID `9798d1043d57690ffa9aee16c74dfb93`.
-- Worker previsto: `jac-nomina`, sin rutas ni dominio de producción durante la preparación.
-- D1 nueva vacía: `jac-nomina`, ID `74f39547-ed41-4456-a4b3-e32b2dd13b03`, binding `DB`.
+- Worker de preparación: `https://jac-nomina.jacmusic.workers.dev`, sin rutas ni dominio de producción.
+- D1 nueva: `jac-nomina`, ID `74f39547-ed41-4456-a4b3-e32b2dd13b03`, binding `DB`, con las 27 migraciones del proyecto y sin datos copiados todavía.
 - R2 nuevo privado: `jac-documentos`, binding `BUCKET`, separado del original de Sites.
 - Fotografía conserva el bucket privado existente `jac-fotografia`; no se traslada el histórico de Drive.
 
@@ -26,6 +26,14 @@ El perfil se activa al construir con `npm run build:cloudflare`. `npm run build`
 
 La autorización de Apple Developer es independiente de este traslado: conservar `co.jacmusic.nomina`, la sesión en Llavero y los mismos proyectos de iPhone/iPad/Mac. Las apps ya consultan `https://jhonalexcastano.com`; no necesitan otro proyecto para continuar con el mismo dominio.
 
-## Estado
+## Traslado temporal cifrado
 
-Sesión de Cloudflare verificada. D1 y R2 de destino creados vacíos. Acceso Git al repositorio privado existente verificado. Todavía no se ha cambiado el dominio, copiado la producción ni declarado terminado el traslado. El detalle de compilaciones, publicación de preparación, transferencia y corte se añadirá al verificarlos.
+El exportador temporal exige la sesión propia del fundador Camilo, comprobada nuevamente tras leer, el mismo origen y una ventana máxima de dos horas. La clave pública del destinatario queda fijada en la configuración de ejecución. La base, las dos claves de ejecución y cada bloque de documentos salen cifrados con AES-256-GCM y RSA-OAEP; el navegador no los descifra. La clave privada y la capacidad del importador viven únicamente en la memoria del operador local. El archivo descargado contiene solamente sobres cifrados e inventario de cantidades; no se guarda una base o claves en texto claro.
+
+El importador solo funciona en el Worker de preparación bloqueado, con capacidad y caducidad, sin aceptar peticiones de navegador. No admite SQL arbitrario ni otros buckets. Verifica columnas, filas, contadores, huellas de cada tabla y SHA-256 de cada documento. Las claves se instalan mediante la entrada estándar del Wrangler oficial, sin registros ni archivos de credenciales. La activación deshabilita el importador, y al terminar se deben retirar las rutas y valores temporales de ambos destinos. La primera copia es de preparación; todavía requiere corte final coherente y control de escrituras antes del DNS.
+
+Archivos nuevos: `lib/hosting-transfer.ts`, las dos API `hosting-transfer*`, `/migracion`, `scripts/cloudflare-transfer-local.mjs` y sus pruebas. El envoltorio de Cloudflare incorpora la importación antes de su bloqueo; el servidor habitual conserva todas sus rutas y servicios. No cambia ninguna dependencia, migración ni proyecto nativo.
+
+## Estado verificado
+
+Sesión de Cloudflare y acceso Git privado verificados. Fuente actual guardada en la rama privada, sin workflow de Actions. Worker publicado con `ready:false`, D1 con 27 migraciones y R2 privado nuevo. TypeScript, build independiente y 52 pruebas iniciales pasaron; las 11 comprobaciones finales de importación, cifrado y bloqueo también pasan con SQLite y R2 ficticios. No se ha cambiado el dominio ni copiado producción. GoDaddy necesita revisión/respaldos DNS y faltan datos, secretos, comprobación del plan de Workers y corte final. No declarar terminado el traslado hasta verificarlos.
