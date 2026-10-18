@@ -50,7 +50,10 @@ async function restore(path){
  if(Object.values(secrets.values).some(v=>typeof v!=='string'||v.length<32))throw Error('Las claves de ejecución están incompletas.');
  const inventory=await api({action:'tables'});
  const sourceNames=db.tables.map(t=>t.name).sort(),targetNames=inventory.tables.map(t=>t.name).sort();
- if(JSON.stringify(sourceNames)!==JSON.stringify(targetNames))throw Error('Los esquemas de origen y destino no coinciden.');
+ if(JSON.stringify(sourceNames)!==JSON.stringify(targetNames)){
+  report({phase:'schema-difference',sourceOnly:sourceNames.filter(n=>!targetNames.includes(n)),targetOnly:targetNames.filter(n=>!sourceNames.includes(n))});
+  throw Error('Los esquemas de origen y destino no coinciden.');
+ }
  await secretBulk(secrets.values);for(const key of Object.keys(secrets.values))delete secrets.values[key];
  await api({action:'clear',confirmation:'jac-nomina-staging'});
  let rowCount=0;

@@ -16,7 +16,7 @@ async function input(req:Request){
  const bytes=new Uint8Array(size);let n=0;for(const c of chunks){bytes.set(c,n);n+=c.length;}return JSON.parse(new TextDecoder().decode(bytes));
 }
 const quote=(s:string)=>'"'+s.replaceAll('"','""')+'"';
-const internal=(s:string)=>s.startsWith('sqlite_')||s.startsWith('_cf_')||s==='d1_migrations'||s==='__drizzle_migrations';
+const internal=(s:string)=>s.startsWith('sqlite_')||s.startsWith('_cf_')||s==='d1_migrations'||s==='__drizzle_migrations'||s==='__appgarden_migrations';
 async function tables(db:D1Database){return (await db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").all<{name:string;sql:string}>()).results.filter(t=>!internal(t.name));}
 function base64(bytes:Uint8Array){let s='';for(let n=0;n<bytes.length;n+=8192)s+=String.fromCharCode(...bytes.subarray(n,n+8192));return btoa(s);}
 async function seal(value:unknown,e:TransferEnv){

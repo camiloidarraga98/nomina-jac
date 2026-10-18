@@ -3,8 +3,11 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import {payrollRoute} from "../lib/payroll-navigation";
 import type {TransferEnv} from '../lib/hosting-transfer';
+import {frozenOriginResponse} from '../lib/hosting-cutover';
 
 interface Env extends TransferEnv {
+  JAC_ORIGIN_FROZEN?:string;
+  JAC_HOSTING?:string;
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
@@ -29,6 +32,7 @@ interface ExecutionContext {
 
 const worker = {
   async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+    const frozen=frozenOriginResponse(request,env);if(frozen)return frozen;
     const url = new URL(request.url);
 
 

@@ -8,7 +8,7 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {pathToFileURL} from 'node:url';
 const dir=await mkdtemp(join(tmpdir(),'jac-transfer-test-')),out=join(dir,'module.mjs');
-await build({stdin:{contents:"export * from './lib/hosting-transfer';export {POST as sourceApi} from './app/api/hosting-transfer/route';export {POST as inventoryApi} from './app/api/hosting-transfer-inventory/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',outfile:out,plugins:[{name:'fake',setup(b){
+await build({stdin:{contents:"export * from './lib/hosting-transfer';export * from './lib/hosting-cutover';export {POST as sourceApi} from './app/api/hosting-transfer/route';export {POST as inventoryApi} from './app/api/hosting-transfer-inventory/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',outfile:out,plugins:[{name:'fake',setup(b){
  b.onResolve({filter:/^cloudflare:workers$/},()=>({path:'env',namespace:'fake'}));
  b.onResolve({filter:/^@\/lib\/payroll-auth-store$/},()=>({path:'auth',namespace:'fake'}));
  b.onLoad({filter:/.*/,namespace:'fake'},a=>({contents:a.path==='env'?'export const env=globalThis.__transferTestEnv;':'export const OWNER_EMAIL="camilo@mac2you.co";export async function authenticatedSession(token){return globalThis.__transferUsers.get(token)||null;}'}));
@@ -28,6 +28,15 @@ function setup(){
 }
 function req(value,{source=false,auth=token,origin=source?'https://source.example.invalid':null}={}){return new Request((source?'https://source.example.invalid/api/hosting-transfer':'https://target.example.invalid/_jac/transfer'),{method:'POST',headers:{'Content-Type':'application/json',...(origin?{Origin:origin}:{}),...(auth?{Authorization:'Bearer '+auth}:{})},body:JSON.stringify(value)});}
 test.after(async()=>{await rm(dir,{recursive:true,force:true});});
+test('el corte bloquea toda operación del origen y deja la copia privada sin afectar al destino',()=>{
+ for(const path of ['/api/payroll','/api/notices/slack','/api/calendar','/api/media/upload','/crm','/acceso']){
+  const request=new Request('https://source.example.invalid'+path,{method:path.startsWith('/api/')?'POST':'GET'});
+  assert.equal(m.frozenOriginResponse(request,{JAC_ORIGIN_FROZEN:'1'}).status,503);
+  assert.equal(m.frozenOriginResponse(request,{}),null);assert.equal(m.frozenOriginResponse(request,{JAC_ORIGIN_FROZEN:'1',JAC_HOSTING:'cloudflare'}),null);
+ }
+ for(const path of ['/migracion','/api/hosting-transfer','/api/hosting-transfer-inventory','/assets/client-123.js'])assert.equal(m.frozenOriginResponse(new Request('https://source.example.invalid'+path),{JAC_ORIGIN_FROZEN:'1'}),null);
+ assert.equal(m.frozenOriginResponse(new Request('https://source.example.invalid/assets/../api/payroll'),{JAC_ORIGIN_FROZEN:'1'}).status,503);
+});
 test('el origen exige sesión vigente del fundador, mismo origen, clave pública fijada y plazo acotado',async()=>{
  const {env,sql}=setup();
  for(const [e,request,guard] of [[env,req({action:'secrets'},{source:true}),async()=>false],[env,req({action:'secrets'},{source:true,origin:'https://evil.invalid'}),async()=>true],[{...env,JAC_TRANSFER_EXPIRES:'2000-01-01'},req({action:'secrets'},{source:true}),async()=>true],[{...env,JAC_TRANSFER_EXPIRES:new Date(Date.now()+3*3600000).toISOString()},req({action:'secrets'},{source:true}),async()=>true]]){
@@ -45,8 +54,8 @@ test('la base y las secuencias se cifran sin modificar el origen',async()=>{
  const {env,sql}=setup();const r=await m.sourceTransfer(req({action:'database'},{source:true}),env,async()=>true),data=open(await r.json());assert.equal(data.kind,'database');assert.deepEqual(data.tables.find(t=>t.name==='records').rows,[{id:1,value:'Ficticio'}]);assert.ok(data.sequences.some(s=>s.name==='records'&&s.seq===1));assert.equal(sql.prepare('SELECT count(*) n FROM records').get().n,1);sql.close();
 });
 test('los contadores internos no se copian y una tabla vacía conserva su siguiente identificador',async()=>{
- const {env,sql}=setup();sql.exec('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT);INSERT INTO d1_migrations DEFAULT VALUES;DELETE FROM records;UPDATE sqlite_sequence SET seq=71 WHERE name=\'records\';');
- const copy=open(await (await m.sourceTransfer(req({action:'database'},{source:true}),env,async()=>true)).json());assert.ok(!copy.sequences.some(s=>s.name==='d1_migrations'));
+ const {env,sql}=setup();sql.exec('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT);INSERT INTO d1_migrations DEFAULT VALUES;CREATE TABLE __appgarden_migrations(id INTEGER PRIMARY KEY);INSERT INTO __appgarden_migrations VALUES (1);DELETE FROM records;UPDATE sqlite_sequence SET seq=71 WHERE name=\'records\';');
+ const copy=open(await (await m.sourceTransfer(req({action:'database'},{source:true}),env,async()=>true)).json());assert.ok(!copy.sequences.some(s=>s.name==='d1_migrations'));assert.ok(!copy.tables.some(t=>t.name==='__appgarden_migrations'));assert.equal(sql.prepare('SELECT count(*) n FROM __appgarden_migrations').get().n,1);
  sql.exec('DELETE FROM sqlite_sequence WHERE name=\'records\';');assert.equal((await m.targetTransfer(req({action:'sequences',sequences:copy.sequences}),env)).status,200);
  sql.exec("INSERT INTO records(value) VALUES ('Nuevo ficticio');");assert.equal(sql.prepare('SELECT id FROM records').get().id,72);sql.close();
 });
