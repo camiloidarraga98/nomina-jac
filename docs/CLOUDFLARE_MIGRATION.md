@@ -37,3 +37,15 @@ Archivos nuevos: `lib/hosting-transfer.ts`, las dos API `hosting-transfer*`, `/m
 ## Estado verificado
 
 Sesión de Cloudflare y acceso Git privado verificados. Fuente actual guardada en la rama privada, sin workflow de Actions. Worker publicado con `ready:false`, D1 con 27 migraciones y R2 privado nuevo. TypeScript, build independiente y 52 pruebas iniciales pasaron; las 11 comprobaciones finales de importación, cifrado y bloqueo también pasan con SQLite y R2 ficticios. No se ha cambiado el dominio ni copiado producción. GoDaddy necesita revisión/respaldos DNS y faltan datos, secretos, comprobación del plan de Workers y corte final. No declarar terminado el traslado hasta verificarlos.
+
+### Actualización de preparación · 18 octubre, 22:10 UTC
+
+La copia inicial ya está en el destino: 40 tablas de aplicación, 786 filas y 114 documentos (27.773.665 bytes), huellas por tabla y SHA-256 por objeto comprobados. La tabla interna `__appgarden_migrations` queda excluida junto con los metadatos de D1/Drizzle; las 27 migraciones del destino ya están registradas por Wrangler. Las dos claves se instalaron por stdin sin archivos en claro. Los sobres cifrados descargados están fuera de Git. El R2 de Fotografía sigue en el mismo bucket y su catálogo sí forma parte de la copia.
+
+Camilo activó personalmente Workers Paid (US$5/mes más consumo) y autorizó expresamente activar el Worker tras un rechazo de revisión automática. `/_jac/health` responde 200/ready:true, `/acceso` muestra el formulario con 200 y `/api/users` rechaza una petición sin sesión con 403. No se probaron envíos, Google/Slack/push reales ni mutaciones de usuarios reales. Son verificaciones de disponibilidad/autenticación, todavía no una prueba completa del servicio en el dominio.
+
+61 pruebas de nómina/auth/correo/móvil/traslado/corte y 121 de servicios simulados aprobadas. Ambos perfiles compilan con Node24 y TypeScript pasa. No cambios de dependencias o proyectos nativos.
+
+DNS de GoDaddy respaldado en `work/local/dns-backup/` (ignorado). Cloudflare zona `4ea77d648671345507d58c8b94e2fc90`, plan DNS Free independiente de Workers Paid, siete registros de usuario conservados como DNS only. SOA y NS del proveedor no se importan como registros de usuario. Camilo confirmó guardar `gwen.ns.cloudflare.com` y `sterling.ns.cloudflare.com`; GoDaddy aceptó y procesa el cambio. El registro del dominio sigue en GoDaddy, `.co` y otros dominios no se modificaron. Aún sirve el Site original y falta propagación/SSL y corte final.
+
+`JAC_ORIGIN_FROZEN` está preparado pero NO activado. Al corte se debe bloquear primero el origen, esperar solicitudes en curso y tomar copia final; desactivar `JAC_READY` en el destino antes de reimportar. Después activar destino, conectar dominio y retirar el custom hostname de Sites al último paso (su prioridad SaaS puede prevalecer). No descongelar el origen después de recibir escrituras en Cloudflare sin una copia inversa coherente. Retirar rutas y valores temporales al concluir.

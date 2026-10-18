@@ -53,6 +53,15 @@ test('una sesión administrativa de jac no sustituye la sesión del fundador',as
 test('la base y las secuencias se cifran sin modificar el origen',async()=>{
  const {env,sql}=setup();const r=await m.sourceTransfer(req({action:'database'},{source:true}),env,async()=>true),data=open(await r.json());assert.equal(data.kind,'database');assert.deepEqual(data.tables.find(t=>t.name==='records').rows,[{id:1,value:'Ficticio'}]);assert.ok(data.sequences.some(s=>s.name==='records'&&s.seq===1));assert.equal(sql.prepare('SELECT count(*) n FROM records').get().n,1);sql.close();
 });
+test('la copia final bloquea escrituras incluso de peticiones antiguas y permite leer y revertir antes del corte',async()=>{
+ const {env,sql}=setup();const pending=env.DB.prepare("UPDATE records SET value='No debe guardarse' WHERE id=1");
+ assert.equal((await m.sourceTransfer(req({action:'freeze',confirmation:'wrong'},{source:true}),env,async()=>true)).status,409);
+ const freeze=await m.sourceTransfer(req({action:'freeze',confirmation:'final-copy'},{source:true}),env,async()=>true);assert.equal(freeze.status,200);assert.equal(open(await freeze.json()).frozen,true);
+ await assert.rejects(()=>pending.run(),/source is read only/);assert.throws(()=>sql.exec("INSERT INTO records(value) VALUES ('Bloqueado');"),/source is read only/);assert.throws(()=>sql.exec('DELETE FROM records'),/source is read only/);
+ const data=open(await (await m.sourceTransfer(req({action:'database'},{source:true}),env,async()=>true)).json());assert.equal(data.tables.length,2);assert.equal(data.tables.find(t=>t.name==='records').rows[0].value,'Ficticio');assert.ok(!data.tables.some(t=>t.name==='__jac_transfer_control'));
+ assert.equal((await m.sourceTransfer(req({action:'resume',confirmation:'wrong'},{source:true}),env,async()=>true)).status,409);
+ assert.equal((await m.sourceTransfer(req({action:'resume',confirmation:'rollback-before-cloudflare-writes'},{source:true}),env,async()=>true)).status,200);await pending.run();assert.equal(sql.prepare('SELECT value FROM records').get().value,'No debe guardarse');sql.close();
+});
 test('los contadores internos no se copian y una tabla vacía conserva su siguiente identificador',async()=>{
  const {env,sql}=setup();sql.exec('CREATE TABLE d1_migrations(id INTEGER PRIMARY KEY AUTOINCREMENT);INSERT INTO d1_migrations DEFAULT VALUES;CREATE TABLE __appgarden_migrations(id INTEGER PRIMARY KEY);INSERT INTO __appgarden_migrations VALUES (1);DELETE FROM records;UPDATE sqlite_sequence SET seq=71 WHERE name=\'records\';');
  const copy=open(await (await m.sourceTransfer(req({action:'database'},{source:true}),env,async()=>true)).json());assert.ok(!copy.sequences.some(s=>s.name==='d1_migrations'));assert.ok(!copy.tables.some(t=>t.name==='__appgarden_migrations'));assert.equal(sql.prepare('SELECT count(*) n FROM __appgarden_migrations').get().n,1);

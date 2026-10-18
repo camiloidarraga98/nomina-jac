@@ -16,8 +16,16 @@ async function input(req:Request){
  const bytes=new Uint8Array(size);let n=0;for(const c of chunks){bytes.set(c,n);n+=c.length;}return JSON.parse(new TextDecoder().decode(bytes));
 }
 const quote=(s:string)=>'"'+s.replaceAll('"','""')+'"';
-const internal=(s:string)=>s.startsWith('sqlite_')||s.startsWith('_cf_')||s==='d1_migrations'||s==='__drizzle_migrations'||s==='__appgarden_migrations';
+const internal=(s:string)=>s.startsWith('sqlite_')||s.startsWith('_cf_')||s==='d1_migrations'||s==='__drizzle_migrations'||s==='__appgarden_migrations'||s==='__jac_transfer_control';
 async function tables(db:D1Database){return (await db.prepare("SELECT name,sql FROM sqlite_master WHERE type='table' ORDER BY name").all<{name:string;sql:string}>()).results.filter(t=>!internal(t.name));}
+async function freezeSource(db:D1Database){
+ const list=await tables(db);
+ await db.batch([db.prepare('CREATE TABLE IF NOT EXISTS __jac_transfer_control(id INTEGER PRIMARY KEY CHECK(id=1),frozen INTEGER NOT NULL)'),db.prepare('INSERT OR IGNORE INTO __jac_transfer_control(id,frozen) VALUES (1,0)')]);
+ const guards=list.flatMap(t=>['INSERT','UPDATE','DELETE'].map(operation=>db.prepare('CREATE TRIGGER IF NOT EXISTS '+quote('__jac_transfer_stop_'+operation.toLowerCase()+'_'+t.name)+' BEFORE '+operation+' ON '+quote(t.name)+" WHEN (SELECT frozen FROM __jac_transfer_control WHERE id=1)=1 BEGIN SELECT RAISE(ABORT,'JAC migration: source is read only'); END")));
+ // The barrier is enforced by SQLite, including requests that started before
+ // the Worker deployment changed. No application row is changed by freezing.
+ await db.batch([...guards,db.prepare('UPDATE __jac_transfer_control SET frozen=1 WHERE id=1')]);
+}
 function base64(bytes:Uint8Array){let s='';for(let n=0;n<bytes.length;n+=8192)s+=String.fromCharCode(...bytes.subarray(n,n+8192));return btoa(s);}
 async function seal(value:unknown,e:TransferEnv){
  const publicKey=JSON.parse(e.JAC_TRANSFER_PUBLIC_KEY||'null');
@@ -33,13 +41,22 @@ async function seal(value:unknown,e:TransferEnv){
 
 // This route is disabled unless a short-lived runtime capability and a pinned
 // recipient public key have both been configured. It never returns plaintext
-// records or keys, accepts SQL, changes source data, or calls external services.
+// records or keys, accepts SQL, changes application records, or calls external services.
+// The founder may install a temporary SQLite write barrier for the final copy.
 export async function sourceTransfer(req:Request,e:TransferEnv,founderSession:()=>Promise<boolean>){
  const expiry=Date.parse(e.JAC_TRANSFER_EXPIRES||'');
  if(req.method!=='POST'||req.headers.get('Origin')!==new URL(req.url).origin||!e.JAC_TRANSFER_PUBLIC_KEY||!Number.isFinite(expiry)||expiry<=Date.now()||expiry-Date.now()>2*60*60*1000||!await founderSession())return missing();
  try{
   const p=await input(req);
   const output=async(value:unknown)=>{if(!await founderSession())return missing();return seal(value,e);};
+  if(p.action==='freeze'){
+   if(p.confirmation!=='final-copy')throw Error('confirmation');
+   await freezeSource(e.DB);return await output({kind:'freeze',frozen:true});
+  }
+  if(p.action==='resume'){
+   if(p.confirmation!=='rollback-before-cloudflare-writes')throw Error('confirmation');
+   await e.DB.prepare('UPDATE __jac_transfer_control SET frozen=0 WHERE id=1').run();return await output({kind:'freeze',frozen:false});
+  }
   if(p.action==='database'){
    const list=await tables(e.DB);if(list.length>45)throw Error('tables');
    const results=await e.DB.batch<Record<string,unknown>>(list.map(t=>e.DB.prepare('SELECT * FROM '+quote(t.name))));
