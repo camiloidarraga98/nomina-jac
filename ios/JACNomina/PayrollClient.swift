@@ -144,6 +144,7 @@ final class PayrollClient: ObservableObject {
     private var storageFailures = 0
     private var crmGeneration = 0
     private var cacheGeneration = 0
+    private var noticeInvalidations: [String: Int] = [:]
     private var permissionUser: PayrollUser?
     private var mediaRootRead: (id: UUID, stamp: String, task: Task<MediaFeed, Error>)?
     var accessUser: PayrollUser? { permissionUser }
@@ -423,6 +424,7 @@ final class PayrollClient: ObservableObject {
         self.cacheRevision += 1
     }
     private func removeCachedNotice(_ id: String, scope: AgendaCacheScope) {
+        noticeInvalidations[id, default: 0] += 1
         offlineCache.remove(scope) { entry in
             guard let parts = URLComponents(string: entry.url), parts.path.hasPrefix("/api/notices") else { return false }
             return parts.queryItems?.contains(where: { ["id", "item"].contains($0.name) && $0.value == id }) == true
@@ -587,6 +589,16 @@ final class PayrollClient: ObservableObject {
         guard data.count <= 10*1024*1024, response.mimeType == file.mimeType, (try NoticeUpload.mime(data)) == file.mimeType else { throw APIError.message("No se recibió un archivo válido.") }
         let name = (file.filename as NSString).lastPathComponent
         return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Adjunto" : name)
+    }
+    // A derived code belongs to the same private session, attachment and revision
+    // as its PDF. Removal/denial invalidates even an in-memory, already decoded code.
+    func boardingCodeAccessStamp(_ item: JACNotice, file: NoticeAttachment) throws -> String {
+        guard item.kind == "boarding_pass", permissionUser?.permitsNotice(item.kind) != false,
+              item.files.contains(where: { $0.id == file.id }), let scope = try offlineScope() else { throw APIError.unauthorized }
+        if let latest = cachedNotice(item.id), (latest.revision ?? 1) != (item.revision ?? 1) || !latest.files.contains(where: { $0.id == file.id }) {
+            throw APIError.invalid("El pase cambió. Abre la versión más reciente.")
+        }
+        return "\(scope.id):\(cacheGeneration):\(noticeInvalidations[item.id, default: 0]):\(item.revision ?? 1)"
     }
     func confirmNotice(_ item: JACNotice) async throws {
         try await noticeCommand(.object(["action":.string("confirm"),"id":.string(item.id),"revision":.number(Double(item.revision ?? 1))]))

@@ -5,6 +5,7 @@ import ImageIO
 import CryptoKit
 import PDFKit
 import CoreText
+import Vision
 #if os(iOS)
 import UIKit
 @testable import JACNomina
@@ -146,6 +147,88 @@ private final class MediaDownloadChunkProtocol: URLProtocol, @unchecked Sendable
 }
 
 final class PayrollClientTests: XCTestCase {
+    func testBoardingCodeCropsKeepOriginalQRAndPDF417PayloadAcrossPagesAndRotation() throws {
+        let pdf=try XCTUnwrap(PDFDocument(data:UITestBackend.boardingCodePDF()))
+        // Nonzero crop origin and rotation catch both PDF drawing and Vision's
+        // bottom-left -> top-left conversion, not just centered QR detection.
+        pdf.page(at:0)!.setBounds(CGRect(x:20,y:25,width:560,height:750),for:.cropBox)
+        pdf.page(at:0)!.rotation=90
+        let data=try XCTUnwrap(pdf.dataRepresentation())
+        let codes=try BoardingCodeExtractor.extract(data,mime:"application/pdf")
+        XCTAssertEqual(codes.count,2);XCTAssertEqual(codes.map(\.page),[1,2]);XCTAssertEqual(codes.map(\.format),["QR","PDF417"])
+        for (index,code) in codes.enumerated() {
+            let request=VNDetectBarcodesRequest()
+            try BoardingCodeExtractor.configure(request)
+            try VNImageRequestHandler(cgImage:code.image,options:[:]).perform([request])
+            XCTAssertEqual(request.results?.first?.payloadStringValue,"JAC FICTICIO SIN VALIDEZ - CODIGO \(index+1)","The displayed crop must still scan as the original, including PDF417.")
+        }
+    }
+    func testBoardingCodeAlsoReadsAnImageAndReportsNoCodeWithoutInventingOne() throws {
+        let code=try XCTUnwrap(BoardingCodeExtractor.extract(UITestBackend.boardingCodePDF(),mime:"application/pdf").first)
+        let bytes=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(bytes,"public.png" as CFString,1,nil))
+        CGImageDestinationAddImage(destination,code.image,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+        XCTAssertEqual(try BoardingCodeExtractor.extract(bytes as Data,mime:"image/png").first?.format,"QR")
+        let pdf=PDFDocument();pdf.insert(PDFPage(),at:0)
+        XCTAssertTrue(try BoardingCodeExtractor.extract(XCTUnwrap(pdf.dataRepresentation()),mime:"application/pdf").isEmpty)
+        XCTAssertThrowsError(try BoardingCodeExtractor.extract(Data("invalid".utf8),mime:"application/pdf"))
+        XCTAssertThrowsError(try BoardingCodeExtractor.extract(Data(repeating:0,count:10*1024*1024+1),mime:"image/png"))
+    }
+    func testBoardingCodeExtractionHonorsCancellation() async {
+        let task=Task.detached { () throws -> [BoardingCodeImage] in
+            try? await Task.sleep(for:.milliseconds(100))
+            return try BoardingCodeExtractor.extract(UITestBackend.boardingCodePDF(),mime:"application/pdf")
+        }
+        task.cancel()
+        do {_ = try await task.value;XCTFail("Cancelled work must not install private pixels.")} catch is CancellationError {} catch {XCTFail("Unexpected error: \(error)")}
+    }
+    @MainActor func testBoardingBrightnessRestoresOnCloseBackgroundAndDisplayChange() {
+        final class Screen:BoardingScreenBrightness {var brightness:CGFloat;init(_ value:CGFloat){brightness=value}}
+        let screen=Screen(0.37),other=Screen(0.62),lease=BoardingBrightnessLease()
+        lease.begin(screen);XCTAssertEqual(screen.brightness,1)
+        lease.begin(screen);lease.end();XCTAssertEqual(screen.brightness,0.37)
+        lease.end();XCTAssertEqual(screen.brightness,0.37)
+        screen.brightness=0.21;lease.begin(screen);lease.end();XCTAssertEqual(screen.brightness,0.21)
+        lease.begin(screen);lease.begin(other);XCTAssertEqual(screen.brightness,0.21);XCTAssertEqual(other.brightness,1)
+        lease.end();XCTAssertEqual(other.brightness,0.62)
+    }
+    @MainActor func testBoardingDerivedCodeAccessIsInvalidatedByDeletionLogoutAndNewSession() async throws {
+        let client=UITestBackend.client(),feed=try await client.notices(boarding:"current")
+        let item=try XCTUnwrap(feed.notices.first),file=try XCTUnwrap(item.files.first)
+        let stamp=try client.boardingCodeAccessStamp(item,file:file)
+        let doc=try await client.noticeFile(item,file:file);defer {TemporaryDocuments.remove(doc)}
+        XCTAssertEqual(stamp,try client.boardingCodeAccessStamp(item,file:file))
+        try await client.deleteNotice(item)
+        XCTAssertNotEqual(stamp,try client.boardingCodeAccessStamp(item,file:file))
+        try client.clearSession();XCTAssertThrowsError(try client.boardingCodeAccessStamp(item,file:file))
+        let other=UITestBackend.client(reader:true)
+        XCTAssertNotEqual(stamp,try other.boardingCodeAccessStamp(item,file:file))
+        do {_ = try await other.noticeFile(item,file:file);XCTFail("Another recipient must never receive the PDF or derived code.")} catch {}
+    }
+    @MainActor func testBoardingCodeUsesPrivateDownloadedPDFOfflineAndDenialRevokesItsStamp() async throws {
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer {try? FileManager.default.removeItem(at:cache.root)}
+        let (client,_)=relaunchFixture(cache),pdf=try UITestBackend.boardingCodePDF()
+        let itemJSON:JSONValue = .object(["id":.string("private-code-fixture"),"kind":.string("boarding_pass"),"title":.string("Ficticio"),"body":.string(""),"filename":.string("Ficticio.pdf"),"size":.number(Double(pdf.count)),"createdAt":.string("2026-10-17T10:00:00Z"),"read":.bool(false),"revision":.number(1),"attachments":.array([.object(["id":.string("fake-file"),"filename":.string("Ficticio.pdf"),"mimeType":.string("application/pdf"),"size":.number(Double(pdf.count))])])])
+        var requests=0
+        MockProtocol.handler = {request in
+            requests+=1;XCTAssertEqual(request.url?.host,"ui-fixture.example.invalid")
+            let document=request.url?.path == "/api/notices/file"
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":document ? "application/pdf":"application/json"])!,document ? pdf:try JSONEncoder().encode(JSONValue.object(["item":itemJSON])))
+        }
+        let item=try await client.notice(id:"private-code-fixture"),file=try XCTUnwrap(item.files.first)
+        let stamp=try client.boardingCodeAccessStamp(item,file:file)
+        let downloaded=try await client.noticeFile(item,file:file);defer {TemporaryDocuments.remove(downloaded)}
+        XCTAssertEqual(try BoardingCodeExtractor.extract(Data(contentsOf:downloaded.url),mime:file.mimeType).count,2)
+        let beforeOffline=requests;client.beginOfflineRestore()
+        MockProtocol.handler = {_ in XCTFail("Downloaded passes must open without a network request.");throw URLError(.notConnectedToInternet)}
+        let offline=try await client.noticeFile(item,file:file);defer {TemporaryDocuments.remove(offline)}
+        XCTAssertEqual(try BoardingCodeExtractor.extract(Data(contentsOf:offline.url),mime:file.mimeType).count,2)
+        XCTAssertEqual(requests,beforeOffline);XCTAssertEqual(stamp,try client.boardingCodeAccessStamp(item,file:file))
+        let (online,_)=relaunchFixture(cache),onlineStamp=try online.boardingCodeAccessStamp(item,file:file)
+        MockProtocol.handler = {request in (HTTPURLResponse(url:request.url!,statusCode:403,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"error\":\"Revocado\"}".utf8))}
+        do {_ = try await online.noticeFile(item,file:file);XCTFail("403 must never use the saved private PDF.")} catch APIError.forbidden {}
+        XCTAssertNotEqual(onlineStamp,try online.boardingCodeAccessStamp(item,file:file));XCTAssertNil(online.cachedNotice(item.id))
+    }
     @MainActor func testMediaRevalidatesImmediatelyWhileWorkspaceStillUsesItsRestoredCopy() async throws {
         let vault=MemorySession();vault.token=token
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]

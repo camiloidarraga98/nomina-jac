@@ -22,6 +22,8 @@ Mismo proyecto y esquema JACNomina. Fotografía está preparada para el archivo 
 
 El **mismo proyecto** ya incluye iPad, con barra lateral nativa, CRM para administradores y Agenda adaptada al ancho disponible. Fotografía, itinerarios/pases, alertas, nómina, Gestión y Mi cuenta conservan sus accesos y funciones. El iPhone mantiene sus pestañas. Ver [App para iPad](../docs/IPAD_APP.md) para pruebas y límites de verificación.
 
+En pases privados, **Mostrar código** extrae localmente el QR/código original del PDF o imagen y lo muestra a pantalla completa. En iPhone/iPad sube temporalmente el brillo y lo restaura al cerrar o cambiar de app. Funciona con un PDF ya descargado sin internet; el pase completo sigue disponible. Ver [Código de embarque](../docs/BOARDING_CODE.md).
+
 Para instalar, abre **este mismo `ios/JACNomina.xcodeproj`**, elige **JACNomina → tu iPad → Run**. Se conservan la firma personal y `co.jacmusic.nomina`; push sigue suspendido. No necesitas descargar ni sustituir otro proyecto.
 
 ## Fotografía: actualización inmediata — iPhone 0.18.1 (30)

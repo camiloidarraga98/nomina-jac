@@ -1,3 +1,7 @@
+## Código de embarque nativo · 17 de octubre de 2026
+
+Camilo pidió Mostrar código antes de abrir el pase, a pantalla completa con brillo 100% en el teléfono. Implementado en el mismo proyecto iPhone/iPad y Mac: extracción local Vision de QR/PDF417/Aztec/Data Matrix, recorte original, selector por página y vuelta al PDF. Brillo temporal con restauración al cerrar/background, cubierta de privacidad, sello privado por sesión/revisión/revocación y caché PDF existente offline. Sin API/DB/dependencias ni visor web nuevos. iPhone: 143 unitarias, 142 aprobadas y una física omitida; Mac131 aprobadas; cuatro UI iPhone aprobadas y61 servidor simuladas. Release iPhone y Mac universal correctos. Ver docs/BOARDING_CODE.md y outputs/pase-codigo-iphone-ficticio.png. No instalado ni escaneado en teléfono físico; usar Run. Entrega/publicación se anotan al cierre.
+
 ## Fotografía Mac y aviso CRM · 17 de octubre de2026
 
 Camilo pidió corregir la hoja de destino de Fotografía de Mac y quitar el aviso web de shows revisados. Nuevo selector680×620sin recortes y creación de carpeta compacta; búsqueda dentro del contenido y acciones claras. Solo rama macOS de DocumentsView; iPhone/iPad y lógica de carga intactos. Prueba directa .invalid con búsqueda/creación/subida PNG+MOV aprobada y compatibilidad iOS compilada. Web elimina solo setNotice al sincronizar Calendar, conserva errores/flujo. TypeScript y37pruebas obligatorias aprobadas. Ver docs/PHOTOGRAPHY_UX.md, outputs/mac-fotografia-subir.png y work/local/mac-photo-upload-menu-*. Publicación y entrega se anotan al cerrar.

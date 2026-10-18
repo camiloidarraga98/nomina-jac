@@ -1,10 +1,27 @@
 #if DEBUG
 import Foundation
+import CoreImage
 
 // Opt-in UI fixtures use .invalid URLs and an ephemeral protocol. They are
 // excluded from Release and never read or write the real payroll or Keychain.
 enum UITestBackend {
     static let base = URL(string: "https://ui-fixture.example.invalid")!
+    // Synthetic codes; deliberately not a valid boarding pass or airline payload.
+    static func boardingCodePDF() throws -> Data {
+        let bytes=NSMutableData(),consumer=CGDataConsumer(data:bytes)!
+        var box=CGRect(x:0,y:0,width:600,height:800)
+        let pdf=CGContext(consumer:consumer,mediaBox:&box,nil)!,ci=CIContext()
+        for (position,type) in ["CIQRCodeGenerator","CIPDF417BarcodeGenerator"].enumerated() {
+            let filter=CIFilter(name:type)!
+            filter.setValue(Data("JAC FICTICIO SIN VALIDEZ - CODIGO \(position+1)".utf8),forKey:"inputMessage")
+            let output=filter.outputImage!,image=ci.createCGImage(output,from:output.extent)!
+            pdf.beginPDFPage(nil);pdf.setFillColor(CGColor(gray:1,alpha:1));pdf.fill(box);pdf.interpolationQuality = .none
+            let width:CGFloat=position == 0 ? 180:460,height=width*CGFloat(image.height)/CGFloat(image.width)
+            pdf.draw(image,in:CGRect(x:position == 0 ? 65:80,y:position == 0 ? 110:540,width:width,height:height))
+            pdf.endPDFPage()
+        }
+        pdf.closePDF();return bytes as Data
+    }
     @MainActor static func client(reader: Bool = false, conflict: Bool = false, cancelledReads: Bool = false, offline: Bool = false, slowAgenda: Bool = false, persistentAgenda: Bool = false, resetAgenda: Bool = false, contentCache: OfflineResponseCache? = nil, downloadOffline: Bool? = nil) -> PayrollClient {
         FixtureProtocol.reset(reader: reader, conflict: conflict, cancelledReads: cancelledReads, offline: offline, slowAgenda: slowAgenda)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [FixtureProtocol.self]
@@ -162,7 +179,8 @@ private final class FixtureProtocol: URLProtocol {
                 let viewer=Self.reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
                 let item=(Self.boardingFixtures+Self.alerts).first { $0["id"].text==notice }
                 guard item?["kind"].text != "boarding_pass" || item?["recipients"].elements.contains(.string(viewer)) == true else { throw URLError(.fileDoesNotExist) }
-                guard !Self.deletedNotices.contains(notice), let bytes = Self.attachments[id] ?? (id.hasPrefix("boarding-fixture-") ? Data(base64Encoded:Self.pdf) : nil) else { throw URLError(.fileDoesNotExist) }
+                let codePDF = ProcessInfo.processInfo.arguments.contains("--uitest-boarding-code") && id.hasPrefix("boarding-fixture-") ? try UITestBackend.boardingCodePDF():nil
+                guard !Self.deletedNotices.contains(notice), let bytes = Self.attachments[id] ?? codePDF ?? (id.hasPrefix("boarding-fixture-") ? Data(base64Encoded:Self.pdf) : nil) else { throw URLError(.fileDoesNotExist) }
                 let reply = HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":try NoticeUpload.mime(bytes)])!; client?.urlProtocol(self,didReceive:reply,cacheStoragePolicy:.notAllowed); client?.urlProtocol(self,didLoad:bytes); client?.urlProtocolDidFinishLoading(self); return
             }
             if request.url?.path == "/api/notices/pdf" {

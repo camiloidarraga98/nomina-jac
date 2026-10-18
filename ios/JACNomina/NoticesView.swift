@@ -1,6 +1,8 @@
 import SwiftUI
 import UniformTypeIdentifiers
 import PhotosUI
+import Vision
+import ImageIO
 #if os(iOS)
 import UIKit
 #else
@@ -76,6 +78,8 @@ struct NoticesView: View {
     @State private var boardingCount = 0
     @State private var tomorrowCount = 0
     @State private var boardingDocument: ExportedDocument?
+    @State private var boardingCode: BoardingCodeSelection?
+    @State private var fullPassAfterCode: BoardingCodeSelection?
     @State private var previousBoardingDocument: ExportedDocument?
     @State private var openingFile: String?
     @State private var documentGeneration = 0
@@ -86,7 +90,6 @@ struct NoticesView: View {
     private var effectiveKind: String { incomingKind ?? kind }
     var body: some View {
         List {
-            if store.isOffline { Section { Label("Sin conexión · Copia guardada", systemImage: "wifi.slash").font(.footnote).accessibilityIdentifier("offline.copy") } }
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
             if let notice { Section { Text(notice).foregroundStyle(JACTheme.action) } }
             if loading && feed == nil { ProgressView("Consultando…") }
@@ -133,6 +136,11 @@ struct NoticesView: View {
             .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }
             .onChange(of:historyOpen) { _,open in if open { Task { await loadHistory() } } }
             .onChange(of: scenePhase) { _, value in if value == .active { Task { await refresh() } } }
+            #if os(iOS)
+            .fullScreenCover(item:$boardingCode,onDismiss:openFullPassAfterCode) { selection in codeViewer(selection) }
+            #else
+            .sheet(item:$boardingCode,onDismiss:openFullPassAfterCode) { selection in codeViewer(selection).frame(minWidth:620,minHeight:540) }
+            #endif
             .sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
                 NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Pase de abordar PDF" : "Pase de abordar").jacInlineTitle().toolbar { ToolbarItem(placement:.cancellationAction) { Button("Listo") { boardingDocument=nil }.accessibilityIdentifier("notices.pdf.close") }
                     #if os(iOS)
@@ -160,6 +168,7 @@ struct NoticesView: View {
     @ViewBuilder private func boardingRows(_ items:[JACNotice]) -> some View {
         ForEach(items) { item in VStack(alignment:.leading,spacing:16) {
             ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
+                VStack(alignment:.leading,spacing:0) {
                 Button { Task { await openBoarding(item,file:file) } } label: {
                     VStack(alignment:.leading,spacing:16) {
                         let info=BoardingClock.filenameDetails(file.filename)
@@ -173,17 +182,33 @@ struct NoticesView: View {
                         HStack(alignment:.center,spacing:14) {
                             Label(BoardingClock.label(item.travelDate ?? ""),systemImage:"calendar").font(.caption).foregroundStyle(.secondary)
                             Spacer(minLength:0)
-                            if openingFile == file.id { ProgressView() }
-                            Text(file.mimeType == "application/pdf" ? "Abrir PDF" : "Abrir imagen").font(.subheadline.bold()).foregroundStyle(JACTone.teal.color).fixedSize(horizontal:true,vertical:false)
                         }
-                    }.padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
-                        .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1))
+                    }.padding(18).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(openingFile != nil || deleting).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
+                HStack(spacing:16) {
+                    Button { boardingCode=BoardingCodeSelection(item:item,file:file) } label: {
+                        Label("Mostrar código",systemImage:"qrcode.viewfinder").font(.subheadline.weight(.semibold)).padding(.horizontal,12).frame(minHeight:44)
+                            .background(JACTone.teal.color.opacity(0.09),in:RoundedRectangle(cornerRadius:12))
+                    }.buttonStyle(.plain).accessibilityIdentifier("boarding.code.\(file.id)")
+                    Spacer(minLength:0)
+                    Button {Task {await openBoarding(item,file:file)}} label: {
+                        HStack(spacing:8) {if openingFile == file.id {ProgressView()};Text(file.mimeType == "application/pdf" ? "Abrir PDF":"Abrir imagen").font(.subheadline.weight(.semibold))}.frame(minHeight:44).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityIdentifier("boarding.open.\(file.id)")
+                }.foregroundStyle(JACTone.teal.color).padding(.horizontal,18).padding(.bottom,14).disabled(openingFile != nil || deleting)
+                }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
+                    .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1))
             }
         }.padding(.vertical,6).jacStandaloneRow()
             .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner { deleteButton(item,destructive:false).tint(.red) } }
             .contextMenu { if user.isOwner { deleteButton(item) } }
         }
+    }
+    private func codeViewer(_ selection:BoardingCodeSelection) -> some View {
+        BoardingCodeView(selection:selection) { fullPassAfterCode=selection;boardingCode=nil }
+    }
+    private func openFullPassAfterCode() {
+        guard let selection=fullPassAfterCode else {return};fullPassAfterCode=nil
+        Task { await openBoarding(selection.item,file:selection.file) }
     }
     private func openBoarding(_ item:JACNotice,file:NoticeAttachment) async {
         guard openingFile == nil else { return }; openingFile=file.id; let generation=documentGeneration; defer { openingFile=nil }
@@ -214,6 +239,220 @@ struct NoticesView: View {
             if effectiveKind == "itinerary" && user.hasSection(.boarding) { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
             if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
         } catch { self.error = store.reportReadFailure(error) }
+    }
+}
+
+struct BoardingCodeSelection: Identifiable {
+    let id = UUID()
+    let item: JACNotice
+    let file: NoticeAttachment
+}
+
+struct BoardingCodeImage: Identifiable, @unchecked Sendable {
+    let id = UUID()
+    let image: CGImage
+    let format: String
+    let page: Int
+}
+
+enum BoardingCodeExtractor {
+    static func configure(_ request:VNRequest) throws {
+        #if targetEnvironment(simulator)
+        // This CoreSimulator runtime cannot load revision 3's barcode models.
+        // Revision 2 decodes the same original pixels on CPU. Physical iPhones
+        // retain the current detector and Vision's normal hardware selection.
+        (request as? VNDetectBarcodesRequest)?.revision=VNDetectBarcodesRequestRevision2
+        for (stage,devices) in try request.supportedComputeStageDevices {
+            if let cpu=devices.first(where:{if case .cpu = $0 {return true};return false}) {request.setComputeDevice(cpu,for:stage)}
+        }
+        #endif
+    }
+    // Render and crop the original pixels: never recreate a code from a text
+    // payload, which could change its binary encoding or airline signature.
+    static func extract(_ data: Data, mime: String) throws -> [BoardingCodeImage] {
+        guard data.count <= 10*1024*1024 else { throw APIError.invalid("El pase supera los 10 MB.") }
+        try Task.checkCancellation()
+        if mime == "application/pdf" {
+            guard let provider=CGDataProvider(data:data as CFData),let pdf=CGPDFDocument(provider), !pdf.isEncrypted,
+                  (1...12).contains(pdf.numberOfPages) else { throw APIError.invalid("No se pudo analizar este PDF. Abre el pase completo.") }
+            var codes:[BoardingCodeImage]=[]
+            for number in 1...pdf.numberOfPages {
+                try Task.checkCancellation()
+                let found = try autoreleasepool { () throws -> [BoardingCodeImage] in
+                    guard let page=pdf.page(at:number) else { return [] }
+                    let box=page.getBoxRect(.cropBox)
+                    guard box.width.isFinite,box.height.isFinite,box.width>0,box.height>0 else {return []}
+                    let rotated=abs(page.rotationAngle)%180 == 90
+                    let w=rotated ? box.height:box.width,h=rotated ? box.width:box.height
+                    let scale=3200/max(w,h),width=max(1,Int((w*scale).rounded())),height=max(1,Int((h*scale).rounded()))
+                    guard let context=bitmap(width:width,height:height) else { throw APIError.message("No se pudo preparar el pase.") }
+                    context.setFillColor(CGColor(gray:1,alpha:1));context.fill(CGRect(x:0,y:0,width:width,height:height))
+                    context.concatenate(page.getDrawingTransform(.cropBox,rect:CGRect(x:0,y:0,width:width,height:height),rotate:0,preserveAspectRatio:true))
+                    context.drawPDFPage(page)
+                    guard let image=context.makeImage() else {return []}
+                    return try detect(image,page:number)
+                }
+                let pixels=(codes+found).reduce(0) {$0+$1.image.width*$1.image.height}
+                guard codes.count+found.count <= 24,pixels <= 16_000_000 else { throw APIError.invalid("Este documento tiene demasiados códigos. Abre el pase completo para revisarlos.") }
+                codes += found
+            }
+            return codes
+        }
+        guard ["image/jpeg","image/png"].contains(mime),let source=CGImageSourceCreateWithData(data as CFData,nil),
+              let image=CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceThumbnailMaxPixelSize:3200] as CFDictionary) else {
+            throw APIError.invalid("No se pudo analizar esta imagen. Abre el pase completo.")
+        }
+        return try detect(image,page:1)
+    }
+    private static func bitmap(width:Int,height:Int) -> CGContext? {
+        CGContext(data:nil,width:width,height:height,bitsPerComponent:8,bytesPerRow:width*4,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue)
+    }
+    private static func detect(_ image:CGImage,page:Int) throws -> [BoardingCodeImage] {
+        try Task.checkCancellation()
+        let request=VNDetectBarcodesRequest()
+        try configure(request)
+        request.symbologies=[.qr,.pdf417,.aztec,.dataMatrix]
+        try VNImageRequestHandler(cgImage:image,options:[:]).perform([request])
+        try Task.checkCancellation()
+        let observations=(request.results ?? []).sorted { a,b in abs(a.boundingBox.midY-b.boundingBox.midY)>0.03 ? a.boundingBox.midY>b.boundingBox.midY : a.boundingBox.minX<b.boundingBox.minX }
+        return observations.prefix(25).compactMap { observation in
+            let b=observation.boundingBox,w=CGFloat(image.width),h=CGFloat(image.height)
+            // Vision coordinates start at the bottom left; CGImage crops start
+            // at the top left. Include the original quiet zone and white margin.
+            let bounds=CGRect(x:0,y:0,width:w,height:h)
+            let rect=CGRect(x:b.minX*w,y:(1-b.maxY)*h,width:b.width*w,height:b.height*h)
+            let margin=max(12,min(rect.width,rect.height)*0.12)
+            let crop=rect.insetBy(dx:-margin,dy:-margin).intersection(bounds).integral
+            guard !crop.isEmpty,let original=image.cropping(to:crop) else {return nil}
+            let padding=max(20,Int(min(crop.width,crop.height)*0.12))
+            guard let context=bitmap(width:original.width+padding*2,height:original.height+padding*2) else {return nil}
+            context.setFillColor(CGColor(gray:1,alpha:1));context.fill(CGRect(x:0,y:0,width:context.width,height:context.height))
+            context.interpolationQuality = .none
+            context.draw(original,in:CGRect(x:padding,y:padding,width:original.width,height:original.height))
+            guard let cropped=context.makeImage() else {return nil}
+            let names:[VNBarcodeSymbology:String]=[.qr:"QR",.pdf417:"PDF417",.aztec:"Aztec",.dataMatrix:"Data Matrix"]
+            return BoardingCodeImage(image:cropped,format:names[observation.symbology] ?? "Código",page:page)
+        }
+    }
+}
+
+@MainActor protocol BoardingScreenBrightness: AnyObject { var brightness: CGFloat { get set } }
+
+@MainActor final class BoardingBrightnessLease {
+    private var screen: (any BoardingScreenBrightness)?
+    private var original: CGFloat?
+    func begin(_ next:any BoardingScreenBrightness) {
+        if let screen,screen === next { return }
+        end();screen=next;original=next.brightness;next.brightness=1
+    }
+    func end() { if let screen,let original {screen.brightness=original};screen=nil;original=nil }
+}
+
+#if os(iOS)
+extension UIScreen: BoardingScreenBrightness {}
+
+private struct BoardingBrightness: UIViewRepresentable {
+    let enabled:Bool
+    func makeUIView(context:Context) -> Anchor { Anchor() }
+    func updateUIView(_ view:Anchor,context:Context) { view.enabled=enabled;view.update() }
+    static func dismantleUIView(_ view:Anchor,coordinator:()) {view.stop()}
+    final class Anchor:UIView {
+        var enabled=false
+        private let lease=BoardingBrightnessLease()
+        private var observers:[NSObjectProtocol]=[]
+        private var sceneObservers:[NSObjectProtocol]=[]
+        init() {
+            super.init(frame:.zero);isUserInteractionEnabled=false
+            observers.append(NotificationCenter.default.addObserver(forName:UIApplication.willResignActiveNotification,object:nil,queue:.main) { [weak self] _ in MainActor.assumeIsolated {self?.lease.end()} })
+            observers.append(NotificationCenter.default.addObserver(forName:UIApplication.didBecomeActiveNotification,object:nil,queue:.main) { [weak self] _ in MainActor.assumeIsolated {self?.update()} })
+        }
+        required init?(coder:NSCoder) {fatalError("init(coder:) has not been implemented")}
+        override func didMoveToWindow() {
+            super.didMoveToWindow();lease.end()
+            sceneObservers.forEach(NotificationCenter.default.removeObserver);sceneObservers=[]
+            if let scene=window?.windowScene {
+                sceneObservers.append(NotificationCenter.default.addObserver(forName:UIScene.willDeactivateNotification,object:scene,queue:.main) { [weak self] _ in MainActor.assumeIsolated {self?.lease.end()} })
+                sceneObservers.append(NotificationCenter.default.addObserver(forName:UIScene.didActivateNotification,object:scene,queue:.main) { [weak self] _ in MainActor.assumeIsolated {self?.update()} })
+            }
+            update()
+        }
+        func update() {
+            if enabled,UIApplication.shared.applicationState == .active,let scene=window?.windowScene,scene.activationState == .foregroundActive {lease.begin(scene.screen)}
+            else {lease.end()}
+        }
+        func stop() {lease.end();(observers+sceneObservers).forEach(NotificationCenter.default.removeObserver);observers=[];sceneObservers=[];enabled=false}
+    }
+}
+#endif
+
+private struct BoardingCodeView: View {
+    @EnvironmentObject private var store:PayrollStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    let selection:BoardingCodeSelection
+    let openFullPass:()->Void
+    @State private var codes:[BoardingCodeImage]=[]
+    @State private var index=0
+    @State private var loading=true
+    @State private var error:String?
+    @State private var stamp:String?
+    @State private var revoked=false
+    private var visible:Bool { !codes.isEmpty && !revoked && scenePhase == .active }
+    var body:some View {
+        NavigationStack {
+            VStack(spacing:16) {
+                if loading {Spacer();ProgressView("Buscando el código del pase…").accessibilityIdentifier("boarding.code.loading");Spacer()}
+                else if let error {Spacer();Image(systemName:"qrcode.viewfinder").font(.largeTitle);Text(error).multilineTextAlignment(.center).accessibilityIdentifier("boarding.code.error");Spacer()}
+                else if visible,codes.indices.contains(index) {
+                    let code=codes[index]
+                    Image(code.image,scale:1,label:Text("Código \(code.format) del pase de abordar")).resizable().interpolation(.none).scaledToFit().padding(12)
+                        .accessibilityLabel("Código \(code.format) del pase de abordar").accessibilityIdentifier("boarding.code.image").accessibilityHidden(false)
+                    if codes.count>1 {
+                        HStack(spacing:20) {
+                            Button {index-=1} label:{Image(systemName:"chevron.left").frame(width:44,height:44)}.disabled(index==0).accessibilityLabel("Código anterior")
+                            Text("\(index+1) de \(codes.count) · \(code.format) · Pág. \(code.page)").font(.footnote).accessibilityIdentifier("boarding.code.position")
+                            Button {index+=1} label:{Image(systemName:"chevron.right").frame(width:44,height:44)}.disabled(index==codes.count-1).accessibilityLabel("Código siguiente")
+                        }
+                        Text("Elige el código que corresponde a tu vuelo.").font(.footnote).foregroundStyle(.secondary)
+                    }
+                } else {Spacer();Color.white;Spacer()}
+                if !loading && !revoked {Button("Abrir pase completo",action:openFullPass).accessibilityIdentifier("boarding.code.fullpass").padding(.bottom,12)}
+            }.padding(20).frame(maxWidth:.infinity,maxHeight:.infinity).background(.white).foregroundStyle(.black)
+                .privacySensitive().navigationTitle("Código de embarque").jacInlineTitle()
+                .toolbar {ToolbarItem(placement:.cancellationAction) {Button("Listo") {dismiss()}.accessibilityIdentifier("boarding.code.close")}}
+                #if os(iOS)
+                .toolbarBackground(.white,for:.navigationBar).toolbarBackground(.visible,for:.navigationBar)
+                .background(BoardingBrightness(enabled:visible))
+                #endif
+        }.preferredColorScheme(.light).task {await load()}
+            .onChange(of:store.cacheRevision) {_,_ in validateAccess()}
+            .onChange(of:store.overview?.user) {_,_ in validateAccess()}
+            .onDisappear {codes=[];stamp=nil}
+    }
+    private func validateAccess() {
+        guard let stamp else {return}
+        if (try? store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) != stamp {
+            revoked=true;codes=[];error="El pase cambió o ya no está disponible. Vuelve a abrir tus pases.";loading=false
+        }
+    }
+    private func load() async {
+        do {
+            let start=try store.client.boardingCodeAccessStamp(selection.item,file:selection.file);stamp=start
+            let document=try await store.client.noticeFile(selection.item,file:selection.file)
+            defer {TemporaryDocuments.remove(document)}
+            try Task.checkCancellation()
+            let data=try Data(contentsOf:document.url),mime=selection.file.mimeType
+            let worker=Task.detached(priority:.userInitiated) {try BoardingCodeExtractor.extract(data,mime:mime)}
+            let found=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+            try Task.checkCancellation()
+            guard !revoked,start == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
+            if found.isEmpty {error="No se encontró un código legible. Puedes abrir el pase completo."} else {codes=found}
+            loading=false
+        } catch {
+            guard !Task.isCancelled else {return}
+            codes=[];loading=false
+            if !revoked {self.error=error is CancellationError ? "El pase cambió. Vuelve a abrir tus pases.":store.reportReadFailure(error)}
+        }
     }
 }
 

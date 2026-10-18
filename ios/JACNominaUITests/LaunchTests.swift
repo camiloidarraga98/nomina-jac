@@ -811,6 +811,30 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"itinerario-manual-eliminado")
     }
 
+    @MainActor func testBoardingCodesFullScreenMultiplePagesAndReturnToFullPDF() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-boarding-code"];app.launch()
+        app.tabBars.buttons["Itinerarios"].tap();tap(app,"boarding.open");tap(app,"boarding.code.boarding-fixture-0-pdf")
+        XCTAssertTrue(app.images["boarding.code.image"].waitForExistence(timeout:30))
+        XCTAssertTrue(app.staticTexts["1 de 2 · QR · Pág. 1"].exists)
+        attachScreen(app,name:"pase-codigo-qr-ficticio")
+        tap(app,"Código siguiente");XCTAssertTrue(app.staticTexts["2 de 2 · PDF417 · Pág. 2"].exists)
+        XCUIDevice.shared.press(.home);app.activate()
+        XCTAssertTrue(app.images["boarding.code.image"].waitForExistence(timeout:15))
+        XCTAssertTrue(app.staticTexts["2 de 2 · PDF417 · Pág. 2"].exists)
+        tap(app,"boarding.code.fullpass")
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15));tap(app,"notices.pdf.close")
+        tap(app,"boarding.code.boarding-fixture-0-pdf")
+        XCTAssertTrue(app.images["boarding.code.image"].waitForExistence(timeout:30));tap(app,"boarding.code.close")
+        XCTAssertTrue(app.buttons["notices.item.boarding-fixture-0"].waitForExistence(timeout:10))
+    }
+
+    @MainActor func testBoardingWithoutCodeOffersOriginalPDFInsteadOfAFabricatedCode() {
+        let app=fixture();app.tabBars.buttons["Itinerarios"].tap();tap(app,"boarding.open");tap(app,"boarding.code.boarding-fixture-0-pdf")
+        XCTAssertTrue(app.staticTexts["boarding.code.error"].waitForExistence(timeout:30));XCTAssertFalse(app.images["boarding.code.image"].exists)
+        tap(app,"boarding.code.fullpass");XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15))
+        tap(app,"notices.pdf.close");XCTAssertTrue(app.buttons["notices.item.boarding-fixture-0"].waitForExistence(timeout:10))
+    }
+
     @MainActor func testBoardingPassesTodayFutureHiddenHistoryAndPrivatePDF() {
         let app=fixture(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
         XCTAssertTrue(app.staticTexts["Pases de abordar para hoy · 2"].waitForExistence(timeout:10))
