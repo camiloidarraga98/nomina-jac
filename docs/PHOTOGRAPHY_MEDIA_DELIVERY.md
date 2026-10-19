@@ -20,7 +20,7 @@ iPhone/iPad muestran Descargar todas las fotos y Descargar fotos y videos en el 
 
 Comprobación final agrupada de iPhone con pruebas directamente afectadas y tres UI (revisión de video, descargar solo fotos/todo y crear/revocar enlace). Compilación Mac porque cambian fuentes compartidas; sin segundo Release iPhone ni suites financieras, scroll/caché intactos o procesos redundantes. Web: TypeScript, pruebas específicas de nuevas capacidades/Workerd y build de publicación. No se crean enlaces, subidas, borrados ni mensajes reales como pruebas.
 
-GitHub conserva main, Team AYHVYN8BJF, proyectos/bundles/firma automática y pushNO. Associated Domains y AASA se añaden únicamente para abrir carpetas compartidas. No declarar instalación física desde Cloud.
+GitHub conserva main, Team AYHVYN8BJF, proyectos/bundles/firma automática y pushNO. La firma personal usa entitlements vacíos: Associated Domains se retiró al comprobar que el Personal Team no lo admite. HTTPS abre la web y el botón Abrir en la app JAC usa el esquema jacnomina; el AASA publicado queda inactivo sin un perfil compatible. No declarar instalación física desde Cloud.
 
 
 ## Resultados confirmados durante el cierre
@@ -38,3 +38,6 @@ Solicitud posterior: áreas táctiles de44px, iconos sin encogerse, campos de16p
 Esta ampliación web quedó publicada en la versión898bd2a0-9451-43a0-9a25-e406f9d602e4 al100% (despliegue4f388604-eeb4-4003-b87c-2a9df357ae6c). La API confirma controles nuevos, tres modos, endpoint y FixedLengthStream, con bindings y tres secretos conservados. Dominio directo aún restringido por la política de salida; no se crean enlaces, descargas ni cargas reales como prueba de producción.
 
 Petición posterior: visor público con flechas, teclado y deslizamiento entre fotos y videos, paginación automática, pausa al cambiar/cerrar y cancelación de lecturas pendientes. Casilla permanente sustituida por selector discreto al hover/foco y selección múltiple desde la primera marca; en móvil, pulsación prolongada450ms con cancelación por movimiento para conservar el scroll. Prueba Chromium reproducible en tests/media-shared-viewer-browser.mjs aprobada, incluidos cierre durante carga y revocación con el visor abierto. TypeScript, build y comprobación del Worker construido aprobados; servidor ZIP sin cambios, se reutilizan sus resultados. Publicado como versiónaee2cc75-d7e7-4b48-a098-df88ab9aca19 al100% (despliegue5c765ed1-9c2b-49ea-9945-63862a2463c5); API verifica visor/gestos y conserva bindings/tres secretos.
+
+
+Corrección de firma tras el error de Xcode del Personal Team: JACNomina.entitlements queda vacío en Debug/Release, JACNominaPush.entitlements conserva solo aps-environment y no está seleccionado. Se mantienen AYHVYN8BJF, firma automática, bundle y JAC_PUSH_ENABLED=NO. Se verifican XML, configuración de ambos modos y el esquema jacnomina existente; no se repiten compilaciones sin firma porque no comprueban la aceptación del perfil personal por Apple. La firma real se realiza al hacer Pull y Run en el Xcode de Camilo. Cambio de configuración/documentación, sin despliegue web.
