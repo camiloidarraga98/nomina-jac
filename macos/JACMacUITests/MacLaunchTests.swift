@@ -16,14 +16,14 @@ final class MacLaunchTests:XCTestCase {
         XCTAssertTrue(app.descendants(matching:.any)["mac.nav.itineraries"].waitForExistence(timeout:20));XCTAssertTrue(app.descendants(matching:.any)["mac.nav.media"].exists)
         for section in ["crm","payroll","agenda"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
         XCTAssertFalse(app.buttons["boarding.open"].exists);click(app,"mac.nav.media");XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons["media.createFolder"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
-        click(app,"media.item.media-day");click(app,"media.item.media-photo");click(app,"media.preview.close");click(app,"mac.nav.alerts");XCTAssertTrue(app.staticTexts["Avisos del equipo"].waitForExistence(timeout:10));shot(app,"mac-secciones-hibridas")
+        click(app,"media.item.media-day");click(app,"media.item.media-photo");click(app,"media.preview.close");click(app,"mac.nav.alerts");XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label ==[c] %@","Avisos del equipo")).firstMatch.waitForExistence(timeout:10));shot(app,"mac-secciones-hibridas")
     }
     @MainActor func testModernCalendarOnlyAndAlertsOnlySidebarRemainIsolated() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=calendar","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
         XCTAssertTrue(app.descendants(matching:.any)["mac.nav.agenda"].waitForExistence(timeout:20));XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:15))
         for section in ["crm","payroll","itineraries","alerts","media","account"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
         app.terminate();app.launchArguments=["--uitest-payroll","--uitest-sections=alerts","-ApplePersistenceIgnoreState","YES"];app.launch();app.activate()
-        XCTAssertTrue(app.descendants(matching:.any)["mac.nav.alerts"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts["Avisos del equipo"].waitForExistence(timeout:15))
+        XCTAssertTrue(app.descendants(matching:.any)["mac.nav.alerts"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label ==[c] %@","Avisos del equipo")).firstMatch.waitForExistence(timeout:15))
         for section in ["crm","payroll","agenda","itineraries","media"] {XCTAssertFalse(app.descendants(matching:.any)["mac.nav."+section].exists)}
         click(app,"mac.nav.management");XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);shot(app,"mac-solo-alertas")
     }

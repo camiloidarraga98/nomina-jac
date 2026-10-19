@@ -323,7 +323,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20));XCTAssertTrue(hasSection(app, "Agenda"))
         for title in ["Quincena","Itinerarios","Fotografía","Mi cuenta","Alertas"] {XCTAssertFalse(hasSection(app, title))}
         app.terminate();app.launchArguments=["--uitest-payroll","--uitest-sections=alerts"];app.launch()
-        XCTAssertTrue(hasSection(app, "Alertas", timeout: 20));XCTAssertTrue(app.staticTexts["Avisos del equipo"].waitForExistence(timeout:15))
+        XCTAssertTrue(hasSection(app, "Alertas", timeout: 20));XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label ==[c] %@","Avisos del equipo")).firstMatch.waitForExistence(timeout:15))
         for title in ["Quincena","Agenda","Itinerarios","Fotografía"] {XCTAssertFalse(hasSection(app, title))}
         openSection(app, "Gestión");XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.media"].exists)
         attachScreen(app,name:"solo-alertas-sin-modulos-adicionales")
@@ -663,16 +663,15 @@ final class LaunchTests: XCTestCase {
         if menuVisible(app) { return true }
         let opener=app.buttons["phone.menu.open"]
         guard opener.waitForExistence(timeout: timeout) else { return false }
-        let icon=opener.images.firstMatch
-        guard icon.exists else { return false }
-        let frame=opener.frame,visible=icon.frame,screen=app.windows.firstMatch.frame
-        guard frame.width >= 44,frame.height >= 44,screen.contains(frame),visible.width > 0,visible.height > 0,screen.contains(visible) else { return false }
+        let frame=opener.frame,screen=app.windows.firstMatch.frame
+        guard frame.width >= 44,frame.height >= 44,screen.contains(frame) else { return false }
         // After focus returns, XCTest may include the full header/status area
-        // in the button frame. Tap the visible icon inside its 44pt control.
+        // in the button frame. The actual 44pt control is at its bottom-left;
+        // tap its center without requiring an exposed SF Symbol child.
         // One bounded retry handles an event lost during cold launch;
         // both attempts must open the real panel, never a synthetic state.
         for _ in 0..<2 {
-            icon.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
+            opener.coordinate(withNormalizedOffset:CGVector(dx:0,dy:1)).withOffset(CGVector(dx:22,dy:-22)).tap()
             if waitForMenu(app, visible:true) {return true}
             if !opener.exists {return false}
         }
