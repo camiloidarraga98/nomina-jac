@@ -88,7 +88,7 @@ struct NoticesView: View {
     @State private var deleting = false
     @State private var deletedIDs = Set<String>()
     private var effectiveKind: String { incomingKind ?? kind }
-    var body: some View {
+    private var noticeList: some View {
         List {
             if let error { Section { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
             if let notice { Section { Text(notice).foregroundStyle(JACTheme.action) } }
@@ -130,7 +130,10 @@ struct NoticesView: View {
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             } }
 
-        }.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().jacConnectionStatus().refreshable { await refresh() }
+        }
+    }
+    private var noticeUpdates: some View {
+        noticeList.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().jacConnectionStatus().refreshable { await refresh() }
             .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
             .onChange(of: store.cacheRevision) { _, _ in restoreCached() }
             .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }
@@ -141,7 +144,9 @@ struct NoticesView: View {
             #else
             .sheet(item:$boardingCode,onDismiss:openFullPassAfterCode) { selection in codeViewer(selection).frame(minWidth:620,minHeight:540) }
             #endif
-            .sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
+    }
+    var body: some View {
+        noticeUpdates.sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
                 NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Pase de abordar PDF" : "Pase de abordar").jacInlineTitle().toolbar { ToolbarItem(placement:.cancellationAction) { Button("Listo") { boardingDocument=nil }.accessibilityIdentifier("notices.pdf.close") }
                     #if os(iOS)
                     ToolbarItem(placement:.confirmationAction) { ShareLink(item:file.url) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("Compartir archivo") }

@@ -509,7 +509,7 @@ struct MediaGalleryView: View {
         return false
         #endif
     }
-    var body: some View {
+    private var galleryContent: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
@@ -577,7 +577,10 @@ struct MediaGalleryView: View {
                     }
                 }
             }.padding(18).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
-        }.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle().jacConnectionStatus(shown:!compactGallery)
+        }
+    }
+    private var galleryNavigation: some View {
+        galleryContent.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle().jacConnectionStatus(shown:!compactGallery)
             #if os(iOS)
             .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if compactGallery && selection.active { selectionActions } }
@@ -605,7 +608,9 @@ struct MediaGalleryView: View {
                 ToolbarItem {if let folder=feed?.folder,feed?.canRead == true {Menu {folderCommands(folder);if user.canUploadMedia {Button("Calidad de las imágenes",systemImage:"slider.horizontal.3"){imageQualitySettings=true}.accessibilityIdentifier("media.quality")}} label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel("Opciones de esta carpeta").accessibilityIdentifier("media.current.options")}}
                 }
             }
-            .task(id: folderID) {
+    }
+    private var galleryUpdates: some View {
+        galleryNavigation.task(id: folderID) {
                 await reload()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(30)) } catch { return }
@@ -636,7 +641,9 @@ struct MediaGalleryView: View {
                 Button("Eliminar",role:.destructive){deletionConfirmed=true;beginFolderDeletion()}.accessibilityIdentifier("media.delete.confirm")
             } message:{Text("¿Estás seguro de eliminar esta carpeta y todo su contenido?")}
             .overlay(alignment:.bottom) {if deleting {HStack(spacing:12){ProgressView();Text("Eliminando carpeta…").font(.subheadline)}.padding(18).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20).accessibilityIdentifier("media.delete.progress")}else if let deletionError {HStack {Text(deletionError).font(.footnote);Button("Reintentar"){beginFolderDeletion()};Button("Cerrar"){self.deletionError=nil;deletingFolder=nil;deletionConfirmed=false}}.padding(16).background(.regularMaterial,in:RoundedRectangle(cornerRadius:16)).padding(20)}}
-            .sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
+    }
+    var body: some View {
+        galleryUpdates.sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
             .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
             .sheet(item:$uploadComposition,onDismiss:{
                 if confirmedUpload {confirmedUpload=false;if !queue.isEmpty {uploadTask=Task {await uploadAll()}}}
