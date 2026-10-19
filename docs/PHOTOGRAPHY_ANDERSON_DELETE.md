@@ -12,4 +12,8 @@ Web permite eliminar fotos y videos desde Opciones y su vista previa; carpetas d
 
 ## Verificación y publicación
 
-Pendientes de registrar al finalizar: pruebas locales de API/SQL con D1 y S3 simulados, build web, comprobaciones nativas limitadas al permiso y despliegue del Worker propio. No requiere migración de datos ni cambios de credenciales/conexiones.
+TypeScript y build web correctos. Las 45 pruebas de la galería R2 pasaron, incluidas tres nuevas de Anderson (archivos existentes de otra cuenta, fotos/videos/carpetas, guardas SQL y revocación durante la eliminación). También pasaron permisos de Fotografía, Drive, móvil/OAuth y las 16 pruebas Workerd con servicios interceptados. La primera ejecución Workerd no pudo abrir localhost por el sandbox; se repitió únicamente esa suite con red local habilitada y pasó. Sin datos ni servicios reales como pruebas.
+
+Fuente publicada en `main`, commit `9c22c99c8f02b2b39d311a6c16d1431af2976e5a`. Build de esas mismas fuentes desplegado en Worker `jac-nomina`: versión `3d30e32b-8b7d-4f6b-b1e1-3ed8b2f1eb7c`, despliegue `a79fff45-85a0-4baf-abf1-8f517bae4464`, 100% confirmado mediante la API oficial de Cloudflare. Wrangler informó un error posterior al consultar workers.dev/memberships; la carga y la activación ya estaban completas y verificadas, por lo que no se repitió el despliegue. No requiere migración de datos ni cambios de credenciales/conexiones.
+
+Actions `39280446327` selecciona únicamente cuatro pruebas nativas del permiso, aislamiento financiero y revocación. Compila Mac por el modelo compartido y omite una segunda Release iPhone. A las 15:53 UTC seguía en cola, sin pasos ejecutados. El resultado nativo queda pendiente; conservar los resultados previos de la galería porque sus algoritmos no cambiaron.
