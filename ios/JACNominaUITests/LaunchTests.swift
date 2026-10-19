@@ -2,6 +2,50 @@ import XCTest
 import UIKit
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testLongPressSelectsMixedMediaAndCancelRestoresThePhotoViewer() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2"]; app.launch()
+        tap(app, "media.item.r2_media-day")
+        let photo = app.buttons["media.item.r2_media-photo"], video = app.buttons["media.item.r2_media-video"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.press(forDuration: 0.65)
+        XCTAssertTrue(app.staticTexts["media.selection.count"].waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
+        XCTAssertFalse(app.buttons["media.preview.close"].exists, "Lifting a long press must not open the viewer")
+        video.tap(); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "2 seleccionados")
+        XCTAssertEqual(photo.value as? String, "Seleccionado"); XCTAssertEqual(video.value as? String, "Seleccionado")
+        photo.tap(); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
+        XCTAssertFalse(app.buttons["media.selection.delete"].exists, "An uploader does not gain administrative deletion")
+        tap(app, "media.selection.cancel"); photo.tap()
+        XCTAssertTrue(app.buttons["media.preview.close"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
+        video.press(forDuration: 0.65); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
+        XCTAssertFalse(app.buttons["media.preview.close"].exists)
+        attachScreen(app, name: "fotografia-seleccion-multiple-foto-video")
+    }
+    @MainActor func testSelectedPhotosAndVideosDownloadOnlyThatGroupToPhotosAndOffline() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2", "--uitest-media-slideshow"]; app.launch()
+        tap(app, "media.item.r2_media-day")
+        let photo = app.buttons["media.item.r2_media-photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.press(forDuration: 0.65)
+        tap(app, "media.item.r2_media-video"); tap(app, "media.selection.download"); tap(app, "media.selection.savePhotos")
+        XCTAssertTrue(app.staticTexts["2 archivos seleccionados"].waitForExistence(timeout: 10)); tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
+        tap(app, "media.selection.download"); tap(app, "media.selection.offline"); tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["media.item.r2_media-photo-2"].exists, "The unselected photo remains in the gallery")
+        attachScreen(app, name: "fotografia-descarga-seleccionada-fotos-offline")
+    }
+    @MainActor func testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-r2", "--uitest-media-slideshow", "--uitest-media-two-folders"]; app.launch()
+        XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout: 20)); app.tabBars.buttons["Fotografía"].tap()
+        tap(app, "media.item.r2_media-day")
+        let photo = app.buttons["media.item.r2_media-photo"], video = app.buttons["media.item.r2_media-video"], kept = app.buttons["media.item.r2_media-photo-2"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.press(forDuration: 0.65); video.tap()
+        tap(app, "media.selection.delete"); XCTAssertTrue(app.alerts["Eliminar selección"].waitForExistence(timeout: 5))
+        app.alerts.buttons["Cancelar"].tap(); XCTAssertTrue(photo.exists); XCTAssertTrue(video.exists); XCTAssertTrue(kept.exists)
+        tap(app, "media.selection.delete"); app.alerts.buttons.matching(identifier: "media.selection.delete.confirm").firstMatch.tap()
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos eliminados."].waitForExistence(timeout: 20))
+        XCTAssertTrue(kept.waitForExistence(timeout: 15)); XCTAssertFalse(photo.exists); XCTAssertFalse(video.exists)
+        XCTAssertTrue(app.buttons["media.item.r2_media-day"].exists); XCTAssertTrue(app.buttons["media.item.r2_media-other"].exists)
+        attachScreen(app, name: "fotografia-borrado-seleccion-conserva-resto")
+    }
     @MainActor func testPhotoUploadQueueSurvivesLeavingGalleryAndGoingHome() {
         let app=XCUIApplication()
         app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=calendar,alerts,media,mediaUpload","--uitest-slow-media-upload"]

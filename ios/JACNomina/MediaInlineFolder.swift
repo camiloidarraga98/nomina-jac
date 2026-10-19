@@ -1,6 +1,170 @@
 #if os(iOS)
 import SwiftUI
 
+/// One selection spans the expanded folders, but never another session or
+/// collection. Keep the observed revision until the user explicitly reselects.
+@MainActor
+final class MediaBatchSelection: ObservableObject {
+    private struct Entry {
+        let item: MediaItem
+        let ancestors: Set<String>
+        let canDelete: Bool
+    }
+    @Published private(set) var active = false
+    @Published private var entries: [Entry] = []
+    @Published private(set) var deleting = false
+    @Published private(set) var completed = 0
+    @Published private(set) var total = 0
+    @Published private(set) var failures: [String] = []
+    @Published private(set) var message: String?
+    private var stamp: String?
+    private var collectionID: String?
+    private var operation = UUID()
+    private var task: Task<Void, Never>?
+
+    var items: [MediaItem] { entries.map(\.item) }
+    var count: Int { entries.count }
+    var canDelete: Bool { !entries.isEmpty && entries.allSatisfy(\.canDelete) }
+    func contains(_ id: String) -> Bool { entries.contains { $0.item.id == id } }
+
+    func select(_ item: MediaItem, in feed: MediaFeed, client: PayrollClient) {
+        guard !deleting, item.kind == "image" || item.kind == "video",
+              feed.connected, feed.canRead, let current = try? client.mediaAccessStamp() else { return }
+        if active && (stamp != current || collectionID != feed.collectionID) { reset() }
+        if !active { stamp = current; collectionID = feed.collectionID; active = true }
+        guard !contains(item.id) else { return }
+        entries.append(Entry(item: item, ancestors: Set(feed.breadcrumbs.map(\.id)).union([feed.folder?.id ?? ""]), canDelete: feed.canDelete == true))
+    }
+
+    func toggle(_ item: MediaItem, in feed: MediaFeed, client: PayrollClient) {
+        guard !deleting else { return }
+        if contains(item.id) { entries.removeAll { $0.item.id == item.id } }
+        else { select(item, in: feed, client: client) }
+    }
+
+    func synchronize(client: PayrollClient) {
+        if active, stamp != (try? client.mediaAccessStamp()) { reset() }
+    }
+
+    func reconcile(_ feed: MediaFeed) {
+        guard active else { return }
+        guard feed.connected, feed.canRead, collectionID == feed.collectionID else { reset(); return }
+        let files = Set(feed.deletedFiles ?? []), folders = Set(feed.deletedFolders ?? [])
+        let current = Dictionary(feed.items.map { ($0.id, $0) }, uniquingKeysWith: { first, _ in first })
+        entries.removeAll { entry in
+            files.contains(entry.item.id) || !entry.ancestors.isDisjoint(with: folders)
+                || current[entry.item.id].map { $0 != entry.item } == true
+        }
+        if feed.canDelete != true {
+            entries = entries.map { Entry(item: $0.item, ancestors: $0.ancestors, canDelete: false) }
+        }
+    }
+
+    func reset() {
+        operation = UUID(); task?.cancel(); task = nil
+        active = false; entries = []; stamp = nil; collectionID = nil
+        deleting = false; completed = 0; total = 0; failures = []; message = nil
+    }
+
+    func cancelDeletion() { task?.cancel() }
+
+    func delete(_ targets: [MediaItem], client: PayrollClient, denied: @escaping (Error) -> Void) {
+        synchronize(client: client)
+        guard active, !deleting, canDelete, !targets.isEmpty,
+              client.accessUser?.canDeleteMedia == true, !client.usingOfflineCopy,
+              let scope = try? client.mediaScope(), let stamp else { return }
+        guard targets.allSatisfy({ target in entries.contains { $0.item == target && $0.canDelete } }) else {
+            message = "La selección cambió. Revisa los archivos antes de eliminarlos."; return
+        }
+        let actor = client.accessUser, run = UUID()
+        operation = run; deleting = true; completed = 0; total = targets.count; failures = []; message = nil
+        self.stamp = stamp
+        task = Task {
+            defer { if operation == run { deleting = false; task = nil } }
+            for item in targets {
+                do {
+                    var result: MediaFolderDeletion
+                    repeat {
+                        try Task.checkCancellation()
+                        guard operation == run, self.stamp == (try client.mediaAccessStamp()),
+                              scope.id == (try client.mediaScope())?.id, actor == client.accessUser else { throw CancellationError() }
+                        result = try await client.deleteMediaFileStep(item)
+                        guard operation == run, scope.id == (try client.mediaScope())?.id,
+                              actor == client.accessUser else { throw CancellationError() }
+                        // This authorized delete advances the client's cache generation.
+                        // Adopt only our own change, in the same session and permission set.
+                        self.stamp = try client.mediaAccessStamp()
+                        try Task.checkCancellation()
+                        if result.complete != true { try await Task.sleep(for: .milliseconds(result.waiting == true ? 1000 : 100)) }
+                    } while result.complete != true
+                    completed += 1; entries.removeAll { $0.item.id == item.id }
+                } catch {
+                    guard operation == run else { return }
+                    if error is CancellationError || (error as? URLError)?.code == .cancelled {
+                        message = "Eliminación detenida. Los archivos ya eliminados no se pueden recuperar."; return
+                    }
+                    if case APIError.unauthorized = error { reset(); denied(error); return }
+                    if case APIError.forbidden = error { reset(); denied(error); return }
+                    failures.append(item.name + ": " + error.localizedDescription)
+                }
+            }
+            if operation == run { message = "\(completed) de \(total) archivos eliminados." }
+        }
+    }
+}
+
+/// An exclusive gesture keeps a completed long press from opening the viewer
+/// when the finger lifts. The button action remains available to VoiceOver.
+@MainActor
+struct MediaSelectableTile: View {
+    let item: MediaItem
+    let feed: MediaFeed
+    let client: PayrollClient
+    @ObservedObject var selection: MediaBatchSelection
+    let offline: Bool
+    let disabled: Bool
+    let opening: Bool
+    let epoch: UUID
+    let open: () -> Void
+    let denied: (Error) -> Void
+    private var selected: Bool { selection.contains(item.id) }
+    var body: some View {
+        Button(action: tap) {
+            MediaTile(item: item, client: client, offline: offline, opening: opening, epoch: epoch, denied: denied)
+                .overlay { if selected { RoundedRectangle(cornerRadius: 18).strokeBorder(JACTheme.action, lineWidth: 3) } }
+                .overlay(alignment: .topTrailing) {
+                    if selection.active {
+                        Image(systemName: selected ? "checkmark.circle.fill" : "circle")
+                            .font(.title2).symbolRenderingMode(.palette).foregroundStyle(selected ? JACTheme.action : Color.secondary, Color.white)
+                            .padding(10).accessibilityHidden(true)
+                    }
+                }
+        }
+        .buttonStyle(.plain).disabled(disabled)
+        .highPriorityGesture(LongPressGesture(minimumDuration: 0.45).exclusively(before: TapGesture()).onEnded { gesture in
+            guard !disabled else { return }
+            switch gesture {
+            case .first: selection.select(item, in: feed, client: client)
+            case .second: tap()
+            }
+        })
+        .accessibilityIdentifier("media.item." + item.id)
+        .accessibilityValue(selection.active ? (selected ? "Seleccionado" : "No seleccionado") : "")
+        .accessibilityAddTraits(selected ? [.isSelected] : [])
+        .accessibilityAction(named: Text("Seleccionar")) { if !disabled { selection.select(item, in: feed, client: client) } }
+        .overlay(alignment: .topTrailing) {
+            if !selection.active, item.kind == "image" {
+                MediaPhotoMenu(item: item, client: client, canDelete: client.accessUser?.canDeleteMedia == true && feed.canDelete == true).padding(6)
+            }
+        }
+    }
+    private func tap() {
+        guard !disabled else { return }
+        if selection.active { selection.toggle(item, in: feed, client: client) }
+        else { open() }
+    }
+}
+
 /// An expanded folder keeps its own authorized feed. Opening a photo passes
 /// that feed to the viewer, so the slideshow stays inside the same folder.
 @MainActor
@@ -14,6 +178,7 @@ struct MediaInlineFolder: View {
     let open: (MediaItem, MediaFeed) -> Void
     let denied: (Error) -> Void
     let commands: (MediaFolder) -> AnyView
+    @ObservedObject var selection: MediaBatchSelection
     var ancestry: Set<String> = []
 
     @EnvironmentObject private var store: PayrollStore
@@ -105,21 +270,17 @@ struct MediaInlineFolder: View {
                             open: open,
                             denied: denied,
                             commands: commands,
+                            selection: selection,
                             ancestry: descendants
                         ))
                     }
                     if let feed, !files.isEmpty {
                         LazyVGrid(columns: [GridItem(.flexible(), spacing: 10), GridItem(.flexible(), spacing: 10)], spacing: 10) {
                             ForEach(files) { item in
-                                Button { open(item, previewFeed(feed)) } label: {
-                                    MediaTile(item: item, client: store.client,
-                                              offline: offline || store.isOffline,
-                                              opening: opening == item.id,
-                                              epoch: epoch, denied: reject)
-                                }
-                                .buttonStyle(.plain).disabled(disabled || opening != nil)
-                                .accessibilityIdentifier("media.item." + item.id)
-                                .overlay(alignment:.topTrailing){if item.kind=="image" {MediaPhotoMenu(item:item,client:store.client,canDelete:store.overview?.user.canDeleteMedia == true && feed.canDelete == true).padding(6)}}
+                                MediaSelectableTile(item: item, feed: feed, client: store.client, selection: selection,
+                                                    offline: offline || store.isOffline, disabled: disabled || opening != nil,
+                                                    opening: opening == item.id, epoch: epoch,
+                                                    open: { open(item, previewFeed(feed)) }, denied: reject)
                             }
                         }
                     }
@@ -156,7 +317,7 @@ struct MediaInlineFolder: View {
             if stamp != nil && isExpanded { startRead() }
         }
         .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
-            if let saved=store.client.cachedMedia(folder:folder.id) {items=uniqueSorted(saved.items)}
+            if let saved=store.client.cachedMedia(folder:folder.id) {items=uniqueSorted(saved.items);selection.reconcile(saved)}
         }
         .onChange(of: store.isOffline) { previous, current in
             if previous && !current && offline && isExpanded { startRead() }
@@ -226,7 +387,7 @@ struct MediaInlineFolder: View {
                 }
                 try Task.checkCancellation()
                 guard expected == generation, isExpanded, stamp == (try store.client.mediaAccessStamp()) else { throw CancellationError() }
-                feed = result; items = uniqueSorted(all); offline = false; error = nil
+                feed = result; items = uniqueSorted(all); offline = false; error = nil; selection.reconcile(previewFeed(result))
             } catch {
                 guard expected == generation, isExpanded, !Task.isCancelled else { return }
                 if failureIsCancelled(error) { clearContent(); return }

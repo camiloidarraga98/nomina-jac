@@ -469,6 +469,9 @@ struct MediaGalleryView: View {
     @State private var importing = false
     @State private var importTask: Task<Void, Never>?
     #if os(iOS)
+    @StateObject private var selection = MediaBatchSelection()
+    @State private var selectionConfirmation = false
+    @State private var selectionDeletionTargets: [MediaItem] = []
     @ObservedObject private var persistentUploads = MediaUploadQueue.shared
     @State private var handingOffUploads = false
     @State private var uploadRefreshPending = false
@@ -499,12 +502,26 @@ struct MediaGalleryView: View {
         return false
         #endif
     }
+    private var showingSelection: Bool {
+        #if os(iOS)
+        return compactGallery && selection.active
+        #else
+        return false
+        #endif
+    }
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
                 if compactGallery {
-                    HStack {ConnectionStatusIcon();Spacer();if user.canUploadMedia {Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(!writable || uploading || !queue.isEmpty).accessibilityIdentifier("media.add")}}
+                    HStack {
+                        ConnectionStatusIcon(); Spacer()
+                        if selection.active {
+                            Button("Cancelar selección") { selection.reset() }.disabled(selectionBusy).accessibilityIdentifier("media.selection.cancel")
+                        } else if user.canUploadMedia {
+                            Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(!writable || uploading || !queue.isEmpty).accessibilityIdentifier("media.add")
+                        }
+                    }
                 } else {
                 VStack(alignment:.leading,spacing:12) {
                     Text(feed?.folder?.id == feed?.root?.id ? "Cada show, en imágenes." : feed?.folder?.name ?? "Fotos y videos de JAC").font(.system(.title2,design:.rounded,weight:.bold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal:false,vertical:true).frame(maxWidth:.infinity,alignment:.leading).accessibilityIdentifier("media.heading")
@@ -536,7 +553,7 @@ struct MediaGalleryView: View {
                         ContentUnavailableView("Sin acceso a Fotografía", systemImage: "lock", description: Text("Tu cuenta no tiene acceso a estas fotos y videos."))
                     } else {
                         if !compactGallery { breadcrumbs(feed) }
-                        if preparingTransfer || folderTransfer.running || folderTransfer.message != nil || !folderTransfer.failures.isEmpty { transferStatus }
+                        if !showingSelection && (preparingTransfer || folderTransfer.running || folderTransfer.message != nil || !folderTransfer.failures.isEmpty) { transferStatus }
                         if user.canDeleteMedia,let pending=feed.pendingDeletions,!pending.isEmpty {
                             VStack(alignment:.leading,spacing:12) {ForEach(pending) {job in HStack {Text("Eliminación pendiente: "+job.name).font(.footnote);Spacer();Button("Continuar eliminación") {deletingFolder=MediaFolder(id:job.id,name:job.name);deletionConfirmed=true;beginFolderDeletion()}.disabled(deleting).accessibilityIdentifier("media.delete.resume."+job.id)}}}.padding(14).background(.orange.opacity(0.08),in:RoundedRectangle(cornerRadius:14))
                         }
@@ -565,6 +582,23 @@ struct MediaGalleryView: View {
         }.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle().jacConnectionStatus(shown:!compactGallery)
             #if os(iOS)
             .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
+            .safeAreaInset(edge: .bottom) { if compactGallery && selection.active { selectionActions } }
+            .onChange(of: try? store.client.mediaAccessStamp()) { _, _ in
+                selection.synchronize(client: store.client)
+                folderTransfer.cancel(); transferReview = nil; confirmedTransfer = nil
+            }
+            .onChange(of: feed?.collectionID) { _, _ in
+                folderTransfer.cancel(); transferReview = nil; confirmedTransfer = nil
+            }
+            .alert("Eliminar selección", isPresented: $selectionConfirmation) {
+                Button("Cancelar", role: .cancel) { selectionDeletionTargets = [] }
+                Button("Eliminar", role: .destructive) {
+                    selection.delete(selectionDeletionTargets, client: store.client, denied: thumbnailDenied)
+                    selectionDeletionTargets = []
+                }.accessibilityIdentifier("media.selection.delete.confirm")
+            } message: {
+                Text("¿Estás seguro de eliminar los \(selectionDeletionTargets.count) archivos seleccionados? Se eliminarán para todo el equipo. Esta acción no se puede deshacer.")
+            }
             #endif
             .refreshable { await reload() }
             .toolbar {
@@ -591,7 +625,12 @@ struct MediaGalleryView: View {
             .onChange(of: persistentUploads.uploading) { _, running in if !running { refreshAfterUploads() } }
             #endif
             .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
-                if let saved=store.client.cachedMedia(folder:folderID) {items=MediaGalleryOrder.sorted(saved.items);thumbnailEpoch=UUID()}
+                if let saved=store.client.cachedMedia(folder:folderID) {
+                    items=MediaGalleryOrder.sorted(saved.items);thumbnailEpoch=UUID()
+                    #if os(iOS)
+                    selection.reconcile(saved)
+                    #endif
+                }
             }
             .onChange(of: selectedPhotos) { _, selected in guard !selected.isEmpty else { return }; importTask?.cancel(); importTask = Task { await readPhotos(selected) } }
             .alert("Eliminar carpeta",isPresented:$deletionConfirmation) {
@@ -610,7 +649,11 @@ struct MediaGalleryView: View {
                 }
                 #endif
             }
-            .sheet(item: $transferReview,onDismiss:{if let review=confirmedTransfer {confirmedTransfer=nil;folderTransfer.start(client:store.client,plan:review.plan,photos:review.photos,writer:photosWriter)}}) { review in MediaTransferReviewSheet(review: review) { confirmedTransfer=review } }
+            .sheet(item: $transferReview,onDismiss:{if let review=confirmedTransfer {
+                confirmedTransfer=nil
+                guard review.stamp != nil,review.stamp == (try? store.client.mediaAccessStamp()) else {return}
+                folderTransfer.start(client:store.client,plan:review.plan,photos:review.photos,writer:photosWriter)
+            }}) { review in MediaTransferReviewSheet(review: review) { confirmedTransfer=review } }
             .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document, photos: (previewFeed?.items ?? items).filter { $0.kind == "image" }, feed: previewFeed ?? feed, client: store.client, denied: thumbnailDenied) }
             #if os(iOS)
             .fullScreenCover(item:$fullscreenPhotos) {request in MediaFullscreenPhotoView(selected:request.selected,feed:request.feed,client:store.client,denied:thumbnailDenied)}
@@ -625,6 +668,9 @@ struct MediaGalleryView: View {
                 galleryVisible = false
                 #endif
                 if fullscreenPhotos == nil || store.overview?.user.id != user.id {
+                    #if os(iOS)
+                    selection.reset(); selectionConfirmation = false; selectionDeletionTargets = []
+                    #endif
                     deletionTask?.cancel()
                     #if os(macOS)
                     uploadTask?.cancel()
@@ -636,16 +682,77 @@ struct MediaGalleryView: View {
             }
     }
     #if os(iOS)
+    private var selectionBusy: Bool { selection.deleting || folderTransfer.running || preparingTransfer }
+    private var selectionActions: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 12) {
+                Text(selection.count == 1 ? "1 seleccionado" : "\(selection.count) seleccionados").font(.subheadline.weight(.semibold)).accessibilityIdentifier("media.selection.count")
+                Spacer(minLength: 0)
+                if selection.deleting {
+                    Button("Detener") { selection.cancelDeletion() }.accessibilityIdentifier("media.selection.stop")
+                } else if folderTransfer.running {
+                    Button("Detener") { folderTransfer.cancel() }.accessibilityIdentifier("media.selection.stop")
+                } else {
+                    Menu {
+                        Button { prepareSelectionTransfer(photos: true) } label: { Label("Guardar en Fotos", systemImage: "square.and.arrow.down") }.accessibilityIdentifier("media.selection.savePhotos")
+                        Button { prepareSelectionTransfer(photos: false) } label: { Label("Guardar sin conexión", systemImage: "arrow.down.circle") }.accessibilityIdentifier("media.selection.offline")
+                    } label: { Label("Descargar", systemImage: "square.and.arrow.down") }
+                        .disabled(selection.count == 0 || selectionBusy || deleting).accessibilityIdentifier("media.selection.download")
+                    if store.overview?.user.canDeleteMedia == true && selection.canDelete {
+                        Button(role: .destructive) {
+                            selectionDeletionTargets = selection.items; selectionConfirmation = true
+                        } label: { Image(systemName: "trash") }
+                            .disabled(selectionBusy || deleting || store.isOffline)
+                            .accessibilityLabel("Eliminar selección").accessibilityIdentifier("media.selection.delete")
+                    }
+                }
+            }
+            if selection.deleting {
+                ProgressView(value: Double(selection.completed), total: Double(max(1, selection.total)))
+                Text("Eliminando: \(selection.completed) de \(selection.total)").font(.footnote).accessibilityIdentifier("media.selection.progress")
+            } else if folderTransfer.running {
+                ProgressView(value: Double(folderTransfer.completed), total: Double(max(1, folderTransfer.total)))
+                Text("Descargando: \(folderTransfer.completed) de \(folderTransfer.total)").font(.footnote).accessibilityIdentifier("media.selection.progress")
+            }
+            if let message = selection.message { Text(message).font(.footnote).accessibilityIdentifier("media.selection.status") }
+            if !selection.failures.isEmpty {
+                DisclosureGroup("\(selection.failures.count) archivos no se pudieron eliminar") {
+                    ScrollView { VStack(alignment: .leading, spacing: 6) { ForEach(Array(selection.failures.enumerated()), id: \.offset) { _, failure in Text(failure).font(.caption).foregroundStyle(.red) } } }.frame(maxHeight: 120)
+                }.font(.footnote)
+            }
+            if !folderTransfer.running, let message = folderTransfer.message {
+                Text(message).font(.footnote).foregroundStyle(.secondary)
+            }
+            if !folderTransfer.failures.isEmpty {
+                DisclosureGroup("\(folderTransfer.failures.count) archivos no se pudieron descargar") {
+                    ScrollView { VStack(alignment: .leading, spacing: 6) { ForEach(Array(folderTransfer.failures.enumerated()), id: \.offset) { _, failure in Text(failure).font(.caption).foregroundStyle(.red) } } }.frame(maxHeight: 120)
+                }.font(.footnote)
+            }
+        }.padding(16).background(.regularMaterial).accessibilityIdentifier("media.selection.actions")
+    }
+    private func prepareSelectionTransfer(photos: Bool) {
+        selection.synchronize(client: store.client)
+        guard !selectionBusy, !deleting, !selection.items.isEmpty else { return }
+        let files = selection.items
+        let plan = MediaDownloadPlan(folder: MediaFolder(id: "selection", name: "\(files.count) archivos seleccionados"), files: files)
+        let scope = try? store.client.mediaScope(), cache = store.client.mediaOffline
+        let pending = photos ? files : files.filter { item in scope.map { !cache.isPinned(item, scope: $0) } ?? true }
+        transferReview = MediaTransferReview(plan: plan, photos: photos, requiredBytes: MediaStorageReview.required(pending), selection: true, stamp: try? store.client.mediaAccessStamp())
+    }
     private var inlineFolders: some View {
         VStack(spacing:12) {
             ForEach(items.filter { $0.kind == "folder" }) { item in
-                MediaInlineFolder(folder:MediaFolder(id:item.id,name:item.name),collectionID:feed?.collectionID,expanded:$expandedFolders,epoch:thumbnailEpoch,disabled:uploading || opening != nil || deleting,opening:opening,open:{item,context in open(item,in:context)},denied:thumbnailDenied,commands:{AnyView(folderCommands($0))})
+                MediaInlineFolder(folder:MediaFolder(id:item.id,name:item.name),collectionID:feed?.collectionID,expanded:$expandedFolders,epoch:thumbnailEpoch,disabled:uploading || opening != nil || deleting || selectionBusy,opening:opening,open:{item,context in open(item,in:context)},denied:thumbnailDenied,commands:{AnyView(folderCommands($0))},selection:selection)
             }
             // Older general uploads remain readable without adding a heading.
             LazyVGrid(columns:[GridItem(.flexible()),GridItem(.flexible())],spacing:12) {
                 ForEach(items.filter { $0.kind != "folder" }) {item in
-                    Button {open(item)} label:{MediaTile(item:item,client:store.client,offline:store.isOffline,opening:opening==item.id,epoch:thumbnailEpoch,denied:thumbnailDenied)}.buttonStyle(.plain).disabled(opening != nil || uploading).accessibilityIdentifier("media.item."+item.id)
-                        .overlay(alignment:.topTrailing){if item.kind=="image" {MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true).padding(6)}}
+                    if let feed {
+                        MediaSelectableTile(item: item, feed: feed, client: store.client, selection: selection,
+                                            offline: store.isOffline, disabled: opening != nil || uploading || deleting || selectionBusy,
+                                            opening: opening == item.id, epoch: thumbnailEpoch,
+                                            open: { open(item) }, denied: thumbnailDenied)
+                    }
                 }
             }
         }
@@ -722,7 +829,7 @@ struct MediaGalleryView: View {
             guard !Task.isCancelled,stamp == (try store.client.mediaAccessStamp()) else {throw CancellationError()}
             let scope=try store.client.mediaScope(),cache=store.client.mediaOffline
             let pending=photos ? plan.files:plan.files.filter{item in scope.map{!cache.hasFile(item,scope:$0)} ?? true}
-            transferReview=MediaTransferReview(plan:plan,photos:photos,requiredBytes:MediaStorageReview.required(pending))
+            transferReview=MediaTransferReview(plan:plan,photos:photos,requiredBytes:MediaStorageReview.required(pending),stamp:stamp)
         } catch {if let message=store.reportReadFailure(error){self.error=message}else if !Task.isCancelled {self.error="No se pudo preparar la carpeta. Actualiza Fotografía e inténtalo de nuevo."}}
     }
     private func beginUpload() {
@@ -894,6 +1001,9 @@ struct MediaGalleryView: View {
             guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
             if let previous=feed?.collectionID,previous != result.collectionID {expandedFolders=[];clearPreview()}
             feed = result; var seen = Set<String>(); items = MediaGalleryOrder.sorted(all.filter { seen.insert($0.id).inserted });thumbnailEpoch=UUID(); error = nil;mediaIsOffline=false
+            #if os(iOS)
+            selection.reconcile(result)
+            #endif
             if !result.canRead || !result.connected { items = []; expandedFolders=[];uploadComposition=nil;clearPreview(); discardStagedUploads() }
             // A live gallery does not grant unrelated financial permissions.
             // Join session revalidation before restoring write controls.
@@ -937,9 +1047,15 @@ struct MediaGalleryView: View {
     private func navigate(to id: String) {
         guard !queue.contains(where: { !completed.contains($0.id) }) else { error = "Sube o quita los archivos seleccionados antes de cambiar de carpeta."; return }
         queue = []; completed = [];uploadDestination=nil; generation = UUID(); folderID = id; loadedPages = 1; feed = nil; items = []
+        #if os(iOS)
+        selection.reset()
+        #endif
     }
     private func clearPreview() { preview?.stream?.cancel(); if let document = previewDocument { TemporaryDocuments.remove(document) }; previewDocument = nil; preview = nil;previewFeed=nil;fullscreenPhotos=nil }
     private func thumbnailDenied(_ failure:Error) {
+        #if os(iOS)
+        selection.reset(); selectionConfirmation = false; selectionDeletionTargets = []
+        #endif
         generation=UUID();loadingFolder=nil;loading=false;expandedFolders=[];openingTask?.cancel();clearPreview()
         if failure is MediaFolderRemoved || failure is MediaFileRemoved {if compactGallery {Task {await reload()}}else{navigate(to:"")};return}
         items=[];feed=nil;discardStagedUploads();uploadDestination=nil;uploadComposition=nil;error=store.reportReadFailure(failure)
@@ -1749,16 +1865,23 @@ struct DeviceMediaPhotosWriter: MediaPhotosWriting {
     func cancel() { task?.cancel() }
     func start(client: PayrollClient, plan: MediaDownloadPlan, photos: Bool, writer: any MediaPhotosWriting = DeviceMediaPhotosWriter()) {
         guard !running else { return }; running = true; completed = 0; total = plan.files.count; failures = []; message = nil
+        let stamp = try? client.mediaAccessStamp()
         task = Task {
             defer { running = false; task = nil }
+            guard !Task.isCancelled, stamp != nil, stamp == (try? client.mediaAccessStamp()) else { message = "Operación detenida. Los archivos completados se conservan."; return }
             if photos { do { try await writer.authorize() } catch { failures = [error.localizedDescription];message="No se pudo iniciar el guardado en Fotos. "+error.localizedDescription; return } }
             for item in plan.files {
                 do {
                     try Task.checkCancellation()
+                    guard stamp != nil, stamp == (try client.mediaAccessStamp()) else { throw CancellationError() }
                     if photos {
                         let document = try await client.mediaDocument(item); defer { TemporaryDocuments.remove(document) }
-                        try Task.checkCancellation(); try await writer.save(document, item: item)
+                        try Task.checkCancellation()
+                        guard stamp == (try client.mediaAccessStamp()) else { throw CancellationError() }
+                        try await writer.save(document, item: item)
                     } else { try await client.saveMediaOffline(item) }
+                    try Task.checkCancellation()
+                    guard stamp == (try client.mediaAccessStamp()) else { throw CancellationError() }
                     completed += 1
                 } catch {
                     if error is CancellationError || (error as? URLError)?.code == .cancelled { message = "Operación detenida. Los archivos completados se conservan."; return }
@@ -1776,6 +1899,8 @@ private struct MediaTransferReview: Identifiable {
     let plan: MediaDownloadPlan
     let photos: Bool
     let requiredBytes: Int64
+    var selection = false
+    var stamp: String? = nil
 }
 private struct MediaTransferReviewSheet: View {
     let review: MediaTransferReview
@@ -1790,9 +1915,11 @@ private struct MediaTransferReviewSheet: View {
                     LabeledContent("Tamaño total", value: ByteCountFormatter.string(fromByteCount: review.plan.totalBytes, countStyle: .file))
                     LabeledContent("Espacio disponible", value: ByteCountFormatter.string(fromByteCount: MediaStorageReview.freeBytes, countStyle: .file))
                     if review.requiredBytes > MediaStorageReview.freeBytes { Text("No hay espacio suficiente. Se necesitan aproximadamente " + ByteCountFormatter.string(fromByteCount: review.requiredBytes, countStyle: .file) + " libres, incluyendo los archivos temporales.").font(.footnote).foregroundStyle(.red) }
-                    Text(review.photos ? "Se agregarán a Fotos las fotos y videos de esta carpeta y sus subcarpetas. JAC pedirá permiso para agregar archivos; no leerá tu biblioteca." : "Se guardará una copia privada y cifrada de esta carpeta y sus subcarpetas para abrirlas dentro de JAC sin internet. Se elimina al cerrar sesión o al revocarse el acceso.").font(.footnote).foregroundStyle(.secondary)
+                    Text(review.selection
+                         ? (review.photos ? "Se agregarán a Fotos solo las fotos y videos seleccionados, conservando los originales. JAC pedirá permiso para agregar archivos; no leerá tu biblioteca." : "Se guardará una copia privada y cifrada solo de los archivos seleccionados para abrirlos dentro de JAC sin internet. Se elimina al cerrar sesión o al revocarse el acceso.")
+                         : (review.photos ? "Se agregarán a Fotos las fotos y videos de esta carpeta y sus subcarpetas. JAC pedirá permiso para agregar archivos; no leerá tu biblioteca." : "Se guardará una copia privada y cifrada de esta carpeta y sus subcarpetas para abrirlas dentro de JAC sin internet. Se elimina al cerrar sesión o al revocarse el acceso.")).font(.footnote).foregroundStyle(.secondary)
                 }
-                Section { Button(review.photos ? "Guardar todos en Fotos" : "Descargar carpeta completa") { begin(); dismiss() }.buttonStyle(JACPrimaryButtonStyle()).disabled(review.plan.files.isEmpty || review.requiredBytes > MediaStorageReview.freeBytes).accessibilityIdentifier("media.transfer.begin") }
+                Section { Button(review.photos ? "Guardar todos en Fotos" : review.selection ? "Descargar selección" : "Descargar carpeta completa") { begin(); dismiss() }.buttonStyle(JACPrimaryButtonStyle()).disabled(review.plan.files.isEmpty || review.requiredBytes > MediaStorageReview.freeBytes).accessibilityIdentifier("media.transfer.begin") }
                 Section("Archivos incluidos") { ForEach(review.plan.files) { file in HStack { Image(systemName: file.kind == "video" ? "video" : "photo"); Text(file.name); Spacer(); Text(file.sizeLabel).font(.caption).foregroundStyle(.secondary) } } }
             }.jacSurface().navigationTitle(review.photos ? "Guardar en Fotos" : "Disponible sin conexión").jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() } } }

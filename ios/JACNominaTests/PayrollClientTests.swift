@@ -41,6 +41,12 @@ private struct DeniedMediaPhotosWriter:MediaPhotosWriting {
     @MainActor func authorize() async throws {throw APIError.invalid("Permiso de Fotos rechazado en prueba.")}
     @MainActor func save(_ document:ExportedDocument,item:MediaItem) async throws {XCTFail("No debe guardar sin autorización")}
 }
+@MainActor private final class SelectionMediaPhotosWriter: MediaPhotosWriting {
+    var authorizeAction: (() throws -> Void)?
+    var saved: [String: Data] = [:]
+    func authorize() async throws { try authorizeAction?() }
+    func save(_ document: ExportedDocument, item: MediaItem) async throws { saved[item.id] = try Data(contentsOf: document.url) }
+}
 
 private final class MockProtocol: URLProtocol {
     static var handler: ((URLRequest) throws -> (HTTPURLResponse, Data))?
@@ -524,6 +530,150 @@ final class PayrollClientTests: XCTestCase {
         let result=try await client.deleteMediaFileStep(photo);XCTAssertEqual(result.id,photo.id);XCTAssertEqual(result.complete,true)
         XCTAssertFalse(client.mediaOffline.hasFile(photo,scope:scope));XCTAssertFalse(client.cachedMedia(folder:folder.id)?.items.contains{$0.id==photo.id} ?? true)
         XCTAssertNotNil(client.cachedWorkspace());let workspace=try await client.workspace();XCTAssertTrue(workspace.user.canReadMedia)
+    }
+    #if os(iOS)
+    @MainActor func testMediaSelectionIncludesPhotosAndVideosAcrossFoldersWithoutSelectingFolders() async throws {
+        let client = UITestBackend.client(); _ = try await client.workspace()
+        let feed = try await client.media(folder: "media-day"), model = MediaBatchSelection()
+        let photo = try XCTUnwrap(feed.items.first { $0.kind == "image" }), video = try XCTUnwrap(feed.items.first { $0.kind == "video" })
+        model.select(photo, in: feed, client: client); model.select(photo, in: feed, client: client)
+        model.toggle(video, in: feed, client: client)
+        XCTAssertTrue(model.active); XCTAssertEqual(model.items.map(\.id), [photo.id, video.id]); XCTAssertTrue(model.canDelete)
+        let folder = MediaItem(id: "folder", name: "No seleccionar", mimeType: "application/vnd.google-apps.folder", kind: "folder", size: 0, modifiedAt: "fixture", thumbnailAvailable: false)
+        model.select(folder, in: feed, client: client); XCTAssertEqual(model.count, 2)
+        model.toggle(photo, in: feed, client: client); XCTAssertEqual(model.items, [video])
+        let other = MediaItem(id: "other", name: "Otra.png", mimeType: photo.mimeType, kind: "image", size: photo.size, modifiedAt: "other-revision", thumbnailAvailable: true)
+        let otherFeed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: feed.root, folder: MediaFolder(id: "other-day", name: "Otro día"), breadcrumbs: feed.breadcrumbs, items: [other], nextPageToken: nil, collectionID: feed.collectionID, canDelete: false)
+        model.toggle(other, in: otherFeed, client: client); XCTAssertEqual(model.items.map(\.id), [video.id, other.id]); XCTAssertFalse(model.canDelete)
+        model.toggle(other, in: otherFeed, client: client); model.toggle(video, in: feed, client: client)
+        XCTAssertTrue(model.active); XCTAssertEqual(model.count, 0)
+        model.reset(); XCTAssertFalse(model.active)
+    }
+    @MainActor func testMediaSelectionPreservesUnlistedPagesAndPrunesOnlyConfirmedChanges() async throws {
+        let client = UITestBackend.client(); _ = try await client.workspace()
+        let feed = try await client.media(folder: "media-day"), model = MediaBatchSelection()
+        for item in feed.items { model.select(item, in: feed, client: client) }
+        var page = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: [], nextPageToken: "next", collectionID: feed.collectionID, canDelete: feed.canDelete)
+        model.reconcile(page); XCTAssertEqual(model.count, feed.items.count, "A missing page is not a deletion")
+        page.deletedFiles = [feed.items[0].id]; model.reconcile(page); XCTAssertEqual(model.items, Array(feed.items.dropFirst()))
+        page.deletedFolders = [try XCTUnwrap(feed.folder?.id)]; model.reconcile(page); XCTAssertEqual(model.count, 0)
+        model.select(feed.items[0], in: feed, client: client)
+        var replacement = page; replacement.collectionID = "another-collection"; model.reconcile(replacement)
+        XCTAssertFalse(model.active); XCTAssertEqual(model.count, 0)
+        model.select(feed.items[0], in: feed, client: client)
+        let old = feed.items[0], revised = MediaItem(id: old.id, name: old.name, mimeType: old.mimeType, kind: old.kind, size: old.size, modifiedAt: "new-revision", thumbnailAvailable: old.thumbnailAvailable, createdAt: old.createdAt)
+        var refreshed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: [revised], nextPageToken: nil, collectionID: feed.collectionID, canDelete: true)
+        model.reconcile(refreshed); XCTAssertEqual(model.count, 0, "A changed revision must be selected again before deletion")
+        model.select(revised, in: refreshed, client: client); XCTAssertTrue(model.canDelete)
+        refreshed.canDelete = false; model.reconcile(refreshed); XCTAssertFalse(model.canDelete)
+    }
+    @MainActor func testMediaSelectionIsRemovedOnSessionChangeAndPermissionRevocation() async throws {
+        let client = UITestBackend.client(), workspace = try await client.workspace(), feed = try await client.media(folder: "media-day"), model = MediaBatchSelection()
+        model.select(feed.items[0], in: feed, client: client)
+        var changed = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))
+        changed["user"]["isOwner"] = .bool(false); changed["user"]["administrator"] = .bool(false); changed["user"]["sections"] = .array([.string("calendar")])
+        client.rememberWorkspace(try changed.decoded(PayrollWorkspace.self)); model.synchronize(client: client)
+        XCTAssertFalse(model.active); XCTAssertEqual(model.count, 0)
+        client.rememberWorkspace(workspace); model.select(feed.items[0], in: feed, client: client)
+        try client.clearSession(); model.synchronize(client: client); XCTAssertFalse(model.active); XCTAssertEqual(model.count, 0)
+    }
+    @MainActor private func selectionDeletionFixture() async throws -> (PayrollClient, MediaFeed) {
+        let workspace = try await UITestBackend.client().workspace(), vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let cache = MediaOfflineCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let client = PayrollClient(baseURL: URL(string: "https://selection.example.invalid")!, vault: vault, configuration: config, mediaOffline: cache, automaticallyDownloadOffline: false)
+        client.rememberWorkspace(workspace)
+        let folder = MediaFolder(id: "r2_day", name: "Selección ficticia")
+        let items = ["image", "video", "image"].enumerated().map { index, kind in MediaItem(id: "r2_file_\(index)", name: "Archivo \(index)", mimeType: kind == "image" ? "image/png" : "video/quicktime", kind: kind, size: 100, modifiedAt: "revision-\(index)", thumbnailAvailable: true) }
+        let feed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: folder, folder: folder, breadcrumbs: [folder], items: items, nextPageToken: nil, provider: "r2", collectionID: "jac-r2-selection", canDelete: true)
+        try cache.saveFeed(feed, key: folder.id, append: false, scope: XCTUnwrap(client.mediaScope()))
+        return (client, feed)
+    }
+    @MainActor func testMediaBatchDeletionRetriesTheSameRevisionAndKeepsUnselectedFiles() async throws {
+        let (client, feed) = try await selectionDeletionFixture(), model = MediaBatchSelection()
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        let targets = Array(feed.items.prefix(2)); for item in targets { model.select(item, in: feed, client: client) }
+        var calls: [String] = []
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "selection.example.invalid"); XCTAssertEqual(request.url?.path, "/api/media"); XCTAssertEqual(request.httpMethod, "POST")
+            let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request)), id = body["id"].text
+            XCTAssertEqual(body["action"].text, "deleteFile"); XCTAssertEqual(body["revision"].text, targets.first { $0.id == id }?.modifiedAt)
+            calls.append(id)
+            let result = MediaFolderDeletion(id: id, parentId: feed.folder!.id, name: id, removed: 1, complete: calls.count != 1, waiting: false)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(result))
+        }
+        model.delete(targets, client: client) { XCTFail("Unexpected denial: \($0)") }
+        for _ in 0..<400 where model.deleting { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.deleting); XCTAssertEqual(model.completed, 2); XCTAssertTrue(model.failures.isEmpty)
+        XCTAssertEqual(calls, [targets[0].id, targets[0].id, targets[1].id]); XCTAssertEqual(model.count, 0)
+        XCTAssertEqual(client.cachedMedia(folder: feed.folder!.id)?.items, [feed.items[2]])
+        model.synchronize(client: client); XCTAssertTrue(model.active, "Own deletions may advance the cache stamp without invalidating the batch")
+    }
+    @MainActor func testMediaBatchDeletionReportsConflictAndKeepsThatFileSelected() async throws {
+        let (client, feed) = try await selectionDeletionFixture(), model = MediaBatchSelection()
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        let targets = Array(feed.items.prefix(2)); for item in targets { model.select(item, in: feed, client: client) }
+        MockProtocol.handler = { request in
+            let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request)), id = body["id"].text
+            let conflict = id == targets[0].id
+            let data = conflict ? Data("{\"error\":\"El archivo cambió\"}".utf8) : try JSONEncoder().encode(MediaFolderDeletion(id: id, parentId: feed.folder!.id, name: id, removed: 1, complete: true))
+            return (HTTPURLResponse(url: request.url!, statusCode: conflict ? 409 : 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, data)
+        }
+        model.delete(targets, client: client) { XCTFail("Unexpected denial: \($0)") }
+        for _ in 0..<400 where model.deleting { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.deleting); XCTAssertEqual(model.completed, 1); XCTAssertEqual(model.failures.count, 1)
+        XCTAssertEqual(model.items, [targets[0]]); XCTAssertEqual(model.message, "1 de 2 archivos eliminados.")
+    }
+    @MainActor func testMediaBatchDeletionStopsImmediatelyWhenAuthorizationIsRevoked() async throws {
+        let (client, feed) = try await selectionDeletionFixture(), model = MediaBatchSelection()
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        for item in feed.items { model.select(item, in: feed, client: client) }
+        var calls = 0, denials = 0
+        MockProtocol.handler = { request in calls += 1; return (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Acceso retirado\"}".utf8)) }
+        model.delete(model.items, client: client) { _ in denials += 1 }
+        for _ in 0..<400 where model.deleting { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertEqual(calls, 1); XCTAssertEqual(denials, 1); XCTAssertFalse(model.active); XCTAssertEqual(model.count, 0)
+    }
+    @MainActor func testMediaBatchCancellationStopsPendingRetriesAndProtectsANewSelection() async throws {
+        let (client, feed) = try await selectionDeletionFixture(), model = MediaBatchSelection()
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        for item in feed.items.prefix(2) { model.select(item, in: feed, client: client) }
+        var calls = 0
+        MockProtocol.handler = { request in
+            calls += 1
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(MediaFolderDeletion(id: feed.items[0].id, parentId: feed.folder!.id, name: "Pendiente", removed: 0, complete: false, waiting: true)))
+        }
+        model.delete(model.items, client: client) { XCTFail("Unexpected denial: \($0)") }
+        for _ in 0..<200 where calls == 0 { try await Task.sleep(for: .milliseconds(10)) }
+        model.reset(); model.select(feed.items[2], in: feed, client: client)
+        try await Task.sleep(for: .milliseconds(50))
+        XCTAssertEqual(calls, 1); XCTAssertFalse(model.deleting); XCTAssertEqual(model.items, [feed.items[2]]); XCTAssertNil(model.message)
+    }
+    @MainActor func testSelectedPhotoAndVideoDownloadsKeepTheirOriginalBytesAndExcludeOtherItems() async throws {
+        let client = UITestBackend.client(); _ = try await client.workspace()
+        let feed = try await client.media(folder: "media-day"), model = MediaBatchSelection(), writer = SelectionMediaPhotosWriter(), transfer = MediaFolderTransfer()
+        for item in feed.items { model.select(item, in: feed, client: client) }
+        let plan = MediaDownloadPlan(folder: feed.folder!, files: model.items)
+        transfer.start(client: client, plan: plan, photos: true, writer: writer)
+        for _ in 0..<400 where transfer.running { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(transfer.running); XCTAssertTrue(transfer.failures.isEmpty); XCTAssertEqual(transfer.completed, 2)
+        XCTAssertEqual(writer.saved["media-photo"], MediaFixture.photo); XCTAssertEqual(writer.saved["media-video"], MediaFixture.video)
+        model.toggle(feed.items.first { $0.kind == "image" }!, in: feed, client: client)
+        transfer.start(client: client, plan: MediaDownloadPlan(folder: feed.folder!, files: model.items), photos: false)
+        for _ in 0..<400 where transfer.running { try await Task.sleep(for: .milliseconds(10)) }
+        let scope = try XCTUnwrap(client.mediaScope())
+        XCTAssertEqual(transfer.completed, 1); XCTAssertTrue(client.mediaOffline.isPinned(feed.items.first { $0.kind == "video" }!, scope: scope))
+        XCTAssertFalse(client.mediaOffline.isPinned(feed.items.first { $0.kind == "image" }!, scope: scope))
+    }
+    #endif
+    @MainActor func testBulkPhotoExportStopsIfSessionChangesWhilePhotosPermissionIsPending() async throws {
+        let client = UITestBackend.client(); _ = try await client.workspace()
+        let feed = try await client.media(folder: "media-day"), writer = SelectionMediaPhotosWriter(), transfer = MediaFolderTransfer()
+        writer.authorizeAction = { try client.clearSession() }
+        transfer.start(client: client, plan: MediaDownloadPlan(folder: feed.folder!, files: feed.items), photos: true, writer: writer)
+        for _ in 0..<400 where transfer.running { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(transfer.running); XCTAssertEqual(transfer.completed, 0); XCTAssertTrue(writer.saved.isEmpty)
+        XCTAssertEqual(transfer.message, "Operación detenida. Los archivos completados se conservan.")
     }
     @MainActor func testNativeFolderDeletionUsesJACAndKeepsSessionAndOtherModules() async throws {
         let client=UITestBackend.client();_ = try await client.workspace();let root=try await client.media(),folder=try XCTUnwrap(root.items.first{$0.kind=="folder"});_ = try await client.media(folder:folder.id)
