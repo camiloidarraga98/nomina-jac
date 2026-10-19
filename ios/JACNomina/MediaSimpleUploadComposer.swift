@@ -65,10 +65,19 @@ enum MediaVideoPreparation {
         let composition = AVMutableVideoComposition()
         composition.renderSize = renderSize
         let sourceRate = try await video.load(.nominalFrameRate)
-        let minimumFrameDuration = try await video.load(.minFrameDuration).seconds
+        let minimumFrameTime = try await video.load(.minFrameDuration)
+        let minimumFrameDuration = minimumFrameTime.seconds
         let rate = sourceRate.isFinite && sourceRate > 0 ? Double(sourceRate) :
             (minimumFrameDuration.isFinite && minimumFrameDuration > 0 ? 1 / minimumFrameDuration : 30)
-        composition.frameDuration = CMTime(seconds: 1 / rate, preferredTimescale: 60000)
+        // Nominal FPS is an average (and may be slightly above 60 for a short
+        // clip). Preserve the source's exact frame clock when it agrees, so a
+        // fractional rounding does not repeat/drop a frame during composition.
+        if minimumFrameDuration.isFinite, minimumFrameDuration > 0,
+           abs(1 / minimumFrameDuration - rate) <= max(0.1, rate * 0.01) {
+            composition.frameDuration = minimumFrameTime
+        } else {
+            composition.frameDuration = CMTime(seconds: 1 / rate, preferredTimescale: 60000)
+        }
         composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
         composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
         composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2

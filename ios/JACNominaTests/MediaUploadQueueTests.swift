@@ -259,6 +259,8 @@ final class MediaVideoPreparationTests: XCTestCase {
         let source = try MediaLocalFile.stage(url, quality: .original); defer { source.remove() }
         let sourceTracks = try await AVURLAsset(url: source.url).loadTracks(withMediaType: .video)
         let sourceRate = try await XCTUnwrap(sourceTracks.first).load(.nominalFrameRate)
+        let sourceFrameTime = try await XCTUnwrap(sourceTracks.first).load(.minFrameDuration)
+        print("JAC video source: \(sourceRate) fps, exact frame time \(sourceFrameTime.value)/\(sourceFrameTime.timescale)")
         XCTAssertEqual(sourceRate, 60, accuracy: 0.1, "La fuente de la comparación debe tener los 60 fotogramas por segundo")
         let result = try await MediaVideoPreparation.prepare(source); defer { result.file.remove() }
         let original = AVURLAsset(url: source.url), compressed = AVURLAsset(url: result.file.url)
@@ -273,7 +275,9 @@ final class MediaVideoPreparationTests: XCTestCase {
         XCTAssertGreaterThan(ratio, 0.5)
         XCTAssertLessThan(ratio, 0.85)
         for frame in [12, 30, 48] {
-            XCTAssertGreaterThan(try framePSNR(original, compressed, at: CMTime(value: Int64(frame), timescale: 60)), 34)
+            let detail = try framePSNR(original, compressed, at: CMTime(value: Int64(frame), timescale: 60))
+            print("JAC video frame \(frame): \(detail) dB")
+            XCTAssertGreaterThan(detail, 34)
         }
         print("JAC video fixture: \(source.size) → \(result.file.size) bytes; \(Int((1 - ratio) * 100))% less, 1600×900, 60 fps")
     }
