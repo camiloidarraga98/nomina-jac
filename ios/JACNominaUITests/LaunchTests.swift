@@ -323,7 +323,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20));XCTAssertTrue(hasSection(app, "Agenda"))
         for title in ["Quincena","Itinerarios","Fotografía","Mi cuenta","Alertas"] {XCTAssertFalse(hasSection(app, title))}
         app.terminate();app.launchArguments=["--uitest-payroll","--uitest-sections=alerts"];app.launch()
-        XCTAssertTrue(hasSection(app, "Alertas", timeout: 20));XCTAssertTrue(app.staticTexts["Lo importante, cerca."].waitForExistence(timeout:15))
+        XCTAssertTrue(hasSection(app, "Alertas", timeout: 20));XCTAssertTrue(app.staticTexts["Avisos del equipo"].waitForExistence(timeout:15))
         for title in ["Quincena","Agenda","Itinerarios","Fotografía"] {XCTAssertFalse(hasSection(app, title))}
         openSection(app, "Gestión");XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.media"].exists)
         attachScreen(app,name:"solo-alertas-sin-modulos-adicionales")

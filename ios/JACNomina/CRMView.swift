@@ -49,11 +49,10 @@ struct CRMHomeView:View {
               else { List {
                 if let error { InlineError(message:error) }
                 Section {
-                    JACFeatureBanner(eyebrow:"JAC · CRM",title:"El show empieza aquí.",subtitle:"Ventas, abonos y preparación de cada fecha.",symbol:"briefcase",tone:.violet)
                     ViewThatFits(in:.horizontal) {
                         HStack(spacing:12) { quickPayment; moreActions }
                         VStack(spacing:12) { quickPayment; moreActions }
-                    }.padding(.top,5)
+                    }
                 }.jacStandaloneRow()
                 sectionPicker
                 if section == "shows" { showList }

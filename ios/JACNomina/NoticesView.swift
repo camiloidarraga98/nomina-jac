@@ -100,13 +100,10 @@ struct NoticesView: View {
                     }.buttonStyle(.plain).accessibilityIdentifier("boarding.open")
                 }.jacStandaloneRow()
             }
-            if effectiveKind == "alert" {
+            if effectiveKind == "alert" && user.isOwner {
                 Section {
-                    JACFeatureBanner(eyebrow:"JAC · Equipo",title:"Lo importante, cerca.",subtitle:"Avisos y documentos para estar al tanto.",symbol:"bell.badge",tone:.amber)
-                    if user.isOwner {
-                        Button { editor = true } label: { Label("Crear alerta o itinerario",systemImage:"plus").frame(maxWidth:.infinity) }
-                            .buttonStyle(JACPrimaryButtonStyle()).accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil || store.isOffline).padding(.top,5)
-                    }
+                    Button { editor = true } label: { Label("Crear alerta o itinerario",systemImage:"plus").frame(maxWidth:.infinity) }
+                        .buttonStyle(JACPrimaryButtonStyle()).accessibilityLabel("Crear alerta").accessibilityIdentifier("notices.create").disabled(feed == nil || store.isOffline)
                 }.jacStandaloneRow()
             }
             if effectiveKind == "boarding_pass" {

@@ -290,16 +290,18 @@ struct PeriodsView: View {
     private var content: some View {
             List {
                 OperationStatusSection()
-                Section {
-                    JACFeatureBanner(eyebrow: archive ? "JAC · Archivo" : "JAC · Nómina", title: archive ? "Cada cierre, a mano." : "Tu equipo. Todo al día.", subtitle: archive ? "Consulta tus quincenas y documentos conservados." : "\(overview.periods.filter { !$0.isClosed }.count) en preparación · \(overview.periods.filter(\.isClosed).count) cerradas", symbol: archive ? "archivebox" : "wallet.pass")
-                    if !archive && overview.user.can("payroll") {
+                if archive {
+                    Section {
+                        JACFeatureBanner(eyebrow: "JAC · Archivo", title: "Cada cierre, a mano.", subtitle: "Consulta tus quincenas y documentos conservados.", symbol: "archivebox")
+                    }.jacStandaloneRow()
+                } else if overview.user.can("payroll") {
+                    Section {
                         Button {
                             if let w = store.workspace { editor = PayrollEditorSession(kind: .period, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.period, workspace: w)) }
                         } label: { Label("Nueva quincena", systemImage: "plus").frame(maxWidth: .infinity) }
                             .buttonStyle(JACPrimaryButtonStyle()).accessibilityLabel("Crear quincena").accessibilityIdentifier("period.create").disabled(!store.canWrite)
-                            .padding(.top, 5)
-                    }
-                }.jacStandaloneRow()
+                    }.jacStandaloneRow()
+                }
                 if periods.isEmpty {
                     ContentUnavailableView(search.isEmpty ? (archive ? "Archivo vacío" : "Sin quincenas") : "Sin resultados", systemImage: archive ? "archivebox" : "calendar", description: Text(archive ? "Consulta los cierres y sus documentos." : "Crea una quincena para comenzar."))
                 }

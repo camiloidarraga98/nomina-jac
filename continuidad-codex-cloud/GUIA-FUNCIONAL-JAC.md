@@ -292,3 +292,5 @@ Música es un módulo propio de web/iPhone/iPad/Mac, con cuatro secciones tipo p
 ## Navegación iPhone y subida de Música · 19 octubre de 2026
 
 El iPhone sustituye la barra inferior por un menú lateral desde el botón superior izquierdo, disponible dentro de los módulos. El panel entra físicamente desde la izquierda y desplaza la pantalla completa hacia la derecha, sin fade ni velo oscuro; conserva su ancho y estado. Incluye Música y cada sección permitida, conserva estado y reproducción; Mi cuenta sigue en Gestión. iPad/Mac mantienen su distribución. Ver [menú iPhone](../docs/IPHONE_SIDEBAR.md). La subida web de Música muestra destino, archivos/estados, barra general por bytes y confirmación final; reintenta solo pendientes. Ver [Música](../docs/MUSIC.md).
+
+Camilo pidió retirar los banners decorativos de CRM («El show empieza aquí»), Quincena y Alertas. Las vistas nativas compartidas por iPhone/iPad/Mac empiezan directamente con sus acciones y listas, sin reservar espacio para el banner. Conservar los títulos de navegación, búsquedas, botones y permisos; Archivo y las demás secciones mantienen sus encabezados.
