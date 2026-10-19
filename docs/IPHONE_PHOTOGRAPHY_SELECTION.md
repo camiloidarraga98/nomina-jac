@@ -30,4 +30,14 @@ El borrado usa `deleteMediaFileStep` y la API `deleteFile` existente, un archivo
 
 **Dependencia de producción pendiente:** una lectura del código del Worker publicado confirmó que todavía no contiene `deleteFile` ni `r2-delete-file`, incorporados en la fuente `27ba386`. El build Cloudflare verificado incluye esa API y conserva DB/BUCKET/secretos con `--keep-vars`. El intento de publicarlo fue bloqueado por la revisión automática, que exige autorización expresa del usuario para el despliegue del servidor. No se ejecutó el despliegue, no se cambiaron datos de producción y no se debe afirmar que el borrado ya funciona en el servidor publicado. Guardar en Fotos/offline reutiliza las API de descarga existentes.
 
-Actualizar las fuentes con `git pull --ff-only` en el mismo proyecto del Mac y usar **JACNomina → iPhone → Run**. La fuente nueva no instala por sí misma un binario ni publica la API pendiente.
+**Entrega de la fuente:** rama privada `codex/iphone-media-selection`; implementación inicial `93fbf07`. La revisión automática también rechazó incorporar esta fuente a `main` mientras la compilación y las pruebas Xcode estén pendientes, pese a la autorización general de commits/pushes. Se conservó en su rama de trabajo como alternativa de menor alcance; `main` permanece sin este cambio hasta que el usuario autorice expresamente incorporarlo o se complete la verificación Apple.
+
+Para probar desde esa rama, en la misma carpeta del Mac:
+
+```sh
+git status --short
+git fetch origin
+git switch codex/iphone-media-selection
+```
+
+Conservar y conciliar cualquier cambio personal si Git advierte un conflicto; no usar reset/checkout forzados ni retirar la firma. Abrir el mismo proyecto y usar **JACNomina → iPhone → Run**. Un `git pull` de `main` todavía no trae esta modificación. La fuente nueva no instala por sí misma un binario ni publica la API pendiente.

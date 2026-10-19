@@ -516,9 +516,7 @@ struct MediaGalleryView: View {
                 if compactGallery {
                     HStack {
                         ConnectionStatusIcon(); Spacer()
-                        if selection.active {
-                            Button("Cancelar selección") { selection.reset() }.disabled(selectionBusy).accessibilityIdentifier("media.selection.cancel")
-                        } else if user.canUploadMedia {
+                        if !selection.active && user.canUploadMedia {
                             Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(!writable || uploading || !queue.isEmpty).accessibilityIdentifier("media.add")
                         }
                     }
@@ -706,6 +704,9 @@ struct MediaGalleryView: View {
                             .accessibilityLabel("Eliminar selección").accessibilityIdentifier("media.selection.delete")
                     }
                 }
+                Button { selection.reset() } label: { Image(systemName: "xmark.circle").frame(width: 36, height: 36) }
+                    .buttonStyle(.plain).disabled(selectionBusy)
+                    .accessibilityLabel("Cancelar selección").accessibilityIdentifier("media.selection.cancel")
             }
             if selection.deleting {
                 ProgressView(value: Double(selection.completed), total: Double(max(1, selection.total)))
