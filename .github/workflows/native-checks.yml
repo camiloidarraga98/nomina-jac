@@ -1,15 +1,11 @@
 name: JAC Apple checks
 
+# One final metadata-only run cancels the old workflow through its concurrency
+# group. The job is skipped: no runner starts and no tests or builds run.
 on:
   push:
     branches:
-      - main
-      - codex/**
-    paths:
-      - ios/**
-      - macos/**
-      - .github/workflows/native-checks.yml
-  workflow_dispatch:
+      - codex/iphone-media-selection
 
 permissions:
   contents: read
@@ -19,98 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  iphone:
-    runs-on: macos-15
-    timeout-minutes: 35
+  stopped:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-        with:
-          persist-credentials: false
-      - name: Record Xcode and select a fresh iPhone simulator
-        shell: bash
-        run: |
-          set -euo pipefail
-          mkdir -p native-ci
-          xcodebuild -version | tee native-ci/xcode-version.log
-          python3 - <<'PY'
-          import json, os, re, subprocess
-          devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
-          for runtime in sorted(devices, key=lambda name: tuple(map(int, re.findall(r'\d+', name))), reverse=True):
-              if '.iOS-' not in runtime:
-                  continue
-              candidates = [device for device in devices[runtime] if device['name'].startswith('iPhone') and device.get('deviceTypeIdentifier')]
-              if candidates:
-                  device = candidates[0]
-                  simulator = subprocess.check_output(['xcrun', 'simctl', 'create', 'JAC CI', device['deviceTypeIdentifier'], runtime], text=True).strip()
-                  with open(os.environ['GITHUB_ENV'], 'a') as output:
-                      output.write('JAC_CI_SIMULATOR_ID=' + simulator + '\n')
-                  break
-          else:
-              raise SystemExit('No available iPhone simulator runtime was found.')
-          PY
-      - name: Build Release for iPhone without a distribution certificate
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
-            -configuration Release -destination 'generic/platform=iOS' \
-            -derivedDataPath native-ci/device CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
-            build 2>&1 | tee native-ci/iphone-release.log
-      - name: Test iPhone units and the three media selection flows
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
-            -destination "platform=iOS Simulator,id=$JAC_CI_SIMULATOR_ID" \
-            -derivedDataPath native-ci/simulator -resultBundlePath native-ci/iphone.xcresult \
-            -parallel-testing-enabled NO \
-            -only-testing:JACNominaTests \
-            -only-testing:JACNominaUITests/LaunchTests/testLongPressSelectsMixedMediaAndCancelRestoresThePhotoViewer \
-            -only-testing:JACNominaUITests/LaunchTests/testSelectedPhotosAndVideosDownloadOnlyThatGroupToPhotosAndOffline \
-            -only-testing:JACNominaUITests/LaunchTests/testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo \
-            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
-            test 2>&1 | tee native-ci/iphone-tests.log
-      - name: Build the Mac app that shares the modified sources
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -project macos/JACMac.xcodeproj -scheme JACMac \
-            -configuration Release -destination 'generic/platform=macOS' \
-            -derivedDataPath native-ci/mac CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
-            build 2>&1 | tee native-ci/mac-release.log
-      - name: Export compact test diagnostics
-        if: always()
-        shell: bash
-        run: |
-          if [ -d native-ci/iphone.xcresult ]; then
-            xcrun xcresulttool get test-results summary --path native-ci/iphone.xcresult > native-ci/test-summary.json || true
-            xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
-          fi
-      - name: Save compact diagnostics separately
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: JAC-Apple-Diagnostics-${{ github.sha }}
-          retention-days: 7
-          path: |
-            native-ci/*.log
-            native-ci/*.json
-            native-ci/attachments/**/*.png
-      - name: Save test results and build logs
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: JAC-Apple-${{ github.sha }}
-          retention-days: 7
-          path: |
-            native-ci/*.log
-            native-ci/*.xcresult
-      - name: Remove the disposable simulator
-        if: always()
-        shell: bash
-        run: |
-          if [ -n "${JAC_CI_SIMULATOR_ID:-}" ]; then
-            xcrun simctl shutdown "$JAC_CI_SIMULATOR_ID" || true
-            xcrun simctl delete "$JAC_CI_SIMULATOR_ID"
-          fi
+      - run: echo 'Apple checks stopped at the user request.'
