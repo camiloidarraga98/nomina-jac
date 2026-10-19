@@ -8,7 +8,7 @@ Camilo reportó tirones al abrir y desplazar una carpeta. Se encontraron rutas c
 - La comprobación de si una foto está guardada offline también lee el índice cifrado en una tarea de utilidad, con cancelación y sello de sesión, para no bloquear la aparición de cada menú durante el scroll.
 - Decodificación ImageIO a360píxeles y caché inmediata de píxeles en una tarea detached de utilidad; se instala la imagen al regresar a la interfaz y revalidar sesión/cancelación.
 - Hasta cuatro peticiones/decodificaciones simultáneas. Una celda retirada cancela su petición o espera pendiente y libera su turno; no se deja una cola de descargas de celdas ya retiradas.
-- Caché de imágenes decodificadas solo en memoria: máximo96 entradas/12MiB, vencimiento de30segundos. La clave incluye cliente, sello de sesión/permisos, época de actualización e ID/revisión/tamaño del archivo. Una nueva revisión o actualización requiere volver a autorizar su miniatura. NSCache permite retirar memoria bajo presión.
+- Caché de imágenes decodificadas solo en memoria: límites configurados de96 entradas/12MiB, vencimiento de30segundos. La clave incluye cliente, sello de sesión/permisos, época de actualización e ID/revisión/tamaño del archivo. Una nueva revisión o actualización requiere volver a autorizar su miniatura. NSCache permite retirar memoria bajo presión.
 - Se comprueba autorización antes de reutilizar y antes de instalar. 401/403 vacían la caché; no hay fallback ante una denegación ni inserción tardía después de invalidación. La tarea de celda conserva su borrado de imagen local al desaparecer.
 
 El endpoint autenticado, límite de512KiB y tamaño máximo de visualización siguen vigentes. Nunca se usan los originales para poblar la cuadrícula. La caché no da acceso offline nuevo, no sustituye la copia cifrada y no cambia permisos, borrados ni revisiones.
@@ -18,3 +18,9 @@ El endpoint autenticado, límite de512KiB y tamaño máximo de visualización si
 Pruebas de reutilización/cambio de revisión, concurrencia limitada, cancelación de celdas pendientes y revocación de imágenes guardadas/tardías. Se conserva la prueba del endpoint exclusivo de miniaturas y sus límites. La UI usa una carpeta ficticia de80fotos para bajar/subir y seleccionar/cancelar después. Se comprueban junto a los cambios de compresión y su cola, una sola ronda al finalizar. Mac se compila por el archivo compartido; no hay suites web/financieras ni datos reales.
 
 El recorrido de simulador comprueba comportamiento y las unitarias prueban que se evita trabajo repetido. No constituye una medición de fluidez en el iPhone físico: Camilo debe comprobar el scroll de sus carpetas tras pull/Run. El resultado online se registra al cierre.
+
+## Resultado final comprobado
+
+[Ejecución39202395410](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39202395410), fuente `1735e0268d3f772d08efba7897755cf4cb089b72`:23 unitarias y tres UI aprobadas, sin fallos ni pruebas omitidas, más compilación Release Mac correcta. Las cuatro pruebas del cargador verificaron reutilización por revisión, concurrencia limitada, cancelación de espera y revocación de datos guardados/tardíos. La prueba existente confirmó endpoint autenticado exclusivo de miniaturas y sus límites. El recorrido de80fotos completó scroll de ida/vuelta y selección/cancelación; también pasaron revisión de video y continuidad de la cola al ir a Home.
+
+Comprobación única al finalizar ambos cambios, sin repetir suites válidas. El registro documental posterior conserva esas fuentes comprobadas. La mejora aborda las rutas de trabajo identificadas; la fluidez/fps de las carpetas reales debe comprobarse en el iPhone tras pull/Run. Team AYHVYN8BJF conservado.

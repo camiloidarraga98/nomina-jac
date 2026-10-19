@@ -23,3 +23,9 @@ La entrega agrupa la compresión y la mejora del scroll. La ronda final dirigida
 La primera versión opcional tuvo16 unitarias aprobadas en39191316820 y la UI corregida aprobó en39192378915. Esos resultados describen el comportamiento anterior y no verifican por sí mismos esta nueva política obligatoria. El resultado nuevo se registra al cerrar la entrega. La conversión de material real y la calidad visual requieren revisión en el iPhone físico.
 
 Mismo proyecto Xcode y Team AYHVYN8BJF: actualizar main mediante pull y Run, sin reinstalar desde otro proyecto ni cambiar firma, bundles, entitlements o pushNO.
+
+## Resultado final comprobado
+
+[Ejecución39202395410](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39202395410), fuente `1735e0268d3f772d08efba7897755cf4cb089b72`: iPhone y Release Mac correctos. Pasaron23 unitarias y tres UI, cero fallos y ninguna prueba omitida. Las seis de preparación incluyen un fixture HEVC Main10/HLG generado localmente: se confirmó que la fuente tiene HDR y que la copia final es H.264 SDR, sin volver al original. Se verificaron también audio/orientación/duración, fotos intactas, videos pequeños recomprimidos, cancelación y rechazo del video sin preparar en la cola.
+
+Las tres UI aprobaron revisión/cancelación de video, scroll de80fotos con selección funcional y subida de foto/video MP4 que continúa después de salir/Home. El segundo Release iPhone quedó omitido; no hubo suites web/financieras ni repeticiones de la ronda. El cambio documental posterior mantiene las mismas entradas nativas/workflow comprobadas y no inicia otra ejecución. No se usaron videos/fototecas reales ni se instaló en un teléfono físico desde CI.
