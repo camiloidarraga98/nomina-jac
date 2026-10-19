@@ -28,6 +28,12 @@ El informe indica Xcode16.4 y un simulador iPhone17Pro/iOS26.2. Las salidas de d
 
 La ejecución39184981303, fuente `022bfd024f07df7fbc68145f6da69eb097b98084`, aprobó las156 unitarias aplicables (una comprobación física omitida), el recorrido de selección/cancelación/visor y el de cancelación/borrado administrativo conservando el resto. El único fallo restante fue la pulsación de Descargar: iOS expone su Menu como un contenedor Button alrededor del botón nativo. La prueba ahora elige el control nativo cuando el contenedor no es pulsable y conserva las comprobaciones de existencia/hittability. No se cambia la descarga, el producto ni los permisos por esta adaptación de la prueba. Se repite la verificación online del recorrido de descarga.
 
+## Botón de descarga y jobs paralelos
+
+La ejecución39185991596 volvió a aprobar las unitarias y los recorridos de selección/borrado, pero confirmó que tampoco el botón interno del Menu era pulsable en la prueba de iOS26. Se sustituye ese Menu de la barra por un Button normal con una zona mínima de44pt y un confirmationDialog que conserva Guardar en Fotos y Guardar sin conexión. Se retira el helper experimental de la prueba: el recorrido vuelve a exigir la pulsación normal de cada botón. El diálogo se cierra al cambiar ámbito/colección o salir; las transferencias, revisiones y permisos se conservan.
+
+La CI separa ahora tres jobs independientes: pruebas iPhone con simulador, Release iPhone y Release Mac. Todos usan macos-15 estándar y la misma guarda de repositorio público. Ejecutarlos en paralelo reduce la espera sin omitir compilaciones ni pruebas. Los logs Release se guardan en artefactos propios; el resumen de pruebas y xcresult siguen en los artefactos de diagnóstico/iPhone.
+
 ## Pendiente
 
 Comprobar la ejecución online ya iniciada, corregir cualquier fallo y registrar la fuente/resultados finales. La instalación física sigue en el mismo proyecto Xcode del Mac de Camilo. No repetir el despliegue web/API, que ya quedó activo antes de este cambio de flujo.

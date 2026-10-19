@@ -470,6 +470,7 @@ struct MediaGalleryView: View {
     @State private var importTask: Task<Void, Never>?
     #if os(iOS)
     @StateObject private var selection = MediaBatchSelection()
+    @State private var selectionDownloadChoices = false
     @State private var selectionConfirmation = false
     @State private var selectionDeletionTargets: [MediaItem] = []
     @ObservedObject private var persistentUploads = MediaUploadQueue.shared
@@ -586,10 +587,19 @@ struct MediaGalleryView: View {
             .safeAreaInset(edge: .bottom) { if compactGallery && selection.active { selectionActions } }
             .onChange(of: try? store.client.mediaAccessStamp()) { _, _ in
                 selection.synchronize(client: store.client)
+                selectionDownloadChoices = false
                 folderTransfer.cancel(); transferReview = nil; confirmedTransfer = nil
             }
             .onChange(of: feed?.collectionID) { _, _ in
+                selectionDownloadChoices = false
                 folderTransfer.cancel(); transferReview = nil; confirmedTransfer = nil
+            }
+            .confirmationDialog("Descargar selección", isPresented: $selectionDownloadChoices, titleVisibility: .visible) {
+                Button("Guardar en Fotos") { prepareSelectionTransfer(photos: true) }
+                    .accessibilityIdentifier("media.selection.savePhotos")
+                Button("Guardar sin conexión") { prepareSelectionTransfer(photos: false) }
+                    .accessibilityIdentifier("media.selection.offline")
+                Button("Cancelar", role: .cancel) {}
             }
             .alert("Eliminar selección", isPresented: $selectionConfirmation) {
                 Button("Cancelar", role: .cancel) { selectionDeletionTargets = [] }
@@ -674,7 +684,7 @@ struct MediaGalleryView: View {
                 #endif
                 if fullscreenPhotos == nil || store.overview?.user.id != user.id {
                     #if os(iOS)
-                    selection.reset(); selectionConfirmation = false; selectionDeletionTargets = []
+                    selection.reset(); selectionDownloadChoices = false; selectionConfirmation = false; selectionDeletionTargets = []
                     #endif
                     deletionTask?.cancel()
                     #if os(macOS)
@@ -698,10 +708,9 @@ struct MediaGalleryView: View {
                 } else if folderTransfer.running {
                     Button("Detener") { folderTransfer.cancel() }.accessibilityIdentifier("media.selection.stop")
                 } else {
-                    Menu {
-                        Button { prepareSelectionTransfer(photos: true) } label: { Label("Guardar en Fotos", systemImage: "square.and.arrow.down") }.accessibilityIdentifier("media.selection.savePhotos")
-                        Button { prepareSelectionTransfer(photos: false) } label: { Label("Guardar sin conexión", systemImage: "arrow.down.circle") }.accessibilityIdentifier("media.selection.offline")
-                    } label: { Label("Descargar", systemImage: "square.and.arrow.down") }
+                    Button { selectionDownloadChoices = true } label: {
+                        Label("Descargar", systemImage: "square.and.arrow.down").frame(minHeight: 44).contentShape(Rectangle())
+                    }
                         .disabled(selection.count == 0 || selectionBusy || deleting).accessibilityIdentifier("media.selection.download")
                     if store.overview?.user.canDeleteMedia == true && selection.canDelete {
                         Button(role: .destructive) {

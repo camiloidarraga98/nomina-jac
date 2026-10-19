@@ -24,7 +24,7 @@ jobs:
     # Public standard runners are free; never use the exhausted private quota.
     if: ${{ github.event.repository.private == false }}
     runs-on: macos-15
-    timeout-minutes: 35
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
         with:
@@ -51,14 +51,6 @@ jobs:
           else:
               raise SystemExit('No available iPhone simulator runtime was found.')
           PY
-      - name: Build Release for iPhone without a distribution certificate
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
-            -configuration Release -destination 'generic/platform=iOS' \
-            -derivedDataPath native-ci/device CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
-            build 2>&1 | tee native-ci/iphone-release.log
       - name: Test iPhone units and the three media selection flows
         shell: bash
         run: |
@@ -91,15 +83,6 @@ jobs:
             native-ci/*.log
             native-ci/*.json
             native-ci/attachments/**/*.png
-      - name: Build the Mac app that shares the modified sources
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -project macos/JACMac.xcodeproj -scheme JACMac \
-            -configuration Release -destination 'generic/platform=macOS' \
-            -derivedDataPath native-ci/mac CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
-            build 2>&1 | tee native-ci/mac-release.log
       - name: Save test results and build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -117,3 +100,55 @@ jobs:
             xcrun simctl shutdown "$JAC_CI_SIMULATOR_ID" || true
             xcrun simctl delete "$JAC_CI_SIMULATOR_ID"
           fi
+
+  iphone_release:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build Release for iPhone without a distribution certificate
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native-ci
+          xcodebuild -version | tee native-ci/xcode-version.log
+          xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
+            -configuration Release -destination 'generic/platform=iOS' \
+            -derivedDataPath native-ci/device CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
+            build 2>&1 | tee native-ci/iphone-release.log
+      - name: Save Release build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JAC-iPhone-Release-${{ github.sha }}
+          retention-days: 7
+          path: native-ci/*.log
+
+  mac:
+    if: ${{ github.event.repository.private == false }}
+    runs-on: macos-15
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the Mac app that shares the modified sources
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native-ci
+          xcodebuild -version | tee native-ci/xcode-version.log
+          xcodebuild -project macos/JACMac.xcodeproj -scheme JACMac \
+            -configuration Release -destination 'generic/platform=macOS' \
+            -derivedDataPath native-ci/mac CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
+            build 2>&1 | tee native-ci/mac-release.log
+      - name: Save Release build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JAC-Mac-Release-${{ github.sha }}
+          retention-days: 7
+          path: native-ci/*.log
