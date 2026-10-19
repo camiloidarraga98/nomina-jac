@@ -204,6 +204,9 @@ final class PayrollClient: ObservableObject {
         try agendaCache.save(record, scope: scope)
     }
     func clearSession() throws {
+        #if os(iOS)
+        MediaGridThumbnailLoader.shared.clear()
+        #endif
         deletedContractIDs=[];contractDocuments=[:]
         mediaRootRead?.task.cancel(); mediaRootRead = nil
         syncTask?.cancel(); syncTask = nil
@@ -295,6 +298,7 @@ final class PayrollClient: ObservableObject {
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false) async throws -> (Data, HTTPURLResponse) {
+        let mediaThumbnailRead = path == "api/media/file" && query.contains { $0.name == "thumbnail" && $0.value == "1" }
         guard allowsResource(path,query:query) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
@@ -332,7 +336,7 @@ final class PayrollClient: ObservableObject {
         catch {
             guard sentToken == (try vault.load()), generation == cacheGeneration else { throw CancellationError() }
             if path.hasPrefix("api/crm") || path == "api/mobile/contracts",body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
-            if AgendaOfflineCache.isUnavailable(error) {
+            if AgendaOfflineCache.isUnavailable(error), !mediaThumbnailRead {
                 usingOfflineCopy = true
                 if let saved, let response = saved.response, !forceNetwork { return (try authorizedNoticeData(saved.data,path:path), response) }
             }
@@ -352,6 +356,10 @@ final class PayrollClient: ObservableObject {
             usingOfflineCopy = true; return (try authorizedNoticeData(saved.data,path:path), result)
         }
         guard (200..<300).contains(response.statusCode) else {
+            // A pending/missing cover is not a revoked session or a deleted
+            // original. Invalidating the global generation here used to cancel
+            // every other thumbnail and collapse expanded folder contents.
+            if mediaThumbnailRead, [404, 429, 500, 502, 503, 504].contains(response.statusCode) { throw MediaThumbnailUnavailable() }
             if path=="api/media",body==nil,response.statusCode==410,let folder=query.first(where:{$0.name=="folder"})?.value,let mediaScope=try mediaScope() {try mediaOffline.removeFolders([folder],scope:mediaScope);throw MediaFolderRemoved()}
             if path.hasPrefix("api/media"), response.statusCode == 403, let mediaScope = try mediaScope() { cacheGeneration += 1; mediaOffline.clear(mediaScope); TemporaryDocuments.clear() }
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }

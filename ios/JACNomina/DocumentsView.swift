@@ -168,15 +168,28 @@ struct MediaItem: Codable, Identifiable, Equatable {
 }
 enum MediaGalleryOrder {
     static func sorted(_ items:[MediaItem]) -> [MediaItem] {
-        items.sorted { left,right in
+        // Parse each distinct timestamp once, outside the O(n log n) comparator.
+        let parser = ISO8601DateFormatter()
+        var dates: [String: Date] = [:]
+        for value in Set(items.compactMap(\.createdAt)) {
+            parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+            if let date = parser.date(from: value) { dates[value] = date }
+            else { parser.formatOptions = [.withInternetDateTime]; dates[value] = parser.date(from: value) }
+        }
+        return items.sorted { left,right in
             if (left.kind == "folder") != (right.kind == "folder") {return left.kind == "folder"}
-            let first=left.createdAt.flatMap(CalendarClock.instant),second=right.createdAt.flatMap(CalendarClock.instant)
+            let first=left.createdAt.flatMap { dates[$0] },second=right.createdAt.flatMap { dates[$0] }
             if first != second {if let first,let second {return first > second};return first != nil}
             let order=left.name.localizedStandardCompare(right.name)
             return order == .orderedSame ? left.id < right.id : order == .orderedAscending
         }
     }
+    static func applyingDeletions(to items: [MediaItem], from feed: MediaFeed) -> [MediaItem] {
+        let removed = Set(feed.deletedFiles ?? []).union(feed.deletedFolders ?? [])
+        return items.filter { !removed.contains($0.id) }
+    }
 }
+struct MediaThumbnailUnavailable: Error {}
 enum MediaThumbnail {
     static func jpeg(for file: MediaLocalFile) async -> Data? {
         let image: CGImage?
@@ -316,6 +329,38 @@ struct MediaFeed: Codable {
     var deletedFolders: [String]? = nil
     var deletedFiles: [String]? = nil
     var pendingFileDeletions: [MediaFolderDeletion]? = nil
+    func replacingItems(_ items: [MediaItem]) -> MediaFeed {
+        MediaFeed(connected: connected, canRead: canRead, canUpload: canUpload, canConnect: canConnect,
+                  root: root, folder: folder, breadcrumbs: breadcrumbs, items: items, nextPageToken: nextPageToken,
+                  provider: provider, collectionID: collectionID, canDelete: canDelete,
+                  pendingDeletions: pendingDeletions, deletedFolders: deletedFolders,
+                  deletedFiles: deletedFiles, pendingFileDeletions: pendingFileDeletions)
+    }
+}
+/// Fetch a complete replacement before publishing any page. Remember the
+/// visible count too: a restored/pinned cache may contain more than one page.
+@MainActor
+enum MediaGalleryListing {
+    static func read(minimumPages: Int, minimumItems: Int,
+                     page: (String) async throws -> MediaFeed) async throws -> (feed: MediaFeed, pages: Int) {
+        var result = try await page("")
+        var seen = Set<String>()
+        var all = result.items.filter { seen.insert($0.id).inserted }, pages = 1
+        let collection = result.collectionID, folder = result.folder?.id
+        var cursor = result.nextPageToken ?? "", visited = Set<String>()
+        while !cursor.isEmpty && (pages < max(1, minimumPages) || all.count < minimumItems) {
+            try Task.checkCancellation()
+            guard visited.insert(cursor).inserted else { throw APIError.invalid("No se pudo continuar la lista de esta carpeta.") }
+            let next = try await page(cursor)
+            guard next.connected, next.canRead, next.collectionID == collection, next.folder?.id == folder else {
+                throw APIError.forbidden("La carpeta cambió o dejó de estar disponible.")
+            }
+            result = next; all += next.items.filter { seen.insert($0.id).inserted }; pages += 1; cursor = next.nextPageToken ?? ""
+        }
+        try Task.checkCancellation()
+        let ordered = MediaGalleryOrder.sorted(MediaGalleryOrder.applyingDeletions(to: all, from: result))
+        return (result.replacingItems(ordered), pages)
+    }
 }
 struct MediaUploadState: Decodable {
     let id: String
@@ -525,7 +570,10 @@ struct MediaGalleryView: View {
     }
     private var galleryContent: some View {
         ScrollView {
-            LazyVStack(alignment: .leading, spacing: 22) {
+            // Only the tile grids are lazy. A lazy ancestor estimates the height
+            // of an entire expanded folder and can remove it while its children
+            // are on screen, producing blank space and jumps in the scroll.
+            VStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
                 if compactGallery {
                     HStack {
@@ -653,9 +701,10 @@ struct MediaGalleryView: View {
             #endif
             .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
                 if let saved=store.client.cachedMedia(folder:folderID) {
-                    items=MediaGalleryOrder.sorted(saved.items);thumbnailEpoch=UUID()
+                    let remaining = MediaGalleryOrder.applyingDeletions(to: items, from: saved)
+                    if remaining != items { items = remaining }
                     #if os(iOS)
-                    selection.reconcile(saved)
+                    selection.reconcile(saved.replacingItems([]))
                     #endif
                 }
             }
@@ -774,7 +823,7 @@ struct MediaGalleryView: View {
         transferReview = MediaTransferReview(plan: plan, photos: photos, requiredBytes: MediaStorageReview.required(pending), selection: true, stamp: try? store.client.mediaAccessStamp())
     }
     private var inlineFolders: some View {
-        LazyVStack(spacing:12) {
+        VStack(spacing:12) {
             ForEach(items.filter { $0.kind == "folder" }) { item in
                 MediaInlineFolder(folder:MediaFolder(id:item.id,name:item.name),collectionID:feed?.collectionID,expanded:$expandedFolders,epoch:thumbnailEpoch,disabled:uploading || opening != nil || deleting || selectionBusy,opening:opening,open:{item,context in open(item,in:context)},denied:thumbnailDenied,commands:{AnyView(folderCommands($0))},selection:selection)
             }
@@ -1042,15 +1091,15 @@ struct MediaGalleryView: View {
             feed=saved;items=MediaGalleryOrder.sorted(saved.items)
         }
         do {
-            var result = try await store.client.media(folder: requestedFolder, forceNetwork: true), all = result.items
-            var cursor = result.nextPageToken ?? "", visited = Set<String>()
-            for _ in 1..<max(1, loadedPages) {
-                guard !cursor.isEmpty, visited.insert(cursor).inserted else { break }
-                result = try await store.client.media(folder: requestedFolder, pageToken: cursor, forceNetwork: true); all += result.items; cursor = result.nextPageToken ?? ""
+            let read = try await MediaGalleryListing.read(minimumPages: loadedPages, minimumItems: items.count) { cursor in
+                try await store.client.media(folder: requestedFolder, pageToken: cursor, forceNetwork: true)
             }
+            let result = read.feed
             guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
             if let previous=feed?.collectionID,previous != result.collectionID {expandedFolders=[];clearPreview()}
-            feed = result; var seen = Set<String>(); items = MediaGalleryOrder.sorted(all.filter { seen.insert($0.id).inserted });thumbnailEpoch=UUID(); error = nil;mediaIsOffline=false
+            loadedPages = read.pages; feed = result
+            if items != result.items { items = result.items }
+            thumbnailEpoch=UUID(); error = nil;mediaIsOffline=false
             #if os(iOS)
             selection.reconcile(result)
             #endif
@@ -1061,7 +1110,8 @@ struct MediaGalleryView: View {
         } catch {
             guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
             if AgendaOfflineCache.isUnavailable(error), let saved = store.client.cachedMedia(folder: requestedFolder) {
-                feed=saved;items=MediaGalleryOrder.sorted(saved.items);mediaIsOffline=true;self.error=nil;return
+                if feed == nil { feed=saved;items=MediaGalleryOrder.sorted(saved.items) }
+                mediaIsOffline=true;self.error=nil;return
             }
             if let message = store.reportReadFailure(error) { self.error = message }
             if case APIError.forbidden = error { items = []; feed = nil; expandedFolders=[];uploadComposition=nil;clearPreview() }
@@ -1210,13 +1260,28 @@ private struct MediaPhotoPresentation:Identifiable {
 
 struct MediaTile: View {
     let item: MediaItem
-    let client: PayrollClient
+    @ObservedObject var client: PayrollClient
     let offline: Bool
     let opening: Bool
     let epoch:UUID
     let denied:(Error)->Void
+    var selectionValue: String? = nil
+    #if os(iOS)
+    @StateObject private var thumbnail = MediaTileThumbnail()
+    private var image: UIImage? { thumbnail.image }
+    private var thumbnailKey: String {
+        "\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.thumbnailAvailable)|\(item.mimeType)|\((try? client.mediaAccessStamp()) ?? "")"
+    }
+    private func showThumbnail() {
+        let stamp = try? client.mediaAccessStamp()
+        thumbnail.show(key: thumbnailKey, authorized: {
+            stamp != nil && stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false
+        }, load: { try await MediaGridThumbnailLoader.shared.image(item, client: client, networkAllowed: !offline) }, denied: denied)
+    }
+    #else
     @State private var image: JACPlatformImage?
     @State private var loadedRevision:String?
+    #endif
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             ZStack {
@@ -1233,24 +1298,28 @@ struct MediaTile: View {
                 if item.kind == "video" { Image(systemName: "play.circle.fill").font(.system(size: 36)).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.45)) }
                 if opening { ProgressView().padding(12).background(.regularMaterial, in: Capsule()) }
             }.frame(height:item.kind == "folder" ? 84:140).frame(maxWidth:.infinity).clipped().clipShape(RoundedRectangle(cornerRadius:12)).accessibilityIdentifier(image == nil ? "media.placeholder."+item.id:"media.thumbnail."+item.id)
-            Text(item.name).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).lineLimit(2).frame(maxWidth: .infinity, alignment: .leading)
+            Text(item.name).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).lineLimit(2, reservesSpace: true).frame(maxWidth: .infinity, alignment: .leading)
             if item.kind != "folder" {Text((item.kind == "video" ? "Video · ":"Foto · ")+item.sizeLabel).font(.caption).foregroundStyle(.secondary)}
         }.padding(12).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18)).contentShape(Rectangle())
+            .accessibilityValue(selectionValue ?? (image != nil ? "Miniatura cargada" : item.thumbnailAvailable ? "Miniatura pendiente" : "Sin miniatura"))
+            #if os(iOS)
+            .onAppear { if item.kind != "folder" { showThumbnail() } }
+            .onChange(of: thumbnailKey) { _, _ in if thumbnail.visible { showThumbnail() } }
+            .onChange(of: offline || client.usingOfflineCopy) { _, _ in if thumbnail.visible { showThumbnail() } }
+            .onDisappear { thumbnail.hide() }
+            #else
             .task(id: item.id + item.modifiedAt + epoch.uuidString + (offline ? "offline":"online")) {
                 guard item.kind != "folder",!offline,loadedRevision != item.modifiedAt else{return}
                 if loadedRevision != nil {image=nil;loadedRevision=nil}
                 do {
-                    #if os(iOS)
-                    let thumbnail = try await MediaGridThumbnailLoader.shared.image(item, client: client, epoch: epoch)
-                    #else
                     let data = try await client.mediaThumbnail(item)
                     let thumbnail = MediaThumbnail.image(data)
-                    #endif
                     try Task.checkCancellation()
                     if let thumbnail { image = thumbnail; loadedRevision = item.modifiedAt }
                 }
                 catch {if case APIError.unauthorized = error {denied(error)}else if case APIError.forbidden = error {denied(error)}}
             }.onDisappear {image=nil;loadedRevision=nil}
+            #endif
     }
 }
 private struct MediaUploadDestinationPicker: View {
@@ -1729,7 +1798,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let index = readIndex(scope)
         guard let saved = index.downloads[key] ?? index.feeds[key] else { return nil }
-        return MediaFeed(connected: saved.connected, canRead: saved.canRead, canUpload: false, canConnect: false, root: saved.root, folder: saved.folder, breadcrumbs: saved.breadcrumbs, items: saved.items, nextPageToken: nil, provider: saved.provider, collectionID: saved.collectionID)
+        return MediaFeed(connected: saved.connected, canRead: saved.canRead, canUpload: false, canConnect: false, root: saved.root, folder: saved.folder, breadcrumbs: saved.breadcrumbs, items: saved.items, nextPageToken: nil, provider: saved.provider, collectionID: saved.collectionID, deletedFolders: index.deletedFolders, deletedFiles: index.deletedFiles)
     }
     func pinFeed(_ feed: MediaFeed, key: String, scope: AgendaCacheScope) throws {
         lock.lock(); defer { lock.unlock() }

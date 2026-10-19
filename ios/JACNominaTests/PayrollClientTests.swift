@@ -471,6 +471,100 @@ final class PayrollClientTests: XCTestCase {
         let bounded=try XCTUnwrap(MediaThumbnail.image(output as Data));XCTAssertLessThanOrEqual(bounded.size.width,360);XCTAssertLessThanOrEqual(bounded.size.height,360)
         XCTAssertNil(MediaThumbnail.image(Data(repeating:0,count:512*1024+1)))
     }
+    @MainActor func testMissingThumbnailDoesNotInvalidateOtherImagesOrFolderSession() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://missing-cover.invalid")!, vault: vault, configuration: configuration, automaticallyDownloadOffline: false)
+        let stamp = try client.mediaAccessStamp(), revision = client.cacheRevision
+        let item = MediaItem(id: "no-cover-yet", name: "Pendiente.jpg", mimeType: "image/jpeg", kind: "image", size: 100, modifiedAt: "same", thumbnailAvailable: true)
+        var reads = 0
+        MockProtocol.handler = { request in
+            reads += 1
+            return (HTTPURLResponse(url: request.url!, statusCode: 404, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Miniatura pendiente\"}".utf8))
+        }
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        do { _ = try await client.mediaThumbnail(item); XCTFail("La ausencia debe informarse") }
+        catch { XCTAssertTrue(error is MediaThumbnailUnavailable) }
+        XCTAssertEqual(try client.mediaAccessStamp(), stamp); XCTAssertEqual(client.cacheRevision, revision)
+        XCTAssertFalse(client.usingOfflineCopy); XCTAssertEqual(reads, 1)
+        #if os(iOS)
+        let missing = MediaItem(id: item.id, name: item.name, mimeType: item.mimeType, kind: item.kind, size: item.size, modifiedAt: item.modifiedAt, thumbnailAvailable: false)
+        let image = try await MediaGridThumbnailLoader().image(missing, client: client)
+        XCTAssertNil(image); XCTAssertEqual(reads, 1, "Una portada aún no indexada no debe generar otro 404")
+        #endif
+        MockProtocol.handler = { _ in throw URLError(.timedOut) }
+        do { _ = try await client.mediaThumbnail(item); XCTFail() } catch {}
+        XCTAssertFalse(client.usingOfflineCopy, "Un fallo aislado no desconecta toda la aplicación")
+        XCTAssertEqual(try client.mediaAccessStamp(), stamp)
+    }
+    func testCacheNotificationsPreserveLoadedPagesAndOrderWhileApplyingExplicitDeletions() {
+        let items = (0..<120).map { index in
+            MediaItem(id: "photo-\(index)", name: String(format: "%03d.jpg", index), mimeType: "image/jpeg", kind: "image", size: 100,
+                      modifiedAt: "unchanged", thumbnailAvailable: true, createdAt: "2026-10-19T12:00:00Z")
+        }
+        let partial = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false,
+                               root: nil, folder: nil, breadcrumbs: [], items: Array(items.prefix(100)), nextPageToken: "100")
+        XCTAssertEqual(MediaGalleryOrder.applyingDeletions(to: items, from: partial), items)
+        var deleted = partial; deleted.deletedFiles = ["photo-2", "photo-112"]
+        let remaining = MediaGalleryOrder.applyingDeletions(to: items, from: deleted)
+        XCTAssertEqual(remaining.map(\.id), items.filter { !["photo-2", "photo-112"].contains($0.id) }.map(\.id))
+        XCTAssertEqual(MediaGalleryOrder.sorted(Array(items.reversed())), items)
+        XCTAssertEqual(partial.replacingItems(items).items.count, 120)
+        XCTAssertEqual(partial.replacingItems(items).nextPageToken, "100")
+    }
+    func testCachedGalleryIncludesDeletionMarkersForVisibleAndPinnedFolders() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = MediaOfflineCache(root: root), scope = AgendaCacheScope(origin: "https://deletions.invalid", token: String(repeating: "f", count: 43))
+        defer { cache.clear(scope); try? FileManager.default.removeItem(at: root) }
+        let item = MediaItem(id: "removed", name: "Retirada.jpg", mimeType: "image/jpeg", kind: "image", size: 100, modifiedAt: "old", thumbnailAvailable: true)
+        let feed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: nil, folder: MediaFolder(id: "day", name: "Evento"), breadcrumbs: [], items: [item], nextPageToken: nil, collectionID: "jac-r2-test")
+        _ = try cache.saveFeed(feed, key: "day", append: false, scope: scope)
+        try cache.pinFeed(feed, key: "day", scope: scope)
+        var removed = feed.replacingItems([]); removed.deletedFiles = [item.id]
+        _ = try cache.saveFeed(removed, key: "day", append: false, scope: scope)
+        let saved = try XCTUnwrap(cache.loadFeed("day", scope: scope))
+        XCTAssertTrue(saved.items.isEmpty); XCTAssertEqual(saved.deletedFiles, [item.id])
+        XCTAssertTrue(MediaGalleryOrder.applyingDeletions(to: [item], from: saved).isEmpty)
+    }
+    @MainActor func testGalleryRefreshRestoresAllVisiblePagesBeforeReturningTheReplacement() async throws {
+        let items = (0..<120).map { index in MediaItem(id: "photo-\(index)", name: String(format: "%03d.jpg", index), mimeType: "image/jpeg", kind: "image", size: 100, modifiedAt: "same", thumbnailAvailable: true) }
+        var calls: [String] = []
+        let read = try await MediaGalleryListing.read(minimumPages: 1, minimumItems: 120) { cursor in
+            calls.append(cursor)
+            return MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: nil, folder: nil, breadcrumbs: [],
+                             items: cursor.isEmpty ? Array(items.prefix(100).reversed()) : [items[99]] + Array(items.suffix(20).reversed()), nextPageToken: cursor.isEmpty ? "next" : nil)
+        }
+        XCTAssertEqual(calls, ["", "next"]); XCTAssertEqual(read.pages, 2)
+        XCTAssertEqual(read.feed.items, items); XCTAssertNil(read.feed.nextPageToken)
+    }
+    @MainActor func testGalleryRefreshDoesNotPublishAPartialReplacementWhenALaterPageFails() async throws {
+        let first = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: nil, folder: nil, breadcrumbs: [], items: [], nextPageToken: "second")
+        var calls: [String] = []
+        do {
+            _ = try await MediaGalleryListing.read(minimumPages: 2, minimumItems: 0) { cursor in
+                calls.append(cursor)
+                if !cursor.isEmpty { throw URLError(.timedOut) }
+                return first
+            }
+            XCTFail("Un reemplazo incompleto no debe devolverse a la interfaz")
+        } catch { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
+        XCTAssertEqual(calls, ["", "second"])
+    }
+    @MainActor func testGalleryRefreshRejectsRepeatedCursorsAndMixedCollections() async throws {
+        let first = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: nil, folder: nil, breadcrumbs: [], items: [], nextPageToken: "repeated", collectionID: "original")
+        var calls = 0
+        do {
+            _ = try await MediaGalleryListing.read(minimumPages: 3, minimumItems: 0) { _ in calls += 1; return first }
+            XCTFail("Un cursor circular no puede continuar")
+        } catch { guard case APIError.invalid = error else { return XCTFail("Error incorrecto: \(error)") } }
+        XCTAssertEqual(calls, 2)
+        do {
+            _ = try await MediaGalleryListing.read(minimumPages: 2, minimumItems: 0) { cursor in
+                var value = first; if !cursor.isEmpty { value.collectionID = "another-collection" }; return value
+            }
+            XCTFail("No se mezclan archivos de colecciones distintas")
+        } catch { guard case APIError.forbidden = error else { return XCTFail("Error incorrecto: \(error)") } }
+    }
     @MainActor func testControlWorkspaceRevocationReplacesHigherPayrollRevisionWithoutLosingSession() async throws {
         let original=try await UITestBackend.client().workspace()
         var payload=try JSONDecoder().decode(JSONValue.self,from:JSONEncoder().encode(original));payload["version"] = .number(14)

@@ -2,6 +2,9 @@ import XCTest
 import UIKit
 
 final class LaunchTests: XCTestCase {
+    @MainActor private func waitFor(_ element: XCUIElement, predicate: NSPredicate, timeout: TimeInterval) -> Bool {
+        XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: timeout) == .completed
+    }
     @MainActor func testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-payroll", "--uitest-reader", "--uitest-sections=media,mediaUpload"]
@@ -46,6 +49,44 @@ final class LaunchTests: XCTestCase {
             print("JAC failure accessibility hierarchy:\n" + XCUIApplication().debugDescription)
         }
         try super.tearDownWithError()
+    }
+    @MainActor func testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2", "--uitest-media-stability"]
+        app.launch(); tap(app, "media.item.r2_media-day")
+        let first = app.buttons["media.item.r2_media-scroll-0"]
+        let ready = NSPredicate(format: "value == %@", "Miniatura cargada")
+        XCTAssertTrue(first.waitForExistence(timeout: 15))
+        XCTAssertTrue(waitFor(first, predicate: ready, timeout: 10), "Una miniatura inicialmente pendiente debe reintentarse")
+        let scroll = app.scrollViews.firstMatch, more = app.buttons["media.more.r2_media-day"]
+        for _ in 0..<10 { if more.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(more.isHittable); more.tap()
+        let secondPage = app.buttons["media.item.r2_media-scroll-12"]
+        for _ in 0..<8 { if secondPage.isHittable { break }; scroll.swipeUp() }
+        XCTAssertTrue(secondPage.isHittable)
+        XCTAssertTrue(waitFor(secondPage, predicate: ready, timeout: 10))
+        let visible = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media.item.r2_media-scroll-")).allElementsBoundByIndex.filter(\.isHittable)
+        let ids = visible.map(\.identifier), positions = visible.map(\.frame)
+        XCTAssertFalse(ids.isEmpty)
+        // Exercise the real 30-second periodic refresh while the folder header
+        // and its first page are outside the viewport. No test-only timer.
+        let header = app.buttons["media.item.r2_media-day"]
+        let previousLabel = header.label
+        XCTAssertTrue(waitFor(header, predicate: NSPredicate(format: "label != %@ AND label CONTAINS %@", previousLabel, "Carpeta actualizada"), timeout: 45))
+        XCTAssertTrue(waitFor(secondPage, predicate: ready, timeout: 10))
+        let after = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media.item.r2_media-scroll-")).allElementsBoundByIndex.filter(\.isHittable)
+        XCTAssertEqual(after.map(\.identifier), ids)
+        for (element, position) in zip(visible, positions) {
+            XCTAssertTrue(element.isHittable)
+            XCTAssertEqual(element.frame.minY, position.minY, accuracy: 2, "Actualizar no debe mover el contenido")
+        }
+        for _ in 0..<12 { if first.isHittable { break }; scroll.swipeDown() }
+        XCTAssertTrue(first.isHittable); XCTAssertTrue(waitFor(first, predicate: ready, timeout: 10))
+        first.press(forDuration: 0.65)
+        XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
+        tap(app, "media.selection.cancel")
+        XCTAssertTrue(waitFor(first, predicate: ready, timeout: 5))
+        attachScreen(app, name: "fotografia-miniaturas-orden-paginacion-estables")
     }
     @MainActor func testLongPressSelectsMixedMediaAndCancelRestoresThePhotoViewer() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2"]; app.launch()

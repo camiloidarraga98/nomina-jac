@@ -344,6 +344,74 @@ final class MediaVideoPreparationTests: XCTestCase {
 
 @MainActor
 final class MediaGridThumbnailLoaderTests: XCTestCase {
+    func testReturningCellRestartsAfterCancellationAndUsesTheSameCachedPixels() async throws {
+        let loader = MediaGridThumbnailLoader(), cell = MediaTileThumbnail()
+        var downloads = 0
+        func show() {
+            cell.show(key: "same-revision", authorized: { true }, load: {
+                try await loader.load(key: "session|same-revision", authorized: { true }, bytes: {
+                    downloads += 1; return MediaFixture.photo
+                })
+            }, denied: { _ in XCTFail("No hay revocación en este recorrido") })
+        }
+        show()
+        try await waitFor { cell.image != nil }
+        let original = cell.image
+        cell.hide(); XCTAssertNil(cell.image)
+        show()
+        try await waitFor { cell.image != nil }
+        XCTAssertTrue(original === cell.image); XCTAssertEqual(downloads, 1)
+    }
+    func testLateCellCompletionCannotReplaceANewerRevisionOrRestoreAHiddenCell() async throws {
+        let cell = MediaTileThumbnail(), old = UIImage(), current = UIImage()
+        var reply: CheckedContinuation<UIImage?, Never>?
+        cell.show(key: "old", authorized: { true }, load: {
+            await withCheckedContinuation { reply = $0 }
+        }, denied: { _ in XCTFail() })
+        try await waitFor { reply != nil }
+        cell.show(key: "new", authorized: { true }, load: { current }, denied: { _ in XCTFail() })
+        try await waitFor { cell.image === current }
+        reply?.resume(returning: old)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertTrue(cell.image === current)
+        var hiddenReply: CheckedContinuation<UIImage?, Never>?
+        cell.show(key: "hidden", authorized: { true }, load: {
+            await withCheckedContinuation { hiddenReply = $0 }
+        }, denied: { _ in XCTFail() })
+        try await waitFor { hiddenReply != nil }
+        cell.hide(); hiddenReply?.resume(returning: old)
+        for _ in 0..<10 { await Task.yield() }
+        XCTAssertNil(cell.image); XCTAssertFalse(cell.visible)
+    }
+    func testTransientThumbnailFailureRetriesWithoutAnotherFolderRefresh() async throws {
+        let cell = MediaTileThumbnail(); var attempts = 0
+        cell.show(key: "ready-soon", authorized: { true }, load: {
+            attempts += 1
+            if attempts == 1 { throw MediaThumbnailUnavailable() }
+            return UIImage()
+        }, denied: { _ in XCTFail() })
+        try await waitFor { cell.image != nil }
+        XCTAssertEqual(attempts, 2); cell.hide()
+    }
+    func testOfflineReusesOnlyAlreadyAuthorizedSessionPixelsAndDenialClearsThem() async throws {
+        let loader = MediaGridThumbnailLoader(); var reads = 0
+        let image = try await loader.load(key: "saved", authorized: { true }, bytes: { reads += 1; return MediaFixture.photo })
+        let offline = try await loader.load(key: "saved", authorized: { true }, allowNetwork: false, bytes: { reads += 1; return MediaFixture.photo })
+        let absent = try await loader.load(key: "not-saved", authorized: { true }, allowNetwork: false, bytes: { reads += 1; return MediaFixture.photo })
+        XCTAssertTrue(image === offline); XCTAssertNil(absent); XCTAssertEqual(reads, 1)
+        do {
+            _ = try await loader.load(key: "saved", authorized: { false }, allowNetwork: false, bytes: { XCTFail(); return MediaFixture.photo })
+            XCTFail("Offline no permite ignorar una revocación")
+        } catch { XCTAssertTrue(error is CancellationError) }
+    }
+    private func waitFor(_ predicate: () -> Bool) async throws {
+        for _ in 0..<200 {
+            if predicate() { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        XCTFail("La miniatura no alcanzó el estado esperado")
+        throw URLError(.timedOut)
+    }
     func testReturningToTheSameRevisionReusesDecodedImageButAnotherRevisionLoads() async throws {
         let loader = MediaGridThumbnailLoader(); var count = 0
         let first = try await loader.load(key: "session|revision1", authorized: { true }, bytes: { count += 1; return MediaFixture.photo })

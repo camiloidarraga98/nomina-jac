@@ -1,26 +1,42 @@
-# Scroll de Fotografía en iPhone
+# Estabilidad de Fotografía en iPhone
 
-Camilo reportó tirones al abrir y desplazar una carpeta. Se encontraron rutas concretas de trabajo: MediaTile decodificaba imágenes en su tarea de interfaz y descartaba la miniatura al salir del viewport; volver a ella repetía descarga/decodificación. Los contenedores verticales de la galería y carpetas también se construían de manera anticipada. No se atribuye todo el problema a la red o al teléfono ni se afirma haber medido fps físicos desde Cloud.
+## Corrección vigente · 19 de octubre de 2026
 
-## Cambios
+Camilo reportó que las miniaturas cargaban y desaparecían al desplazarse o esperar en una carpeta, que todo el contenido podía quedar vacío hasta volver arriba y que los archivos cambiaban de distribución. La intervención anterior con LazyVStack y caché de30segundos no resolvió esos casos. No se atribuye el problema al hardware ni se afirma haber medido fps físicos desde Cloud.
 
-- Contenedores LazyVStack para galería, carpetas y contenido desplegado; se conserva la cuadrícula, navegación y selección múltiple.
-- La comprobación de si una foto está guardada offline también lee el índice cifrado en una tarea de utilidad, con cancelación y sello de sesión, para no bloquear la aparición de cada menú durante el scroll.
-- Decodificación ImageIO a360píxeles y caché inmediata de píxeles en una tarea detached de utilidad; se instala la imagen al regresar a la interfaz y revalidar sesión/cancelación.
-- Hasta cuatro peticiones/decodificaciones simultáneas. Una celda retirada cancela su petición o espera pendiente y libera su turno; no se deja una cola de descargas de celdas ya retiradas.
-- Caché de imágenes decodificadas solo en memoria: límites configurados de96 entradas/12MiB, vencimiento de30segundos. La clave incluye cliente, sello de sesión/permisos, época de actualización e ID/revisión/tamaño del archivo. Una nueva revisión o actualización requiere volver a autorizar su miniatura. NSCache permite retirar memoria bajo presión.
-- Se comprueba autorización antes de reutilizar y antes de instalar. 401/403 vacían la caché; no hay fallback ante una denegación ni inserción tardía después de invalidación. La tarea de celda conserva su borrado de imagen local al desaparecer.
+### Causas encontradas en el cliente
 
-El endpoint autenticado, límite de512KiB y tamaño máximo de visualización siguen vigentes. Nunca se usan los originales para poblar la cuadrícula. La caché no da acceso offline nuevo, no sustituye la copia cifrada y no cambia permisos, borrados ni revisiones.
+- Un404 del endpoint de miniaturas seguía la invalidación global de documentos: avanzaba la generación de sesión/caché y cancelaba las demás imágenes. Las carpetas reaccionaban al nuevo sello vaciando su contenido. Además, una petición aislada de miniatura sin conexión podía marcar toda la app como offline.
+- La caché caducaba a los30segundos y su clave incluía una época nueva en cada refresco. Aunque el archivo no cambiara, volver a una celda repetía descarga y decodificación.
+- Los contenedores LazyVStack anidados estimaban la altura de carpetas completas. Su onDisappear cancelaba la lectura y vaciaba metadatos mientras se desplazaban sus hijos; esa pérdida de altura causaba huecos y saltos.
+- Las notificaciones generales de cacheRevision reemplazaban la lista visible por cachedMedia, que podía contener solo la primera página o una copia fijada anterior. Un error de refresco también podía reemplazar una lista completa por esa copia parcial.
+- La ordenación reconstruía formateadores de fecha dentro de cada comparación, añadiendo trabajo innecesario al hilo de interfaz.
 
-## Verificación dirigida
+El servidor R2 ya conserva una miniatura indexada por archivo y lista por creación/nombre/ID. El diagnóstico no requiere migrar R2, modificar datos reales ni desplegar de nuevo el Worker.
 
-Pruebas de reutilización/cambio de revisión, concurrencia limitada, cancelación de celdas pendientes y revocación de imágenes guardadas/tardías. Se conserva la prueba del endpoint exclusivo de miniaturas y sus límites. La UI usa una carpeta ficticia de80fotos para bajar/subir y seleccionar/cancelar después. Se comprueban junto a los cambios de compresión y su cola, una sola ronda al finalizar. Mac se compila por el archivo compartido; no hay suites web/financieras ni datos reales.
+### Comportamiento implementado
 
-El recorrido de simulador comprueba comportamiento y las unitarias prueban que se evita trabajo repetido. No constituye una medición de fluidez en el iPhone físico: Camilo debe comprobar el scroll de sus carpetas tras pull/Run. El resultado online se registra al cierre.
+- Contenedores de carpetas VStack estables; únicamente las cuadrículas de archivos son lazy. Dos líneas reservadas para nombres mantienen alturas constantes al cargar imágenes. Se conserva la navegación desplegable y la selección múltiple.
+- Salir de pantalla cancela la lectura de una carpeta, conservando sus metadatos y páginas. Solo el cierre explícito, cambio de colección/sesión o denegación limpia su estado. Al volver se revalida sin quitar el contenido permitido.
+- MediaGalleryListing reúne todas las páginas antes de devolver el reemplazo: recuerda tanto las páginas solicitadas como la cantidad visible restaurada desde caché. Rechaza cursores repetidos y colecciones mezcladas; elimina duplicados y aplica borrados. Un fallo posterior no instala la primera página aislada.
+- cacheRevision aplica únicamente identificadores de borrado confirmados a los elementos actuales, sin reordenar ni truncar páginas. La caché cifrada devuelve esos marcadores también para carpetas fijadas. Los refrescos autorizados sí actualizan cambios reales del contenido.
+- Caché de píxeles NSCache por cliente, sesión/permisos, ID, revisión, tamaño y MIME; sin época ni caducidad arbitraria. Límites configurados256entradas/64MiB, con retirada por presión de memoria. Cada uso comprueba autorización. Logout y401/403 retiran la caché, y los resultados tardíos se rechazan.
+- Cada celda reinicia explícitamente su solicitud al reaparecer. Al desaparecer libera su referencia y cancela el trabajo; la caché compartida permite recuperar los mismos píxeles sin red. El estado de una revisión anterior nunca sustituye la nueva.
+- Hasta cuatro cargas/decodificaciones simultáneas, cola cancelable y decodificación ImageIO fuera de interfaz, máximo360píxeles/512KiB. Nunca se solicitan originales para poblar la cuadrícula.
+- Una miniatura conocida como pendiente no genera peticiones fallidas. Un404/429/5xx aislado no invalida el resto; una celda visible hace hasta tres intentos ante indisponibilidad transitoria. Un fallo de esa petición no cambia la conectividad global. Un401/403 mantiene su retirada normal.
+- Ante una pérdida temporal de conexión se pueden reutilizar únicamente píxeles ya presentes en memoria de esa sesión autorizada. No se crean nuevas descargas offline ni se ignoran denegaciones.
+- Fechas de creación analizadas una vez por valor y orden determinista por creación, nombre e ID. La modificación de una miniatura no cambia la fecha usada para ordenar.
 
-## Resultado final comprobado
+Esto corrige la pérdida y recarga de miniaturas existentes; no genera miniaturas históricas que nunca quedaron indexadas. Tampoco garantiza carga instantánea tras un arranque sin caché y con red lenta.
 
-[Ejecución39202395410](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39202395410), fuente `1735e0268d3f772d08efba7897755cf4cb089b72`:23 unitarias y tres UI aprobadas, sin fallos ni pruebas omitidas, más compilación Release Mac correcta. Las cuatro pruebas del cargador verificaron reutilización por revisión, concurrencia limitada, cancelación de espera y revocación de datos guardados/tardíos. La prueba existente confirmó endpoint autenticado exclusivo de miniaturas y sus límites. El recorrido de80fotos completó scroll de ida/vuelta y selección/cancelación; también pasaron revisión de video y continuidad de la cola al ir a Home.
+### Verificación al finalizar
 
-Comprobación única al finalizar ambos cambios, sin repetir suites válidas. El registro documental posterior conserva esas fuentes comprobadas. La mejora aborda las rutas de trabajo identificadas; la fluidez/fps de las carpetas reales debe comprobarse en el iPhone tras pull/Run. Team AYHVYN8BJF conservado.
+Alcance gallery-stability en Actions: únicamente pruebas del cargador/ciclo de vida, miniatura pendiente, conectividad, permisos, borrados, orden y paginación, más recorridos UI de refresco real de30segundos con varias páginas/404 y recuperación tras validar sesión. Mac se compila una vez porque comparte DocumentsView/PayrollClient. No se repiten compresión, cola de subidas, web ni suites financieras.
+
+El fixture UI nuevo conserva archivos en la segunda página mientras el encabezado está fuera de pantalla, verifica el siguiente refresco real, compara identidades/posiciones, vuelve arriba y selecciona/cancela. Incluye una portada que responde404 inicialmente, otra ausente y otra marcada pendiente. Solo servicios .invalid; ningún archivo real se sube, descarga o elimina.
+
+Resultado online pendiente de la ejecución de cierre. La instalación y fluidez de carpetas reales se comprueban con pull/Run en el mismo Xcode. Team AYHVYN8BJF, firma personal sin Associated Domains, bundles y JAC_PUSH_ENABLED=NO conservados.
+
+## Verificación histórica
+
+La ejecución39202395410 sobre1735e026 aprobó23unitarias, tres UI y Release Mac de la intervención anterior. Su recorrido de80fotos no comprobaba permanencia durante el refresco de30segundos ni la pérdida de páginas; ese resultado no demuestra resuelto el nuevo fallo reportado. Las reglas vigentes de caché y contenedores son las de la sección anterior.

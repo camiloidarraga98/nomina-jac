@@ -9,8 +9,7 @@ final class MediaGridThumbnailLoader {
     static let shared = MediaGridThumbnailLoader()
     private final class Entry: NSObject {
         let image: UIImage
-        let expires: Date
-        init(_ image: UIImage) { self.image = image; expires = Date().addingTimeInterval(30) }
+        init(_ image: UIImage) { self.image = image }
     }
     private let cache = NSCache<NSString, Entry>()
     private let limit: Int
@@ -19,20 +18,21 @@ final class MediaGridThumbnailLoader {
     private var waiting: [(UUID, CheckedContinuation<Void, Error>)] = []
     init(limit: Int = 4) {
         self.limit = max(1, limit)
-        cache.countLimit = 96
-        cache.totalCostLimit = 12 * 1024 * 1024
+        cache.countLimit = 256
+        cache.totalCostLimit = 64 * 1024 * 1024
     }
     func clear() { generation += 1; cache.removeAllObjects() }
 
-    func load(key: String, authorized: () -> Bool, bytes: () async throws -> Data) async throws -> UIImage? {
+    func load(key: String, authorized: () -> Bool, allowNetwork: Bool = true, bytes: () async throws -> Data) async throws -> UIImage? {
         try Task.checkCancellation()
         guard authorized() else { clear(); throw CancellationError() }
-        if let entry = cache.object(forKey: key as NSString), entry.expires > Date() { return entry.image }
+        if let entry = cache.object(forKey: key as NSString) { return entry.image }
+        guard allowNetwork else { return nil }
         try await acquire()
         defer { release() }
         try Task.checkCancellation()
         guard authorized() else { clear(); throw CancellationError() }
-        if let entry = cache.object(forKey: key as NSString), entry.expires > Date() { return entry.image }
+        if let entry = cache.object(forKey: key as NSString) { return entry.image }
         let expected = generation
         do {
             let data = try await bytes()
@@ -52,10 +52,11 @@ final class MediaGridThumbnailLoader {
         }
     }
 
-    func image(_ item: MediaItem, client: PayrollClient, epoch: UUID) async throws -> UIImage? {
-        guard let stamp = try client.mediaAccessStamp(), client.accessUser?.canReadMedia != false, !client.usingOfflineCopy else { throw CancellationError() }
-        let key = "\(ObjectIdentifier(client))|\(stamp)|\(epoch)|\(item.id)|\(item.modifiedAt)|\(item.size)"
-        return try await load(key: key, authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false && !client.usingOfflineCopy }, bytes: { try await client.mediaThumbnail(item) })
+    func image(_ item: MediaItem, client: PayrollClient, networkAllowed: Bool = true) async throws -> UIImage? {
+        guard let stamp = try client.mediaAccessStamp(), client.accessUser?.canReadMedia != false else { throw CancellationError() }
+        guard item.thumbnailAvailable else { return nil }
+        let key = "\(ObjectIdentifier(client))|\(stamp)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.mimeType)"
+        return try await load(key: key, authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false }, allowNetwork: networkAllowed && !client.usingOfflineCopy, bytes: { try await client.mediaThumbnail(item) })
     }
 
     private func acquire() async throws {
@@ -77,6 +78,51 @@ final class MediaGridThumbnailLoader {
     private func release() {
         if waiting.isEmpty { running -= 1 }
         else { waiting.removeFirst().1.resume() }
+    }
+}
+
+/// The viewport owns the request, not the cached image. Explicit appearance
+/// restarts a cancelled cell even when SwiftUI reuses the same task identity.
+@MainActor
+final class MediaTileThumbnail: ObservableObject {
+    @Published private(set) var image: UIImage?
+    private(set) var visible = false
+    private var key: String?
+    private var generation = UUID()
+    private var task: Task<Void, Never>?
+
+    func show(key: String, authorized: @escaping () -> Bool,
+              load: @escaping () async throws -> UIImage?, denied: @escaping (Error) -> Void) {
+        visible = true
+        guard authorized() else { cancel(); return }
+        if self.key == key, image != nil || task != nil { return }
+        cancel(); self.key = key
+        let expected = generation
+        task = Task {
+            defer { if expected == generation { task = nil } }
+            // A temporary failure retries only while this cell is visible.
+            // A known missing thumbnail is skipped by the loader instead.
+            for attempt in 0..<3 {
+                do {
+                    let value = try await load()
+                    try Task.checkCancellation()
+                    guard expected == generation, visible, authorized() else { return }
+                    image = value; return
+                } catch {
+                    guard expected == generation, visible, !Task.isCancelled else { return }
+                    if case APIError.unauthorized = error { cancel(); denied(error); return }
+                    if case APIError.forbidden = error { cancel(); denied(error); return }
+                    guard authorized(), attempt < 2,
+                          error is MediaThumbnailUnavailable || AgendaOfflineCache.isUnavailable(error) else { return }
+                    do { try await Task.sleep(for: .milliseconds(attempt == 0 ? 600 : 1800)) }
+                    catch { return }
+                }
+            }
+        }
+    }
+    func hide() { visible = false; cancel() }
+    private func cancel() {
+        generation = UUID(); task?.cancel(); task = nil; key = nil; image = nil
     }
 }
 
@@ -210,7 +256,8 @@ struct MediaSelectableTile: View {
     let denied: (Error) -> Void
     private var selected: Bool { selection.contains(item.id) }
     var body: some View {
-        MediaTile(item: item, client: client, offline: offline, opening: opening, epoch: epoch, denied: denied)
+        MediaTile(item: item, client: client, offline: offline, opening: opening, epoch: epoch, denied: denied,
+                  selectionValue: selection.active ? (selected ? "Seleccionado" : "No seleccionado") : nil)
                 .overlay { if selected { RoundedRectangle(cornerRadius: 18).strokeBorder(JACTheme.action, lineWidth: 3) } }
                 .overlay(alignment: .topTrailing) {
                     if selection.active {
@@ -231,7 +278,6 @@ struct MediaSelectableTile: View {
         .accessibilityAddTraits(.isButton)
         .accessibilityAction { tap() }
         .accessibilityIdentifier("media.item." + item.id)
-        .accessibilityValue(selection.active ? (selected ? "Seleccionado" : "No seleccionado") : "")
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityAction(named: Text("Seleccionar")) { if !disabled { selection.select(item, in: feed, client: client) } }
         .overlay(alignment: .topTrailing) {
@@ -325,7 +371,7 @@ struct MediaInlineFolder: View {
             .contextMenu { commands(folder) }
 
             if isExpanded && validPath {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                VStack(alignment: .leading, spacing: 14) {
                     if loading && items.isEmpty {
                         ProgressView().frame(maxWidth: .infinity).padding(.vertical, 18)
                     }
@@ -399,12 +445,16 @@ struct MediaInlineFolder: View {
             if stamp != nil && isExpanded { startRead() }
         }
         .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
-            if let saved=store.client.cachedMedia(folder:folder.id) {items=uniqueSorted(saved.items);selection.reconcile(saved)}
+            if let saved=store.client.cachedMedia(folder:folder.id) {
+                let remaining = MediaGalleryOrder.applyingDeletions(to: items, from: saved)
+                if remaining != items { items = remaining }
+                selection.reconcile(saved.replacingItems([]))
+            }
         }
         .onChange(of: store.isOffline) { previous, current in
             if previous && !current && offline && isExpanded { startRead() }
         }
-        .onDisappear { stopRead(); clearContent() }
+        .onDisappear { stopRead() }
     }
 
     private func previewFeed(_ source: MediaFeed) -> MediaFeed {
@@ -442,7 +492,7 @@ struct MediaInlineFolder: View {
     }
 
     private func startRead() {
-        guard isExpanded, validPath else { return }
+        guard isExpanded, validPath, !loading else { return }
         stopRead()
         let expected = generation, pages = max(1, loadedPages)
         loading = true
@@ -455,34 +505,31 @@ struct MediaInlineFolder: View {
                 if feed == nil, let saved = store.client.cachedMedia(folder: folder.id), (try? validate(saved)) != nil {
                     feed = saved; items = uniqueSorted(saved.items)
                 }
-                var result = try await store.client.media(folder: folder.id, forceNetwork: true)
-                try validate(result)
-                var all = result.items, cursor = result.nextPageToken ?? "", visited = Set<String>()
-                for _ in 1..<pages {
-                    guard !cursor.isEmpty else { break }
-                    guard visited.insert(cursor).inserted else { throw APIError.invalid("No se pudo continuar la lista de esta carpeta.") }
-                    try Task.checkCancellation()
+                let read = try await MediaGalleryListing.read(minimumPages: pages, minimumItems: items.count) { cursor in
                     guard expected == generation, isExpanded, stamp == (try store.client.mediaAccessStamp()) else { throw CancellationError() }
-                    result = try await store.client.media(folder: folder.id, pageToken: cursor, forceNetwork: true)
-                    try validate(result)
-                    all += result.items; cursor = result.nextPageToken ?? ""
+                    let value = try await store.client.media(folder: folder.id, pageToken: cursor, forceNetwork: true)
+                    try validate(value)
+                    return value
                 }
                 try Task.checkCancellation()
                 guard expected == generation, isExpanded, stamp == (try store.client.mediaAccessStamp()) else { throw CancellationError() }
-                feed = result; items = uniqueSorted(all); offline = false; error = nil; selection.reconcile(previewFeed(result))
+                let result = read.feed
+                loadedPages = read.pages; feed = result
+                if items != result.items { items = result.items }
+                offline = false; error = nil; selection.reconcile(previewFeed(result))
             } catch {
                 guard expected == generation, isExpanded, !Task.isCancelled else { return }
-                if failureIsCancelled(error) { clearContent(); return }
+                if failureIsCancelled(error) { return }
                 if case APIError.unauthorized = error { reject(error); return }
                 if case APIError.forbidden = error { reject(error); return }
                 if error is MediaFolderRemoved { reject(error); return }
                 guard stamp != nil, stamp == (try? store.client.mediaAccessStamp()) else { clearContent(); return }
                 if AgendaOfflineCache.isUnavailable(error), let saved = store.client.cachedMedia(folder: folder.id),
                    (try? validate(saved)) != nil {
-                    feed = saved; items = uniqueSorted(saved.items); offline = true; self.error = nil
+                    if feed == nil { feed = saved; items = uniqueSorted(saved.items) }
+                    offline = true; self.error = nil
                     return
                 }
-                clearContent()
                 self.error = error.localizedDescription
             }
         }

@@ -478,15 +478,21 @@ enum MediaFixture {
     static var sharedLinks: [JSONValue] = []
     static var deletedFolders=Set<String>()
     static let folder: JSONValue = .object(["id": .string("media-root"), "name": .string("Fotografía ficticia")])
+    static var thumbnailAttempts: [String: Int] = [:]
+    static var stabilityStarted = Date()
+    static var stabilityFixture: Bool { ProcessInfo.processInfo.arguments.contains("--uitest-media-stability") }
     static func reset() {
         lock.lock(); defer { lock.unlock() }
         files = ["media-photo": photo, "media-video": video]; uploads = [:];deletedFolders=[];sharedLinks=[]
+        thumbnailAttempts = [:]; stabilityStarted = Date()
         items = ["media-root": [item(id: "media-day", name: "2026-10-16 · PEREIRA", mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)], "media-day": [item(id: "media-photo", name: "Foto ficticia.png", mime: "image/png", kind: "image", size: photo.count), item(id: "media-video", name: "Video ficticio.mov", mime: "video/quicktime", kind: "video", size: video.count)]]
-        if ProcessInfo.processInfo.arguments.contains("--uitest-media-scroll") {
-            items["media-day"] = (0..<80).map { index in
+        if ProcessInfo.processInfo.arguments.contains("--uitest-media-scroll") || stabilityFixture {
+            items["media-day"] = (0..<(stabilityFixture ? 24 : 80)).map { index in
                 let id = "media-scroll-\(index)"
                 files[id] = photo
-                return item(id: id, name: String(format: "Foto ficticia %03d.png", index), mime: "image/png", kind: "image", size: photo.count)
+                var value = item(id: id, name: String(format: "Foto ficticia %03d.png", index), mime: "image/png", kind: "image", size: photo.count)
+                if stabilityFixture, index == 5 { value["thumbnailAvailable"] = .bool(false) }
+                return value
             }
         }
         if ProcessInfo.processInfo.arguments.contains("--uitest-media-slideshow") {
@@ -524,6 +530,12 @@ enum MediaFixture {
         let q = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems ?? [], id = sourceID(q.first { $0.name == "id" }?.value ?? "")
         guard let bytes = files[id] else { return (404, "application/json", Data("{\"error\":\"Archivo ficticio no encontrado\"}".utf8)) }
         let record = items.values.flatMap { $0 }.first { $0["id"].text == id }
+        if stabilityFixture, q.contains(where: { $0.name == "thumbnail" }) {
+            thumbnailAttempts[id, default: 0] += 1
+            if id == "media-scroll-3" || (id == "media-scroll-0" && thumbnailAttempts[id] == 1) {
+                return (404, "application/json", Data("{\"error\":\"Miniatura pendiente ficticia\"}".utf8))
+            }
+        }
         if q.contains(where: { $0.name == "metadata" }), let record { return (200, "application/json", try JSONEncoder().encode(JSONValue.object(["item": r2Value(record)]))) }
         let mime = record?["mimeType"].text ?? "image/png"
         return (200, q.contains { $0.name == "thumbnail" } ? "image/png" : mime, q.contains { $0.name == "thumbnail" } ? photo : bytes)
@@ -544,6 +556,17 @@ enum MediaFixture {
             let id = sourceID(q.first { $0.name == "folder" }?.value ?? "media-root"), selected: JSONValue = id == "media-root" ? folder : .object(["id": .string(id), "name": .string(id == "media-day" ? "2026-10-16 · PEREIRA" : id == "media-other" ? "2026-10-17 · BOGOTÁ" : "Carpeta ficticia")])
             if deletedFolders.contains(id){return (410,.object(["error":.string("Carpeta eliminada")]))}
             var feed:JSONValue = .object(["canDelete":.bool(administrator),"deletedFolders":.array(deletedFolders.map{.string($0)}),"pendingDeletions":.array([]),"connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(photographer), "canConnect": .bool(!photographer), "root": folder, "folder": selected, "breadcrumbs": .array(id == "media-root" ? [folder] : [folder, selected]), "items": .array(items[id] ?? []), "nextPageToken": .string("")])
+            if stabilityFixture {
+                if id == "media-root", Date().timeIntervalSince(stabilityStarted) >= 25 {
+                    var updated = items[id] ?? []
+                    if !updated.isEmpty { updated[0]["name"] = .string("Carpeta actualizada \(Int((Date().timeIntervalSince(stabilityStarted) + 5) / 30))") }
+                    feed["items"] = .array(updated)
+                } else if id == "media-day" {
+                    let all = items[id] ?? [], offset = Int(q.first { $0.name == "pageToken" }?.value ?? "") ?? 0
+                    feed["items"] = .array(Array(all.dropFirst(offset).prefix(12)))
+                    feed["nextPageToken"] = .string(offset + 12 < all.count ? String(offset + 12) : "")
+                }
+            }
             if r2Fixture {feed["provider"] = .string("r2");feed["collectionID"] = .string("jac-r2-new-20261016")}
             return (200,r2Value(feed))
         }
