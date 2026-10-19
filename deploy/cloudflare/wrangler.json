@@ -36,5 +36,10 @@
       "pattern": "jhonalexcastano.com",
       "custom_domain": true
     }
-  ]
+  ],
+  "triggers": {
+    "crons": [
+      "* * * * *"
+    ]
+  }
 }

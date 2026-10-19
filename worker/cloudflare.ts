@@ -1,9 +1,11 @@
+import {processMediaPresentations} from '../lib/media-stream';
 import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
 const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/file.svg','/globe.svg','/window.svg']);
 
 export default {
+  async scheduled(){await processMediaPresentations();},
   async fetch(request:Request,env:DeploymentEnv,ctx:Parameters<typeof application.fetch>[2]){
     const url=new URL(request.url);
     if(url.pathname==='/.well-known/apple-app-site-association'&&['GET','HEAD'].includes(request.method))return Response.json({applinks:{details:[{appIDs:['AYHVYN8BJF.co.jacmusic.nomina'],components:[{'/':'/compartir/*'}]}]}},{headers:{'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'}});

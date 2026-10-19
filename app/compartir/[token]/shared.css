@@ -31,3 +31,6 @@
 .jac-shared-viewer-error{margin:0;color:#a13b30;font-size:13px;line-height:1.5}.jac-shared-viewer button:focus-visible,.jac-shared-viewer a:focus-visible{outline:3px solid #0088df;outline-offset:2px}.jac-shared-spin{animation:jac-shared-spin 1s linear infinite}@keyframes jac-shared-spin{to{transform:rotate(360deg)}}
 @media(max-width:500px){.jac-shared-viewer[data-slot=dialog-content]{padding:18px 14px;gap:10px}.jac-shared-viewer-navigation{gap:8px}.jac-shared-viewer-navigation button{padding:10px}.jac-shared-viewer-navigation button span{display:none}}
 @media(prefers-reduced-motion:reduce){.jac-shared-checkbox{transition:none}.jac-shared-spin{animation:none}}
+
+/* Media fills a stable tile; filenames remain in accessible labels and viewer. */
+.jac-shared .jac-shared-file-open{height:auto;aspect-ratio:1;line-height:0}.jac-shared-thumb{position:relative;height:100%;aspect-ratio:1}.jac-shared-file{border:0;border-radius:14px;background:#edf5fa}.jac-shared-video-icon{position:absolute;bottom:8px;right:8px;width:28px;height:28px;display:grid;place-items:center;border-radius:50%;background:#071c2980;color:#fff;line-height:1}.jac-shared-video-icon>svg{width:15px;height:15px}

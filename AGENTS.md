@@ -1,3 +1,9 @@
+## Fotografía: vistas ligeras, Stream y caché temporal · 19 de octubre de 2026
+
+Camilo eligió expresamente **Cloudflare Stream adaptativo**, con su cobro por uso, para reproducir videos en web y apps. Confirmó haber agregado el secreto `JAC_STREAM_API_TOKEN` al Worker; se verificó su nombre, nunca su valor. Esta decisión sustituye la propuesta histórica de no contratar procesamiento. Los originales permanecen en R2 y solo se obtienen al descargar/guardar; abrir fotos usa JPEG ligero y abrir videos usa HLS adaptativo privado. El procesamiento gradual de videos existentes es trabajo de producción solicitado, nunca una prueba con archivos reales. Las pruebas usan exclusivamente fixtures locales y servicios interceptados.
+
+La cuadrícula de fotos/videos no lleva nombres visibles, franja inferior ni texto «Video»; imagen hasta los bordes e icono de video discreto. Conservar nombres accesibles y en el visor. La app guarda miniaturas cifradas temporalmente por sesión/revisión, hasta48h desde el acceso, además de la memoria compartida. Mantener borrado/revocación y límites. iPad usa pulsación prolongada compatible con scroll; fotos **y videos** tienen menú individual de borrado según permiso. Ver `docs/PHOTOGRAPHY_LIGHTWEIGHT_PLAYBACK.md` para flujo, límites y comprobaciones reales.
+
 ## Permiso vigente de Fotografía · Anderson · 19 de octubre de 2026
 
 Camilo pidió habilitar a `anderson` para borrar archivos ya subidos y carpetas de Fotografía. El permiso se limita a esa cuenta y requiere Fotografía y sesión activa; no conceder CRM, administración ni derechos financieros. Mantener la misma regla en API, guardas SQL y modelos nativos, con revalidación durante borrados, confirmación y revisión del archivo. Los otros usuarios que solo suben no reciben borrado. Ver `docs/PHOTOGRAPHY_ANDERSON_DELETE.md`. Esta decisión sustituye la restricción histórica de borrado exclusivo para administradores.

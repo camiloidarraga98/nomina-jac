@@ -194,20 +194,20 @@ enum MediaGalleryOrder {
 }
 struct MediaThumbnailUnavailable: Error {}
 enum MediaThumbnail {
-    static func jpeg(for file: MediaLocalFile) async -> Data? {
+    static func jpeg(for file: MediaLocalFile, edge: Int = 360, quality: Double = 0.60, limit: Int = 512 * 1024) async -> Data? {
         let image: CGImage?
         if file.mimeType.hasPrefix("video/") {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: file.url))
-            generator.appliesPreferredTrackTransform = true; generator.maximumSize = CGSize(width: 360, height: 360)
+            generator.appliesPreferredTrackTransform = true; generator.maximumSize = CGSize(width: CGFloat(edge), height: CGFloat(edge))
             image = try? await generator.image(at: .zero).image
         } else if let source = CGImageSourceCreateWithURL(file.url as CFURL, nil) {
-            image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 360, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: false] as CFDictionary)
+            image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: edge, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: false] as CFDictionary)
         } else { image = nil }
         guard !Task.isCancelled, let image else { return nil }
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.60] as CFDictionary)
-        guard CGImageDestinationFinalize(destination), data.length <= 512 * 1024 else { return nil }
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: quality] as CFDictionary)
+        guard CGImageDestinationFinalize(destination), data.length <= limit else { return nil }
         return data as Data
     }
     static func image(_ data:Data, decodeImmediately: Bool = false) -> JACPlatformImage? {
@@ -239,22 +239,22 @@ struct MediaPhotoMenu: View {
     var body:some View {
         Menu {
             if !resuming {
-                Button {perform(.download)} label:{Label("Descargar foto",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.photo.download")
+                Button {perform(.download)} label:{Label(item.kind == "video" ? "Descargar video" : "Descargar foto",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.photo.download")
                 Button {perform(.offline)} label:{Label(pinned ? "Disponible sin conexión":"Guardar sin conexión",systemImage:pinned ? "checkmark.circle":"arrow.down.circle")}.disabled(pinned).accessibilityIdentifier("media.photo.offline")
             }
             if canDelete {
                 Divider()
-                Button(role:.destructive) {confirmation=true} label:{Label(resuming ? "Continuar eliminación":"Eliminar foto",systemImage:"trash")}.disabled(store.isOffline).accessibilityIdentifier("media.photo.delete")
+                Button(role:.destructive) {confirmation=true} label:{Label(resuming ? "Continuar eliminación" : (item.kind == "video" ? "Eliminar video" : "Eliminar foto"),systemImage:"trash")}.disabled(store.isOffline).accessibilityIdentifier("media.photo.delete")
             }
         } label:{Image(systemName:"ellipsis.circle.fill").font(.title2).symbolRenderingMode(.palette).foregroundStyle(JACTheme.action,Color.white).frame(width:44,height:44).contentShape(Rectangle())}
             .buttonStyle(.plain).disabled(busy).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.photo.options."+item.id)
             .onAppear {updatePinned()}
             .onReceive(client.$cacheRevision) {_ in updatePinned()}
             .overlay {if busy {ProgressView().controlSize(.small)}}
-            .alert(confirmation ? "Eliminar foto":"Fotografía",isPresented:Binding(get:{confirmation || message != nil || failure != nil},set:{if !$0 {confirmation=false;message=nil;failure=nil}})) {
+            .alert(confirmation ? (item.kind == "video" ? "Eliminar video" : "Eliminar foto") : "Fotografía",isPresented:Binding(get:{confirmation || message != nil || failure != nil},set:{if !$0 {confirmation=false;message=nil;failure=nil}})) {
                 if confirmation {
                     Button("Cancelar",role:.cancel){confirmation=false}
-                    Button("Eliminar foto",role:.destructive){confirmation=false;perform(.delete)}.accessibilityIdentifier("media.photo.delete.confirm")
+                    Button(item.kind == "video" ? "Eliminar video" : "Eliminar foto",role:.destructive){confirmation=false;perform(.delete)}.accessibilityIdentifier("media.photo.delete.confirm")
                 } else {
                     Button("Aceptar",role:.cancel){message=nil;failure=nil}
                     if failure != nil && resuming {Button("Reintentar"){perform(.delete)}}
@@ -295,11 +295,11 @@ struct MediaPhotoMenu: View {
                     guard !Task.isCancelled,stamp == (try? client.mediaAccessStamp()) else {TemporaryDocuments.remove(file);throw CancellationError()}
                     ownedDocument=file;document=file
                 case .offline:
-                    try await client.saveMediaOffline(selected);try Task.checkCancellation();updatePinned();message="Foto disponible sin conexión en este \(JACDevice.name)."
+                    try await client.saveMediaOffline(selected);try Task.checkCancellation();updatePinned();message="Archivo disponible sin conexión en este \(JACDevice.name)."
                 case .delete:
                     var result:MediaFolderDeletion
                     repeat {result=try await client.deleteMediaFileStep(selected);try Task.checkCancellation();if result.complete != true {try await Task.sleep(for:.milliseconds(result.waiting == true ? 1000:100))}}while result.complete != true
-                    message="Foto eliminada."
+                    message="Archivo eliminado."
                 }
             }catch{if let text=store.reportReadFailure(error){failure=text}}
         }
@@ -850,7 +850,7 @@ struct MediaGalleryView: View {
                                 VStack(alignment:.leading,spacing:0) {
                                     Button { open(item) } label: { MediaTile(item: item, client: store.client, offline: store.isOffline, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
                                         .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
-                                    if item.kind == "image" {HStack{Spacer();MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true)}.padding(8)}
+                                    if item.kind == "image" || item.kind == "video" {HStack{Spacer();MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true)}.padding(8)}
                                     if item.kind == "folder" {
                                         HStack {Text("Carpeta del equipo").font(.caption).foregroundStyle(.secondary);Spacer(minLength:6)
                                             Menu {folderCommands(MediaFolder(id:item.id,name:item.name))} label:{Image(systemName:"ellipsis.circle").font(.title3).padding(4)}.buttonStyle(.plain).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.options."+item.id)
@@ -1137,9 +1137,10 @@ struct MediaGalleryView: View {
                     try Task.checkCancellation()
                     guard stamp == (try store.client.mediaAccessStamp()) else {throw CancellationError()}
                     previewFeed=context
-                    preview = MediaPreview(item: item, document: nil, stream: try MediaVideoStream(client: store.client, item: item))
+                    preview = MediaPreview(item: item, document: nil, stream: nil)
                 } else {
-                    let document = try await store.client.mediaDocument(item)
+                    let document: ExportedDocument
+                    if item.kind == "image" { document = try await store.client.mediaPhotoPreview(item) } else { document = try await store.client.mediaDocument(item) }
                     guard !Task.isCancelled,stamp == (try store.client.mediaAccessStamp()) else {TemporaryDocuments.remove(document);throw CancellationError()}
                     previewFeed=context;previewDocument = document; preview = MediaPreview(item: item, document: document, stream: nil)
                 }
@@ -1286,7 +1287,7 @@ struct MediaTile: View {
     @State private var loadedRevision:String?
     #endif
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: item.kind == "folder" ? 10 : 0) {
             ZStack {
                 RoundedRectangle(cornerRadius: 12).fill(JACTheme.action.opacity(0.08)).overlay {
                     if let image {
@@ -1298,12 +1299,12 @@ struct MediaTile: View {
                     }
                 }
                 if image == nil { Image(systemName: item.kind == "folder" ? "folder.fill" : item.kind == "video" ? "video.fill" : "photo").font(.system(size: 36)).foregroundStyle(JACTheme.action) }
-                if item.kind == "video" { Image(systemName: "play.circle.fill").font(.system(size: 36)).symbolRenderingMode(.palette).foregroundStyle(.white, .black.opacity(0.45)) }
+                if item.kind == "video" { VStack { Spacer(); HStack { Spacer(); Image(systemName: "video.fill").font(.system(size: 13, weight: .semibold)).foregroundStyle(.white).frame(width: 28, height: 28).background(.black.opacity(0.45), in: Circle()).padding(8) } }.accessibilityHidden(true) }
                 if opening { ProgressView().padding(12).background(.regularMaterial, in: Capsule()) }
-            }.frame(height:item.kind == "folder" ? 84:140).frame(maxWidth:.infinity).clipped().clipShape(RoundedRectangle(cornerRadius:12)).accessibilityIdentifier(image == nil ? "media.placeholder."+item.id:"media.thumbnail."+item.id)
-            Text(item.name).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).lineLimit(2, reservesSpace: true).frame(maxWidth: .infinity, alignment: .leading)
-            if item.kind != "folder" {Text((item.kind == "video" ? "Video · ":"Foto · ")+item.sizeLabel).font(.caption).foregroundStyle(.secondary)}
-        }.padding(12).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18)).contentShape(Rectangle())
+            }.frame(height:item.kind == "folder" ? 84:170).frame(maxWidth:.infinity).clipped().clipShape(RoundedRectangle(cornerRadius:12)).accessibilityIdentifier(image == nil ? "media.placeholder."+item.id:"media.thumbnail."+item.id)
+            if item.kind == "folder" { Text(item.name).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).lineLimit(2, reservesSpace: true).frame(maxWidth: .infinity, alignment: .leading) }
+        }.padding(item.kind == "folder" ? 12 : 0).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18)).contentShape(Rectangle())
+            .accessibilityLabel(item.name)
             .accessibilityValue(selectionValue ?? (image != nil ? "Miniatura cargada" : item.thumbnailAvailable ? "Miniatura pendiente" : "Sin miniatura"))
             #if os(iOS)
             .onAppear { if item.kind != "folder" { showThumbnail() } }
@@ -1554,20 +1555,22 @@ private struct MediaPreviewSheet: View {
     let preview: MediaPreview
     let client:PayrollClient
     let canDelete:Bool
+    private let denied:(Error)->Void
     @StateObject private var photos: MediaPhotoViewer
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
     @State private var player: AVPlayer?
     init(preview: MediaPreview, photos: [MediaItem], feed: MediaFeed?, client: PayrollClient, denied: @escaping (Error)->Void) {
-        self.preview=preview;self.client=client;self.canDelete=feed?.canDelete == true
-        _photos=StateObject(wrappedValue:MediaPhotoViewer(selected:preview.item,document:preview.document,items:photos,token:feed?.nextPageToken ?? "",folderID:feed?.folder?.id ?? "",collectionID:feed?.collectionID,load:{try await client.mediaDocument($0)},page:{try await client.media(folder:feed?.folder?.id ?? "",pageToken:$0)},denied:denied))
+        self.preview=preview;self.client=client;self.denied=denied;self.canDelete=feed?.canDelete == true
+        _photos=StateObject(wrappedValue:MediaPhotoViewer(selected:preview.item,document:preview.document,items:photos,token:feed?.nextPageToken ?? "",folderID:feed?.folder?.id ?? "",collectionID:feed?.collectionID,load:{try await client.mediaPhotoPreview($0)},page:{try await client.media(folder:feed?.folder?.id ?? "",pageToken:$0)},denied:denied))
     }
     var body: some View {
         NavigationStack {
             VStack(spacing:0) {
                 Group {
                     if let stream = preview.stream { MediaStreamingPlayer(stream: stream) }
-                    else if let document = preview.document, preview.item.kind == "video" { MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video").onAppear { player = AVPlayer(url: document.url); player?.play() }.onDisappear { player?.pause(); player = nil } }
+                    else if preview.item.kind == "video", preview.document == nil { MediaAdaptivePlaybackView(item: preview.item, client: client, denied: denied) }
+                    else if let document = preview.document, preview.item.kind == "video" { MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 180, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video").onAppear { player = AVPlayer(url: document.url); player?.play() }.onDisappear { player?.pause(); player = nil } }
                     else if let document = photos.document {
                         #if os(iOS)
                         MediaZoomPhoto(url:document.url,name:photos.selected.name,canPrevious:photos.canPrevious,canNext:photos.canNext,active:phase == .active) {photos.start($0)}
@@ -1599,7 +1602,7 @@ private struct MediaPreviewSheet: View {
             })
             #endif
             .privacySensitive().navigationTitle(preview.item.kind=="image" ? photos.selected.name : preview.item.name).jacInlineTitle()
-                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() }.accessibilityIdentifier("media.preview.close") };ToolbarItem(placement:.confirmationAction){if preview.item.kind=="image" {MediaPhotoMenu(item:photos.selected,client:client,canDelete:canDelete && client.accessUser?.canDeleteMedia == true).id(photos.selected.id)}} }
+                .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() }.accessibilityIdentifier("media.preview.close") };ToolbarItem(placement:.confirmationAction){if preview.item.kind=="image" || preview.item.kind=="video" {MediaPhotoMenu(item:preview.item.kind == "video" ? preview.item : photos.selected,client:client,canDelete:canDelete && client.accessUser?.canDeleteMedia == true).id(photos.selected.id)}} }
         }.onChange(of: phase) { _, value in if value != .active { player?.pause() } }
         .onReceive(client.$cacheRevision) {_ in if let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(photos.selected.id,scope:scope) {photos.stop();dismiss()}}
         .onDisappear {photos.stop();player?.pause()}
@@ -1624,11 +1627,24 @@ final class MediaVideoStream: NSObject, ObservableObject, AVAssetResourceLoaderD
     private var blocks: [Int64: Data] = [:]
     private var order: [Int64] = []
     @Published private(set) var error: String?
-    init(client: PayrollClient, item: MediaItem) throws {
+    private var authorization: Task<Void, Never>?
+    init(client: PayrollClient, item: MediaItem, playbackURL: URL? = nil) throws {
         guard let stamp = try client.mediaAccessStamp() else { throw APIError.unauthorized }
         self.client = client; self.item = item; self.stamp = stamp
-        asset = AVURLAsset(url: URL(string: "jac-media://asset/" + UUID().uuidString)!)
-        super.init(); asset.resourceLoader.setDelegate(self, queue: .main)
+        asset = AVURLAsset(url: playbackURL ?? URL(string: "jac-media://asset/" + UUID().uuidString)!)
+        super.init()
+        if playbackURL == nil { asset.resourceLoader.setDelegate(self, queue: .main) }
+        else { authorization = Task { [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(for: .seconds(30))
+                    guard let self else { return }; try self.valid(); try await client.validateMediaItem(item)
+                } catch {
+                    guard let self, !Task.isCancelled else { return }
+                    self.error = error.localizedDescription; self.cancel(); return
+                }
+            }
+        } }
     }
     nonisolated func resourceLoader(_ resourceLoader: AVAssetResourceLoader, shouldWaitForLoadingOfRequestedResource request: AVAssetResourceLoadingRequest) -> Bool {
         Task { @MainActor [weak self] in self?.start(request) }; return true
@@ -1681,7 +1697,35 @@ final class MediaVideoStream: NSObject, ObservableObject, AVAssetResourceLoaderD
         }
     }
     func trimCache() { blocks.removeAll(); order.removeAll() }
-    func cancel() { active = false; requests.values.forEach { $0.cancel() }; requests.removeAll(); blocks.removeAll(); order.removeAll(); asset.cancelLoading() }
+    func cancel() { authorization?.cancel(); authorization = nil; active = false; requests.values.forEach { $0.cancel() }; requests.removeAll(); blocks.removeAll(); order.removeAll(); asset.cancelLoading() }
+}
+private struct MediaAdaptivePlaybackView: View {
+    let item: MediaItem
+    let client: PayrollClient
+    let denied: (Error) -> Void
+    @State private var stream: MediaVideoStream?
+    @State private var message = "Preparando reproducción adaptativa…"
+    var body: some View {
+        Group {
+            if let stream { MediaStreamingPlayer(stream: stream) }
+            else { VStack(spacing: 16) { ProgressView(); Text(message).font(.footnote).multilineTextAlignment(.center) }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity) }
+        }.task {
+            let stamp = try? client.mediaAccessStamp()
+            while !Task.isCancelled, stamp != nil, stamp == (try? client.mediaAccessStamp()) {
+                do {
+                    let url = try await client.mediaPlayback(item)
+                    try Task.checkCancellation()
+                    guard stamp == (try? client.mediaAccessStamp()) else { return }
+                    stream = try MediaVideoStream(client: client, item: item, playbackURL: url); return
+                } catch {
+                    if case APIError.unauthorized = error { denied(error); return }
+                    if case APIError.forbidden = error { denied(error); return }
+                    if Task.isCancelled { return }; message = error.localizedDescription
+                }
+                do { try await Task.sleep(for: .seconds(8)) } catch { return }
+            }
+        }.onDisappear { stream?.cancel(); stream = nil }
+    }
 }
 private struct MediaStreamingPlayer: View {
     @ObservedObject var stream: MediaVideoStream
@@ -1690,7 +1734,7 @@ private struct MediaStreamingPlayer: View {
     var body: some View {
         VStack(spacing: 12) {
             if let error = stream.error { InlineError(message: error) }
-            MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 420, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video")
+            MediaNativePlayer(player: player).frame(maxWidth: .infinity, minHeight: 180, maxHeight: .infinity).accessibilityElement(children: .contain).accessibilityIdentifier("media.video")
         }
         .onAppear { player = AVPlayer(playerItem: AVPlayerItem(asset: stream.asset)); player?.play() }
         .onChange(of: stream.error) { _, value in if value != nil { player?.pause(); player?.replaceCurrentItem(with: nil); stream.cancel() } }
@@ -1763,6 +1807,7 @@ final class MediaOfflineCache: @unchecked Sendable {
             result = MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload, canConnect: feed.canConnect, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: (previous.items + feed.items).filter { seen.insert($0.id).inserted }, nextPageToken: feed.nextPageToken, provider: feed.provider, collectionID: feed.collectionID,canDelete:feed.canDelete,pendingDeletions:feed.pendingDeletions,deletedFolders:feed.deletedFolders,deletedFiles:feed.deletedFiles,pendingFileDeletions:feed.pendingFileDeletions)
         }
         let deletedFiles=Set(index.deletedFiles ?? []).union(feed.deletedFiles ?? [])
+        removeThumbnails(deletedFiles.subtracting(index.deletedFiles ?? []), scope: scope)
         for id in deletedFiles {
             if let file=index.files.removeValue(forKey:id) {try? FileManager.default.removeItem(at:encryptedFile(file,scope:scope))}
             index.pinnedFiles?.removeValue(forKey:id);index.previewAccess?.removeValue(forKey:id)
@@ -1787,6 +1832,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         let feeds=Array(index.feeds.values)+Array(index.downloads.values)
         let affected=feeds.filter {feed in removed.contains(feed.folder?.id ?? "") || feed.breadcrumbs.contains{removed.contains($0.id)}}
         let fileIDs=Set(index.deletedFiles ?? []).union(affected.flatMap{$0.items.filter{$0.kind != "folder"}.map(\.id)})
+        removeThumbnails(fileIDs.subtracting(index.deletedFiles ?? []), scope: scope)
         for id in fileIDs {if let item=index.files.removeValue(forKey:id){try? FileManager.default.removeItem(at:encryptedFile(item,scope:scope))};index.previewAccess?.removeValue(forKey:id);index.pinnedFiles?.removeValue(forKey:id)}
         func keep(_ feed:MediaFeed)->Bool {!removed.contains(feed.folder?.id ?? "") && !feed.breadcrumbs.contains{removed.contains($0.id)}}
         index.feeds=index.feeds.filter{keep($0.value)}.mapValues{filteredFeed($0,removed:removed)}
@@ -1845,6 +1891,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         guard !revoked.contains(scope.id) else { return }
         var index = readIndex(scope)
         index.files.removeValue(forKey: item.id); index.previewAccess?.removeValue(forKey: item.id);index.pinnedFiles?.removeValue(forKey:item.id)
+        removeThumbnails([item.id], scope: scope)
         index.deletedFiles = Array(Set(index.deletedFiles ?? []).union([item.id]))
         func withoutFile(_ feed: MediaFeed) -> MediaFeed {
             MediaFeed(connected: feed.connected, canRead: feed.canRead, canUpload: feed.canUpload,
@@ -1859,6 +1906,58 @@ final class MediaOfflineCache: @unchecked Sendable {
         try? FileManager.default.removeItem(at: encryptedFile(item, scope: scope))
         do { try writeIndex(index, scope: scope) }
         catch { clear(scope); throw error }
+    }
+    // Temporary JPEGs have their own bounded, encrypted store. They are never
+    // registered as downloaded originals or exported to Photos.
+    private func thumbnailURL(_ item: MediaItem, scope: AgendaCacheScope) -> URL {
+        let identity = Data("thumbnail-v1|\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.mimeType)".utf8)
+        let name = SHA256.hash(data: identity).map { String(format: "%02x", $0) }.joined()
+        return folder(scope).appendingPathComponent("thumbnails", isDirectory: true).appendingPathComponent(thumbnailPrefix(item.id) + name + ".sealed")
+    }
+    private func thumbnailPrefix(_ id: String) -> String { SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined() + "-" }
+    private func removeThumbnails(_ ids: Set<String>, scope: AgendaCacheScope) {
+        guard !ids.isEmpty else { return }
+        let prefixes = Set(ids.map { thumbnailPrefix($0) })
+        let files = (try? FileManager.default.contentsOfDirectory(at: folder(scope).appendingPathComponent("thumbnails", isDirectory: true), includingPropertiesForKeys: nil)) ?? []
+        for file in files where prefixes.contains(String(file.lastPathComponent.prefix(65))) { try? FileManager.default.removeItem(at: file) }
+    }
+    func loadThumbnail(_ item: MediaItem, scope: AgendaCacheScope, now: Date = Date()) -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        guard !revoked.contains(scope.id) else { return nil }
+        let url = thumbnailURL(item, scope: scope)
+        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let date = values.contentModificationDate, now.timeIntervalSince(date) < 48 * 3600,
+              let size = values.fileSize, size <= 512 * 1024 + 64,
+              let sealed = try? Data(contentsOf: url), let box = try? AES.GCM.SealedBox(combined: sealed),
+              let data = try? AES.GCM.open(box, using: scope.key, authenticating: associated(item, scope: scope, block: -1)),
+              !data.isEmpty, data.count <= 512 * 1024 else { try? FileManager.default.removeItem(at: url); return nil }
+        try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: url.path)
+        return data
+    }
+    private var thumbnailWrites: [String: Int] = [:]
+    func saveThumbnail(_ data: Data, item: MediaItem, scope: AgendaCacheScope, now: Date = Date()) throws {
+        lock.lock(); defer { lock.unlock() }
+        try prepare(scope)
+        guard !data.isEmpty, data.count <= 512 * 1024, !(readIndex(scope).deletedFiles ?? []).contains(item.id) else { throw CancellationError() }
+        let url = thumbnailURL(item, scope: scope), directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        let sealed = try AES.GCM.seal(data, using: scope.key, authenticating: associated(item, scope: scope, block: -1)).combined!
+        try sealed.write(to: url, options: JACFileSecurity.writeOptions)
+        try FileManager.default.setAttributes(JACFileSecurity.fileAttributes.merging([.modificationDate: now]) { _, value in value }, ofItemAtPath: url.path)
+        thumbnailWrites[scope.id, default: 0] += 1
+        if thumbnailWrites[scope.id] == 1 || thumbnailWrites[scope.id, default: 0] % 32 == 0 {
+            let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
+            var saved: [(URL, Int, Date)] = []
+            for file in files {
+                guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]), let date = values.contentModificationDate else { continue }
+                if now.timeIntervalSince(date) >= 48 * 3600 { try? FileManager.default.removeItem(at: file) }
+                else { saved.append((file, values.fileSize ?? 0, date)) }
+            }
+            var bytes = saved.reduce(0) { $0 + $1.1 }, count = saved.count
+            for file in saved.sorted(by: { $0.2 < $1.2 }) where bytes > 128 * 1024 * 1024 || count > 4096 {
+                try? FileManager.default.removeItem(at: file.0); bytes -= file.1; count -= 1
+            }
+        }
     }
     private func associated(_ item: MediaItem, scope: AgendaCacheScope, block: Int) -> Data { Data("jac-media-v1|\(scope.id)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(block)".utf8) }
     private func length(_ value: Int) -> Data { var size = UInt32(value).bigEndian; return withUnsafeBytes(of: &size) { Data($0) } }

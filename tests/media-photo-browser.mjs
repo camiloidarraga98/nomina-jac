@@ -7,12 +7,14 @@ import {readFile,mkdir,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {build} from 'esbuild';
 import {createHash} from 'node:crypto';
+import {execFileSync} from 'node:child_process';
 const {chromium}=await import(process.env.JAC_PLAYWRIGHT_MODULE||'playwright');
 const directory=resolve('work/local/photo-actions-browser');await mkdir(directory,{recursive:true});
 const entry=directory+'/entry.tsx';
 await writeFile(entry,"import {createRoot} from 'react-dom/client';import MediaPanel from '../../../app/media-panel';createRoot(document.getElementById('app')!).render(<MediaPanel/>);");
 await build({entryPoints:[entry],outdir:directory+'/bundle',bundle:true,format:'esm',platform:'browser',jsx:'automatic',define:{'process.env.NODE_ENV':'"development"'}});
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
+const previewJPEG=execFileSync('ffmpeg',['-loglevel','error','-f','lavfi','-i','color=c=blue:s=16x16','-frames:v','1','-f','image2pipe','-c:v','mjpeg','pipe:1']);
 const root={id:'jac_r2_root',name:'Archivo ficticio'},revision='2026-10-18T12:00:00Z';
 const photos=[1,2].map((n)=>({id:'r2_'+String(n).repeat(8)+'-1111-4111-8111-111111111111',name:n===1?'Uno.png':'Dos.png',kind:'image',mimeType:'image/png',size:png.length,createdAt:revision,modifiedAt:revision,thumbnailAvailable:true}));
 let removed=new Set(),revoked=false,scope=Buffer.alloc(32,7).toString('base64url'),deleteCalls=0,administrator=true;
@@ -29,6 +31,7 @@ const server=createServer(async(req,res)=>{
  if(url.pathname==='/api/media/file'){
   const item=photos.find(p=>p.id===url.searchParams.get('id'));if(!item||removed.has(item.id))return json({error:'Foto eliminada'},410);
   if(url.searchParams.has('metadata'))return json({item});
+  if(url.searchParams.get('preview')==='1'){res.writeHead(200,{'Content-Type':'image/jpeg','Content-Length':previewJPEG.length});return res.end(previewJPEG);}
   res.writeHead(200,{'Content-Type':'image/png','Content-Length':png.length,'Cache-Control':'private, no-store'});return res.end(png);
  }
  let path;
@@ -48,6 +51,11 @@ async function until(fn){for(let n=0;n<100;n++){if(await fn())return;await new P
 async function moduleCall(fn){return page.evaluate(fn);}
 try{
  await page.goto(base);await page.getByRole('button',{name:'Abrir Uno.png',exact:true}).waitFor();
+ await page.getByRole('button',{name:'Abrir Uno.png',exact:true}).click();await until(()=>page.locator('.media-preview-stage img').evaluate(image=>image.complete&&image.naturalWidth>0));
+ assert.ok(requests.some(url=>url.includes('preview=1')));assert.ok(!requests.some(value=>{const url=new URL(value,base);return url.pathname==='/api/media/file'&&!url.searchParams.has('thumbnail')&&!url.searchParams.has('preview')&&!url.searchParams.has('metadata');}));
+ assert.equal(await page.locator('.media-file-caption').first().evaluate(element=>getComputedStyle(element).display),'none');
+ await page.keyboard.press('Escape');
+
  await page.getByLabel('Opciones de Uno.png',{exact:true}).click();
  const save=page.getByRole('button',{name:'Guardar sin conexión',exact:true}).first();await until(()=>save.isEnabled());await save.click();
  await page.getByText('Foto disponible sin conexión en este navegador.',{exact:true}).waitFor();
@@ -67,7 +75,7 @@ try{
  const active=await reopened.evaluate(()=>localStorage.getItem('jac.media.offline.scope.v1'));assert.equal(active,null);
  revoked=false;await reopened.close();const live=await context.newPage();await live.goto(base);await live.getByRole('button',{name:'Abrir Uno.png',exact:true}).waitFor();
  await live.getByLabel('Opciones de Uno.png',{exact:true}).click();await live.getByRole('button',{name:'Eliminar foto',exact:true}).click();
- await live.getByRole('dialog').getByRole('button',{name:'Eliminar foto',exact:true}).click();await live.getByText('Foto eliminada.',{exact:true}).waitFor();
+ await live.getByRole('dialog').getByRole('button',{name:'Eliminar archivo',exact:true}).click();await live.getByText('Archivo eliminado.',{exact:true}).waitFor();
  assert.equal(deleteCalls,1);assert.equal(await live.getByRole('button',{name:'Abrir Uno.png',exact:true}).count(),0);assert.equal(await live.getByRole('button',{name:'Abrir Dos.png',exact:true}).count(),1);
  // The photographer keeps download/offline actions without the delete command.
  administrator=false;await live.reload();await live.getByLabel('Opciones de Dos.png',{exact:true}).click();assert.equal(await live.getByRole('button',{name:'Eliminar foto',exact:true}).count(),0);

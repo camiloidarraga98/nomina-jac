@@ -298,7 +298,7 @@ final class PayrollClient: ObservableObject {
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false) async throws -> (Data, HTTPURLResponse) {
-        let mediaThumbnailRead = path == "api/media/file" && query.contains { $0.name == "thumbnail" && $0.value == "1" }
+        let mediaThumbnailRead = path == "api/media/file" && query.contains { ["thumbnail", "preview"].contains($0.name) && $0.value == "1" }
         guard allowsResource(path,query:query) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
@@ -983,19 +983,18 @@ final class PayrollClient: ObservableObject {
     }
     func uploadMediaThumbnail(_ file: MediaLocalFile) async throws {
         let stamp = try mediaAccessStamp()
-        if let thumbnail = await MediaThumbnail.jpeg(for: file) {
+        for preview in file.mimeType.hasPrefix("image/") ? [false, true] : [false] {
+            guard let bytes = await MediaThumbnail.jpeg(for: file, edge: preview ? 1600 : 360, quality: preview ? 0.76 : 0.60, limit: preview ? 2 * 1024 * 1024 : 512 * 1024) else {
+                try Task.checkCancellation(); throw APIError.message("Original subido. Reintenta para completar sus vistas ligeras.")
+            }
             guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
-            let (request, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "thumbnail", value: "1"), URLQueryItem(name: "id", value: file.id)], method: "PUT")
+            let kind = preview ? "preview" : "thumbnail"
+            let (request, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: kind, value: "1"), URLQueryItem(name: "id", value: file.id)], method: "PUT")
             var upload = request; upload.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
-                let data: Data, response: URLResponse
-                if let mediaUploadTransport { (data, response) = try await mediaUploadTransport.send(upload, body: thumbnail, key: "thumbnail:" + (try mediaScope())!.id + ":" + file.id, progress: { _ in }) }
-                else { (data, response) = try await mediaSession.upload(for: upload, from: thumbnail) }
-                _ = try validateMediaResponse(response, data: data, token: token, generation: generation)
-        } else {
-            try Task.checkCancellation()
-            // Keep the durable job/local source until its cover is confirmed.
-            // Retrying this phase must never repeat the committed original.
-            throw APIError.message("El archivo ya está subido, pero su miniatura sigue pendiente. Reintenta para completarla.")
+            let data: Data, response: URLResponse
+            if let mediaUploadTransport { (data, response) = try await mediaUploadTransport.send(upload, body: bytes, key: kind + ":" + (try mediaScope())!.id + ":" + file.id, progress: { _ in }) }
+            else { (data, response) = try await mediaSession.upload(for: upload, from: bytes) }
+            _ = try validateMediaResponse(response, data: data, token: token, generation: generation)
         }
     }
     static func directMediaRequest(_ url: URL, mime: String, offset: Int64, count: Int, total: Int64) throws -> URLRequest {
@@ -1025,10 +1024,37 @@ final class PayrollClient: ObservableObject {
         // Authorization header. The URL only authorizes its reserved new file.
         return request
     }
-    func mediaThumbnail(_ item: MediaItem) async throws -> Data {
-        let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "thumbnail", value: "1")], document: true, forceNetwork: true)
+    func mediaThumbnail(_ item: MediaItem, networkAllowed: Bool = true) async throws -> Data {
+        guard let scope = try mediaScope(), permissionUser?.canReadMedia != false else { throw APIError.unauthorized }
+        let stamp = try mediaAccessStamp(), cache = mediaOffline
+        let saved = await Task.detached(priority: .utility) { cache.loadThumbnail(item, scope: scope) }.value
+        guard stamp == (try mediaAccessStamp()), permissionUser?.canReadMedia != false else { throw CancellationError() }
+        if let saved { return saved }
+        guard networkAllowed, !usingOfflineCopy else { throw MediaThumbnailUnavailable() }
+        let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "revision", value: item.modifiedAt), URLQueryItem(name: "thumbnail", value: "1")], document: true, forceNetwork: true)
         guard data.count <= 512 * 1024, ["image/jpeg", "image/png", "image/webp", "image/gif"].contains(response.mimeType ?? "") else { throw APIError.invalid("No se recibió una miniatura válida.") }
+        guard stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+        _ = await Task.detached(priority: .utility) { try? cache.saveThumbnail(data, item: item, scope: scope) }.value
+        guard stamp == (try mediaAccessStamp()) else { throw CancellationError() }
         return data
+    }
+    func mediaPlayback(_ item: MediaItem) async throws -> URL {
+        struct Playback: Decodable { let ready: Bool; let url: String?; let message: String? }
+        let (data, _) = try await request(path: "api/media/playback", query: [URLQueryItem(name: "id", value: item.id)], forceNetwork: true)
+        let info = try decoder.decode(Playback.self, from: data)
+        guard info.ready, let raw = info.url, let url = URL(string: raw), url.scheme == baseURL.scheme, url.host == baseURL.host,
+              url.port == baseURL.port, url.path == "/api/media/playback", let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
+              parts.queryItems?.contains(where: { $0.name == "lease" && !($0.value ?? "").isEmpty }) == true else { throw APIError.message(info.message ?? "Preparando la reproducción adaptativa. Vuelve a abrir el video en unos momentos.") }
+        return url
+    }
+    func mediaPhotoPreview(_ item: MediaItem, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
+        if usingOfflineCopy { return try await mediaDocument(item, progress: progress) }
+        let stamp = try mediaAccessStamp()
+        let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "preview", value: "1"), URLQueryItem(name: "revision", value: item.modifiedAt)], document: true, forceNetwork: true)
+        guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+        guard !data.isEmpty, data.count <= 2 * 1024 * 1024, response.mimeType == "image/jpeg" else { throw APIError.invalid("No se recibió una vista previa ligera.") }
+        progress(Int64(data.count), Int64(data.count))
+        return try TemporaryDocuments.save(data, filename: "vista-previa.jpg")
     }
     private func restoredMediaDocument(_ item: MediaItem, scope: AgendaCacheScope) async throws -> ExportedDocument? {
         let generation = cacheGeneration

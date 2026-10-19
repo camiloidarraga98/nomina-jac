@@ -17,7 +17,7 @@ El servidor R2 ya conserva una miniatura indexada por archivo y lista por creaci
 
 ### Comportamiento implementado
 
-- Contenedores de carpetas VStack estables; únicamente las cuadrículas de archivos son lazy. Dos líneas reservadas para nombres mantienen alturas constantes al cargar imágenes. Se conserva la navegación desplegable y la selección múltiple.
+- Contenedores de carpetas VStack estables; únicamente las cuadrículas de archivos son lazy. Las tarjetas de archivos tienen altura fija de170pt, sin nombre visible ni franja inferior; las carpetas conservan sus títulos. Esta petición visual posterior sustituye las dos líneas reservadas de nombres. Se conserva la navegación desplegable y la selección múltiple.
 - Los encabezados cerrados no consultan Llavero ni descifran el índice al recibir notificaciones de caché. Solo las carpetas abiertas mantienen lecturas activas.
 - Salir de pantalla cancela la lectura de una carpeta, conservando sus metadatos y páginas. Solo el cierre explícito, cambio de colección/sesión o denegación limpia su estado. Al volver se revalida sin quitar el contenido permitido.
 - MediaGalleryListing reúne todas las páginas antes de devolver el reemplazo: recuerda tanto las páginas solicitadas como la cantidad visible restaurada desde caché. Rechaza cursores repetidos y colecciones mezcladas; elimina duplicados y aplica borrados. Un fallo posterior no instala la primera página aislada.
@@ -26,7 +26,7 @@ El servidor R2 ya conserva una miniatura indexada por archivo y lista por creaci
 - Cada celda reinicia explícitamente su solicitud al reaparecer. Al desaparecer libera su referencia y cancela el trabajo; la caché compartida permite recuperar los mismos píxeles sin red. El estado de una revisión anterior nunca sustituye la nueva.
 - Hasta cuatro cargas/decodificaciones simultáneas, cola cancelable y decodificación ImageIO fuera de interfaz, máximo 360 píxeles/512 KiB. Nunca se solicitan originales para poblar la cuadrícula.
 - Una miniatura conocida como pendiente no genera peticiones fallidas. Un404/429/5xx aislado no invalida el resto; una celda visible hace hasta tres intentos ante indisponibilidad transitoria. Un fallo de esa petición no cambia la conectividad global. Un401/403 mantiene su retirada normal.
-- Ante una pérdida temporal de conexión se pueden reutilizar únicamente píxeles ya presentes en memoria de esa sesión autorizada. No se crean nuevas descargas offline ni se ignoran denegaciones.
+- Ante una pérdida temporal de conexión se pueden reutilizar píxeles en memoria o las miniaturas temporales cifradas de esa sesión autorizada. No se crean nuevas descargas offline ni se ignoran denegaciones.
 - Fechas de creación analizadas una vez por valor, con dos formateadores reutilizados, y orden por creación, nombre binario e ID, coincidiendo con el servidor entre páginas. La modificación de una miniatura no cambia la fecha usada para ordenar.
 
 Esto corrige la pérdida y recarga de miniaturas existentes; no genera miniaturas históricas que nunca quedaron indexadas. Tampoco garantiza carga instantánea tras un arranque sin caché y con red lenta.
@@ -46,3 +46,7 @@ La repetición final de esa única UI está en `39278192940`, fuente `0e7540a5b5
 ## Verificación histórica
 
 La ejecución39202395410 sobre1735e026 aprobó23unitarias, tres UI y Release Mac de la intervención anterior. Su recorrido de80fotos no comprobaba permanencia durante el refresco de 30 segundos ni la pérdida de páginas; ese resultado no demuestra resuelto el nuevo fallo reportado. Las reglas vigentes de caché y contenedores son las de la sección anterior.
+
+## Ampliación posterior: caché temporal al reabrir
+
+Se conserva una copia AES-GCM de cada miniatura, vinculada a origen/sesión, ID, revisión, tamaño y MIME. Caduca tras48h sin acceso; poda periódica de128MiB/4096archivos (puede sobrepasar temporalmente el límite entre32escrituras). La clave de píxeles usa el scope estable y comprueba el sello de autorización en cada uso, sin perder la caché por una actualización general. Logout/revocación eliminan ambos niveles y rechazan escrituras tardías. La decodificación y lectura de disco continúan fuera del hilo de interfaz. Ver PHOTOGRAPHY_LIGHTWEIGHT_PLAYBACK.md.

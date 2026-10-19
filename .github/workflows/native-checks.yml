@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, media-delete]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, media-delete, media-light]
         default: full
 
 permissions:
@@ -60,6 +60,7 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_MEDIA_LIGHT: ${{ inputs.scope == 'media-light' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-light]')) }}
           JAC_MEDIA_DELETE: ${{ inputs.scope == 'media-delete' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-delete]')) }}
           JAC_GALLERY_STABILITY: ${{ inputs.scope == 'gallery-stability' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-stability]')) }}
           JAC_GALLERY_STABILITY_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[gallery-ui-only]') }}
@@ -72,7 +73,19 @@ jobs:
           JAC_VIDEO_UI_ONLY: ${{ inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]') && contains(github.event.head_commit.message, '[ui-only]')) }}
         run: |
           set -euo pipefail
-          if [ "$JAC_MEDIA_DELETE" = true ]; then
+          if [ "$JAC_MEDIA_LIGHT" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests
+              -only-testing:JACNominaTests/PayrollClientTests/testThumbnailCacheSurvivesClosingFolderMemoryEvictionAndReopeningSession
+              -only-testing:JACNominaTests/PayrollClientTests/testThumbnailDiskCacheIsEncryptedBoundedByRevisionSessionAndExpiry
+              -only-testing:JACNominaTests/PayrollClientTests/testLightPhotoPreviewAndAdaptiveVideoNeverRequestOriginalBytes
+              -only-testing:JACNominaTests/PayrollClientTests/testThumbnailFailureRemainsAnErrorUntilTheIndexedJPEGIsConfirmed
+              -only-testing:JACNominaTests/PayrollClientTests/testGalleryThumbnailUsesOnlyAuthenticatedThumbnailEndpointAndBoundsItsPixels
+              -only-testing:JACNominaTests/PayrollClientTests/testMissingThumbnailDoesNotInvalidateOtherImagesOrFolderSession
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaStreamingAssetUsesAuthenticatedRangesAndRejectsChangedContent
+              -only-testing:JACNominaUITests/LaunchTests/testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling
+            )
+          elif [ "$JAC_MEDIA_DELETE" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testAndersonCanDeleteOnlyWhilePhotographyIsGranted
               -only-testing:JACNominaTests/PayrollClientTests/testAndersonCanDeleteExistingPhotoVideoBatchAndFolder
@@ -152,6 +165,38 @@ jobs:
             "${checks[@]}" \
             ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
             test 2>&1 | tee native-ci/iphone-tests.log
+      - name: Verify iPad selection and video deletion using the compiled app
+        if: ${{ !cancelled() && (inputs.scope == 'media-light' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-light]'))) }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import glob, json, os, re, subprocess
+          products = glob.glob('native-ci/simulator/Build/Products/*.xctestrun')
+          if not products:
+              raise SystemExit('No compiled simulator test bundle to reuse.')
+          devices = json.loads(subprocess.check_output(['xcrun','simctl','list','devices','available','--json']))['devices']
+          for runtime in sorted(devices, key=lambda name:tuple(map(int,re.findall(r'\d+',name))), reverse=True):
+              if '.iOS-' not in runtime:
+                  continue
+              candidates = [d for d in devices[runtime] if d['name'].startswith('iPad') and d.get('deviceTypeIdentifier')]
+              if candidates:
+                  simulator = subprocess.check_output(['xcrun','simctl','create','JAC iPad CI',candidates[0]['deviceTypeIdentifier'],runtime],text=True).strip()
+                  with open(os.environ['GITHUB_ENV'],'a') as output:
+                      output.write('JAC_CI_IPAD_SIMULATOR_ID='+simulator+'\n')
+                  with open('native-ci/ipad-test-env','w') as output:
+                      output.write(simulator+'\n'+products[0]+'\n')
+                  break
+          else:
+              raise SystemExit('No available iPad simulator runtime was found.')
+          PYCODE
+          JAC_CI_IPAD_SIMULATOR_ID=$(sed -n '1p' native-ci/ipad-test-env)
+          JAC_CI_IPAD_XCTESTRUN=$(sed -n '2p' native-ci/ipad-test-env)
+          xcodebuild test-without-building -xctestrun "$JAC_CI_IPAD_XCTESTRUN" \
+            -destination "platform=iOS Simulator,id=$JAC_CI_IPAD_SIMULATOR_ID" \
+            -resultBundlePath native-ci/ipad.xcresult -parallel-testing-enabled NO \
+            -only-testing:JACNominaUITests/IPadTests/testTabletPhotographyLongPressSelectsAndVideosHaveDeleteAction \
+            2>&1 | tee native-ci/ipad-tests.log
       - name: Export compact test diagnostics
         if: always()
         shell: bash
@@ -187,9 +232,13 @@ jobs:
             xcrun simctl shutdown "$JAC_CI_SIMULATOR_ID" || true
             xcrun simctl delete "$JAC_CI_SIMULATOR_ID"
           fi
+          if [ -n "${JAC_CI_IPAD_SIMULATOR_ID:-}" ]; then
+            xcrun simctl shutdown "$JAC_CI_IPAD_SIMULATOR_ID" || true
+            xcrun simctl delete "$JAC_CI_IPAD_SIMULATOR_ID"
+          fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'media-delete' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-media-delete]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

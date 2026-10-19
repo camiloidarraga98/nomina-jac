@@ -177,6 +177,10 @@ Referencia: [TRAVEL_WORKFLOWS.md](../docs/TRAVEL_WORKFLOWS.md).
 
 ## 10. Fotografía: biblioteca R2, subida, visor y descargas
 
+**Decisión posterior del19 de octubre:** Camilo eligió Cloudflare Stream adaptativo y configuró su secreto en el Worker. Al abrir un video online, web/app/enlace público usan HLS que adapta la calidad; la descarga conserva el archivo R2 completo. Las fotos abiertas usan JPEG de hasta1600px/2MiB generado al subir; las fotos anteriores sin esa variante usan su miniatura existente, sin descargar el original para abrirlas. La preparación de videos existentes es gradual, un video pendiente por minuto; no afirmar que todos estén listos al publicar. No prometer ausencia absoluta de pausas.
+
+Las miniaturas quedan a imagen completa, sin nombre visible, barra blanca ni texto «Video»; videos con pequeño icono en una esquina, nombres accesibles y disponibles en el visor. iPhone/iPad conservan miniaturas temporales cifradas por sesión/revisión durante48h desde el último acceso, además de la memoria, y las retiran al cerrar sesión/revocar. El menú individual permite borrar videos según permiso y la pulsación prolongada de iPad inicia selección múltiple sin bloquear el scroll. Véase [vistas ligeras y caché](../docs/PHOTOGRAPHY_LIGHTWEIGHT_PLAYBACK.md).
+
 **Estado actual: R2 privado `jac-fotografia`, colección nueva independiente.** Camilo ordenó empezar desde cero y retirar Drive de esta sección: no inventariar, migrar, copiar, borrar ni volver a conectar fotos antiguas de Drive. Esta decisión **no elimina Google Calendar, Gmail ni Sheets** del resto de JAC.
 
 ### Carpetas y visualización

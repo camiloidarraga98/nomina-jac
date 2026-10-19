@@ -77,8 +77,8 @@ export async function sharedFolderFeed(token:unknown,folder?:string,page?:string
  // Omit full-gallery roots, deleted IDs, roles, upload state and actor details.
  return {folder:feed.folder,breadcrumbs:feed.breadcrumbs.slice(index),items:feed.items,nextPageToken:feed.nextPageToken||'',expiresAt:row.expires_at};
 }
-export async function sharedFolderFile(token:unknown,id:string,thumbnail:boolean,range:string|null,revision?:string){
- const {g}=await sharedGuard(token,id);return r2File(g,id,thumbnail,range,revision);
+export async function sharedFolderFile(token:unknown,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false){
+ const {g}=await sharedGuard(token,id);return r2File(g,id,thumbnail,range,revision,preview);
 }
 
 export type SharedDownloadMode='selected'|'photos'|'all';
@@ -130,3 +130,5 @@ async function openSharedDownloadFile(folderGuard:MediaGuard,credentials:string,
  if(!response.body)throw new MediaFailure('No se pudo leer el archivo.',502);
  return {body:response.body,check};
 }
+
+export async function sharedPlaybackGuard(token:string,id:string){return (await sharedGuard(token,id)).g;}

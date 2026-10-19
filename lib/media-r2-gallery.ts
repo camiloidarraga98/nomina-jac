@@ -1,3 +1,4 @@
+import {ensurePresentations,presentation} from './media-presentation-store';
 import {createHash} from 'node:crypto';
 import {database} from '@/db/raw';
 import {mailKey} from './payroll-mail';
@@ -67,16 +68,44 @@ export async function r2Folder(g:MediaGuard,input:Record<string,unknown>){
  const found=await entry(id);await live(c);let legacyDigest='';if(found&&found.payload_hash!==digest&&typeof input.date==='string'){try{legacyDigest=hash([g.actorID,parentID,mediaFolderName(input.name,input.date)]);}catch{}}if(!found||(found.payload_hash!==digest&&found.payload_hash!==legacyDigest)||found.mime_type!==MEDIA_FOLDER_MIME)throw new MediaFailure('Esta solicitud ya pertenece a otra carpeta o cuenta.',409);await parent(c,id);return {folder:{id,name:found.name}};
 }
 export async function r2Metadata(g:MediaGuard,id:string){const c=await context(g),rows=await chain(c,id),row=rows.at(-1);if(!row||row.mime_type===MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una foto o video.');await live(c);return {item:item(row)};}
-export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string){
+export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false){
  const c=await context(g),rows=await chain(c,id),row=rows.at(-1);if(!row||row.mime_type===MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una foto o video.');
- if(revision&&revision!==row.modified_at)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);const key=thumbnail?row.thumbnail_key:row.object_key;if(!key)throw new MediaFailure('La miniatura todavía no está disponible.',404);
- const requested=thumbnail?null:mediaRange(range),response=await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
+ if(revision&&revision!==row.modified_at)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);const view=preview?await presentation(id):null;const key=preview?(view?.source_key===row.object_key&&view.connection_version===c.config.version?view.preview_key||row.thumbnail_key:row.thumbnail_key):thumbnail?row.thumbnail_key:row.object_key;if(!key)throw new MediaFailure('La miniatura todavía no está disponible.',404);
+ const requested=thumbnail||preview?null:mediaRange(range),response=await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
  if(requested&&response.status!==206){await response.body?.cancel();throw new MediaFailure('R2 no confirmó el rango solicitado.',502);}
  try{await chain(c,id);const after=await entry(id);if(after?.modified_at!==row.modified_at||after.object_key!==row.object_key)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);await live(c);}catch(e){await response.body?.cancel();throw e;}
- const headers=new Headers({'content-type':thumbnail?'image/jpeg':row.mime_type,'content-disposition':"inline; filename*=UTF-8''"+encodeURIComponent(thumbnail?'miniatura.jpg':row.name),'x-content-type-options':'nosniff','accept-ranges':thumbnail?'none':'bytes'});
+ const headers=new Headers({'content-type':thumbnail||preview?'image/jpeg':row.mime_type,'content-disposition':"inline; filename*=UTF-8''"+encodeURIComponent(preview?'vista-previa.jpg':thumbnail?'miniatura.jpg':row.name),'x-content-type-options':'nosniff','accept-ranges':thumbnail||preview?'none':'bytes'});
  for(const key of ['content-length','content-range','etag']){const value=response.headers.get(key);if(value)headers.set(key,value);}
- if(thumbnail){const bytes=await r2Bytes(response,MEDIA_THUMBNAIL_MAX_BYTES);if(!jpegThumbnail(bytes))throw new MediaFailure('La miniatura no es válida.',502);await live(c);return new Response(bytes,{headers});}
+ if(thumbnail||preview){const bytes=await r2Bytes(response,preview?2*1024*1024:MEDIA_THUMBNAIL_MAX_BYTES);if(!jpegThumbnail(bytes,preview?1600:640,preview?2*1024*1024:MEDIA_THUMBNAIL_MAX_BYTES))throw new MediaFailure('La miniatura no es válida.',502);await live(c);return new Response(bytes,{headers});}
  return new Response(response.body,{status:response.status,headers});
+}
+export async function r2PresentationSource(g:MediaGuard,id:string){
+ checkedID(id);
+ // One bounded ancestry query avoids a series of per-folder round trips for
+ // each playback status check. The encrypted storage credential stays internal.
+ const sql=`WITH RECURSIVE ancestors(id,parent_id,mime_type,depth) AS (
+ SELECT id,parent_id,mime_type,0 FROM jac_media_r2_entries WHERE id=? UNION ALL
+ SELECT e.id,e.parent_id,e.mime_type,a.depth+1 FROM jac_media_r2_entries e JOIN ancestors a ON e.id=a.parent_id WHERE a.depth<24)
+ SELECT e.*,c.credentials,c.version FROM jac_media_r2_entries e CROSS JOIN jac_media_r2_connection c
+ WHERE e.id=? AND e.mime_type<>'application/vnd.google-apps.folder' AND c.id='jac' AND c.enabled=1
+ AND EXISTS(SELECT 1 FROM ancestors WHERE parent_id='jac_r2_root')
+ AND NOT EXISTS(SELECT 1 FROM ancestors WHERE depth>0 AND mime_type<>'application/vnd.google-apps.folder')
+ AND NOT EXISTS(SELECT 1 FROM ancestors a JOIN jac_media_operations d ON d.id='r2-delete:'||a.id AND d.kind IN ('r2-delete-folder','r2-delete-file')) AND ${g.sql}`;
+ const read=()=>database().prepare(sql).bind(id,id,...g.bindings).first<Entry&{credentials:string;version:number}>();
+ const file=await read();if(!file||file.object_key!=='originals/'+file.id.slice(3))throw new MediaFailure('El archivo o los permisos cambiaron.',403);
+ const secret=await decryptMail<MediaR2Secret>(file.credentials,mailKey()),current=await read();
+ if(!current||current.version!==file.version||current.credentials!==file.credentials||current.modified_at!==file.modified_at||current.object_key!==file.object_key||current.size!==file.size||current.mime_type!==file.mime_type)throw new MediaFailure('El archivo o los permisos cambiaron.',403);
+ return {item:item(file),key:file.object_key,version:file.version,secret};
+}
+export async function r2SavePreview(g:MediaGuard,id:unknown,bytes:Uint8Array){
+ if(!jpegThumbnail(bytes,1600,2*1024*1024))throw new MediaFailure('La vista previa debe ser JPEG de hasta 1600 px y 2 MB.',422);
+ const c=await context(g),upload=await own(c,id);if(upload.status!=='ready')throw new MediaFailure('Termina de subir el original.',409);
+ const file=await entry(upload.drive_id);if(!file||!file.mime_type.startsWith('image/')||file.actor_id!==g.actorID)throw new MediaFailure('Esta foto no pertenece a tu subida.',403);
+ await ensurePresentations(g);const key='previews/'+upload.id.toLowerCase()+'.jpg',old=await presentation(file.id);
+ if(old?.preview_key&&old.source_key===file.object_key&&old.connection_version===c.config.version)return {saved:true};
+ const response=await call(c,'PUT',key,{}, {'content-type':'image/jpeg'},bytes);await checked(response);await response.body?.cancel();await chain(c,file.id);await live(c);
+ const saved=await database().prepare(`INSERT INTO jac_media_presentations(file_id,source_key,connection_version,preview_key,updated_at) SELECT ?,?,?,?,? WHERE ${same(c)} AND ${availableSQL(file.id)} ON CONFLICT(file_id) DO UPDATE SET preview_key=excluded.preview_key,updated_at=excluded.updated_at WHERE jac_media_presentations.source_key=excluded.source_key AND jac_media_presentations.connection_version=excluded.connection_version`).bind(file.id,file.object_key,c.config.version,key,new Date().toISOString(),...g.bindings).run();
+ if(saved.meta.changes!==1)throw new MediaFailure('La foto o la sesión cambió.',403);await live(c);return {saved:true};
 }
 async function own(c:Context,id:unknown){if(!validMediaRequestID(id))throw new MediaFailure('La subida no es válida.');const row=await operation(id);if(!row||row.actor_id!==c.g.actorID||row.connection_version!==c.config.version)throw new MediaFailure('Esta subida no pertenece a tu cuenta o conexión.',403);if(row.status==='cancelled'||row.status!=='ready'&&row.expires_at<new Date().toISOString())throw new MediaFailure('La subida venció. Selecciona el archivo otra vez.',410);await parent(c,row.parent_id);if(!(await database().prepare(`SELECT 1 WHERE ${availableSQL(row.drive_id)}`).first()))throw new MediaFailure('Este archivo se eliminó de Fotografía.',410);return row;}
 async function lock(c:Context,row:Upload){const claim=crypto.randomUUID(),result=await database().prepare(`UPDATE jac_media_operations SET claim=?,claim_at=? WHERE id=? AND actor_id=? AND kind='r2-upload' AND status=? AND offset=? AND session_payload=? AND (claim='' OR claim_at<?) AND ${same(c)} AND ${availableSQL(row.parent_id)} AND ${availableSQL(row.drive_id)}`).bind(claim,new Date().toISOString(),row.id,c.g.actorID,row.status,row.offset,row.session_payload,new Date(Date.now()-180000).toISOString(),...c.g.bindings).run();if(result.meta.changes!==1)throw new MediaFailure('Esta subida ya está en curso. Reintenta en un momento.',409);return claim;}
@@ -157,9 +186,9 @@ export async function r2Cancel(g:MediaGuard,id:unknown){const c=await context(g)
 
 // Accept a small JPEG variant, never arbitrary HTML/SVG or an oversized decoded
 // raster. Originals remain unchanged. This is also used for native video covers.
-export function jpegThumbnail(bytes:Uint8Array){
- if(bytes.length<10||bytes.length>MEDIA_THUMBNAIL_MAX_BYTES||!mediaSignature(bytes,'image/jpeg'))return false;
- let p=2;while(p+4<=bytes.length){if(bytes[p++]!==255)return false;let marker=bytes[p++];while(marker===255)marker=bytes[p++];if(marker===217||marker===218)return false;const length=(bytes[p]<<8)|bytes[p+1];if(length<2||p+length>bytes.length)return false;if([192,193,194].includes(marker)){const h=(bytes[p+3]<<8)|bytes[p+4],w=(bytes[p+5]<<8)|bytes[p+6];return length>=8&&w>0&&h>0&&w<=640&&h<=640;}p+=length;}return false;
+export function jpegThumbnail(bytes:Uint8Array,edge=640,limit=MEDIA_THUMBNAIL_MAX_BYTES){
+ if(bytes.length<10||bytes.length>limit||!mediaSignature(bytes,'image/jpeg'))return false;
+ let p=2;while(p+4<=bytes.length){if(bytes[p++]!==255)return false;let marker=bytes[p++];while(marker===255)marker=bytes[p++];if(marker===217||marker===218)return false;const length=(bytes[p]<<8)|bytes[p+1];if(length<2||p+length>bytes.length)return false;if([192,193,194].includes(marker)){const h=(bytes[p+3]<<8)|bytes[p+4],w=(bytes[p+5]<<8)|bytes[p+6];return length>=8&&w>0&&h>0&&w<=edge&&h<=edge;}p+=length;}return false;
 }
 export async function r2SaveThumbnail(g:MediaGuard,id:unknown,bytes:Uint8Array){
  if(!jpegThumbnail(bytes))throw new MediaFailure('La miniatura debe ser un JPEG de hasta 640 px y 512 KB.',422);const c=await context(g),row=await own(c,id);if(row.status!=='ready')throw new MediaFailure('Termina de subir el archivo antes de su miniatura.',409);const claim=await lock(c,row);try{const file=await entry(row.drive_id);if(!file||file.actor_id!==g.actorID)throw new MediaFailure('Este archivo no pertenece a tu subida.',403);const key='thumbnails/'+row.id.toLowerCase()+'.jpg';
@@ -175,7 +204,8 @@ export async function r2SaveThumbnail(g:MediaGuard,id:unknown,bytes:Uint8Array){
 function deletionState(row:Upload,complete=row.status==='ready',waiting=false){return {id:row.parent_id,parentId:row.drive_id,name:row.name,removed:row.offset,complete,waiting};}
 async function deleteKeys(c:Context,keys:string[]){
  keys=[...new Set(keys)].filter(Boolean);if(!keys.length)return;
- if(keys.length>200||keys.some(k=>! /^(originals\/[a-f0-9-]{36}|thumbnails\/[a-f0-9-]{36}\.jpg)$/.test(k)))throw new MediaFailure('Los archivos de la carpeta no son válidos.',409);
+ if(keys.length>400||keys.some(k=>! /^(originals\/[a-f0-9-]{36}|(?:thumbnails|previews)\/[a-f0-9-]{36}\.jpg)$/.test(k)))throw new MediaFailure('Los archivos de la carpeta no son válidos.',409);
+ if(keys.length>200){for(let at=0;at<keys.length;at+=200)await deleteKeys(c,keys.slice(at,at+200));return;}
  const body='<Delete>'+keys.map(k=>'<Object><Key>'+xmlEscape(k)+'</Key></Object>').join('')+'<Quiet>false</Quiet></Delete>';
  const response=await call(c,'POST','',{delete:''},{'content-type':'application/xml','content-md5':createHash('md5').update(body).digest('base64')},body);await checked(response);const xml=await r2XML(response);
  const confirmed=[...xml.matchAll(/<Deleted>([\s\S]*?)<\/Deleted>/g)].map(m=>xmlValue(m[1],'Key'));
@@ -207,7 +237,7 @@ export async function r2DeleteFile(g:MediaGuard,id:unknown,revision:unknown){
   if(busy)return deletionState(job,false,true);
   const row=await entry(id);
   if(row&&(row.object_key!=='originals/'+id.slice(3)||row.thumbnail_key&&row.thumbnail_key!=='thumbnails/'+id.slice(3)+'.jpg'))throw new MediaFailure('El archivo no coincide con su contenido.',409);
-  await deleteKeys(c,['originals/'+id.slice(3),'thumbnails/'+id.slice(3)+'.jpg']);await live(c);
+  await deleteKeys(c,['originals/'+id.slice(3),'thumbnails/'+id.slice(3)+'.jpg','previews/'+id.slice(3)+'.jpg']);await live(c);
   const owned=`EXISTS(SELECT 1 FROM jac_media_operations WHERE id=? AND claim=? AND kind='r2-delete-file' AND status='pending')`;
   await database().prepare(`DELETE FROM jac_media_r2_entries WHERE id=? AND mime_type<>? AND ${same(c)} AND ${owned}`).bind(id,MEDIA_FOLDER_MIME,...g.bindings,job.id,claim).run();
   const saved=await database().prepare(`UPDATE jac_media_operations SET status='ready',offset=1 WHERE id=? AND claim=? AND ${same(c)}`).bind(job.id,claim,...g.bindings).run();
@@ -237,13 +267,13 @@ export async function r2DeleteFolder(g:MediaGuard,id:unknown){
    if(upload.connection_version!==c.config.version)throw new MediaFailure('Una subida pertenece a otra conexión. Revisa la carpeta antes de continuar.',409);
    await live(c);const stopped=await database().prepare(`UPDATE jac_media_operations SET status='cancelled',claim='',claim_at='' WHERE id=? AND kind='r2-upload' AND status IN ('pending','cancelled') AND ${same(c)} AND ${owned}`).bind(upload.id,...g.bindings).run();if(stopped.meta.changes!==1)throw new MediaFailure('La eliminación cambió. Reintenta.',409);
    if(upload.session_payload){const response=await call(c,'DELETE',objectKey(upload),{uploadId:await uploadID(upload)});if(response.status!==404)await checked(response);await response.body?.cancel();}
-   await deleteKeys(c,[objectKey(upload),'thumbnails/'+upload.id.toLowerCase()+'.jpg']);
+   await deleteKeys(c,[objectKey(upload),'thumbnails/'+upload.id.toLowerCase()+'.jpg','previews/'+upload.id.toLowerCase()+'.jpg']);
    await database().prepare(`UPDATE jac_media_operations SET status='deleted',session_payload='' WHERE id=? AND kind='r2-upload' AND status='cancelled' AND ${same(c)} AND ${owned}`).bind(upload.id,...g.bindings).run();await live(c);
   }
   const files=await database().prepare(`${tree} SELECT * FROM jac_media_r2_entries WHERE id IN (SELECT id FROM tree) AND mime_type<>? LIMIT 100`).bind(MEDIA_FOLDER_MIME).all<Entry>();
   if(files.results.length){
    for(const file of files.results){checkedID(file.id);const uuid=file.id.slice(3);if(file.object_key!=='originals/'+uuid||file.thumbnail_key&&file.thumbnail_key!=='thumbnails/'+uuid+'.jpg')throw new MediaFailure('El contenido de la carpeta cambió. Revisa antes de continuar.',409);}
-   await deleteKeys(c,files.results.flatMap(f=>[f.object_key,'thumbnails/'+f.id.slice(3)+'.jpg']));await live(c);
+   await deleteKeys(c,files.results.flatMap(f=>[f.object_key,'thumbnails/'+f.id.slice(3)+'.jpg','previews/'+f.id.slice(3)+'.jpg']));await live(c);
    // Each ID and key is server-observed; guard the catalogue removal too.
    const placeholders=files.results.map(()=>'?').join(','),removed=await database().prepare(`DELETE FROM jac_media_r2_entries WHERE id IN (${placeholders}) AND mime_type<>? AND ${same(c)} AND ${owned}`).bind(...files.results.map(f=>f.id),MEDIA_FOLDER_MIME,...g.bindings).run();
    const saved=await database().prepare(`UPDATE jac_media_operations SET offset=offset+? WHERE id=? AND claim=? AND ${same(c)}`).bind(removed.meta.changes,job.id,claim,...g.bindings).run();if(saved.meta.changes!==1)throw new MediaFailure('La sesión cambió durante la eliminación.',403);

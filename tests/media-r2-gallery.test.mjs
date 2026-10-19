@@ -21,7 +21,7 @@ class Query {
 }
 globalThis.__r2Fixture={DB:{prepare:text=>new Query(text),batch:async queries=>{sql.exec('BEGIN');try{const out=queries.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'separate-r2-fixture-auth-key-2026',PAYROLL_MAIL_KEY:Buffer.alloc(32,9).toString('base64url')};
 globalThis.__r2Headers=new Headers();
-const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as offline from './app/api/media/offline/route';export * as uploads from './app/api/media/upload/route';export * as shares from './app/api/media/shares/route';export * as shared from './app/api/media/shared/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
+const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as offline from './app/api/media/offline/route';export * as uploads from './app/api/media/upload/route';export * as playback from './app/api/media/playback/route';export {processMediaPresentations} from './lib/media-stream';export * as shares from './app/api/media/shares/route';export * as shared from './app/api/media/shared/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/r2-fixture-')),file=dir+'/fixture.mjs';await writeFile(file,bundled.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const ownerID=await m.bootstrapOwner('independent-new-gallery-owner','fixture'),photographer=crypto.randomUUID(),anderson=crypto.randomUUID(),stamp=new Date().toISOString();
 sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,media_only,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(photographer,'new-photo','photo@example.invalid','Fotógrafo ficticio','fixture','[]',1,stamp,stamp);
@@ -29,16 +29,35 @@ sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,perm
 const input={accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0},origin='https://r2.example.invalid',host=input.accountId+'.r2.cloudflarestorage.com';
 const jpeg=new Uint8Array([255,216,255,192,0,11,8,0,16,0,16,1,1,17,0,255,217]);
 let token,photoToken,calls,objects,multiparts,hook,loseComplete,loseDelete;
+let streamCalls,streamVideos,streamReady,streamHook;
 beforeEach(async()=>{
+ globalThis.__r2Fixture.JAC_STREAM_API_TOKEN='fixture-stream-only';streamCalls=[];streamVideos=new Map();streamReady=true;streamHook=undefined;
  beforeQuery=undefined;hook=undefined;loseComplete=false;loseDelete=false;calls=[];objects=new Map();multiparts=new Map();sql.exec('DELETE FROM jac_media_folder_shares;DELETE FROM jac_media_r2_entries;DELETE FROM jac_media_operations;DELETE FROM jac_media_r2_connection;UPDATE payroll_users SET active=1');sql.prepare('UPDATE payroll_users SET section_access=NULL WHERE id IN (?,?)').run(photographer,anderson);token=await m.makeSession(ownerID);photoToken=await m.makeSession(photographer);
  sql.prepare("INSERT OR REPLACE INTO jac_media_connection(id,credentials,email,version,updated_at) VALUES('jac','previous-photo-drive','jacmusicestudios@gmail.com',7,?)").run(stamp);
  globalThis.fetch=async(request,options={})=>{
-  const r=request instanceof Request?request:new Request(request,options),url=new URL(r.url);assert.equal(url.hostname,host,'No Google, Drive, redirect or other network destination is allowed');assert.ok(url.pathname.startsWith('/jac-fotografia'));assert.equal(r.headers.has('cookie'),false);assert.equal(r.headers.has('origin'),false);
+  const r=request instanceof Request?request:new Request(request,options),url=new URL(r.url);
+  if(url.hostname==='api.cloudflare.com'){
+   assert.equal(r.headers.get('authorization'),'Bearer fixture-stream-only');assert.equal(r.redirect,'manual');assert.equal(r.headers.has('cookie'),false);streamCalls.push({method:r.method,url});
+   if(streamHook){const answer=await streamHook(r);if(answer)return answer;}
+   const ok=result=>Response.json({success:true,result});
+   if(url.pathname.endsWith('/copy')){const body=await r.json(),source=new URL(body.url);assert.equal(source.hostname,host);assert.equal(source.searchParams.get('X-Amz-Expires'),'3600');assert.equal(body.requireSignedURLs,true);const uid=crypto.randomUUID().replaceAll('-',''),video={uid,creator:body.creator,meta:body.meta,readyToStream:false};streamVideos.set(uid,video);return ok(video);}
+   if(url.pathname.endsWith('/token'))return ok({token:'fixture.stream.signature'});
+   if(url.searchParams.has('creator'))return ok([...streamVideos.values()].filter(v=>v.creator===url.searchParams.get('creator')));
+   const uid=url.pathname.split('/').at(-1),video=streamVideos.get(uid);if(r.method==='DELETE'){streamVideos.delete(uid);return ok({});}assert.ok(video);return ok({...video,readyToStream:streamReady});
+  }
+  if(url.hostname==='videodelivery.net'){
+   assert.equal(r.headers.has('authorization'),false);assert.equal(r.headers.has('cookie'),false);assert.equal(r.redirect,'manual');streamCalls.push({method:r.method,url});
+   if(streamHook){const answer=await streamHook(r);if(answer)return answer;}
+   if(url.pathname.endsWith('/manifest/video.m3u8'))return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=500000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\nhigh.m3u8\n',{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
+   if(url.pathname.endsWith('.m3u8'))return new Response('#EXTM3U\n#EXTINF:4,\n../video/segment.ts\n#EXT-X-ENDLIST\n',{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
+   return new Response(new Uint8Array([71,0,1,2]),{headers:{'Content-Type':'video/mp2t'}});
+  }
+  assert.equal(url.hostname,host,'No Google, Drive, redirect or other network destination is allowed');assert.ok(url.pathname.startsWith('/jac-fotografia'));assert.equal(r.headers.has('cookie'),false);assert.equal(r.headers.has('origin'),false);
   const direct=url.searchParams.has('X-Amz-Signature');if(direct){assert.equal(r.method,'PUT');assert.equal(r.headers.has('authorization'),false);assert.equal(r.headers.has('content-range'),false);assert.equal(options.credentials,'omit');assert.equal(options.referrerPolicy,'no-referrer');}else{assert.equal(r.redirect,'manual');assert.match(r.headers.get('authorization'),/^AWS4-HMAC-SHA256 Credential=/);}
   calls.push({url,method:r.method,direct});if(hook){const response=await hook(r);if(response)return response;}
   const key=url.pathname.slice('/jac-fotografia/'.length),uploadId=url.searchParams.get('uploadId');
   if(url.searchParams.has('delete')&&r.method==='POST'){
-   const body=await r.text();assert.equal(r.headers.get('content-md5'),createHash('md5').update(body).digest('base64'));const keys=[...body.matchAll(/<Key>([^<]+)<\/Key>/g)].map(m=>m[1]);assert.ok(keys.length<=200);for(const key of keys){assert.match(key,/^(originals|thumbnails)\/[a-f0-9-]{36}(\.jpg)?$/);objects.delete(key);}if(loseDelete){loseDelete=false;throw new Error('lost delete response');}return new Response('<DeleteResult>'+keys.map(k=>'<Deleted><Key>'+k+'</Key></Deleted>').join('')+'</DeleteResult>');
+   const body=await r.text();assert.equal(r.headers.get('content-md5'),createHash('md5').update(body).digest('base64'));const keys=[...body.matchAll(/<Key>([^<]+)<\/Key>/g)].map(m=>m[1]);assert.ok(keys.length<=200);for(const key of keys){assert.match(key,/^(originals|thumbnails|previews)\/[a-f0-9-]{36}(\.jpg)?$/);objects.delete(key);}if(loseDelete){loseDelete=false;throw new Error('lost delete response');}return new Response('<DeleteResult>'+keys.map(k=>'<Deleted><Key>'+k+'</Key></Deleted>').join('')+'</DeleteResult>');
   }
   if(url.pathname==='/jac-fotografia'&&r.method==='HEAD')return new Response(null);
   if(r.method==='POST'&&url.searchParams.has('uploads')){const id='fixture-'+crypto.randomUUID();multiparts.set(id,{key,mime:r.headers.get('content-type'),request:r.headers.get('x-amz-meta-jac-request'),parts:new Map()});return new Response('<InitiateMultipartUploadResult><UploadId>'+id+'</UploadId></InitiateMultipartUploadResult>');}
@@ -427,4 +446,51 @@ test('revoking Anderson Photography access while deleting stops the operation be
  hook=request=>{if(new URL(request.url).searchParams.has('delete')){sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('[]',anderson);return new Response('<DeleteResult/>');}};
  try{assert.equal((await api({action:'deleteFolder',id:target},session)).status,403);hook=undefined;const before=calls.length;assert.equal((await api({action:'deleteFolder',id:target},session)).status,403);assert.equal(calls.length,before);assert.equal(objects.has('originals/'+uploaded.id),true);}
  finally{hook=undefined;sql.prepare('UPDATE payroll_users SET section_access=NULL WHERE id=?').run(anderson);}
+});
+
+
+test('light photo previews preserve the original, fall back only to an existing thumbnail and are removed with the photo',async()=>{
+ await activate();const parent=await folder(),upload=await start(jpeg,parent),done=await (await send(upload)).json();
+ await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'));
+ const entry=(await (await feed(parent)).json()).items[0],before=objects.get('originals/'+done.id).bytes.slice();
+ const fallback=await m.files.GET(req('/api/media/file?id='+entry.id+'&preview=1',undefined,photoToken,'GET'));assert.equal(fallback.status,200);assert.deepEqual(new Uint8Array(await fallback.arrayBuffer()),jpeg);
+ const light=jpeg.slice();light[7]=6;light[8]=64;light[9]=6;light[10]=64;
+ const response=await m.uploads.PUT(req('/api/media/upload?preview=1&id='+upload.data.id,light,photoToken,'PUT'));assert.equal(response.status,200);
+ const preview=await m.files.GET(req('/api/media/file?id='+entry.id+'&preview=1&revision='+entry.modifiedAt,undefined,photoToken,'GET'));assert.equal(preview.status,200);assert.equal(preview.headers.get('content-type'),'image/jpeg');assert.deepEqual(new Uint8Array(await preview.arrayBuffer()),light);assert.deepEqual(objects.get('originals/'+done.id).bytes,before);
+ assert.equal((await api({action:'deleteFile',id:entry.id,revision:entry.modifiedAt},token)).status,200);assert.equal(objects.has('previews/'+done.id+'.jpg'),false);
+});
+
+async function videoFixture(){await activate();const parent=await folder(),bytes=new Uint8Array([0,0,0,24,102,116,121,112,105,115,111,109,0,0,0,0,105,115,111,109,109,112,52,50]),done=await (await send(await start(bytes,parent,crypto.randomUUID(),'video/mp4'))).json();return {parent,id:done.fileId};}
+const playbackInfo=id=>m.playback.GET(req('/api/media/playback?id='+id,undefined,photoToken,'GET'));
+const leased=url=>m.playback.GET(new Request(url.startsWith('/')?origin+url:url));
+async function readyVideo(id){assert.equal((await (await playbackInfo(id)).json()).ready,false);const response=await playbackInfo(id);assert.equal(response.status,200);const info=await response.json();assert.equal(info.ready,true);return info;}
+
+test('adaptive playback prepares a private Stream asset once, rewrites HLS and never reads an original for playback',async()=>{
+ const {id}=await videoFixture(),before=calls.length,info=await readyVideo(id);assert.equal(streamVideos.size,1);assert.equal(streamCalls.filter(x=>x.url.pathname.endsWith('/copy')).length,1);
+ assert.ok(!JSON.stringify(info).includes(photoToken));const master=await leased(info.url);assert.equal(master.status,200);const text=await master.text();assert.ok(text.includes('BANDWIDTH=500000')&&text.includes('BANDWIDTH=1800000'));assert.ok(!text.includes('fixture.stream.signature'));assert.ok(!text.includes('cloudflarestorage'));
+ const child=text.split('\n').find(line=>line.startsWith('/api/')),playlist=await (await leased(child)).text(),segment=playlist.split('\n').find(line=>line.startsWith('/api/'));assert.deepEqual(new Uint8Array(await (await leased(segment)).arrayBuffer()),new Uint8Array([71,0,1,2]));assert.equal(calls.length,before);
+ const bad=new URL(info.url);bad.searchParams.set('asset','../../originals/secret');assert.equal((await leased(bad.toString())).status,400);
+});
+
+test('playback leases revalidate session, ancestor deletion and foreign manifest destinations',async()=>{
+ const {parent,id}=await videoFixture(),info=await readyVideo(id);
+ streamHook=request=>new URL(request.url).hostname==='videodelivery.net'?new Response('#EXTM3U\nhttps://untrusted.example.invalid/video.ts\n'):undefined;
+ assert.equal((await leased(info.url)).status,502);streamHook=undefined;
+ sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('[]',photographer);const before=streamCalls.length;assert.equal((await leased(info.url)).status,403);assert.equal(streamCalls.length,before);
+ sql.prepare('UPDATE payroll_users SET section_access=NULL WHERE id=?').run(photographer);
+ await api({action:'deleteFolder',id:parent},token);assert.equal((await leased(info.url)).status,403);
+});
+
+test('shared video playback never initiates paid processing and revocation withdraws its existing HLS lease',async()=>{
+ const {parent,id}=await videoFixture(),shared=await (await shareCommand({action:'create',id:crypto.randomUUID(),folderId:parent,days:30})).json(),capability=shared.link.url.split('/').at(-1);
+ const pending=await publicRead(capability,{id,playback:'1'});assert.equal((await pending.json()).ready,false);assert.equal(streamCalls.length,0);
+ await readyVideo(id);const response=await publicRead(capability,{id,playback:'1'}),info=await response.json();assert.equal(info.ready,true);assert.equal((await leased(info.url)).status,200);
+ assert.equal((await shareCommand({action:'revoke',id:shared.link.id,folderId:parent})).status,200);assert.equal((await leased(info.url)).status,410);
+});
+
+test('uncertain Stream copies reconcile by creator without issuing a duplicate copy',async()=>{
+ const {id}=await videoFixture();let copied=false;
+ streamHook=async request=>{if(!new URL(request.url).pathname.endsWith('/copy'))return;copied=true;throw new Error('Lost response after an ambiguous copy');};
+ assert.equal((await (await playbackInfo(id)).json()).ready,false);assert.equal(copied,true);streamHook=undefined;
+ const before=streamCalls.filter(x=>x.url.pathname.endsWith('/copy')).length;await playbackInfo(id);assert.equal(streamCalls.filter(x=>x.url.pathname.endsWith('/copy')).length,before);assert.equal((await globalThis.__r2Fixture.DB.prepare('SELECT stream_status FROM jac_media_presentations WHERE file_id=?').bind(id).first()).stream_status,'uncertain');
 });

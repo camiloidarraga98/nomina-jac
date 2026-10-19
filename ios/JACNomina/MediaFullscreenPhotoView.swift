@@ -13,7 +13,7 @@ struct MediaFullscreenPhotoView:View {
     init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,denied:@escaping(Error)->Void) {
         self.client=client;self.canDelete=feed.canDelete == true
         let expected=try? client.mediaAccessStamp();stamp=expected
-        _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaDocument($0,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == (try? client.mediaAccessStamp())},denied:denied))
+        _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaPhotoPreview($0,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == (try? client.mediaAccessStamp())},denied:denied))
     }
     var body:some View {
         ZStack {

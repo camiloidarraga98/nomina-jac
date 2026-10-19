@@ -409,12 +409,12 @@ final class PayrollClientTests: XCTestCase {
         transport.handler = { request, bytes, _ in
             XCTAssertEqual(request.httpMethod, "PUT")
             XCTAssertEqual(request.url?.path, "/api/media/upload")
-            XCTAssertTrue(request.url?.query?.contains("thumbnail=1") == true)
+            XCTAssertTrue(request.url?.query?.contains("thumbnail=1") == true || request.url?.query?.contains("preview=1") == true)
             XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "image/jpeg")
             let image = try XCTUnwrap(CGImageSourceCreateWithData(bytes as CFData, nil))
             let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any])
-            XCTAssertLessThanOrEqual(try XCTUnwrap(properties[kCGImagePropertyPixelWidth] as? Int), 360)
-            XCTAssertLessThanOrEqual(try XCTUnwrap(properties[kCGImagePropertyPixelHeight] as? Int), 360)
+            XCTAssertLessThanOrEqual(try XCTUnwrap(properties[kCGImagePropertyPixelWidth] as? Int), request.url?.query?.contains("preview=1") == true ? 1600 : 360)
+            XCTAssertLessThanOrEqual(try XCTUnwrap(properties[kCGImagePropertyPixelHeight] as? Int), request.url?.query?.contains("preview=1") == true ? 1600 : 360)
             return (Data((status == 200 ? "{\"saved\":true}" : "{\"error\":\"Miniatura pendiente ficticia\"}").utf8),
                 HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type":"application/json"])!)
         }
@@ -423,7 +423,7 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: source.url.path))
         status = 200
         try await client.uploadMediaThumbnail(source)
-        XCTAssertEqual(transport.calls, 2)
+        XCTAssertEqual(transport.calls, 3)
         XCTAssertEqual(try Data(contentsOf: source.url), MediaFixture.photo)
     }
 
@@ -455,6 +455,65 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(complete.files.map(\.id), ["photo", "video", "page-photo", "page-video", "child-photo", "child-video"])
     }
 
+    @MainActor func testThumbnailCacheSurvivesClosingFolderMemoryEvictionAndReopeningSession() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let item = MediaItem(id: "r2_cached", name: "Privada.png", mimeType: "image/png", kind: "image", size: 100, modifiedAt: "revision", thumbnailAvailable: true)
+        var count = 0
+        MockProtocol.handler = { request in count += 1; XCTAssertTrue(request.url?.query?.contains("thumbnail=1") == true); return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"image/png"])!, MediaFixture.photo) }
+        defer { MockProtocol.handler = nil; try? FileManager.default.removeItem(at: root) }
+        let client = PayrollClient(baseURL: URL(string: "https://cache.example.invalid")!, vault: vault, configuration: configuration, mediaOffline: MediaOfflineCache(root: root), automaticallyDownloadOffline: false)
+        let first = try await client.mediaThumbnail(item); XCTAssertEqual(first, MediaFixture.photo)
+        let reopened = PayrollClient(baseURL: client.baseURL, vault: vault, configuration: configuration, mediaOffline: MediaOfflineCache(root: root), automaticallyDownloadOffline: false)
+        let second = try await reopened.mediaThumbnail(item, networkAllowed: false); XCTAssertEqual(second, MediaFixture.photo)
+        XCTAssertEqual(count, 1)
+        let scope = try XCTUnwrap(reopened.mediaScope()); try reopened.clearSession()
+        XCTAssertNil(MediaOfflineCache(root: root).loadThumbnail(item, scope: scope))
+    }
+    func testThumbnailDiskCacheIsEncryptedBoundedByRevisionSessionAndExpiry() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), cache = MediaOfflineCache(root: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scope = AgendaCacheScope(origin: "https://cache.example.invalid/media", token: String(repeating: "a", count: 43)), other = AgendaCacheScope(origin: "https://cache.example.invalid/media", token: String(repeating: "b", count: 43))
+        let item = MediaItem(id: "photo", name: "Privada.png", mimeType: "image/png", kind: "image", size: 100, modifiedAt: "one", thumbnailAvailable: true), now = Date()
+        try cache.saveThumbnail(MediaFixture.photo, item: item, scope: scope, now: now)
+        XCTAssertEqual(cache.loadThumbnail(item, scope: scope, now: now), MediaFixture.photo)
+        XCTAssertNil(cache.loadThumbnail(item, scope: other, now: now))
+        let revision = MediaItem(id: item.id, name: item.name, mimeType: item.mimeType, kind: item.kind, size: item.size, modifiedAt: "two", thumbnailAvailable: true)
+        XCTAssertNil(cache.loadThumbnail(revision, scope: scope, now: now))
+        let urls = try XCTUnwrap(FileManager.default.enumerator(at: root, includingPropertiesForKeys: nil)?.allObjects as? [URL]), encrypted = try XCTUnwrap(urls.first { $0.path.contains("thumbnails/") && $0.pathExtension == "sealed" })
+        XCTAssertNil(try Data(contentsOf: encrypted).range(of: MediaFixture.photo))
+        try Data("alterada".utf8).write(to: encrypted)
+        XCTAssertNil(cache.loadThumbnail(item, scope: scope, now: now))
+        try cache.saveThumbnail(MediaFixture.photo, item: item, scope: scope, now: now)
+        XCTAssertNil(cache.loadThumbnail(item, scope: scope, now: now.addingTimeInterval(49 * 3600)))
+        try cache.saveThumbnail(MediaFixture.photo, item: item, scope: scope, now: now)
+        try cache.removeFile(item, scope: scope)
+        XCTAssertNil(cache.loadThumbnail(item, scope: scope))
+        XCTAssertThrowsError(try cache.saveThumbnail(MediaFixture.photo, item: item, scope: scope))
+        cache.clear(scope); XCTAssertThrowsError(try cache.saveThumbnail(MediaFixture.photo, item: item, scope: scope))
+    }
+    @MainActor func testLightPhotoPreviewAndAdaptiveVideoNeverRequestOriginalBytes() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://playback.example.invalid")!, vault: vault, configuration: configuration, automaticallyDownloadOffline: false)
+        let source = try TemporaryDocuments.save(MediaFixture.photo, filename: "Foto.png"), local = try MediaLocalFile.stage(source.url, quality: .original)
+        defer { MockProtocol.handler = nil; local.remove(); TemporaryDocuments.remove(source) }
+        let generated = await MediaThumbnail.jpeg(for: local); let jpeg = try XCTUnwrap(generated)
+        var requests = 0
+        MockProtocol.handler = { request in
+            requests += 1
+            if request.url?.path == "/api/media/playback" { return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"application/json"])!, Data("{\"ready\":true,\"url\":\"https://playback.example.invalid/api/media/playback?lease=fixture&asset=manifest/video.m3u8\"}".utf8)) }
+            XCTAssertTrue(request.url?.query?.contains("preview=1") == true)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"image/jpeg"])!, jpeg)
+        }
+        let image = MediaItem(id: "photo", name: "Original.png", mimeType: "image/png", kind: "image", size: 1000000, modifiedAt: "one", thumbnailAvailable: true)
+        let document = try await client.mediaPhotoPreview(image); defer { TemporaryDocuments.remove(document) }
+        XCTAssertEqual(try Data(contentsOf: document.url), jpeg)
+        let video = MediaItem(id: "video", name: "Original.mov", mimeType: "video/quicktime", kind: "video", size: 10000000, modifiedAt: "one", thumbnailAvailable: true)
+        let url = try await client.mediaPlayback(video), stream = try MediaVideoStream(client: client, item: video, playbackURL: url)
+        XCTAssertEqual(stream.asset.url, url); stream.cancel(); XCTAssertEqual(requests, 2)
+    }
     @MainActor func testGalleryThumbnailUsesOnlyAuthenticatedThumbnailEndpointAndBoundsItsPixels() async throws {
         let vault=MemorySession();vault.token=String(repeating:"f",count:43)
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]

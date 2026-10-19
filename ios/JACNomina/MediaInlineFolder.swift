@@ -53,10 +53,10 @@ final class MediaGridThumbnailLoader {
     }
 
     func image(_ item: MediaItem, client: PayrollClient, networkAllowed: Bool = true) async throws -> UIImage? {
-        guard let stamp = try client.mediaAccessStamp(), client.accessUser?.canReadMedia != false else { throw CancellationError() }
+        guard let stamp = try client.mediaAccessStamp(), let scope = try client.mediaScope(), client.accessUser?.canReadMedia != false else { throw CancellationError() }
         guard item.thumbnailAvailable else { return nil }
-        let key = "\(ObjectIdentifier(client))|\(stamp)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.mimeType)"
-        return try await load(key: key, authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false }, allowNetwork: networkAllowed && !client.usingOfflineCopy, bytes: { try await client.mediaThumbnail(item) })
+        let key = "\(ObjectIdentifier(client))|\(scope.id)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.mimeType)"
+        return try await load(key: key, authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false }, bytes: { try await client.mediaThumbnail(item, networkAllowed: networkAllowed && !client.usingOfflineCopy) })
     }
 
     private func acquire() async throws {
@@ -254,6 +254,7 @@ struct MediaSelectableTile: View {
     let epoch: UUID
     let open: () -> Void
     let denied: (Error) -> Void
+    @State private var suppressTapUntil = Date.distantPast
     private var selected: Bool { selection.contains(item.id) }
     var body: some View {
         MediaTile(item: item, client: client, offline: offline, opening: opening, epoch: epoch, denied: denied,
@@ -267,12 +268,12 @@ struct MediaSelectableTile: View {
                     }
                 }
         .disabled(disabled)
-        .gesture(LongPressGesture(minimumDuration: 0.45).exclusively(before: TapGesture()).onEnded { gesture in
+        .contentShape(Rectangle())
+        .onTapGesture { if Date() >= suppressTapUntil { tap() } }
+        .simultaneousGesture(LongPressGesture(minimumDuration: 0.45, maximumDistance: 10).onEnded { _ in
             guard !disabled else { return }
-            switch gesture {
-            case .first: selection.select(item, in: feed, client: client)
-            case .second: tap()
-            }
+            suppressTapUntil = Date().addingTimeInterval(0.35)
+            selection.select(item, in: feed, client: client)
         })
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
@@ -281,7 +282,7 @@ struct MediaSelectableTile: View {
         .accessibilityAddTraits(selected ? [.isSelected] : [])
         .accessibilityAction(named: Text("Seleccionar")) { if !disabled { selection.select(item, in: feed, client: client) } }
         .overlay(alignment: .topTrailing) {
-            if !selection.active, item.kind == "image" {
+            if !selection.active, item.kind == "image" || item.kind == "video" {
                 MediaPhotoMenu(item: item, client: client, canDelete: client.accessUser?.canDeleteMedia == true && feed.canDelete == true).padding(6)
             }
         }

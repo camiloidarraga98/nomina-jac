@@ -1217,6 +1217,22 @@ final class IPadTests: XCTestCase {
         let button = app.buttons[id]; XCTAssertTrue(button.waitForExistence(timeout: 20), id); button.tap()
     }
     @MainActor private func capture(_ name: String) { let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot()); attachment.name = name; attachment.lifetime = .keepAlways; add(attachment) }
+    @MainActor func testTabletPhotographyLongPressSelectsAndVideosHaveDeleteAction() {
+        let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-manager", "--uitest-media-r2"]; app.launch()
+        let section = app.buttons["ipad.section.media"]; if section.waitForExistence(timeout: 10) { section.tap() }
+        tap(app, "media.item.r2_media-day")
+        let photo = app.buttons["media.item.r2_media-photo"], video = app.buttons["media.item.r2_media-video"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.press(forDuration: 0.7)
+        XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
+        video.tap(); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "2 seleccionados")
+        tap(app, "media.selection.cancel")
+        photo.tap(); XCTAssertTrue(app.descendants(matching: .any)["media.fullscreen"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
+        tap(app, "media.photo.options.r2_media-video")
+        tap(app, "media.photo.delete")
+        XCTAssertTrue(app.alerts["Eliminar video"].waitForExistence(timeout: 10))
+        app.alerts["Eliminar video"].buttons["Cancelar"].tap()
+        capture("ipad-photography-longpress-video-menu")
+    }
     @MainActor func testTabletSidebarCalendarRotationAndCRM() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"]; app.launch()
         for id in ["crm", "payroll", "agenda", "itineraries", "media", "management"] { XCTAssertTrue(app.buttons["ipad.section." + id].waitForExistence(timeout: 20)) }

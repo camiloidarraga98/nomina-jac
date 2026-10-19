@@ -8,9 +8,10 @@ JAC ya generaba JPEG al subir y almacenaba la miniatura una vez en R2, indexada 
 
 Ahora los JPEG nativos/web se generan a360px y calidad0.60. Un fallo deja la miniatura pendiente: la cola iOS conserva el archivo local y reintenta exclusivamente esa fase, sin duplicar el original ya confirmado. Web conserva el archivo en su cola abierta y reintentar reconcilia la subida existente. Se conservan revalidación de sesión, cancelación, persistencia cifrada y límite de concurrencia. El cambio no repara automáticamente miniaturas que faltan en subidas anteriores ni atribuye una causa comprobada a cada archivo real; no se pudo inventariar producción por la restricción administrativa D1.
 
-La caché iOS continúa acotada en memoria por sesión/revisión; abrir una carpeta puede consultar la miniatura guardada para autorizarla. No significa generarla de nuevo. Un futuro backfill debería ser un trabajo explícito recuperable para archivos sin thumbnail_key, con estado pendiente/listo/error y permisos/revisión, no una descarga de originales por cada apertura.
+Actualización posterior: la caché iOS combina memoria y disco temporal cifrado por sesión/revisión; cerrar y reabrir una carpeta reutiliza los bytes existentes, sin generarlos ni descargarlos otra vez. Un futuro backfill debería ser un trabajo explícito recuperable para archivos sin thumbnail_key, con estado pendiente/listo/error y permisos/revisión, no una descarga de originales por cada apertura.
 
-Para fotos abiertas conviene generar además una vista intermedia (por ejemplo1600px) y reservar el original para descarga/zoom. Para video adaptativo se requieren varias versiones y un manifiesto HLS/DASH; AVPlayer puede elegir bitrate según red. Un único MP4 por rangos no cambia de calidad. Esa infraestructura y el procesamiento de variantes quedan como propuesta, sin activar servicios/costos nuevos ni prometer reproducción sin cortes. El usuario preguntó por viabilidad y flujo; no se ha contratado ni desplegado un transcodificador adaptativo.
+La petición posterior incorpora vistas JPEG de1600px para fotos y Cloudflare Stream para video adaptativo, elegido y configurado expresamente por Camilo. Las fotos anteriores usan la miniatura existente hasta contar con una variante; nunca el original como fallback online. Ver [implementación, caché y límites](PHOTOGRAPHY_LIGHTWEIGHT_PLAYBACK.md). El texto histórico de propuesta queda sustituido por esta decisión; el procesamiento real de videos comienza gradualmente después del despliegue.
+
 
 ## Descargas de carpeta
 

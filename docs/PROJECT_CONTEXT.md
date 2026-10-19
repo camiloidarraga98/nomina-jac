@@ -1,3 +1,9 @@
+## Fotografía: vistas ligeras, Stream y caché temporal · 19 de octubre de 2026
+
+Camilo eligió expresamente **Cloudflare Stream adaptativo**, con su cobro por uso, para reproducir videos en web y apps. Confirmó haber agregado el secreto `JAC_STREAM_API_TOKEN` al Worker; se verificó su nombre, nunca su valor. Esta decisión sustituye la propuesta histórica de no contratar procesamiento. Los originales permanecen en R2 y solo se obtienen al descargar/guardar; abrir fotos usa JPEG ligero y abrir videos usa HLS adaptativo privado. El procesamiento gradual de videos existentes es trabajo de producción solicitado, nunca una prueba con archivos reales. Las pruebas usan exclusivamente fixtures locales y servicios interceptados.
+
+La cuadrícula de fotos/videos no lleva nombres visibles, franja inferior ni texto «Video»; imagen hasta los bordes e icono de video discreto. Conservar nombres accesibles y en el visor. La app guarda miniaturas cifradas temporalmente por sesión/revisión, hasta48h desde el acceso, además de la memoria compartida. Mantener borrado/revocación y límites. iPad usa pulsación prolongada compatible con scroll; fotos **y videos** tienen menú individual de borrado según permiso. Ver `PHOTOGRAPHY_LIGHTWEIGHT_PLAYBACK.md` para flujo, límites y comprobaciones reales.
+
 ## Instrucción vigente: fuente pública y Actions reanudado
 
 Camilo pidió hacer público el repositorio y continuar las pruebas online, sustituyendo la pausa por cuota. GitHub confirmó `visibility: public` y el evento public inició automáticamente la ejecución39183661700 en main. El workflow se ejecuta solo en repositorio público, con runners estándar macOS, sin secretos ni servicios reales de prueba; mientras siga privado se omite sin consumir runners. Ver [estado y resultados online](PUBLIC_REPOSITORY_ACTIONS.md). La aplicación, datos y recursos privados de producción se conservan. No volver a pedir autorización rutinaria ni repetir el despliegue de la API.

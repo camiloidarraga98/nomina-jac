@@ -69,3 +69,11 @@
 .media-sharing-dialog select,.media-sharing-dialog input{min-height:46px;font-size:16px}
 .media-sharing-actions{gap:12px}.media-sharing-actions button{flex:1;min-width:130px}
 @media(max-width:420px){.media-folder-card>svg{display:none}.media-folder-card{gap:10px}.media-sharing-create{flex:1}.media-sharing-controls label{min-width:130px}}
+
+/* Edge-to-edge media tiles, with names retained in the viewer and aria-label. */
+.media-file-card{padding:0;aspect-ratio:1;display:block;overflow:hidden;border-radius:14px}
+.media-file-card .media-thumbnail{height:100%;aspect-ratio:1;position:relative}
+.media-file-caption{display:none}
+.media-thumbnail img{width:100%;height:100%;object-fit:cover}
+.media-video-badge{top:auto;left:auto;right:8px;bottom:8px;width:28px;height:28px;padding:0;display:grid;place-items:center;border-radius:50%;background:#071c2980;color:white;pointer-events:none}
+.media-photo-options summary span{display:none}

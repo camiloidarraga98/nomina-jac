@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import CoreImage
+import ImageIO
 
 // Opt-in UI fixtures use .invalid URLs and an ephemeral protocol. They are
 // excluded from Release and never read or write the real payroll or Keychain.
@@ -214,6 +215,7 @@ private final class FixtureProtocol: URLProtocol {
     static var user: JSONValue {
         let arguments=ProcessInfo.processInfo.arguments
         var user: JSONValue = .object(["id": .string("fixture-user"), "username": .string("simulado"), "email": .string("test@example.invalid"), "displayName": .string("Cuenta simulada"), "itinerariesOnly":.bool(arguments.contains("--uitest-itineraries-only")), "isOwner": .bool(!reader), "permissions": .array([])])
+        if arguments.contains("--uitest-media-manager") {user["username"] = .string("anderson")}
         if arguments.contains("--uitest-media-only") {user["mediaOnly"] = .bool(true);user["itinerariesOnly"] = .bool(true);user["isOwner"] = .bool(false);user["displayName"] = .string("Anderson ficticio")}
         if let selection=arguments.first(where:{$0.hasPrefix("--uitest-sections=")}) {
             let sections=selection.dropFirst("--uitest-sections=".count).split(separator:",").map(String.init)
@@ -227,6 +229,7 @@ private final class FixtureProtocol: URLProtocol {
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         let viewer = reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
         let visible = ([itinerary] + boardingFixtures + alerts).map { overrides[$0["id"].text] ?? $0 }.filter { !(ProcessInfo.processInfo.arguments.contains("--uitest-boarding-tomorrow") && ["boarding-fixture-0","boarding-fixture-1"].contains($0["id"].text)) && !deletedNotices.contains($0["id"].text) && ($0["kind"].text != "boarding_pass" || $0["recipients"].elements.contains(.string(viewer))) }
+        if parts.path == "/api/media/playback" { return (200,.object(["ready":.bool(true),"url":.string("https://ui-fixture.example.invalid/api/media/playback?lease=fixture&asset=manifest/video.m3u8")])) }
         if parts.path == "/api/media" || parts.path == "/api/media/upload" || parts.path == "/api/media/shares" { return try MediaFixture.response(request) }
         if parts.path == "/api/crm" {return try CRMFixture.response(request,reader:reader)}
         if parts.path == "/api/expenses" {
@@ -537,6 +540,13 @@ enum MediaFixture {
             }
         }
         if q.contains(where: { $0.name == "metadata" }), let record { return (200, "application/json", try JSONEncoder().encode(JSONValue.object(["item": r2Value(record)]))) }
+        if q.contains(where: { $0.name == "preview" }) {
+            let data = NSMutableData()
+            if let source = CGImageSourceCreateWithData(photo as CFData, nil), let image = CGImageSourceCreateImageAtIndex(source, 0, nil), let target = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) {
+                CGImageDestinationAddImage(target, image, nil); if CGImageDestinationFinalize(target) { return (200, "image/jpeg", data as Data) }
+            }
+            return (503, "application/json", Data("{}".utf8))
+        }
         let mime = record?["mimeType"].text ?? "image/png"
         return (200, q.contains { $0.name == "thumbnail" } ? "image/png" : mime, q.contains { $0.name == "thumbnail" } ? photo : bytes)
     }
@@ -603,6 +613,7 @@ enum MediaFixture {
             return (200, .object(["folder": .object(["id": .string(id), "name": .string(name)])]))
         }
         if parts.path == "/api/media/upload" {
+            if parts.queryItems?.contains(where: { $0.name == "preview" }) == true { return (200, .object(["saved": .bool(true)])) }
             if q.contains(where: { $0.name == "thumbnail" && $0.value == "1" }) { return (200, .object(["saved": .bool(true)])) }
             var id = ""
             if request.httpMethod == "PUT" {
