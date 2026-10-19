@@ -320,7 +320,7 @@ struct MediaInlineFolder: View {
     @State private var readTask: Task<Void, Never>?
 
     private var isExpanded: Bool { expanded.contains(folder.id) }
-    private var accessStamp: String? { try? store.client.mediaAccessStamp() }
+    private var accessStamp: String? { isExpanded ? (try? store.client.mediaAccessStamp()) : nil }
     private var validPath: Bool { !ancestry.contains(folder.id) && ancestry.count < 64 }
     private var descendants: Set<String> { ancestry.union([folder.id]) }
     private var folders: [MediaItem] { items.filter { $0.kind == "folder" && !descendants.contains($0.id) } }
@@ -440,11 +440,18 @@ struct MediaInlineFolder: View {
             stopRead(); clearContent(); loadedPages = 1
             if isExpanded { startRead() }
         }
-        .onChange(of: accessStamp) { _, stamp in
+        .onChange(of: accessStamp) { previous, stamp in
+            // Opening already starts the read. Closed headers never need a
+            // Keychain lookup or a decrypted folder index on every refresh.
+            if previous == nil, stamp != nil {
+                if isExpanded { startRead() }
+                return
+            }
             stopRead(); clearContent(); loadedPages = 1
             if stamp != nil && isExpanded { startRead() }
         }
         .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
+            guard isExpanded else { return }
             if let saved=store.client.cachedMedia(folder:folder.id) {
                 let remaining = MediaGalleryOrder.applyingDeletions(to: items, from: saved)
                 if remaining != items { items = remaining }

@@ -17,6 +17,7 @@ El servidor R2 ya conserva una miniatura indexada por archivo y lista por creaci
 ### Comportamiento implementado
 
 - Contenedores de carpetas VStack estables; únicamente las cuadrículas de archivos son lazy. Dos líneas reservadas para nombres mantienen alturas constantes al cargar imágenes. Se conserva la navegación desplegable y la selección múltiple.
+- Los encabezados cerrados no consultan Llavero ni descifran el índice al recibir notificaciones de caché. Solo las carpetas abiertas mantienen lecturas activas.
 - Salir de pantalla cancela la lectura de una carpeta, conservando sus metadatos y páginas. Solo el cierre explícito, cambio de colección/sesión o denegación limpia su estado. Al volver se revalida sin quitar el contenido permitido.
 - MediaGalleryListing reúne todas las páginas antes de devolver el reemplazo: recuerda tanto las páginas solicitadas como la cantidad visible restaurada desde caché. Rechaza cursores repetidos y colecciones mezcladas; elimina duplicados y aplica borrados. Un fallo posterior no instala la primera página aislada.
 - cacheRevision aplica únicamente identificadores de borrado confirmados a los elementos actuales, sin reordenar ni truncar páginas. La caché cifrada devuelve esos marcadores también para carpetas fijadas. Los refrescos autorizados sí actualizan cambios reales del contenido.

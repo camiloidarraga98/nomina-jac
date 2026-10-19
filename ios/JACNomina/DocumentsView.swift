@@ -169,12 +169,12 @@ struct MediaItem: Codable, Identifiable, Equatable {
 enum MediaGalleryOrder {
     static func sorted(_ items:[MediaItem]) -> [MediaItem] {
         // Parse each distinct timestamp once, outside the O(n log n) comparator.
-        let parser = ISO8601DateFormatter()
+        let fractional = ISO8601DateFormatter(), seconds = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        seconds.formatOptions = [.withInternetDateTime]
         var dates: [String: Date] = [:]
         for value in Set(items.compactMap(\.createdAt)) {
-            parser.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
-            if let date = parser.date(from: value) { dates[value] = date }
-            else { parser.formatOptions = [.withInternetDateTime]; dates[value] = parser.date(from: value) }
+            dates[value] = fractional.date(from: value) ?? seconds.date(from: value)
         }
         return items.sorted { left,right in
             if (left.kind == "folder") != (right.kind == "folder") {return left.kind == "folder"}
