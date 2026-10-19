@@ -24,6 +24,10 @@ La ejecución39183661700 compiló Release de iPhone y Mac. Las157 unitarias term
 
 El informe indica Xcode16.4 y un simulador iPhone17Pro/iOS26.2. Las salidas de diagnóstico se publican ahora antes de compilar Mac para que los fallos de iPhone se puedan leer antes de terminar todo el job. La corrección mantiene las comprobaciones de permisos, confirmación de borrado y archivos no seleccionados; se ejecutará de nuevo antes de declarar aprobada la interfaz.
 
+## Segunda ejecución pública
+
+La ejecución39184981303, fuente `022bfd024f07df7fbc68145f6da69eb097b98084`, aprobó las156 unitarias aplicables (una comprobación física omitida), el recorrido de selección/cancelación/visor y el de cancelación/borrado administrativo conservando el resto. El único fallo restante fue la pulsación de Descargar: iOS expone su Menu como un contenedor Button alrededor del botón nativo. La prueba ahora elige el control nativo cuando el contenedor no es pulsable y conserva las comprobaciones de existencia/hittability. No se cambia la descarga, el producto ni los permisos por esta adaptación de la prueba. Se repite la verificación online del recorrido de descarga.
+
 ## Pendiente
 
 Comprobar la ejecución online ya iniciada, corregir cualquier fallo y registrar la fuente/resultados finales. La instalación física sigue en el mismo proyecto Xcode del Mac de Camilo. No repetir el despliegue web/API, que ya quedó activo antes de este cambio de flujo.

@@ -30,13 +30,23 @@ final class LaunchTests: XCTestCase {
         tap(app, "media.item.r2_media-day")
         let photo = app.buttons["media.item.r2_media-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.press(forDuration: 0.65)
-        tap(app, "media.item.r2_media-video"); tap(app, "media.selection.download"); tap(app, "media.selection.savePhotos")
+        tap(app, "media.item.r2_media-video"); openSelectionDownloadMenu(app); tap(app, "media.selection.savePhotos")
         XCTAssertTrue(app.staticTexts["2 archivos seleccionados"].waitForExistence(timeout: 10)); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
-        tap(app, "media.selection.download"); tap(app, "media.selection.offline"); tap(app, "media.transfer.begin")
+        openSelectionDownloadMenu(app); tap(app, "media.selection.offline"); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["media.item.r2_media-photo-2"].exists, "The unselected photo remains in the gallery")
         attachScreen(app, name: "fotografia-descarga-seleccionada-fotos-offline")
+    }
+    @MainActor private func openSelectionDownloadMenu(_ app: XCUIApplication) {
+        let menu = app.buttons["media.selection.download"].firstMatch
+        XCTAssertTrue(menu.waitForExistence(timeout: 10))
+        // SwiftUI can expose Menu as a container button around the native
+        // interactive button. Tap that control, retaining the hittability check.
+        let trigger = menu.isHittable ? menu : menu.buttons.firstMatch
+        XCTAssertTrue(trigger.waitForExistence(timeout: 10))
+        XCTAssertTrue(trigger.isHittable, "El botón nativo de Descargar debe poderse tocar")
+        trigger.tap()
     }
     @MainActor func testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-r2", "--uitest-media-slideshow", "--uitest-media-two-folders"]; app.launch()
