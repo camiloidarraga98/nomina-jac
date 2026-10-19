@@ -34,6 +34,18 @@ La ejecución39185991596 volvió a aprobar las unitarias y los recorridos de sel
 
 La CI separa ahora tres jobs independientes: pruebas iPhone con simulador, Release iPhone y Release Mac. Todos usan macos-15 estándar y la misma guarda de repositorio público. Ejecutarlos en paralelo reduce la espera sin omitir compilaciones ni pruebas. Los logs Release se guardan en artefactos propios; el resumen de pruebas y xcresult siguen en los artefactos de diagnóstico/iPhone.
 
-## Pendiente
+## Verificación de la versión con diálogo de descarga
 
-Comprobar la ejecución online ya iniciada, corregir cualquier fallo y registrar la fuente/resultados finales. La instalación física sigue en el mismo proyecto Xcode del Mac de Camilo. No repetir el despliegue web/API, que ya quedó activo antes de este cambio de flujo.
+Fuente canónica `7f73161f1cf7e5a3367d235f9227deebac5c5d03`, [ejecución39187621827](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39187621827). Los jobs paralelos de Release iPhone y Release Mac aprobaron. El recorrido usa el botón normal de Descargar y elige las opciones nativas por sus etiquetas visibles; conserva comprobaciones de existencia, pulsación y resultados de Fotos/offline. El job iPhone también terminó aprobado:156 unitarias y los tres recorridos UI, cero fallos y una comprobación física omitida en CoreSimulator.
+
+La sesión de escritura Git por terminal dejó de autenticar; las fuentes se publicaron con el conector integrado mediante blobs/tree/commit y avance de ref con SHA esperado, sin force push. Las huellas de los blobs y del árbol coinciden con la fuente local; las lecturas Git públicas funcionan sin credenciales. No se cambió ninguna credencial ni se pidió copiar claves. Los commits locales de preparación se conservan; la fuente canónica para CI/main es la publicada por el conector.
+
+## Resultado y entrega
+
+**Verificación completa aprobada:** [ejecución39187621827](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39187621827), fuente `7f73161f1cf7e5a3367d235f9227deebac5c5d03`. Los tres jobs paralelos terminaron success: Release iPhone, Release Mac y pruebas iPhone. El resumen contiene160 comprobaciones:159 aprobadas, cero fallos y una omitida; son156 unitarias aplicables y tres UI. La omitida comprueba NSFileProtectionKey/cifrado de un iPhone físico, que CoreSimulator no reproduce. Simulador iPhone17Pro/iOS26.2, Xcode16.4.
+
+Los recorridos UI aprobados incluyen selección mixta y cancelación/visor, guardar solo los dos archivos elegidos en Fotos y sin conexión, y cancelar/confirmar el borrado administrativo preservando carpetas y archivos no seleccionados. No hubo lecturas/escrituras de contenido real para probar. Los artefactos de pruebas y logs Release permanecen siete días.
+
+La fuente verificada se incorporó a main mediante avance seguro desde684cf20, conservando el historial y sin force push. El avance dispara la comprobación automática habitual de main del mismo código; el cierre documental posterior reutiliza el resultado anterior porque no cambia fuentes nativas ni el workflow. Actions queda activo para cambios nativos futuros, con runners estándar gratuitos en el repositorio público y guarda para no gastar la cuota privada si cambia su visibilidad.
+
+Instalación física pendiente de Camilo: pull de main en su carpeta habitual y Run en el mismo Xcode/proyecto/firma. No se repitió el despliegue web/API, que ya estaba activo con sus recursos y secretos conservados antes de publicar la fuente.
