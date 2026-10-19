@@ -494,3 +494,19 @@ test('uncertain Stream copies reconcile by creator without issuing a duplicate c
  assert.equal((await (await playbackInfo(id)).json()).ready,false);assert.equal(copied,true);streamHook=undefined;
  const before=streamCalls.filter(x=>x.url.pathname.endsWith('/copy')).length;await playbackInfo(id);assert.equal(streamCalls.filter(x=>x.url.pathname.endsWith('/copy')).length,before);assert.equal((await globalThis.__r2Fixture.DB.prepare('SELECT stream_status FROM jac_media_presentations WHERE file_id=?').bind(id).first()).stream_status,'uncertain');
 });
+
+test('scheduled Stream preparation processes existing videos once and cleans the derivative after deletion',async()=>{
+ const {id}=await videoFixture(),key='originals/'+id.slice(3),original=objects.get(key).bytes.slice();
+ await m.processMediaPresentations();
+ let row=sql.prepare('SELECT * FROM jac_media_presentations WHERE file_id=?').get(id);
+ assert.ok(row?.stream_uid);assert.equal(row.stream_status,'processing');
+ await m.processMediaPresentations();
+ row=sql.prepare('SELECT * FROM jac_media_presentations WHERE file_id=?').get(id);assert.equal(row.stream_status,'ready');
+ await m.processMediaPresentations();assert.equal(streamCalls.filter(call=>call.url.pathname.endsWith('/copy')).length,1);
+ assert.deepEqual(objects.get(key).bytes,original);
+ const revision=sql.prepare('SELECT modified_at FROM jac_media_r2_entries WHERE id=?').get(id).modified_at;
+ assert.equal((await api({action:'deleteFile',id,revision},token)).status,200);
+ await m.processMediaPresentations();
+ assert.equal(sql.prepare('SELECT 1 FROM jac_media_presentations WHERE file_id=?').get(id),undefined);
+ assert.equal(streamVideos.has(row.stream_uid),false);
+});

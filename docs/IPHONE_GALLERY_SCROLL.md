@@ -50,3 +50,5 @@ La ejecución39202395410 sobre1735e026 aprobó23unitarias, tres UI y Release Mac
 ## Ampliación posterior: caché temporal al reabrir
 
 Se conserva una copia AES-GCM de cada miniatura, vinculada a origen/sesión, ID, revisión, tamaño y MIME. Caduca tras48h sin acceso; poda periódica de128MiB/4096archivos (puede sobrepasar temporalmente el límite entre32escrituras). La clave de píxeles usa el scope estable y comprueba el sello de autorización en cada uso, sin perder la caché por una actualización general. Logout/revocación eliminan ambos niveles y rechazan escrituras tardías. La decodificación y lectura de disco continúan fuera del hilo de interfaz. Ver PHOTOGRAPHY_LIGHTWEIGHT_PLAYBACK.md.
+
+Actualización posterior: GitHub confirmó **success** de la UI aislada `39278192940` y de los cuatro casos de permiso/Release Mac en `39280446327`. El recorrido de permanencia/orden anterior sí quedó aprobado. La ampliación de caché temporal y las tarjetas actuales se verifican en la nueva ejecución `39294831756`; no confundir resultados de fuentes distintas.
