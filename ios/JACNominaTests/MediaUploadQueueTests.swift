@@ -208,6 +208,8 @@ final class MediaVideoPreparationTests: XCTestCase {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
             AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+            AVVideoColorPropertiesKey: [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2],
             AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 24_000_000,
                 AVVideoExpectedSourceFrameRateKey: 60, AVVideoMaxKeyFrameIntervalKey: 60,
                 AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel]
@@ -311,49 +313,11 @@ final class MediaVideoPreparationTests: XCTestCase {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("HDR ficticio.mov")
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let settings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: 128, AVVideoHeightKey: 96,
-            AVVideoCompressionPropertiesKey: [AVVideoProfileLevelKey: kVTProfileLevel_HEVC_Main10_AutoLevel],
-            AVVideoColorPropertiesKey: [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_2020,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_2100_HLG, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_2020]
-        ]
-        guard writer.canApply(outputSettings: settings, forMediaType: .video) else { throw XCTSkip("El simulador no dispone de codificador HEVC Main10 para generar el fixture HDR") }
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
-            kCVPixelBufferWidthKey as String: 128, kCVPixelBufferHeightKey as String: 96
-        ])
-        writer.add(input)
-        XCTAssertTrue(writer.startWriting(), writer.error?.localizedDescription ?? "")
-        writer.startSession(atSourceTime: .zero)
-        func waitForHDRWriter() async throws {
-            for _ in 0..<3000 {
-                guard writer.status == .writing else { throw writer.error ?? QueueTestFailure.timeout }
-                if input.isReadyForMoreMediaData { return }
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            throw QueueTestFailure.timeout
-        }
-        for frame in 0..<12 {
-            try await waitForHDRWriter()
-            var buffer: CVPixelBuffer?
-            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer), kCVReturnSuccess)
-            let pixel = try XCTUnwrap(buffer)
-            CVPixelBufferLockBaseAddress(pixel, [])
-            for plane in 0..<CVPixelBufferGetPlaneCount(pixel) {
-                let address = try XCTUnwrap(CVPixelBufferGetBaseAddressOfPlane(pixel, plane)).assumingMemoryBound(to: UInt16.self)
-                let count = CVPixelBufferGetBytesPerRowOfPlane(pixel, plane) * CVPixelBufferGetHeightOfPlane(pixel, plane) / 2
-                for index in 0..<count { address[index] = UInt16(plane == 0 ? 256 + frame * 8 : 512) << 6 }
-            }
-            CVPixelBufferUnlockBaseAddress(pixel, [])
-            try await waitForHDRWriter()
-            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 12)))
-        }
-        input.markAsFinished()
-        await writer.finishWriting()
-        XCTAssertEqual(writer.status, .completed, writer.error?.localizedDescription ?? "")
+        let url = folder.appendingPathComponent("HDR ficticio.mp4")
+        // Synthetic Main10 HLG fixture avoids depending on a cold simulator's
+        // HEVC encoder just to exercise the app's HDR decoder/exporter.
+        let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "SyntheticHDR", withExtension: "mp4"))
+        try FileManager.default.copyItem(at: fixture, to: url)
         let source = try MediaLocalFile.stage(url, quality: .original); defer { source.remove() }
         let sourceAsset = AVURLAsset(url: source.url)
         let sourceTracks = try await sourceAsset.loadTracks(withMediaType: .video)
