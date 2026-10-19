@@ -658,12 +658,16 @@ final class LaunchTests: XCTestCase {
         guard opener.waitForExistence(timeout: timeout) else { return false }
         let frame=opener.frame,screen=app.windows.firstMatch.frame
         guard frame.width >= 44,frame.height >= 44,screen.contains(frame) else { return false }
-        // After a SwiftUI overlay closes, XCTest may report a visible header
-        // as non-hittable. Exercise its actual touch point and require the panel
-        // to open; this still fails if another view intercepts the touch.
-        if opener.isHittable {opener.tap()}
-        else {opener.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()}
-        return app.buttons["phone.menu.close"].waitForExistence(timeout: 5)
+        // Touch the visible button center rather than XCTest's inferred hit
+        // point. One bounded retry handles an event lost during cold launch;
+        // both attempts must open the real panel, never a synthetic state.
+        let close=app.buttons["phone.menu.close"]
+        for _ in 0..<2 {
+            opener.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
+            if close.waitForExistence(timeout:5) {return true}
+            if !opener.exists {return false}
+        }
+        return false
     }
     @MainActor private func navigationSections(_ app: XCUIApplication) -> [String] {
         guard showMenu(app) else { return [] }

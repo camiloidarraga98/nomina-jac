@@ -60,6 +60,7 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_NAVIGATION_AGENDA_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-agenda-only]') }}
           JAC_NAVIGATION_REMAINING: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-remaining]') }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
           JAC_MUSIC: ${{ inputs.scope == 'music' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-music]')) }}
@@ -78,9 +79,11 @@ jobs:
           set -euo pipefail
           if [ "$JAC_NAVIGATION" = true ]; then
             checks=(
-              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
               -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
             )
+            if [ "$JAC_NAVIGATION_AGENDA_ONLY" != true ]; then
+              checks+=(-only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState)
+            fi
             if [ "$JAC_NAVIGATION_REMAINING" != true ]; then
               checks+=(
                 -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
