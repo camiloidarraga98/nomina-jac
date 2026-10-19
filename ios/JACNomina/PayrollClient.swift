@@ -1116,13 +1116,13 @@ final class PayrollClient: ObservableObject {
         return try decoder.decode(Response.self, from: data).links
     }
     func createMediaFolderShare(_ folder: String, id: String, days: Int) async throws -> MediaSharedLink {
-        let (data, _) = try await request(path: "api/media/shares", method: "POST", body: .object([
+        let (data, _) = try await request(path: "api/media/shares", body: .object([
             "action": .string("create"), "folderId": .string(folder), "id": .string(id), "days": .number(Double(days))]), forceNetwork: true)
         struct Response: Decodable { let link: MediaSharedLink }
         return try decoder.decode(Response.self, from: data).link
     }
     func revokeMediaFolderShare(_ folder: String, id: String) async throws {
-        _ = try await request(path: "api/media/shares", method: "POST", body: .object([
+        _ = try await request(path: "api/media/shares", body: .object([
             "action": .string("revoke"), "folderId": .string(folder), "id": .string(id)]), forceNetwork: true)
     }
     #endif

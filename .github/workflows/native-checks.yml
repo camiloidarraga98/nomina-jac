@@ -21,7 +21,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: jac-apple-${{ github.ref }}
+  # An iPhone-only correction must not cancel a reusable Mac build in progress.
+  group: jac-apple-${{ github.ref }}${{ contains(github.event.head_commit.message, '[iphone-only]') && '-iphone' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -111,7 +112,7 @@ jobs:
             -derivedDataPath native-ci/simulator -resultBundlePath native-ci/iphone.xcresult \
             -parallel-testing-enabled NO \
             "${checks[@]}" \
-            CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
+            ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
             test 2>&1 | tee native-ci/iphone-tests.log
       - name: Export compact test diagnostics
         if: always()
@@ -176,7 +177,7 @@ jobs:
           path: native-ci/*.log
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
