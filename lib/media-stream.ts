@@ -1,4 +1,5 @@
 import {env} from 'cloudflare:workers';
+import {createHash} from 'node:crypto';
 import {database} from '@/db/raw';
 import {MediaFailure} from './media-core';
 import {mediaGuardActive,mediaStoredGuard,type MediaGuard} from './media-drive';
@@ -98,7 +99,9 @@ async function leaseGuard(token:string){
 const signed=new Map<string,{token:string;expires:number}>();
 async function streamToken(uid:string){
  const old=signed.get(uid);if(old&&old.expires>Date.now())return old.token;
- const result=await streamAPI('/'+uid+'/token',{exp:Math.floor(Date.now()/1000)+120}) as {token?:string};
+ // The provider token must outlive every URL in a one-hour VOD playlist,
+ // including when the player fetches later segments without reloading it.
+ const result=await streamAPI('/'+uid+'/token',{exp:Math.floor(Date.now()/1000)+3900}) as {token?:string};
  if(!result.token||!/^[-A-Za-z0-9_.]+$/.test(result.token))throw new MediaFailure('Stream no confirmó la reproducción.',502);
  if(signed.size>=128)signed.delete(signed.keys().next().value!);signed.set(uid,{token:result.token,expires:Date.now()+90000});return result.token;
 }
@@ -106,16 +109,43 @@ function assetPath(asset:string){
  if(!asset||asset.length>2048||asset.startsWith('/')||asset.includes('\\')||asset.includes('#')||asset.split(/[/?]/).some(x=>x==='.'||x==='..')||!(/^(manifest|video|audio|segments)\//.test(asset)))throw new MediaFailure('El tramo no es válido.',400);
  return asset;
 }
+type StreamAccess=Awaited<ReturnType<typeof leaseGuard>>;
+type StreamAsset={v:1;uid:string;binding:string;url:string};
+const assetBinding=(lease:string)=>createHash('sha256').update(lease).digest('hex');
+function deliveryURL(raw:string,base:URL,access:StreamAccess,token:string){
+ const url=new URL(raw,base),parts=url.pathname.split('/').filter(Boolean);
+ if(url.protocol!=='https:'||url.username||url.password||url.port||url.hash||!validHost(url.hostname)||url.href.length>8192)throw new MediaFailure('La lista contiene un destino no autorizado.',502);
+ if(![access.uid,token,base.pathname.split('/')[1]].includes(parts.shift()||''))throw new MediaFailure('La lista cambió de video.',502);
+ assetPath(parts.join('/'));return url;
+}
+async function resolvedAsset(lease:string,asset:string,access:StreamAccess,token:string){
+ const base=new URL('https://'+access.host+'/'+token+'/manifest/video.m3u8');
+ if(!asset.startsWith('v1.'))return new URL('../'+assetPath(asset),base);
+ if(asset.length>16384)throw new MediaFailure('El tramo no es válido.',400);
+ let value:StreamAsset;try{value=await decryptMail<StreamAsset>(asset.slice(3),mailKey());}catch{throw new MediaFailure('La autorización del tramo no es válida.',403);}
+ if(value.v!==1||value.uid!==access.uid||value.binding!==assetBinding(lease)||typeof value.url!=='string')throw new MediaFailure('La autorización del tramo cambió.',403);
+ // This complete provider URL was validated and authenticated when issued.
+ // Preserve its host, video-id/token prefix and all signed query parameters.
+ const ownBase=new URL(value.url);return deliveryURL(value.url,ownBase,access,token);
+}
 export async function playbackAsset(lease:string,asset:string,range:string|null){
- assetPath(asset);const access=await leaseGuard(lease),token=await streamToken(access.uid),remote=new URL('https://'+access.host+'/'+token+'/'+asset);
+ if(!asset.startsWith('v1.'))assetPath(asset);
+ const access=await leaseGuard(lease),token=await streamToken(access.uid),remote=await resolvedAsset(lease,asset,access,token);
  if(range&&!/^bytes=\d+-\d*$/.test(range))throw new MediaFailure('Rango no válido.',416);
  const response=await fetch(remote,{redirect:'manual',headers:range?{Range:range}:{},signal:AbortSignal.timeout(30000)});
  if(!response.ok||response.status>=300){await response.body?.cancel();throw new MediaFailure('Cloudflare no entregó la reproducción (HTTP '+response.status+').',502);}
  await leaseGuard(lease);const headers=new Headers({'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'});
  if(remote.pathname.endsWith('.m3u8')){
   const text=new TextDecoder().decode(await r2Bytes(response,1024*1024));if(!text.startsWith('#EXTM3U'))throw new MediaFailure('Stream no devolvió una lista de reproducción.',502);
-  const rewrite=(value:string)=>{const url=new URL(value,remote);if(url.protocol!=='https:'||url.username||url.password||url.port||!(/(^|\.)(videodelivery\.net|cloudflarestream\.com)$/.test(url.hostname)))throw new MediaFailure('La lista contiene un destino no autorizado.',502);const parts=url.pathname.split('/').filter(Boolean);if(![token,access.uid].includes(parts.shift()||''))throw new MediaFailure('La lista cambió de video.',502);for(const [name,value] of [...url.searchParams])if(/token|auth|signature|^sig$|jwt/i.test(name)||value===token)url.searchParams.delete(name);const path=assetPath(parts.join('/')+url.search);return '/api/media/playback?'+new URLSearchParams({lease,asset:path});};
-  const playlist=text.split('\n').map(line=>line.startsWith('#')?line.replace(/URI="([^"]+)"/g,(_,uri)=>'URI="'+rewrite(uri)+'"'):line.trim()?rewrite(line.trim()):line).join('\n');
+  const rewrite=async(value:string)=>{const url=deliveryURL(value,remote,access,token),capability:StreamAsset={v:1,uid:access.uid,binding:assetBinding(lease),url:url.href};return '/api/media/playback?'+new URLSearchParams({lease,asset:'v1.'+await encryptMail(capability,mailKey())});};
+  const lines:string[]=[];
+  for(const original of text.split('\n')){
+   let line=original;
+   if(line.startsWith('#')){for(const match of original.matchAll(/URI="([^"]+)"/g))line=line.replace(match[0],'URI="'+await rewrite(match[1])+'"');}
+   else if(line.trim())line=await rewrite(line.trim());
+   lines.push(line);
+  }
+  const playlist=lines.join('\n');
   await leaseGuard(lease);headers.set('Content-Type','application/vnd.apple.mpegurl');return new Response(playlist,{headers});
  }
  for(const key of ['content-type','content-length','content-range','accept-ranges']){const value=response.headers.get(key);if(value)headers.set(key,value);}
@@ -129,9 +159,9 @@ export async function playbackAsset(lease:string,asset:string,range:string|null)
 // credentials, signed delivery URLs, manifests, filenames or source bytes.
 export async function playbackDiagnostics(g:MediaGuard,origin:string){
  if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión cambió.',403);
- type Stage={ok:boolean;status?:number;code?:number;message?:string};
+ type Stage={ok:boolean;status?:number;code?:number;message?:string;mime?:string};
  const failure=(error:unknown):Stage=>({ok:false,...(error instanceof StreamFailure?{status:error.upstreamStatus,code:error.upstreamCode}:{}),message:error instanceof MediaFailure?error.message:'No se pudo consultar esta etapa.'});
- const report:{configured:boolean;checkedAt:string;videos:number;states:{state:string;count:number}[];api?:Stage;provider?:{state:string;ready:boolean};master?:Stage;variant?:Stage}={configured:configured(),checkedAt:new Date().toISOString(),videos:0,states:[]};
+ const report:{configured:boolean;checkedAt:string;videos:number;states:{state:string;count:number}[];api?:Stage;provider?:{state:string;ready:boolean};master?:Stage;variant?:Stage;initialization?:Stage;fragment?:Stage}={configured:configured(),checkedAt:new Date().toISOString(),videos:0,states:[]};
  report.videos=(await database().prepare(`SELECT COUNT(*) AS n FROM jac_media_r2_entries WHERE mime_type LIKE 'video/%' AND ${g.sql}`).bind(...g.bindings).first<{n:number}>())?.n||0;
  const exists=await database().prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='jac_media_presentations'").first();
  if(exists)report.states=(await database().prepare(`SELECT COALESCE(NULLIF(p.stream_status,''),'pending') AS state,COUNT(*) AS count FROM jac_media_r2_entries e LEFT JOIN jac_media_presentations p ON p.file_id=e.id WHERE e.mime_type LIKE 'video/%' AND ${g.sql} GROUP BY state`).bind(...g.bindings).all<{state:string;count:number}>()).results;
@@ -141,9 +171,10 @@ export async function playbackDiagnostics(g:MediaGuard,origin:string){
   if(candidate){
    try{const video=await streamAPI('/'+candidate.stream_uid) as StreamVideo;report.provider={state:/^[a-zA-Z0-9_-]{1,40}$/.test(video.status?.state||'')?video.status!.state!:'unknown',ready:video.readyToStream===true};}catch(error){report.api=failure(error);}
    const inspect=async(url:string)=>{const q=new URL(url,origin).searchParams;const response=await playbackAsset(q.get('lease')||'',q.get('asset')||'',null);return new TextDecoder().decode(await r2Bytes(response,1024*1024));};
+   const probe=async(url:string):Promise<Stage>=>{const q=new URL(url,origin).searchParams,lease=q.get('lease')||'',access=await leaseGuard(lease),token=await streamToken(access.uid),remote=await resolvedAsset(lease,q.get('asset')||'',access,token);let response=await fetch(remote,{method:'HEAD',redirect:'manual',signal:AbortSignal.timeout(15000)});if(response.status===405){await response.body?.cancel();response=await fetch(remote,{headers:{Range:'bytes=0-0'},redirect:'manual',signal:AbortSignal.timeout(15000)});}await response.body?.cancel();await leaseGuard(lease);return {ok:response.ok,status:response.status,mime:response.headers.get('content-type')?.split(';')[0]};};
    try{
     const sessionID=String(g.bindings[0]),info=await playbackInfo(g,candidate.file_id,origin,{actorID:g.actorID,sessionID},false);
-    if(info.ready&&info.url){const master=await inspect(info.url);report.master={ok:true,status:200};const child=master.split('\n').find(line=>line.startsWith('/api/media/playback?'));if(child){try{await inspect(child);report.variant={ok:true,status:200};}catch(error){report.variant=failure(error);}}}
+    if(info.ready&&info.url){const master=await inspect(info.url);report.master={ok:true,status:200};const child=master.split('\n').find(line=>line.startsWith('/api/media/playback?'));if(child){try{const variant=await inspect(child);report.variant={ok:true,status:200};const initialization=variant.match(/#EXT-X-MAP:.*?URI="([^"]+)"/)?.[1],fragment=variant.split('\n').find(line=>line.startsWith('/api/media/playback?'));if(initialization){try{report.initialization=await probe(initialization);}catch(error){report.initialization=failure(error);}}if(fragment){try{report.fragment=await probe(fragment);}catch(error){report.fragment=failure(error);}}}catch(error){report.variant=failure(error);}}}
     else report.master={ok:false,message:'La versión todavía no figura lista en JAC.'};
    }catch(error){report.master=failure(error);}
   }

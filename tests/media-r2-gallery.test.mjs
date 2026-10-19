@@ -41,12 +41,12 @@ beforeEach(async()=>{
    if(streamHook){const answer=await streamHook(r);if(answer)return answer;}
    const ok=result=>Response.json({success:true,result});
    if(url.pathname.endsWith('/copy')){const body=await r.json(),source=new URL(body.url);assert.equal(source.hostname,host);assert.equal(source.searchParams.get('X-Amz-Expires'),'3600');assert.equal(body.requireSignedURLs,true);const uid=crypto.randomUUID().replaceAll('-',''),video={uid,creator:body.creator,meta:body.meta,readyToStream:false};streamVideos.set(uid,video);return ok(video);}
-   if(url.pathname.endsWith('/token'))return ok({token:'fixture.stream.signature'});
+   if(url.pathname.endsWith('/token')){const body=await r.json();assert.ok(body.exp>=Math.floor(Date.now()/1000)+3800,'Provider URLs must remain valid for the one-hour JAC lease');return ok({token:'fixture.stream.signature'});}
    if(url.searchParams.has('limit'))return ok([...streamVideos.values()]);
    if(url.searchParams.has('creator'))return ok([...streamVideos.values()].filter(v=>v.creator===url.searchParams.get('creator')));
    const uid=url.pathname.split('/').at(-1),video=streamVideos.get(uid);if(r.method==='DELETE'){streamVideos.delete(uid);return ok({});}assert.ok(video);return ok({...video,readyToStream:streamReady});
   }
-  if(url.hostname==='videodelivery.net'){
+  if(url.hostname==='videodelivery.net'||url.hostname==='customer-fixture.cloudflarestream.com'){
    assert.equal(r.headers.has('authorization'),false);assert.equal(r.headers.has('cookie'),false);assert.equal(r.redirect,'manual');streamCalls.push({method:r.method,url});
    if(streamHook){const answer=await streamHook(r);if(answer)return answer;}
    if(url.pathname.endsWith('/manifest/video.m3u8'))return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=500000\nlow.m3u8\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\nhigh.m3u8\n',{headers:{'Content-Type':'application/vnd.apple.mpegurl'}});
@@ -518,10 +518,30 @@ test('owner playback diagnostics inspect delivery without exposing credentials o
  assert.equal(streamCalls.length,0);
  await readyVideo(id);const copies=streamCalls.filter(call=>call.url.pathname.endsWith('/copy')).length;
  let response=await m.playback.GET(req('/api/media/playback?diagnostics=1',undefined,token,'GET')),data=await response.json();
- assert.equal(response.status,200);assert.equal(data.api.ok,true);assert.equal(data.videos,1);assert.equal(data.master.ok,true);assert.equal(data.variant.ok,true);
+ assert.equal(response.status,200);assert.equal(data.api.ok,true);assert.equal(data.videos,1);assert.equal(data.master.ok,true);assert.equal(data.variant.ok,true);assert.equal(data.fragment.ok,true);
  assert.equal(streamCalls.filter(call=>call.url.pathname.endsWith('/copy')).length,copies);
  assert.ok(!JSON.stringify(data).includes('fixture.stream.signature'));assert.ok(!JSON.stringify(data).includes('cloudflarestorage'));assert.ok(!JSON.stringify(data).includes('fixture-stream-only'));
  streamHook=request=>new URL(request.url).hostname==='api.cloudflare.com'?Response.json({success:false,errors:[{code:10000,message:'private upstream value must not be returned'}]},{status:403}):undefined;
  response=await m.playback.GET(req('/api/media/playback?diagnostics=1',undefined,token,'GET'));data=await response.json();
  assert.equal(data.api.status,403);assert.equal(data.api.code,10000);assert.ok(!JSON.stringify(data).includes('private upstream value'));
+});
+
+test('signed HLS preserves the provider host, video path and query credentials for initialization and media fragments',async()=>{
+ const {id}=await videoFixture(),info=await readyVideo(id),uid=[...streamVideos.keys()].at(-1),delivery='https://customer-fixture.cloudflarestream.com/'+uid;
+ streamHook=request=>{
+  const url=new URL(request.url);if(url.hostname==='api.cloudflare.com')return;
+  if(url.pathname.endsWith('/manifest/video.m3u8'))return new Response('#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=1800000\n'+delivery+'/manifest/low.m3u8?token=manifest-secret&sig=manifest-proof\n');
+  assert.equal(url.hostname,'customer-fixture.cloudflarestream.com');assert.ok(url.pathname.startsWith('/'+uid+'/'));
+  if(url.pathname.endsWith('.m3u8')){assert.equal(url.searchParams.get('token'),'manifest-secret');assert.equal(url.searchParams.get('sig'),'manifest-proof');return new Response('#EXTM3U\n#EXT-X-MAP:URI="'+delivery+'/video/init.mp4?token=segment-secret&sig=init-proof"\n#EXTINF:4,\n'+delivery+'/video/segment.m4s?token=segment-secret&sig=media-proof\n#EXT-X-ENDLIST\n');}
+  assert.equal(url.searchParams.get('token'),'segment-secret');assert.equal(url.searchParams.get('sig'),url.pathname.endsWith('init.mp4')?'init-proof':'media-proof');
+  return new Response(new Uint8Array([1,2,3,4]),{headers:{'Content-Type':'video/mp4'}});
+ };
+ const master=await (await leased(info.url)).text(),child=master.split('\n').find(line=>line.startsWith('/api/'));
+ assert.ok(!master.includes('manifest-secret'));assert.ok(!master.includes(uid));
+ const playlist=await (await leased(child)).text(),initialization=playlist.match(/URI="([^"]+)"/)[1],fragment=playlist.split('\n').find(line=>line.startsWith('/api/'));
+ assert.ok(!playlist.includes('segment-secret'));assert.ok(!playlist.includes('init-proof'));assert.ok(!playlist.includes('customer-fixture'));
+ assert.deepEqual(new Uint8Array(await (await leased(initialization)).arrayBuffer()),new Uint8Array([1,2,3,4]));
+ assert.deepEqual(new Uint8Array(await (await leased(fragment)).arrayBuffer()),new Uint8Array([1,2,3,4]));
+ const altered=new URL(fragment,origin),asset=altered.searchParams.get('asset');altered.searchParams.set('asset',asset.slice(0,3)+(asset[3]==='A'?'B':'A')+asset.slice(4));assert.equal((await leased(altered.href)).status,403);
+ const other=await (await playbackInfo(id)).json(),rebound=new URL(fragment,origin);rebound.searchParams.set('lease',new URL(other.url).searchParams.get('lease'));assert.equal((await leased(rebound.href)).status,403);
 });
