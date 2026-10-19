@@ -30,10 +30,10 @@ final class LaunchTests: XCTestCase {
         tap(app, "media.item.r2_media-day")
         let photo = app.buttons["media.item.r2_media-photo"]
         XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.press(forDuration: 0.65)
-        tap(app, "media.item.r2_media-video"); tap(app, "media.selection.download"); tap(app, "media.selection.savePhotos")
+        tap(app, "media.item.r2_media-video"); tap(app, "media.selection.download"); tap(app, "Guardar en Fotos")
         XCTAssertTrue(app.staticTexts["2 archivos seleccionados"].waitForExistence(timeout: 10)); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
-        tap(app, "media.selection.download"); tap(app, "media.selection.offline"); tap(app, "media.transfer.begin")
+        tap(app, "media.selection.download"); tap(app, "Guardar sin conexión"); tap(app, "media.transfer.begin")
         XCTAssertTrue(app.staticTexts["2 de 2 archivos disponibles sin conexión."].waitForExistence(timeout: 20))
         XCTAssertTrue(app.buttons["media.item.r2_media-photo-2"].exists, "The unselected photo remains in the gallery")
         attachScreen(app, name: "fotografia-descarga-seleccionada-fotos-offline")
