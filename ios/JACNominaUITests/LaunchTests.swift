@@ -673,7 +673,7 @@ final class LaunchTests: XCTestCase {
     @MainActor private func hasSection(_ app: XCUIApplication, _ title: String, timeout: TimeInterval = 1) -> Bool {
         guard showMenu(app, timeout: timeout) else { return false }
         var result=app.buttons["phone.section."+sectionID(title)].exists
-        if title == "Pases" { result = result || (app.buttons["phone.section.itineraries"].label == "Pases") }
+        if title == "Pases" {let legacy=app.buttons["phone.section.itineraries"];result = result || (legacy.exists && legacy.label == "Pases")}
         app.buttons["phone.menu.close"].tap();return result
     }
     @MainActor private func openSection(_ app: XCUIApplication, _ title: String) {

@@ -60,6 +60,7 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_NAVIGATION_REMAINING: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-remaining]') }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
           JAC_MUSIC: ${{ inputs.scope == 'music' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-music]')) }}
           JAC_MEDIA_LIGHT: ${{ inputs.scope == 'media-light' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-light]')) }}
@@ -77,13 +78,17 @@ jobs:
           set -euo pipefail
           if [ "$JAC_NAVIGATION" = true ]; then
             checks=(
-              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
               -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
-              -only-testing:JACNominaUITests/LaunchTests/testEmptyProfileCanReachAccountAndLogOutThroughManagement
-              -only-testing:JACNominaUITests/LaunchTests/testModernHybridSectionsShowMediaAndItinerariesWithoutFinanceOrBoarding
               -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
-              -only-testing:JACNominaUITests/LaunchTests/testSidebarAndManagementKeepArchiveTeamAndAccountAccessible
             )
+            if [ "$JAC_NAVIGATION_REMAINING" != true ]; then
+              checks+=(
+                -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
+                -only-testing:JACNominaUITests/LaunchTests/testEmptyProfileCanReachAccountAndLogOutThroughManagement
+                -only-testing:JACNominaUITests/LaunchTests/testModernHybridSectionsShowMediaAndItinerariesWithoutFinanceOrBoarding
+                -only-testing:JACNominaUITests/LaunchTests/testSidebarAndManagementKeepArchiveTeamAndAccountAccessible
+              )
+            fi
           elif [ "$JAC_MUSIC" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testMusicPermissionsDoNotGrantOtherSectionsAndUploadsRequireListening
