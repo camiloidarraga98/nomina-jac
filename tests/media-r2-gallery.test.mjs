@@ -42,6 +42,7 @@ beforeEach(async()=>{
    const ok=result=>Response.json({success:true,result});
    if(url.pathname.endsWith('/copy')){const body=await r.json(),source=new URL(body.url);assert.equal(source.hostname,host);assert.equal(source.searchParams.get('X-Amz-Expires'),'3600');assert.equal(body.requireSignedURLs,true);const uid=crypto.randomUUID().replaceAll('-',''),video={uid,creator:body.creator,meta:body.meta,readyToStream:false};streamVideos.set(uid,video);return ok(video);}
    if(url.pathname.endsWith('/token'))return ok({token:'fixture.stream.signature'});
+   if(url.searchParams.has('limit'))return ok([...streamVideos.values()]);
    if(url.searchParams.has('creator'))return ok([...streamVideos.values()].filter(v=>v.creator===url.searchParams.get('creator')));
    const uid=url.pathname.split('/').at(-1),video=streamVideos.get(uid);if(r.method==='DELETE'){streamVideos.delete(uid);return ok({});}assert.ok(video);return ok({...video,readyToStream:streamReady});
   }
@@ -509,4 +510,18 @@ test('scheduled Stream preparation processes existing videos once and cleans the
  await m.processMediaPresentations();
  assert.equal(sql.prepare('SELECT 1 FROM jac_media_presentations WHERE file_id=?').get(id),undefined);
  assert.equal(streamVideos.has(row.stream_uid),false);
+});
+
+test('owner playback diagnostics inspect delivery without exposing credentials or starting a copy',async()=>{
+ const {id}=await videoFixture();
+ assert.equal((await m.playback.GET(req('/api/media/playback?diagnostics=1',undefined,photoToken,'GET'))).status,403);
+ assert.equal(streamCalls.length,0);
+ await readyVideo(id);const copies=streamCalls.filter(call=>call.url.pathname.endsWith('/copy')).length;
+ let response=await m.playback.GET(req('/api/media/playback?diagnostics=1',undefined,token,'GET')),data=await response.json();
+ assert.equal(response.status,200);assert.equal(data.api.ok,true);assert.equal(data.videos,1);assert.equal(data.master.ok,true);assert.equal(data.variant.ok,true);
+ assert.equal(streamCalls.filter(call=>call.url.pathname.endsWith('/copy')).length,copies);
+ assert.ok(!JSON.stringify(data).includes('fixture.stream.signature'));assert.ok(!JSON.stringify(data).includes('cloudflarestorage'));assert.ok(!JSON.stringify(data).includes('fixture-stream-only'));
+ streamHook=request=>new URL(request.url).hostname==='api.cloudflare.com'?Response.json({success:false,errors:[{code:10000,message:'private upstream value must not be returned'}]},{status:403}):undefined;
+ response=await m.playback.GET(req('/api/media/playback?diagnostics=1',undefined,token,'GET'));data=await response.json();
+ assert.equal(data.api.status,403);assert.equal(data.api.code,10000);assert.ok(!JSON.stringify(data).includes('private upstream value'));
 });

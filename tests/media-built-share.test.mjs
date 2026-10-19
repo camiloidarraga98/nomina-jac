@@ -16,6 +16,7 @@ test('built Worker serves AASA and a private anonymous page, and rejects an unkn
   const page=await mf.dispatchFetch('https://built-share.invalid/compartir/'+'a'.repeat(43)),html=await page.text();assert.equal(page.status,200,html.slice(0,300));assert.ok(html.includes('Carpeta compartida'));assert.match(page.headers.get('cache-control'),/no-store/);assert.equal(page.headers.get('referrer-policy'),'no-referrer');
   const denied=await mf.dispatchFetch('https://built-share.invalid/api/media/shared?token='+'a'.repeat(43));assert.equal(denied.status,410);assert.match(denied.headers.get('cache-control'),/no-store/);
   const playback=await mf.dispatchFetch('https://built-share.invalid/api/media/playback?id=r2_private');assert.equal(playback.status,401);assert.match(playback.headers.get('cache-control'),/no-store/);
+  const diagnostics=await mf.dispatchFetch('https://built-share.invalid/api/media/playback?diagnostics=1');assert.equal(diagnostics.status,401);assert.equal((await diagnostics.json()).configured,undefined);
   const invalidLease=await mf.dispatchFetch('https://built-share.invalid/api/media/playback?lease=invalid&asset=manifest/video.m3u8');assert.equal(invalidLease.status,403);
   // No Stream secret is provided: the real scheduled entry point must return
   // without creating tables, copying media or contacting an external service.

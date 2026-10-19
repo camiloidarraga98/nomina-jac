@@ -13,13 +13,13 @@ import {sectionSql} from './payroll-permissions';
 const ACCOUNT='9798d1043d57690ffa9aee16c74dfb93';
 const settings=()=>env as unknown as {JAC_STREAM_API_TOKEN?:string};
 const configured=()=>!!settings().JAC_STREAM_API_TOKEN;
-class StreamFailure extends MediaFailure {constructor(public uncertain:boolean){super('Cloudflare Stream no confirmó la preparación. Revisa su configuración o reintenta más tarde.',503);}}
+class StreamFailure extends MediaFailure {constructor(public uncertain:boolean,public upstreamStatus=0,public upstreamCode=0){super(upstreamStatus===401||upstreamStatus===403?'Cloudflare Stream rechazó su credencial. Revisa el permiso Stream: Edit y la cuenta configurada.':'Cloudflare Stream no confirmó la preparación. Revisa su configuración o reintenta más tarde.',503);}}
 async function streamAPI(path:string,body?:unknown,method=body?'POST':'GET'){
  const token=settings().JAC_STREAM_API_TOKEN;if(!token)throw new MediaFailure('Falta configurar Cloudflare Stream.',503);
  let response:Response;
  try{response=await fetch('https://api.cloudflare.com/client/v4/accounts/'+ACCOUNT+'/stream'+path,{method,redirect:'manual',headers:{Authorization:'Bearer '+token,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{}),signal:AbortSignal.timeout(15000)});}catch{throw new StreamFailure(method==='POST');}
- const bytes=await r2Bytes(response,2*1024*1024);let data:{success?:boolean;result?:unknown};try{data=JSON.parse(new TextDecoder().decode(bytes));}catch{throw new StreamFailure(method==='POST');}
- if(!response.ok||data.success===false)throw new StreamFailure(method==='POST'&&response.status>=500);
+ const bytes=await r2Bytes(response,2*1024*1024);let data:{success?:boolean;result?:unknown;errors?:{code?:number}[]};try{data=JSON.parse(new TextDecoder().decode(bytes));}catch{throw new StreamFailure(method==='POST',response.status);}
+ if(!response.ok||data.success===false)throw new StreamFailure(method==='POST'&&response.status>=500,response.status,Number(data.errors?.[0]?.code)||0);
  return data.result;
 }
 type StreamVideo={uid:string;readyToStream?:boolean;status?:{state?:string};meta?:{jac_source?:string};playback?:{hls?:string}};
@@ -110,7 +110,7 @@ export async function playbackAsset(lease:string,asset:string,range:string|null)
  assetPath(asset);const access=await leaseGuard(lease),token=await streamToken(access.uid),remote=new URL('https://'+access.host+'/'+token+'/'+asset);
  if(range&&!/^bytes=\d+-\d*$/.test(range))throw new MediaFailure('Rango no válido.',416);
  const response=await fetch(remote,{redirect:'manual',headers:range?{Range:range}:{},signal:AbortSignal.timeout(30000)});
- if(!response.ok||response.status>=300){await response.body?.cancel();throw new MediaFailure('No se pudo recibir el tramo de video.',502);}
+ if(!response.ok||response.status>=300){await response.body?.cancel();throw new MediaFailure('Cloudflare no entregó la reproducción (HTTP '+response.status+').',502);}
  await leaseGuard(lease);const headers=new Headers({'Cache-Control':'private, no-store','Referrer-Policy':'no-referrer','X-Content-Type-Options':'nosniff'});
  if(remote.pathname.endsWith('.m3u8')){
   const text=new TextDecoder().decode(await r2Bytes(response,1024*1024));if(!text.startsWith('#EXTM3U'))throw new MediaFailure('Stream no devolvió una lista de reproducción.',502);
@@ -122,6 +122,34 @@ export async function playbackAsset(lease:string,asset:string,range:string|null)
  const reader=response.body?.getReader();if(!reader)throw new MediaFailure('El tramo está vacío.',502);
  let received=0,last=Date.now();
  return new Response(new ReadableStream({async pull(controller){try{const part=await reader.read();if(part.done){await leaseGuard(lease);controller.close();return;}received+=part.value.byteLength;if(received>=1024*1024||Date.now()-last>=5000){await leaseGuard(lease);received=0;last=Date.now();}controller.enqueue(part.value);}catch(error){await reader.cancel().catch(()=>{});controller.error(error);}},async cancel(){await reader.cancel();}}),{status:response.status,headers});
+}
+
+// Read-only incident diagnosis, reachable exclusively through the owner's
+// existing connect guard. Return counts and sanitized stage outcomes, never
+// credentials, signed delivery URLs, manifests, filenames or source bytes.
+export async function playbackDiagnostics(g:MediaGuard,origin:string){
+ if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión cambió.',403);
+ type Stage={ok:boolean;status?:number;code?:number;message?:string};
+ const failure=(error:unknown):Stage=>({ok:false,...(error instanceof StreamFailure?{status:error.upstreamStatus,code:error.upstreamCode}:{}),message:error instanceof MediaFailure?error.message:'No se pudo consultar esta etapa.'});
+ const report:{configured:boolean;checkedAt:string;videos:number;states:{state:string;count:number}[];api?:Stage;provider?:{state:string;ready:boolean};master?:Stage;variant?:Stage}={configured:configured(),checkedAt:new Date().toISOString(),videos:0,states:[]};
+ report.videos=(await database().prepare(`SELECT COUNT(*) AS n FROM jac_media_r2_entries WHERE mime_type LIKE 'video/%' AND ${g.sql}`).bind(...g.bindings).first<{n:number}>())?.n||0;
+ const exists=await database().prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='jac_media_presentations'").first();
+ if(exists)report.states=(await database().prepare(`SELECT COALESCE(NULLIF(p.stream_status,''),'pending') AS state,COUNT(*) AS count FROM jac_media_r2_entries e LEFT JOIN jac_media_presentations p ON p.file_id=e.id WHERE e.mime_type LIKE 'video/%' AND ${g.sql} GROUP BY state`).bind(...g.bindings).all<{state:string;count:number}>()).results;
+ if(report.configured){try{await streamAPI('?limit=1');report.api={ok:true,status:200};}catch(error){report.api=failure(error);}}
+ if(report.api?.ok&&exists){
+  const candidate=await database().prepare(`SELECT p.file_id,p.stream_uid FROM jac_media_presentations p JOIN jac_media_r2_entries e ON e.id=p.file_id WHERE p.stream_uid<>'' AND e.mime_type LIKE 'video/%' AND ${g.sql} ORDER BY (p.stream_status='ready') DESC,p.updated_at DESC LIMIT 1`).bind(...g.bindings).first<{file_id:string;stream_uid:string}>();
+  if(candidate){
+   try{const video=await streamAPI('/'+candidate.stream_uid) as StreamVideo;report.provider={state:/^[a-zA-Z0-9_-]{1,40}$/.test(video.status?.state||'')?video.status!.state!:'unknown',ready:video.readyToStream===true};}catch(error){report.api=failure(error);}
+   const inspect=async(url:string)=>{const q=new URL(url,origin).searchParams;const response=await playbackAsset(q.get('lease')||'',q.get('asset')||'',null);return new TextDecoder().decode(await r2Bytes(response,1024*1024));};
+   try{
+    const sessionID=String(g.bindings[0]),info=await playbackInfo(g,candidate.file_id,origin,{actorID:g.actorID,sessionID},false);
+    if(info.ready&&info.url){const master=await inspect(info.url);report.master={ok:true,status:200};const child=master.split('\n').find(line=>line.startsWith('/api/media/playback?'));if(child){try{await inspect(child);report.variant={ok:true,status:200};}catch(error){report.variant=failure(error);}}}
+    else report.master={ok:false,message:'La versión todavía no figura lista en JAC.'};
+   }catch(error){report.master=failure(error);}
+  }
+ }
+ if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión cambió.',403);
+ return report;
 }
 
 // Internal scheduled work only. This guard is never accepted from HTTP input
