@@ -133,7 +133,7 @@ struct PayrollHomeView: View {
                         Spacer()
                         Button { setPhoneMenu(false) } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
                             .accessibilityLabel("Cerrar menú").accessibilityIdentifier("phone.menu.close").accessibilityFocused($menuCloseFocused)
-                    }.padding(.horizontal, 18).padding(.top, geometry.safeAreaInsets.top + 12).padding(.bottom, 18)
+                    }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 18)
                     Divider()
                     ScrollView {
                         VStack(alignment: .leading, spacing: 6) {
@@ -160,15 +160,15 @@ struct PayrollHomeView: View {
                     VStack(alignment: .leading, spacing: 4) {
                         Text(user.displayName).font(.subheadline.weight(.semibold)).lineLimit(2)
                         Text("Tu equipo, en un solo lugar.").font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(22).padding(.bottom, geometry.safeAreaInsets.bottom).privacySensitive()
+                    }.frame(maxWidth: .infinity, alignment: .leading).padding(22).privacySensitive()
                 }
                 .frame(width: min(330, geometry.size.width * 0.86), height: geometry.size.height)
-                .background(JACTheme.card).shadow(color: .black.opacity(0.15), radius: 24, x: 8)
-                .accessibilityAddTraits(.isModal).accessibilityIdentifier("phone.sidebar")
+                .background(JACTheme.card.ignoresSafeArea(.container, edges: .vertical)).shadow(color: .black.opacity(0.15), radius: 24, x: 8)
+                .accessibilityAddTraits(.isModal)
                 .transition(.move(edge: .leading))
-                .gesture(DragGesture(minimumDistance: 30).onEnded { value in if value.translation.width < -60 && abs(value.translation.width) > abs(value.translation.height) { setPhoneMenu(false) } })
+                .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { value in if value.translation.width < -60 && abs(value.translation.width) > abs(value.translation.height) { setPhoneMenu(false) } })
             }.onAppear { menuCloseFocused = true }
-        }.ignoresSafeArea(.container, edges: .vertical)
+        }
     }
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var compactColumn: NavigationSplitViewColumn = .detail

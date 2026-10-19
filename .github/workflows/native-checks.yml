@@ -220,11 +220,17 @@ jobs:
             2>&1 | tee native-ci/ipad-tests.log
       - name: Export compact test diagnostics
         if: always()
+        env:
+          JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
         shell: bash
         run: |
           if [ -d native-ci/iphone.xcresult ]; then
             xcrun xcresulttool get test-results summary --path native-ci/iphone.xcresult > native-ci/test-summary.json || true
-            xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
+            if [ "${JAC_NAVIGATION:-false}" = true ]; then
+              xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments || true
+            else
+              xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
+            fi
           fi
       - name: Save compact diagnostics separately
         if: always()
