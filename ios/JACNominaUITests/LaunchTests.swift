@@ -11,9 +11,9 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(Set(navigationSections(app)), Set(["crm","payroll","agenda","itineraries","alerts","boarding","media","music","management"].map {"phone.section."+$0}))
         XCTAssertTrue(showMenu(app));attachScreen(app, name:"iphone-menu-lateral")
         app.coordinate(withNormalizedOffset:CGVector(dx:0.96,dy:0.5)).tap()
-        XCTAssertTrue(waitFor(app.buttons["phone.menu.close"], predicate:NSPredicate(format:"exists == false"), timeout:5))
+        XCTAssertTrue(waitForMenu(app, visible:false))
         XCTAssertTrue(showMenu(app));app.scrollViews["phone.sidebar.scroll"].swipeLeft()
-        XCTAssertTrue(waitFor(app.buttons["phone.menu.close"], predicate:NSPredicate(format:"exists == false"), timeout:5))
+        XCTAssertTrue(waitForMenu(app, visible:false))
         openSection(app,"Música");XCTAssertTrue(app.buttons["music.section.tracks"].waitForExistence(timeout:15))
         attachScreen(app,name:"iphone-musica-sin-barra-inferior")
     }
@@ -652,8 +652,15 @@ final class LaunchTests: XCTestCase {
     @MainActor private func sectionID(_ title: String) -> String {
         ["CRM":"crm", "Quincena":"payroll", "Agenda":"agenda", "Itinerarios":"itineraries", "Pases":"boarding", "Alertas":"alerts", "Fotografía":"media", "Música":"music", "Gestión":"management"][title] ?? title
     }
+    @MainActor private func menuVisible(_ app: XCUIApplication) -> Bool {
+        let close=app.buttons["phone.menu.close"]
+        return close.exists && app.windows.firstMatch.frame.contains(close.frame)
+    }
+    @MainActor private func waitForMenu(_ app: XCUIApplication, visible: Bool) -> Bool {
+        waitFor(app, predicate:NSPredicate {_,_ in self.menuVisible(app) == visible}, timeout:5)
+    }
     @MainActor private func showMenu(_ app: XCUIApplication, timeout: TimeInterval = 20) -> Bool {
-        if app.buttons["phone.menu.close"].exists { return true }
+        if menuVisible(app) { return true }
         let opener=app.buttons["phone.menu.open"]
         guard opener.waitForExistence(timeout: timeout) else { return false }
         let frame=opener.frame,screen=app.windows.firstMatch.frame
@@ -661,10 +668,9 @@ final class LaunchTests: XCTestCase {
         // Touch the visible button center rather than XCTest's inferred hit
         // point. One bounded retry handles an event lost during cold launch;
         // both attempts must open the real panel, never a synthetic state.
-        let close=app.buttons["phone.menu.close"]
         for _ in 0..<2 {
             opener.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
-            if close.waitForExistence(timeout:5) {return true}
+            if waitForMenu(app, visible:true) {return true}
             if !opener.exists {return false}
         }
         return false

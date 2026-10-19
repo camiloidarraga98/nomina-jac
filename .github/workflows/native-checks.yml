@@ -60,6 +60,7 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_NAVIGATION_DRAWER_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-drawer-only]') }}
           JAC_NAVIGATION_AGENDA_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-agenda-only]') }}
           JAC_NAVIGATION_REMAINING: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-remaining]') }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
@@ -78,19 +79,23 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$JAC_NAVIGATION" = true ]; then
-            checks=(
-              -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
-            )
-            if [ "$JAC_NAVIGATION_AGENDA_ONLY" != true ]; then
-              checks+=(-only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState)
-            fi
-            if [ "$JAC_NAVIGATION_REMAINING" != true ]; then
-              checks+=(
-                -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
-                -only-testing:JACNominaUITests/LaunchTests/testEmptyProfileCanReachAccountAndLogOutThroughManagement
-                -only-testing:JACNominaUITests/LaunchTests/testModernHybridSectionsShowMediaAndItinerariesWithoutFinanceOrBoarding
-                -only-testing:JACNominaUITests/LaunchTests/testSidebarAndManagementKeepArchiveTeamAndAccountAccessible
+            if [ "$JAC_NAVIGATION_DRAWER_ONLY" = true ]; then
+              checks=(-only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed)
+            else
+              checks=(
+                -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
               )
+              if [ "$JAC_NAVIGATION_AGENDA_ONLY" != true ]; then
+                checks+=(-only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState)
+              fi
+              if [ "$JAC_NAVIGATION_REMAINING" != true ]; then
+                checks+=(
+                  -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
+                  -only-testing:JACNominaUITests/LaunchTests/testEmptyProfileCanReachAccountAndLogOutThroughManagement
+                  -only-testing:JACNominaUITests/LaunchTests/testModernHybridSectionsShowMediaAndItinerariesWithoutFinanceOrBoarding
+                  -only-testing:JACNominaUITests/LaunchTests/testSidebarAndManagementKeepArchiveTeamAndAccountAccessible
+                )
+              fi
             fi
           elif [ "$JAC_MUSIC" = true ]; then
             checks=(

@@ -14,18 +14,13 @@ struct PayrollHomeView: View {
     var body: some View {
         Group {
             #if os(iOS)
-            if JACDevice.isPad { tabletWorkspace }
-            else { phoneWorkspace }
+            if JACDevice.isPad {
+                tabletWorkspace.safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
+            } else { phoneDrawerWorkspace }
             #else
-            phoneTabs
+            phoneTabs.safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
             #endif
         }.tint(JACTheme.action)
-            .safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music).accessibilityHidden(phoneMenuIsPresented) }
-            .overlay(alignment: .leading) {
-                #if os(iOS)
-                if !JACDevice.isPad && phoneMenuOpen { phoneSidebar }
-                #endif
-            }
             .sheet(item: $store.incomingAudio) { incoming in MusicImportView(incoming: incoming, initialSection: .warmup).environmentObject(store) }
             .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.hasNotices { await push.bind(store.client) } }
             .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.hasNotices { Task { await push.bind(store.client) } } }
@@ -37,13 +32,6 @@ struct PayrollHomeView: View {
                 if !value.hasNotices { push.stop() }
             }
             .sheet(isPresented: Binding(get: { user.hasNotices && push.noticeID != nil }, set: { if !$0 { push.noticeID = nil } })) { NavigationStack { NoticesView(user: user, kind: user.hasSection(.itineraries) ? "itinerary" : user.hasSection(.alerts) ? "alert" : "boarding_pass", initialNotice: push.noticeID).id(push.noticeID).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { push.noticeID = nil } } } } }
-    }
-    private var phoneMenuIsPresented: Bool {
-        #if os(iOS)
-        !JACDevice.isPad && phoneMenuOpen
-        #else
-        false
-        #endif
     }
     private var phoneTabs: some View {
         TabView(selection: $selected) {
@@ -80,8 +68,39 @@ struct PayrollHomeView: View {
     }
     private func setPhoneMenu(_ visible: Bool) {
         if visible { JACPlatform.endEditing() }
-        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.22)) { phoneMenuOpen = visible }
-        if !visible { menuOpenFocused = true }
+        withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.26)) { phoneMenuOpen = visible }
+        menuCloseFocused = visible
+        menuOpenFocused = !visible
+    }
+    private var phoneDrawerWorkspace: some View {
+        GeometryReader { geometry in
+            let width = min(330, geometry.size.width * 0.86)
+            // One rigid translation moves the persistent panel and the entire
+            // screen together. Its full width keeps navigation/scroll layout stable.
+            HStack(spacing: 0) {
+                phoneSidebar
+                    .frame(width: width, height: geometry.size.height)
+                    .allowsHitTesting(phoneMenuOpen).accessibilityHidden(!phoneMenuOpen)
+                phoneWorkspace
+                    .safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
+                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .background(JACTheme.card)
+                    .allowsHitTesting(!phoneMenuOpen).accessibilityHidden(phoneMenuOpen)
+                    .overlay {
+                        Color.clear.contentShape(Rectangle())
+                            .onTapGesture { setPhoneMenu(false) }
+                            .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { closePhoneMenuOnSwipe($0) })
+                            .allowsHitTesting(phoneMenuOpen).accessibilityHidden(true)
+                    }
+            }
+            .frame(width: geometry.size.width + width, height: geometry.size.height, alignment: .leading)
+            .offset(x: phoneMenuOpen ? 0 : -width)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
+            .clipped()
+        }.background(JACTheme.card.ignoresSafeArea())
+    }
+    private func closePhoneMenuOnSwipe(_ value: DragGesture.Value) {
+        if value.translation.width < -60 && abs(value.translation.width) > abs(value.translation.height) { setPhoneMenu(false) }
     }
     private var phoneWorkspace: some View {
         // Keep only visited sections mounted, preserving their routes, calendar
@@ -95,7 +114,7 @@ struct PayrollHomeView: View {
                         .allowsHitTesting(selected == item.id && !phoneMenuOpen)
                         .accessibilityHidden(selected != item.id || phoneMenuOpen)
                 }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped().animation(nil, value: selected)
         }
         .onChange(of: selected) { old, new in phoneVisited.insert(old); phoneVisited.insert(new) }
     }
@@ -127,51 +146,47 @@ struct PayrollHomeView: View {
         }
     }
     private var phoneSidebar: some View {
-        GeometryReader { geometry in
-            ZStack(alignment: .leading) {
-                Color.black.opacity(0.34).ignoresSafeArea().onTapGesture { setPhoneMenu(false) }.accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 0) {
-                    HStack {
-                        BrandView().frame(maxWidth: 150).accessibilityHidden(true)
-                        Spacer()
-                        Button { setPhoneMenu(false) } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
-                            .accessibilityLabel("Cerrar menú").accessibilityIdentifier("phone.menu.close").accessibilityFocused($menuCloseFocused)
-                    }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 18)
-                    Divider()
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("TU ESPACIO").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 10)
-                            ForEach(phoneDestinations, id: \.id) { item in
-                                Button {
-                                    phoneVisited.insert(selected); phoneVisited.insert(item.id); selected = item.id; setPhoneMenu(false)
-                                } label: {
-                                    HStack(spacing: 14) {
-                                        Image(systemName: item.symbol).font(.body).frame(width: 25)
-                                        Text(item.title).font(.body.weight(selected == item.id ? .semibold : .regular))
-                                        Spacer(minLength: 4)
-                                        if selected == item.id { Image(systemName: "checkmark").font(.caption.weight(.semibold)) }
-                                    }.padding(.horizontal, 14).frame(minHeight: 50).contentShape(Rectangle())
-                                }.buttonStyle(.plain)
-                                    .foregroundStyle(selected == item.id ? JACTheme.action : JACTheme.ink)
-                                    .background(selected == item.id ? JACTheme.action.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 14))
-                                    .accessibilityAddTraits(selected == item.id ? [.isSelected] : [])
-                                    .accessibilityIdentifier("phone.section." + item.id)
-                            }
-                        }.padding(12)
-                    }.accessibilityIdentifier("phone.sidebar.scroll")
-                    Divider()
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(user.displayName).font(.subheadline.weight(.semibold)).lineLimit(2)
-                        Text("Tu equipo, en un solo lugar.").font(.caption).foregroundStyle(.secondary)
-                    }.frame(maxWidth: .infinity, alignment: .leading).padding(22).privacySensitive()
-                }
-                .frame(width: min(330, geometry.size.width * 0.86), height: geometry.size.height)
-                .background(JACTheme.card.ignoresSafeArea(.container, edges: .vertical)).shadow(color: .black.opacity(0.15), radius: 24, x: 8)
-                .accessibilityAddTraits(.isModal)
-                .transition(.move(edge: .leading))
-                .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { value in if value.translation.width < -60 && abs(value.translation.width) > abs(value.translation.height) { setPhoneMenu(false) } })
-            }.onAppear { menuCloseFocused = true }
+        VStack(alignment: .leading, spacing: 0) {
+            HStack {
+                BrandView().frame(maxWidth: 150).accessibilityHidden(true)
+                Spacer()
+                Button { setPhoneMenu(false) } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
+                    .accessibilityLabel("Cerrar menú").accessibilityIdentifier("phone.menu.close").accessibilityFocused($menuCloseFocused)
+            }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 18)
+            Divider()
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("TU ESPACIO").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 10)
+                    ForEach(phoneDestinations, id: \.id) { item in
+                        Button {
+                            phoneVisited.insert(selected); phoneVisited.insert(item.id); selected = item.id; setPhoneMenu(false)
+                        } label: {
+                            HStack(spacing: 14) {
+                                Image(systemName: item.symbol).font(.body).frame(width: 25)
+                                Text(item.title).font(.body.weight(selected == item.id ? .semibold : .regular))
+                                Spacer(minLength: 4)
+                                if selected == item.id { Image(systemName: "checkmark").font(.caption.weight(.semibold)) }
+                            }.padding(.horizontal, 14).frame(minHeight: 50).contentShape(Rectangle())
+                        }.buttonStyle(.plain)
+                            .foregroundStyle(selected == item.id ? JACTheme.action : JACTheme.ink)
+                            .background(selected == item.id ? JACTheme.action.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 14))
+                            .accessibilityAddTraits(selected == item.id ? [.isSelected] : [])
+                            .accessibilityIdentifier("phone.section." + item.id)
+                    }
+                }.padding(12)
+            }.accessibilityIdentifier("phone.sidebar.scroll")
+            Divider()
+            VStack(alignment: .leading, spacing: 4) {
+                Text(user.displayName).font(.subheadline.weight(.semibold)).lineLimit(2)
+                Text("Tu equipo, en un solo lugar.").font(.caption).foregroundStyle(.secondary)
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(22).privacySensitive()
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(JACTheme.card)
+        .overlay(alignment: .trailing) { Rectangle().fill(JACTheme.ink.opacity(0.1)).frame(width: 1) }
+        .accessibilityElement(children: .contain)
+        .accessibilityAddTraits(phoneMenuOpen ? [.isModal] : [])
+        .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { closePhoneMenuOnSwipe($0) })
     }
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var compactColumn: NavigationSplitViewColumn = .detail
