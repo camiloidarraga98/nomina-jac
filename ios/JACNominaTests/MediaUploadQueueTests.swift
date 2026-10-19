@@ -1,7 +1,116 @@
 #if os(iOS)
 import XCTest
 import CryptoKit
+import AVFoundation
 @testable import JACNomina
+
+@MainActor
+final class MediaVideoPreparationTests: XCTestCase {
+    private func staged(_ bytes: Data = MediaFixture.video, name: String = "Video.mov") throws -> MediaLocalFile {
+        let document = try TemporaryDocuments.save(bytes, filename: name)
+        defer { TemporaryDocuments.remove(document) }
+        return try MediaLocalFile.stage(document.url, quality: .original)
+    }
+
+    func testOriginalModeAndPhotosKeepIdenticalBytes() async throws {
+        for (bytes, name) in [(MediaFixture.video, "Original.mov"), (MediaFixture.photo, "Foto.png")] {
+            let file = try staged(bytes, name: name); defer { file.remove() }
+            let result = try await MediaVideoPreparation.prepare(file, mode: name.hasSuffix("png") ? .web : .original)
+            XCTAssertEqual(result.file.url, file.url)
+            XCTAssertEqual(result.file.id, file.id)
+            XCTAssertNil(result.detail)
+            XCTAssertEqual(try Data(contentsOf: result.file.url), bytes)
+        }
+    }
+
+    func testSavingsThresholdRejectsEmptyLargerAndInsignificantCopies() {
+        XCTAssertFalse(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 0))
+        XCTAssertFalse(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 1100))
+        XCTAssertFalse(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 951))
+        XCTAssertTrue(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 950))
+        XCTAssertTrue(MediaVideoPreparation.worthKeeping(original: 1_000_000, candidate: 250_000))
+    }
+
+    func testInvalidVideoKeepsOriginalAndExplainsFallback() async throws {
+        let bytes = Data("Ficticio, sin contenido audiovisual".utf8)
+        let file = try staged(bytes); defer { file.remove() }
+        let result = try await MediaVideoPreparation.prepare(file, mode: .web)
+        XCTAssertEqual(result.file.url, file.url)
+        XCTAssertTrue(result.detail?.hasPrefix("Original conservado:") == true)
+        XCTAssertEqual(try Data(contentsOf: file.url), bytes)
+    }
+
+    func testCancelledPreparationLeavesSourceIntact() async throws {
+        let file = try staged(); defer { file.remove() }
+        let task = Task {
+            withUnsafeCurrentTask { $0?.cancel() }
+            return try await MediaVideoPreparation.prepare(file, mode: .web)
+        }
+        do { _ = try await task.value; XCTFail("La preparación cancelada no debe devolver un archivo para subir") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(try Data(contentsOf: file.url), MediaFixture.video)
+    }
+
+    func testMP4ConversionPreservesPortraitAudioTimingAndUploadIdentity() async throws {
+        let input = try staged(); defer { input.remove() }
+        let asset = AVURLAsset(url: input.url)
+        let duration = try await asset.load(.duration)
+        let composition = AVMutableComposition()
+        let videoTracks = try await asset.loadTracks(withMediaType: .video)
+        let video = try XCTUnwrap(videoTracks.first)
+        let composedVideo = try XCTUnwrap(composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
+        try composedVideo.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: video, at: .zero)
+        composedVideo.preferredTransform = CGAffineTransform(rotationAngle: .pi / 2)
+        // Local generated PCM silence verifies a real audio track becomes AAC.
+        let samples = Int(ceil(duration.seconds * 44100))
+        let payload = Data(repeating: 0, count: samples * 2)
+        var wav = Data("RIFF".utf8)
+        func word<T: FixedWidthInteger>(_ value: T) { var little = value.littleEndian; withUnsafeBytes(of: &little) { wav.append(contentsOf: $0) } }
+        word(UInt32(36 + payload.count)); wav.append(Data("WAVEfmt ".utf8))
+        word(UInt32(16)); word(UInt16(1)); word(UInt16(1)); word(UInt32(44100)); word(UInt32(88200)); word(UInt16(2)); word(UInt16(16))
+        wav.append(Data("data".utf8)); word(UInt32(payload.count)); wav.append(payload)
+        let sound = try TemporaryDocuments.save(wav, filename: "Silencio ficticio.wav")
+        defer { TemporaryDocuments.remove(sound) }
+        let soundAsset = AVURLAsset(url: sound.url)
+        let audioTracks = try await soundAsset.loadTracks(withMediaType: .audio)
+        let soundTrack = try XCTUnwrap(audioTracks.first)
+        let composedAudio = try XCTUnwrap(composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
+        try composedAudio.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: soundTrack, at: .zero)
+        let sourceURL = input.url.deletingLastPathComponent().appendingPathComponent("Con audio.mov")
+        let session = try XCTUnwrap(AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough))
+        session.outputURL = sourceURL; session.outputFileType = .mov
+        await session.export()
+        XCTAssertEqual(session.status, .completed, session.error?.localizedDescription ?? "")
+        let source = try MediaLocalFile.stage(sourceURL, quality: .original); defer { source.remove() }
+        let original = try Data(contentsOf: source.url)
+        let result = try await MediaVideoPreparation.prepare(source, mode: .web)
+        defer { if result.file.url != source.url { result.file.remove() } }
+        XCTAssertNotEqual(result.file.url, source.url, result.detail ?? "")
+        XCTAssertEqual(result.file.id, source.id)
+        XCTAssertEqual(result.file.name, "Con audio.mp4")
+        XCTAssertEqual(result.file.mimeType, "video/mp4")
+        XCTAssertTrue(result.file.size < source.size)
+        XCTAssertTrue(result.detail?.contains("% menos") == true)
+        XCTAssertEqual(try Data(contentsOf: source.url), original)
+        let output = AVURLAsset(url: result.file.url)
+        let outputVideos = try await output.loadTracks(withMediaType: .video)
+        let outputAudio = try await output.loadTracks(withMediaType: .audio)
+        XCTAssertEqual(outputVideos.count, 1); XCTAssertEqual(outputAudio.count, 1)
+        let outVideo = try XCTUnwrap(outputVideos.first)
+        let outSize = try await outVideo.load(.naturalSize)
+        let outTransform = try await outVideo.load(.preferredTransform)
+        let inSize = try await video.load(.naturalSize)
+        let rect = CGRect(origin: .zero, size: outSize).applying(outTransform)
+        XCTAssertEqual(abs(rect.width).rounded(), inSize.height.rounded())
+        XCTAssertEqual(abs(rect.height).rounded(), inSize.width.rounded())
+        let outputDuration = try await output.load(.duration)
+        XCTAssertEqual(outputDuration.seconds, duration.seconds, accuracy: 0.1)
+        let formats = try await outVideo.load(.formatDescriptions)
+        XCTAssertEqual(formats.map { CMFormatDescriptionGetMediaSubType($0) }, [kCMVideoCodecType_H264])
+        let soundFormats = try await outputAudio[0].load(.formatDescriptions)
+        XCTAssertEqual(soundFormats.map { CMFormatDescriptionGetMediaSubType($0) }, [kAudioFormatMPEG4AAC])
+    }
+}
 
 @MainActor
 final class MediaUploadQueueTests: XCTestCase {

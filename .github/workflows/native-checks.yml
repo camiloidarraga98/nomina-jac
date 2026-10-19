@@ -5,12 +5,17 @@ on:
   push:
     branches:
       - main
-      - codex/**
     paths:
       - ios/**
       - macos/**
       - .github/workflows/native-checks.yml
   workflow_dispatch:
+    inputs:
+      scope:
+        description: Checks to run after completing the change
+        type: choice
+        options: [full, video-upload]
+        default: full
 
 permissions:
   contents: read
@@ -51,18 +56,31 @@ jobs:
           else:
               raise SystemExit('No available iPhone simulator runtime was found.')
           PY
-      - name: Test iPhone units and the three media selection flows
+      - name: Test the affected iPhone flows
         shell: bash
+        env:
+          JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
         run: |
           set -euo pipefail
+          if [ "$JAC_VIDEO_ONLY" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/MediaVideoPreparationTests
+              -only-testing:JACNominaTests/MediaUploadQueueTests
+              -only-testing:JACNominaUITests/LaunchTests/testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload
+            )
+          else
+            checks=(
+              -only-testing:JACNominaTests
+              -only-testing:JACNominaUITests/LaunchTests/testLongPressSelectsMixedMediaAndCancelRestoresThePhotoViewer
+              -only-testing:JACNominaUITests/LaunchTests/testSelectedPhotosAndVideosDownloadOnlyThatGroupToPhotosAndOffline
+              -only-testing:JACNominaUITests/LaunchTests/testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo
+            )
+          fi
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
             -destination "platform=iOS Simulator,id=$JAC_CI_SIMULATOR_ID" \
             -derivedDataPath native-ci/simulator -resultBundlePath native-ci/iphone.xcresult \
             -parallel-testing-enabled NO \
-            -only-testing:JACNominaTests \
-            -only-testing:JACNominaUITests/LaunchTests/testLongPressSelectsMixedMediaAndCancelRestoresThePhotoViewer \
-            -only-testing:JACNominaUITests/LaunchTests/testSelectedPhotosAndVideosDownloadOnlyThatGroupToPhotosAndOffline \
-            -only-testing:JACNominaUITests/LaunchTests/testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo \
+            "${checks[@]}" \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
             test 2>&1 | tee native-ci/iphone-tests.log
       - name: Export compact test diagnostics
@@ -102,7 +120,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -128,7 +146,7 @@ jobs:
           path: native-ci/*.log
 
   mac:
-    if: ${{ github.event.repository.private == false }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

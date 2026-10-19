@@ -2,6 +2,28 @@ import XCTest
 import UIKit
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-reader", "--uitest-sections=media,mediaUpload"]
+        app.launch()
+        XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout: 20))
+        tap(app, "media.add")
+        let option = app.switches["media.video.optimize"]
+        XCTAssertTrue(option.waitForExistence(timeout: 10)); XCTAssertEqual(option.value as? String, "0")
+        option.tap(); XCTAssertEqual(option.value as? String, "1")
+        tap(app, "media.fixture")
+        let result = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media.video.result.")).firstMatch
+        XCTAssertTrue(result.waitForExistence(timeout: 30))
+        XCTAssertTrue(result.label.contains("Original conservado:") || result.label.contains("% menos"))
+        let preview = app.buttons["Ver video antes de subir"]
+        if !preview.isHittable { app.swipeUp() }
+        XCTAssertTrue(preview.isHittable); preview.tap()
+        XCTAssertTrue(app.navigationBars["Revisar video"].waitForExistence(timeout: 10))
+        tap(app, "Listo")
+        tap(app, "media.composer.cancel")
+        XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.descendants(matching: .any)["media.upload.progress"].exists)
+    }
     @MainActor override func tearDownWithError() throws {
         if let run = testRun, run.failureCount > 0 {
             print("JAC failure accessibility hierarchy:\n" + XCUIApplication().debugDescription)
