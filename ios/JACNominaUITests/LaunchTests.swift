@@ -2,6 +2,12 @@ import XCTest
 import UIKit
 
 final class LaunchTests: XCTestCase {
+    @MainActor override func tearDownWithError() throws {
+        if let run = testRun, run.failureCount > 0 {
+            print("JAC failure accessibility hierarchy:\n" + XCUIApplication().debugDescription)
+        }
+        try super.tearDownWithError()
+    }
     @MainActor func testLongPressSelectsMixedMediaAndCancelRestoresThePhotoViewer() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2"]; app.launch()
         tap(app, "media.item.r2_media-day")

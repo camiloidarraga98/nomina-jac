@@ -1,5 +1,9 @@
 # JAC en la cuenta propia de Cloudflare
 
+**Actualización vigente · 19 octubre2026:** Camilo autorizó continuar desde este chat Cloud y ejecutar GitHub Actions para las comprobaciones Apple automáticas, corregir, guardar/subir cambios e incorporar a main después de verificar. Las publicaciones necesarias en este Worker siguen autorizadas sin confirmaciones rutinarias; las restricciones anteriores de Cloud/Actions que describe la historia del traslado quedan sustituidas. La firma e instalación física se hacen en su Mac, sin acceso remoto. Ver `.github/workflows/native-checks.yml` y [selección múltiple de Fotografía](IPHONE_PHOTOGRAPHY_SELECTION.md).
+
+Web/API de Fotografía activo al100% desde el19 de octubre: versión `b4c4b3a7-3823-45c5-b6c5-cafc34215a15`, despliegue `9875443e-9ed9-4435-8aae-81b49a36d553`. Publicado con `--keep-vars`, sin migraciones; API de despliegues y código verificados, mismos DB/BUCKET y presencia de los tres secretos. Wrangler falló después al consultar workers.dev por permisos del token; el despliegue ya estaba activo. No se cambió DNS ni se probaron eliminaciones reales. Detalles y límites en la guía enlazada.
+
 Estado comprobado el 18 de octubre de 2026. La web y su servidor de producción ya funcionan en **https://jhonalexcastano.com**, dentro de la cuenta `jacmusicestudios@gmail.com`. El dominio sigue registrado en GoDaddy; Cloudflare administra su DNS. Sites ya no atiende ese dominio.
 
 ## Recursos de producción

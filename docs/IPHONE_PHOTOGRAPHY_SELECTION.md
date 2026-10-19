@@ -13,7 +13,7 @@
 
 ## Implementación y límites
 
-`MediaInlineFolder.swift` incorpora `MediaBatchSelection` y `MediaSelectableTile`. El gesto exclusivo diferencia mantener presionado de tocar, conservando el botón y una acción de accesibilidad. La selección guarda los metadatos/revisión observados, sin descargar originales para marcar miniaturas. Una página ausente no prueba un borrado; únicamente una eliminación, revisión cambiada o revocación confirmadas retiran elementos.
+`MediaInlineFolder.swift` incorpora `MediaBatchSelection` y `MediaSelectableTile`. El gesto exclusivo sobre la miniatura diferencia mantener presionado de tocar, con semántica de botón y acciones explícitas para VoiceOver. La selección guarda los metadatos/revisión observados, sin descargar originales para marcar miniaturas. Una página ausente no prueba un borrado; únicamente una eliminación, revisión cambiada o revocación confirmadas retiran elementos.
 
 `DocumentsView.swift` integra la barra inferior y reutiliza las transferencias privadas existentes. Cada revisión de descarga queda vinculada al ámbito de acceso. El proceso vuelve a comprobarlo después del permiso de Fotos y antes/después de cada archivo, y limpia sus temporales. No hay una cola nueva de descargas en segundo plano.
 
@@ -24,13 +24,14 @@ El borrado usa `deleteMediaFileStep` y la API `deleteFile` existente, un archivo
 ## Verificación y entrega
 
 - **97 regresiones Node/Workerd aprobadas:** 5 de accesos, 37 de Drive histórico, 36 de galería R2, 3 del cliente de transferencia y 16 de Workerd. Todos los servicios externos son simulados, sin contenido, cuentas, envíos ni borrados reales de prueba. Informe local ignorado: `work/local/iphone-media-selection-regressions.log`.
-- **Sintaxis de los cinco archivos Swift modificados:** analizada con Tree-sitter Swift sin errores. Esto no comprueba tipos, SwiftUI, SDK ni firma y no sustituye Xcode.
-- Se prepararon **nueve regresiones unitarias nativas y tres recorridos de interfaz**, incluyendo selección mixta, exclusión de otros archivos, revisiones, permisos, cancelación/reintentos, originales y cambio de sesión durante el permiso de Fotos. **No se ejecutaron:** este entorno Linux no tiene Xcode. Hay que compilar y probar en el Mac; tampoco se instaló en un iPhone físico.
+- Se añadieron **nueve regresiones unitarias nativas y tres recorridos de interfaz**, incluyendo selección mixta, exclusión de otros archivos, revisiones, permisos, cancelación/reintentos, originales y cambio de sesión durante el permiso de Fotos. GitHub Actions ejecuta Xcode 16.4 con SDK iOS18.5 en macOS15; los resultados definitivos se registran al terminar. No se instaló en un iPhone físico.
 - TypeScript, las 43 pruebas de nómina/auth/correo/Cloudflare y el build web ya habían pasado al preparar este chat. Se reutilizan porque ningún archivo de entrada web/API ni dependencia cambió por esta modificación.
 
-**Dependencia de producción pendiente:** una lectura del código del Worker publicado confirmó que todavía no contiene `deleteFile` ni `r2-delete-file`, incorporados en la fuente `27ba386`. El build Cloudflare verificado incluye esa API y conserva DB/BUCKET/secretos con `--keep-vars`. El intento de publicarlo fue bloqueado por la revisión automática, que exige autorización expresa del usuario para el despliegue del servidor. No se ejecutó el despliegue, no se cambiaron datos de producción y no se debe afirmar que el borrado ya funciona en el servidor publicado. Guardar en Fotos/offline reutiliza las API de descarga existentes.
+**Web/API publicada, 19 de octubre:** Camilo autorizó expresamente el flujo automático, resolviendo los bloqueos iniciales de publicación. El Worker `jac-nomina` tiene activo al100% el despliegue `9875443e-9ed9-4435-8aae-81b49a36d553`, versión `b4c4b3a7-3823-45c5-b6c5-cafc34215a15`. Su código contiene `deleteFile`, `r2-delete-file` y `/api/media/offline`; DB y BUCKET conservan sus identificadores y permanecen los tres secretos de ejecución. Se usó `--keep-vars`, sin migraciones ni borrados/envíos reales de prueba.
 
-**Entrega de la fuente:** rama privada `codex/iphone-media-selection`; implementación inicial `93fbf07`. La revisión automática también rechazó incorporar esta fuente a `main` mientras la compilación y las pruebas Xcode estén pendientes, pese a la autorización general de commits/pushes. Se conservó en su rama de trabajo como alternativa de menor alcance; `main` permanece sin este cambio hasta que el usuario autorice expresamente incorporarlo o se complete la verificación Apple.
+Wrangler publicó el Worker y luego terminó con error al consultar `/workers/subdomain`, operación que el token de cuenta no permite. La API de despliegues y la lectura posterior del código confirman la versión activa; no se declara que todo el comando terminó correctamente. No se cambió configuración DNS ni dominio. La política de red del entorno no incluye el dominio público, por lo que no se repite aquí una prueba HTTP sobre él. Informes ignorados en `work/local/iphone-selection-*`.
+
+**Entrega de la fuente:** rama privada `codex/iphone-media-selection`; implementación inicial `93fbf07`. Camilo autorizó incorporar a `main` después de verificar Apple; esa verificación está en curso. El workflow `.github/workflows/native-checks.yml` comprueba automáticamente cambios nativos en `main`/`codex/**`, sin claves Apple/Cloudflare ni servicios reales para probar.
 
 Para probar desde esa rama, en la misma carpeta del Mac:
 
@@ -40,4 +41,4 @@ git fetch origin
 git switch codex/iphone-media-selection
 ```
 
-Conservar y conciliar cualquier cambio personal si Git advierte un conflicto; no usar reset/checkout forzados ni retirar la firma. Abrir el mismo proyecto y usar **JACNomina → iPhone → Run**. Un `git pull` de `main` todavía no trae esta modificación. La fuente nueva no instala por sí misma un binario ni publica la API pendiente.
+Conservar y conciliar cualquier cambio personal si Git advierte un conflicto; no usar reset/checkout forzados ni retirar la firma. Abrir el mismo proyecto y usar **JACNomina → iPhone → Run**. La fuente nueva no instala por sí misma un binario en el teléfono.

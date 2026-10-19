@@ -114,7 +114,7 @@ final class MediaBatchSelection: ObservableObject {
 }
 
 /// An exclusive gesture keeps a completed long press from opening the viewer
-/// when the finger lifts. The button action remains available to VoiceOver.
+/// when the finger lifts. VoiceOver has the same explicit default action.
 @MainActor
 struct MediaSelectableTile: View {
     let item: MediaItem
@@ -129,8 +129,7 @@ struct MediaSelectableTile: View {
     let denied: (Error) -> Void
     private var selected: Bool { selection.contains(item.id) }
     var body: some View {
-        Button(action: tap) {
-            MediaTile(item: item, client: client, offline: offline, opening: opening, epoch: epoch, denied: denied)
+        MediaTile(item: item, client: client, offline: offline, opening: opening, epoch: epoch, denied: denied)
                 .overlay { if selected { RoundedRectangle(cornerRadius: 18).strokeBorder(JACTheme.action, lineWidth: 3) } }
                 .overlay(alignment: .topTrailing) {
                     if selection.active {
@@ -139,15 +138,17 @@ struct MediaSelectableTile: View {
                             .padding(10).accessibilityHidden(true)
                     }
                 }
-        }
-        .buttonStyle(.plain).disabled(disabled)
-        .highPriorityGesture(LongPressGesture(minimumDuration: 0.45).exclusively(before: TapGesture()).onEnded { gesture in
+        .disabled(disabled)
+        .gesture(LongPressGesture(minimumDuration: 0.45).exclusively(before: TapGesture()).onEnded { gesture in
             guard !disabled else { return }
             switch gesture {
             case .first: selection.select(item, in: feed, client: client)
             case .second: tap()
             }
         })
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(.isButton)
+        .accessibilityAction { tap() }
         .accessibilityIdentifier("media.item." + item.id)
         .accessibilityValue(selection.active ? (selected ? "Seleccionado" : "No seleccionado") : "")
         .accessibilityAddTraits(selected ? [.isSelected] : [])

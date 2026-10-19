@@ -510,7 +510,7 @@ final class PayrollClientTests: XCTestCase {
         defer {try? FileManager.default.removeItem(at:root)}
         let cache=MediaOfflineCache(root:root),scope=AgendaCacheScope(origin:"https://photo-actions.invalid/media-offline-v1",token:String(repeating:"f",count:43)),folder=MediaFolder(id:"jac_r2_root",name:"Fotografía")
         func photo(_ id:String)->MediaItem {MediaItem(id:id,name:id+".png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"fixture",thumbnailAvailable:true)}
-        let one=photo("one-photo"),two=photo("two-photo"),feed=MediaFeed(connected:true,canRead:true,canUpload:true,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:[one,two],nextPageToken:nil,provider:"r2",collectionID:"jac-r2-test")
+        let one=photo("r2_one-photo"),two=photo("r2_two-photo"),feed=MediaFeed(connected:true,canRead:true,canUpload:true,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:[one,two],nextPageToken:nil,provider:"r2",collectionID:"jac-r2-test")
         try cache.saveFeed(feed,key:"",append:false,scope:scope)
         let source=try TemporaryDocuments.save(MediaFixture.photo,filename:"Fixture.png");defer{TemporaryDocuments.remove(source)}
         for item in [one,two] {try cache.saveFile(source.url,item:item,scope:scope,preview:true)}

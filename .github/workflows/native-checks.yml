@@ -71,6 +71,7 @@ jobs:
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
             test 2>&1 | tee native-ci/iphone-tests.log
       - name: Build the Mac app that shares the modified sources
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           set -euo pipefail
@@ -78,6 +79,24 @@ jobs:
             -configuration Release -destination 'generic/platform=macOS' \
             -derivedDataPath native-ci/mac CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
             build 2>&1 | tee native-ci/mac-release.log
+      - name: Export compact test diagnostics
+        if: always()
+        shell: bash
+        run: |
+          if [ -d native-ci/iphone.xcresult ]; then
+            xcrun xcresulttool get test-results summary --path native-ci/iphone.xcresult > native-ci/test-summary.json || true
+            xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
+          fi
+      - name: Save compact diagnostics separately
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JAC-Apple-Diagnostics-${{ github.sha }}
+          retention-days: 7
+          path: |
+            native-ci/*.log
+            native-ci/*.json
+            native-ci/attachments/**/*.png
       - name: Save test results and build logs
         if: always()
         uses: actions/upload-artifact@v4
