@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload]
+        options: [full, video-upload, video-upload-ui]
         default: full
 
 permissions:
@@ -59,10 +59,13 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
-          JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+          JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+          JAC_VIDEO_UI_ONLY: ${{ inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]') && contains(github.event.head_commit.message, '[ui-only]')) }}
         run: |
           set -euo pipefail
-          if [ "$JAC_VIDEO_ONLY" = true ]; then
+          if [ "$JAC_VIDEO_UI_ONLY" = true ]; then
+            checks=(-only-testing:JACNominaUITests/LaunchTests/testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload)
+          elif [ "$JAC_VIDEO_ONLY" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaVideoPreparationTests
               -only-testing:JACNominaTests/MediaUploadQueueTests
@@ -120,7 +123,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -146,7 +149,7 @@ jobs:
           path: native-ci/*.log
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

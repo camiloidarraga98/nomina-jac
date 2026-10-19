@@ -223,7 +223,6 @@ struct MediaSimpleUploadComposer: View {
                                     .disabled(draft.creating || draft.importing)
                             }
                             .padding(12).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 14))
-                            .accessibilityIdentifier("media.composer.file." + file.id)
                         }
                         #if DEBUG
                         if store.client.baseURL.host?.hasSuffix(".invalid") == true {
