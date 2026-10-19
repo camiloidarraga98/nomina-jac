@@ -3,6 +3,8 @@ import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {readFile,readdir} from 'node:fs/promises';
 import {build} from 'esbuild';
+import {audioFixtures} from './music-audio-fixtures.mjs';
+const samples=await audioFixtures();
 const sql=new DatabaseSync(':memory:');for(const f of (await readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort())sql.exec(await readFile('drizzle/'+f,'utf8'));
 class Query{constructor(s,args=[]){this.s=s;this.args=args;}bind(...args){return new Query(this.s,args);}async first(){return sql.prepare(this.s).get(...this.args)||null;}async run(){const q=sql.prepare(this.s);return q.columns().length?{results:q.all(...this.args),meta:{changes:0}}:{results:[],meta:{changes:Number(q.run(...this.args).changes)}};}async all(){return {results:sql.prepare(this.s).all(...this.args)};}}
 const objects=new Map(),uploads=new Map();let bucketReads=0,onPart=null;
@@ -25,3 +27,39 @@ test('playback lease hides the login token, binds exactly one revision and honor
 test('only administrators delete and retained playback leases stop after deletion',async()=>{const t=await putAudio({name:'Eliminar.wav'});await json(m.api,'/api/music','POST',{action:'delete',id:t.id,revision:t.revision},'uploader',403);await json(m.api,'/api/music','POST',{action:'delete',id:t.id,revision:t.revision},'reader',403);const lease=await json(m.api,'/api/music?'+new URLSearchParams({play:'1',id:t.id,revision:t.revision}),'GET',undefined,'reader');await json(m.api,'/api/music','POST',{action:'delete',id:t.id,revision:t.revision},'admin');await json(m.file,lease.url,'GET',undefined,'anonymous',404);assert(!objects.has('music/audio/'+t.id));});
 test('revocation during a block cannot advance or publish an upload',async()=>{const given=id();await json(m.upload,'/api/music/upload','POST',{action:'start',id:given,section:'studio',filename:'Revocado.wav',size:128},'uploader');onPart=async()=>{sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run('uploader');};await json(m.upload,'/api/music/upload?id='+given+'&offset=0','PUT',wav(128),'uploader',403);onPart=null;assert.equal(sql.prepare('SELECT offset FROM jac_music_tracks WHERE id=?').get(given).offset,0);tokens.uploader=await m.makeSession('uploader',true);});
 test('validation rejects spoofed audio, cross-user upload IDs, changed payloads and CSRF',async()=>{const given=id();await json(m.upload,'/api/music/upload','POST',{action:'start',id:given,section:'warmup',filename:'Prueba.wav',size:128},'uploader');await json(m.upload,'/api/music/upload?id='+given+'&offset=0','PUT',new Uint8Array(128),'uploader',415);await json(m.upload,'/api/music/upload','POST',{action:'complete',id:given},'admin',404);await json(m.upload,'/api/music/upload','POST',{action:'start',id:given,section:'demos',filename:'Prueba.wav',size:128},'uploader',409);await json(m.upload,'/api/music/upload','POST',{action:'start',id:id(),section:'tracks',filename:'evil.html',size:128},'uploader',415);const r=await call(m.upload,'/api/music/upload','POST',{action:'start'},'admin',{Origin:'https://attacker.invalid'});assert.equal(r.status,403);await json(m.upload,'/api/music/upload','POST',{action:'cancel',id:given},'uploader');await json(m.upload,'/api/music/upload?id='+given+'&offset=0','PUT',wav(128),'uploader',410);});
+
+
+test('audio formats recognize real encoder output, RF64/BW64, MP3 metadata and leading padding',()=>{
+ for(const [bytes,mime] of [[samples.wav,'audio/wav'],[samples.rf64,'audio/wav'],[samples.mp3,'audio/mpeg'],[samples.m4a,'audio/mp4'],[samples.aac,'audio/aac']])assert.equal(m.detectedAudioMime(bytes),mime);
+ const bw64=Buffer.from(samples.rf64);bw64.write('BW64');assert.equal(m.detectedAudioMime(bw64),'audio/wav');
+ const bigEndian=Buffer.from(samples.wav);bigEndian.write('RIFX');assert.equal(m.detectedAudioMime(bigEndian),'audio/wav');
+ const id3=Buffer.from([73,68,51,4,0,0,0,0,0,0]);assert.equal(m.detectedAudioMime(Buffer.concat([id3,samples.mp3])),'audio/mpeg');
+ assert.equal(m.detectedAudioMime(Buffer.concat([Buffer.alloc(4096),samples.mp3])),'audio/mpeg');
+ const ape=Buffer.alloc(32),metadata=Buffer.alloc(96000),footer=Buffer.alloc(32);ape.write('APETAGEX');ape.writeUInt32LE(2000,8);ape.writeUInt32LE(metadata.length+32,12);assert.equal(m.detectedAudioMime(Buffer.concat([ape,metadata,footer,samples.mp3])),'audio/mpeg');
+ const free=Buffer.alloc(8);free.writeUInt32BE(8);free.write('free',4);assert.equal(m.detectedAudioMime(Buffer.concat([free,samples.m4a])),'audio/mp4');
+ const large=Buffer.from([73,68,51,4,0,0,4,0,0,0]);assert.equal(m.detectedAudioMime(large,64),null,'Truncated tags are never accepted');
+ assert.equal(m.detectedAudioMime(Buffer.from('<!doctype html><html>renamed MP3</html>')),null);
+ assert.equal(m.detectedAudioMime(Buffer.from('%PDF-1.7 document renamed.wav')),null);
+ assert.equal(m.detectedAudioMime(Buffer.alloc(100)),null);
+ const fakeSync=Buffer.alloc(1024);fakeSync.set([255,251,144,0],32);assert.equal(m.detectedAudioMime(fakeSync),null,'One sync-like sequence in arbitrary data is insufficient');
+});
+
+test('extension mismatches use the real audio MIME and download suffix without altering bytes or retry identity',async()=>{
+ for(const [filename,bytes,mime,suffix] of [['Pista recibida.wav',samples.mp3,'audio/mpeg','.mp3'],['Calentamiento.mp3',samples.rf64,'audio/wav','.wav']]){
+  const given=id(),input={action:'start',id:given,section:'warmup',filename,size:bytes.length};
+  await json(m.upload,'/api/music/upload','POST',input,'uploader');
+  await json(m.upload,'/api/music/upload?id='+given+'&offset=0','PUT',bytes,'uploader');
+  const started=await json(m.upload,'/api/music/upload','POST',input,'uploader');assert.equal(started.offset,bytes.length);
+  const {track}=await json(m.upload,'/api/music/upload','POST',{action:'complete',id:given},'uploader');
+  assert.equal(track.mimeType,mime);assert.equal(track.filename,filename.replace(/\.[^.]+$/,'')+suffix);assert.equal(track.title,filename.replace(/\.[^.]+$/,''));
+  const original=objects.get('music/audio/'+given);assert.equal(original.httpMetadata.contentType,mime);assert.deepEqual(original.bytes,new Uint8Array(bytes));
+  const retried=await json(m.upload,'/api/music/upload','POST',input,'uploader');assert.equal(retried.ready,true);
+  const response=await call(m.file,'/api/music/file?'+new URLSearchParams({id:given,revision:track.revision,download:'1'}),'GET',undefined,'reader');assert.equal(response.headers.get('content-type'),mime);assert.match(response.headers.get('content-disposition'),new RegExp(suffix.replace('.','\\.')+'$'));assert.deepEqual(new Uint8Array(await response.arrayBuffer()),new Uint8Array(bytes));
+ }
+});
+
+test('a rejected MP3 does not change its reservation or publish bytes and a subsequent WAV can complete',async()=>{
+ const bad=id();await json(m.upload,'/api/music/upload','POST',{action:'start',id:bad,section:'tracks',filename:'Archivo dañado.mp3',size:128},'uploader');
+ const rejected=await json(m.upload,'/api/music/upload?id='+bad+'&offset=0','PUT',new Uint8Array(128),'uploader',415);assert(rejected.error.includes('Archivo dañado.mp3'));assert.equal(sql.prepare('SELECT offset FROM jac_music_tracks WHERE id=?').get(bad).offset,0);assert(!objects.has('music/audio/'+bad));
+ const good=await putAudio({name:'Siguiente archivo.wav'});assert.equal(good.filename,'Siguiente archivo.wav');
+});
