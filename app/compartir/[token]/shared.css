@@ -16,7 +16,7 @@
 .jac-shared-grid.is-selecting .jac-shared-checkbox,.jac-shared-file:has(:focus-visible) .jac-shared-checkbox{opacity:1;pointer-events:auto}
 @media(hover:hover) and (pointer:fine){.jac-shared-file:hover .jac-shared-checkbox{opacity:1;pointer-events:auto}}
 .jac-shared-viewer-backdrop[data-slot=dialog-overlay]{position:fixed;inset:0;z-index:101;background:#071c29b8}
-.jac-shared-viewer[data-slot=dialog-content]{position:fixed;top:50%;left:50%;translate:none;transform:translate(-50%,-50%);transition:none;z-index:102;display:grid;gap:12px;width:min(1000px,calc(100vw - 24px));max-width:1000px;max-height:calc(100dvh - 24px);overflow:auto;padding:24px;border:1px solid #d9e5ee;border-radius:18px;background:#fff;color:#163449;font-family:system-ui,sans-serif;box-shadow:0 20px 70px #071c2940}
+.jac-shared-viewer[data-slot=dialog-content]{position:fixed;top:50%;left:50%;translate:-50% -50%;transform:none;transition:none;z-index:102;display:grid;gap:12px;width:min(1000px,calc(100vw - 24px));max-width:1000px;max-height:calc(100dvh - 24px);overflow:auto;padding:24px;border:1px solid #d9e5ee;border-radius:18px;background:#fff;color:#163449;font-family:system-ui,sans-serif;box-shadow:0 20px 70px #071c2940}
 .jac-shared-viewer [data-slot=dialog-title]{font-size:17px;line-height:1.4;overflow-wrap:anywhere;padding-right:42px;font-weight:650}
 .jac-shared-viewer [data-slot=dialog-description]{color:#5b7184;font-size:12px;margin:0}
 .jac-shared-viewer [data-slot=dialog-close]{position:absolute;top:12px;right:12px;display:grid;place-items:center;width:44px;height:44px;border:0;border-radius:10px;background:#edf4f9;color:#163449;opacity:1}
