@@ -1,3 +1,7 @@
+## Instrucción vigente: fuente pública y Actions reanudado
+
+Camilo pidió hacer público el repositorio y continuar las pruebas online, sustituyendo la pausa por cuota. La autorización está registrada en AGENTS; el cambio de visibilidad debe comprobarse realmente. El workflow se prepara para ejecutarse solo en repositorio público, con runners estándar macOS, sin secretos ni servicios reales de prueba; mientras siga privado se omite sin consumir runners. Ver [estado y acceso pendiente](PUBLIC_REPOSITORY_ACTIONS.md). La aplicación, datos y recursos privados de producción se conservan. No volver a pedir autorización rutinaria ni repetir el despliegue de la API.
+
 ## Actions suspendido y entrega para Xcode manual · 19 de octubre de2026
 
 Camilo agotó el100% de la cuota de minutos de Actions y pidió detener las pruebas, dejar la fuente en GitHub y hacer pull/pruebas manuales en su Xcode. Se canceló la ejecución de pruebas en curso y se retira el workflow de `.github/workflows`; no reactivar/reintentar CI sin petición expresa ni ejecutar más pruebas en esta entrega. Esta instrucción sustituye el flujo automático anterior. Autoriza entregar en `main` las fuentes con verificación Apple pendiente, conservando el mismo proyecto/firma/bundle y push NO. Web/API ya publicado con sus recursos y secretos; no repetir el despliegue.

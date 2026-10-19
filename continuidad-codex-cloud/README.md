@@ -1,5 +1,10 @@
 # Continuar JAC desde un único chat Codex Cloud
 
+## Instrucción vigente: fuente pública y Actions reanudado
+
+Camilo pidió hacer público el repositorio y continuar las pruebas online, sustituyendo la pausa por cuota. La autorización está registrada en AGENTS; el cambio de visibilidad debe comprobarse realmente. El workflow se prepara para ejecutarse solo en repositorio público, con runners estándar macOS, sin secretos ni servicios reales de prueba; mientras siga privado se omite sin consumir runners. Ver [estado y acceso pendiente](../docs/PUBLIC_REPOSITORY_ACTIONS.md). La aplicación, datos y recursos privados de producción se conservan. No volver a pedir autorización rutinaria ni repetir el despliegue de la API.
+
+
 **Instrucción vigente, 19 de octubre:** Camilo agotó los minutos de Actions y pidió detener las pruebas, dejar el proyecto en GitHub y verificar manualmente con pull/Xcode. Se cancela la ejecución activa y se retira el workflow; no reactivar Actions ni iniciar más pruebas sin petición expresa. Entregar la fuente en main con verificación Apple pendiente. Esto sustituye la autorización anterior de CI automática; conservar la autonomía para guardar/subir esta entrega. Firma e instalación siguen en su mismo proyecto, sin control remoto ni PR.
 
 **Entorno comprobado, 19 de octubre:** Linux con Node24/npm11, instalación limpia con el lockfile intacto, claves independientes de desarrollo y27 migraciones en D1 exclusivamente local. TypeScript,43 pruebas base,97 regresiones de Fotografía y build web aprobados. Lectura/push del GitHub privado y ejecuciones reales de Actions funcionan. El token de cuenta Cloudflare permite publicar/leer el Worker, sus despliegues y sus bindings; no permite consultar workers.dev ni listar dominios. Web/API de Fotografía ya está activo: versión `b4c4b3a7-3823-45c5-b6c5-cafc34215a15`. Conservar el proxy y las credenciales configuradas del entorno; para Wrangler usar directorios de configuración/logs bajo `.wrangler/`, sin reutilizar el HOME personal del Mac. Ver [evidencias y límites](../docs/IPHONE_PHOTOGRAPHY_SELECTION.md).

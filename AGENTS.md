@@ -1,4 +1,12 @@
-## Instrucción más reciente · Actions suspendido por cuota · 19 octubre2026
+## Instrucción más reciente · publicar la fuente y retomar Actions
+
+Después de suspender CI por cuota, Camilo pidió expresamente: «hagámoslo público y sigue ejecutando las acciones de prueba online». Autoriza cambiar la visibilidad de `camiloidarraga98/nomina-jac` a pública y reactivar las compilaciones/pruebas Apple en GitHub Actions. Esta instrucción sustituye la pausa anterior. No volver a pedir autorización rutinaria para publicar el código, activar las pruebas, corregir fallos o guardar/subir la entrega.
+
+Usar exclusivamente runners estándar `macos-15`, permisos de lectura, simulador desechable, firma ad hoc, fixtures `.invalid` y `JAC_PUSH_ENABLED=NO`, sin secretos ni datos reales de producción en CI. El job tiene una guarda `github.event.repository.private == false`: mientras siga privado no debe iniciar runners ni gastar la cuota agotada. Se dispara al hacerse público, al cambiar fuentes nativas/workflow y manualmente. Verificar la visibilidad real y los resultados; no confundir autorización con un cambio ya ejecutado. Si falta la capacidad de cambiar visibilidad, preparar todo y explicar exactamente ese acceso pendiente.
+
+La publicación del repositorio hace visible la fuente/historial; la aplicación, sesiones, D1/R2, documentos, fotografías, pases y secretos conservan sus permisos y privacidad. No volver a desplegar el Worker para reactivar CI. PR/control remoto del Mac siguen sin solicitarse. Ver `docs/PUBLIC_REPOSITORY_ACTIONS.md` y registrar allí la visibilidad y pruebas realmente observadas.
+
+## Instrucción anterior · Actions suspendido por cuota · 19 octubre2026
 
 Camilo agotó el100% de sus minutos de GitHub Actions y pidió: «que no se hagan pruebas, deja el proyecto listo en GitHub y yo hago pull con Xcode y pruebo manualmente». Detener las ejecuciones activas y retirar los workflows de Actions; no iniciar ni reintentar compilaciones/pruebas automáticas, ni reactivar Actions sin nueva petición expresa. No ejecutar más pruebas para esta entrega. Esta decisión sustituye la autorización de CI automática que sigue en el historial.
 
