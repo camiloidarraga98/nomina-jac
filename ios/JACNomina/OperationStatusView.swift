@@ -52,15 +52,6 @@ struct ConnectionStatusIcon:View {
             .accessibilityIdentifier("connection.status").help(label)
     }
 }
-extension View {
-    @ViewBuilder func jacConnectionStatus(shown:Bool=true)->some View {
-        #if os(iOS)
-        self.toolbar {if shown {ToolbarItem(placement:.jacTrailing){ConnectionStatusIcon()}}}
-        #else
-        self
-        #endif
-    }
-}
 
 struct RecordTextField: View {
     let title: String

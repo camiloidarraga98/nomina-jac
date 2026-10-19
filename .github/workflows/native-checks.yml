@@ -43,9 +43,12 @@ jobs:
           xcodebuild -version | tee native-ci/xcode-version.log
           python3 - <<'PY'
           import json, os, re, subprocess
+          sdk = tuple(map(int, subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version'], text=True).strip().split('.')))
           devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
           for runtime in sorted(devices, key=lambda name: tuple(map(int, re.findall(r'\d+', name))), reverse=True):
               if '.iOS-' not in runtime:
+                  continue
+              if tuple(map(int, re.findall(r'\d+', runtime)))[:2] > sdk[:2]:
                   continue
               candidates = [device for device in devices[runtime] if device['name'].startswith('iPhone') and device.get('deviceTypeIdentifier')]
               if candidates:
@@ -55,7 +58,7 @@ jobs:
                       output.write('JAC_CI_SIMULATOR_ID=' + simulator + '\n')
                   break
           else:
-              raise SystemExit('No available iPhone simulator runtime was found.')
+              raise SystemExit('No iPhone simulator runtime compatible with the selected Xcode SDK was found.')
           PY
       - name: Build and check the affected iPhone flows
         shell: bash

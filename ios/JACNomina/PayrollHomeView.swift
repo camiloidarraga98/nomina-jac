@@ -121,6 +121,7 @@ struct PayrollHomeView: View {
     private var phoneMenuBar: some View {
         HStack(spacing: 8) {
             Button { setPhoneMenu(true) } label: { Image(systemName: "line.3.horizontal").font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
+                .buttonStyle(.plain).frame(width: 44, height: 44).contentShape(Rectangle())
                 .accessibilityLabel("Abrir menú").accessibilityIdentifier("phone.menu.open").accessibilityFocused($menuOpenFocused)
             Text(phoneDestinations.first(where: { $0.id == selected })?.title ?? "JAC Music").font(.subheadline.weight(.semibold)).lineLimit(1)
             Spacer(minLength: 8)
@@ -318,7 +319,7 @@ struct PeriodsView: View {
                         }
                     }
                 }
-            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").jacInlineTitle().jacConnectionStatus()
+            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").jacInlineTitle()
                 .searchable(text: $search, prompt: "Buscar mes o estado")
                 .refreshable { try? await store.refresh() }
                 .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }

@@ -663,13 +663,16 @@ final class LaunchTests: XCTestCase {
         if menuVisible(app) { return true }
         let opener=app.buttons["phone.menu.open"]
         guard opener.waitForExistence(timeout: timeout) else { return false }
-        let frame=opener.frame,screen=app.windows.firstMatch.frame
-        guard frame.width >= 44,frame.height >= 44,screen.contains(frame) else { return false }
-        // Touch the visible button center rather than XCTest's inferred hit
-        // point. One bounded retry handles an event lost during cold launch;
+        let icon=opener.images.firstMatch
+        guard icon.exists else { return false }
+        let frame=opener.frame,visible=icon.frame,screen=app.windows.firstMatch.frame
+        guard frame.width >= 44,frame.height >= 44,screen.contains(frame),visible.width > 0,visible.height > 0,screen.contains(visible) else { return false }
+        // After focus returns, XCTest may include the full header/status area
+        // in the button frame. Tap the visible icon inside its 44pt control.
+        // One bounded retry handles an event lost during cold launch;
         // both attempts must open the real panel, never a synthetic state.
         for _ in 0..<2 {
-            opener.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
+            icon.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
             if waitForMenu(app, visible:true) {return true}
             if !opener.exists {return false}
         }
@@ -781,10 +784,6 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textFields["login.username"].exists)
         XCTAssertFalse(app.buttons["period.create"].isEnabled)
-        let signal=app.descendants(matching:.any)["connection.status"]
-        XCTAssertTrue(signal.waitForExistence(timeout:5))
-        let offlineSignal=XCTNSPredicateExpectation(predicate:NSPredicate(format:"value == %@","Sin conexión"),object:signal)
-        XCTAssertEqual(XCTWaiter.wait(for:[offlineSignal],timeout:10),.completed)
         XCTAssertFalse(app.descendants(matching:.any)["offline.copy"].exists)
         tap(app, "period.fixture-period")
         XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 5))
@@ -832,8 +831,6 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 3), "El arranque debe mostrar la copia antes de que termine la red lenta")
         XCTAssertFalse(app.textFields["login.username"].exists)
         XCTAssertFalse(app.buttons["period.create"].isEnabled)
-        let signal=app.descendants(matching:.any)["connection.status"]
-        XCTAssertTrue(signal.waitForExistence(timeout:5));XCTAssertEqual(signal.value as? String,"Comprobando")
         XCTAssertFalse(app.descendants(matching:.any)["offline.copy"].exists)
         XCTAssertFalse(app.staticTexts["Sin conexión · Consulta de la copia guardada"].exists)
         attachScreen(app, name: "copia-completa-mientras-revalida-sesion")
@@ -844,7 +841,6 @@ final class LaunchTests: XCTestCase {
         let hierarchy = XCTAttachment(string: app.debugDescription); hierarchy.name = "estado-de-controles-tras-revalidacion"; hierarchy.lifetime = .keepAlways; add(hierarchy)
         XCTAssertEqual(result, .completed, "Al reconectar se recuperan las acciones autorizadas")
         XCTAssertTrue(app.buttons["period.create"].isEnabled)
-        XCTAssertEqual(signal.value as? String,"Conectado")
     }
 
     @MainActor func testAgendaSurvivesOfflineRelaunchAndDisplaysCacheDuringInternetRefresh() {
@@ -857,10 +853,6 @@ final class LaunchTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 5))
-        let offline = app.descendants(matching: .any)["connection.status"]
-        for _ in 0..<3 { if offline.exists { break }; app.swipeUp() }
-        XCTAssertTrue(offline.waitForExistence(timeout: 10))
-        XCTAssertEqual(offline.value as? String,"Sin conexión")
         for _ in 0..<3 { if app.buttons["Mes siguiente"].isHittable { break }; app.swipeDown() }
         XCTAssertFalse(app.buttons["agenda.create"].exists, "Sin conexión la copia es de consulta")
         tap(app, "Mes siguiente")

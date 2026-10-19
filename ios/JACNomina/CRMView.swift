@@ -59,7 +59,7 @@ struct CRMHomeView:View {
                 else if section == "weekly" { CRMWeeklyView() }
                 else { CRMContactsView() }
               } }
-            }.jacSurface().navigationTitle(section == "contracts" ? "Contratos":"CRM").jacInlineTitle().jacConnectionStatus()
+            }.jacSurface().navigationTitle(section == "contracts" ? "Contratos":"CRM").jacInlineTitle()
                 .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));if section != "contracts" {await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60)} } catch { break } } }
                 .refreshable { await load(sync:!store.isOffline) }
                 .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }

@@ -80,7 +80,7 @@ struct ManagementView: View {
                         }
                     }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))}
                 }.padding(18).frame(maxWidth: JACDevice.isPad ? 1050 : .infinity).frame(maxWidth: .infinity)
-            }.jacSurface().navigationTitle("Gestión").jacInlineTitle().jacConnectionStatus()
+            }.jacSurface().navigationTitle("Gestión").jacInlineTitle()
                 .navigationDestination(item:$destination) { target in
                     switch target {
                     case .account:AccountView(user:user)

@@ -579,9 +579,9 @@ struct MediaGalleryView: View {
             VStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
                 if compactGallery {
-                    HStack {
-                        ConnectionStatusIcon(); Spacer()
-                        if !selection.active && user.canUploadMedia {
+                    if !selection.active && user.canUploadMedia {
+                        HStack {
+                            Spacer()
                             Button { beginUpload() } label: { Label("Subir",systemImage:"plus").foregroundStyle(.white) }.buttonStyle(.borderedProminent).disabled(!writable || uploading || !queue.isEmpty).accessibilityIdentifier("media.add")
                         }
                     }
@@ -645,7 +645,7 @@ struct MediaGalleryView: View {
         }
     }
     private var galleryNavigation: some View {
-        galleryContent.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle().jacConnectionStatus(shown:!compactGallery)
+        galleryContent.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle()
             #if os(iOS)
             .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }
