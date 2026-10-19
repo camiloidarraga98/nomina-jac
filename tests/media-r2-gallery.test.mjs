@@ -31,6 +31,7 @@ const jpeg=new Uint8Array([255,216,255,192,0,11,8,0,16,0,16,1,1,17,0,255,217]);
 let token,photoToken,calls,objects,multiparts,hook,loseComplete,loseDelete;
 let streamCalls,streamVideos,streamReady,streamHook;
 beforeEach(async()=>{
+ delete globalThis.__r2Fixture.IMAGES;
  globalThis.__r2Fixture.JAC_STREAM_API_TOKEN='fixture-stream-only';streamCalls=[];streamVideos=new Map();streamReady=true;streamHook=undefined;
  beforeQuery=undefined;hook=undefined;loseComplete=false;loseDelete=false;calls=[];objects=new Map();multiparts=new Map();sql.exec('DELETE FROM jac_media_folder_shares;DELETE FROM jac_media_r2_entries;DELETE FROM jac_media_operations;DELETE FROM jac_media_r2_connection;UPDATE payroll_users SET active=1');sql.prepare('UPDATE payroll_users SET section_access=NULL WHERE id IN (?,?)').run(photographer,anderson);token=await m.makeSession(ownerID);photoToken=await m.makeSession(photographer);
  sql.prepare("INSERT OR REPLACE INTO jac_media_connection(id,credentials,email,version,updated_at) VALUES('jac','previous-photo-drive','jacmusicestudios@gmail.com',7,?)").run(stamp);
@@ -73,8 +74,9 @@ beforeEach(async()=>{
    objects.set(key,{bytes,mime:upload.mime,request:upload.request});multiparts.delete(uploadId);if(loseComplete){loseComplete=false;throw new Error('simulated lost completion response');}return new Response('<CompleteMultipartUploadResult><Key>'+key+'</Key></CompleteMultipartUploadResult>');
   }
   if(uploadId&&r.method==='DELETE'){multiparts.delete(uploadId);return new Response(null,{status:204});}
-  if(r.method==='PUT'){objects.set(key,{bytes:new Uint8Array(await r.arrayBuffer()),mime:r.headers.get('content-type')});return new Response(null);}
-  const object=objects.get(key);if(!object)return new Response(null,{status:404});const headers={'content-type':object.mime,'content-length':String(object.bytes.length),...(object.request?{'x-amz-meta-jac-request':object.request}:{})};if(r.method==='HEAD')return new Response(null,{headers});
+  if(r.method==='PUT'){objects.set(key,{bytes:new Uint8Array(await r.arrayBuffer()),mime:r.headers.get('content-type'),profile:r.headers.get('x-amz-meta-jac-preview-profile')});return new Response(null);}
+  if(r.method==='DELETE'){objects.delete(key);return new Response(null,{status:204});}
+  const object=objects.get(key);if(!object)return new Response(null,{status:404});const headers={'content-type':object.mime,'content-length':String(object.bytes.length),...(object.request?{'x-amz-meta-jac-request':object.request}:{}),...(object.profile?{'x-amz-meta-jac-preview-profile':object.profile}:{})};if(r.method==='HEAD')return new Response(null,{headers});
   if(r.method==='GET'){const range=r.headers.get('range');if(range){const match=range.match(/^bytes=(\d+)-(\d+)$/);assert.ok(match);const begin=Number(match[1]),end=Number(match[2]);return new Response(object.bytes.slice(begin,end+1),{status:206,headers:{...headers,'content-length':String(end-begin+1),'content-range':`bytes ${begin}-${end}/${object.bytes.length}`}});}return new Response(object.bytes,{headers});}
   throw new Error('Unhandled fixture operation');
  };
@@ -450,15 +452,81 @@ test('revoking Anderson Photography access while deleting stops the operation be
 });
 
 
-test('light photo previews preserve the original, fall back only to an existing thumbnail and are removed with the photo',async()=>{
+test('light photo previews preserve the original, refuse thumbnail fallback and are removed with the photo',async()=>{
  await activate();const parent=await folder(),upload=await start(jpeg,parent),done=await (await send(upload)).json();
  await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'));
  const entry=(await (await feed(parent)).json()).items[0],before=objects.get('originals/'+done.id).bytes.slice();
- const fallback=await m.files.GET(req('/api/media/file?id='+entry.id+'&preview=1',undefined,photoToken,'GET'));assert.equal(fallback.status,200);assert.deepEqual(new Uint8Array(await fallback.arrayBuffer()),jpeg);
+ const fallback=await m.files.GET(req('/api/media/file?id='+entry.id+'&preview=1',undefined,photoToken,'GET'));assert.equal(fallback.status,503);assert.equal(calls.some(call=>call.method==='GET'&&call.url.pathname.includes('/thumbnails/')),false);
  const light=jpeg.slice();light[7]=6;light[8]=64;light[9]=6;light[10]=64;
  const response=await m.uploads.PUT(req('/api/media/upload?preview=1&id='+upload.data.id,light,photoToken,'PUT'));assert.equal(response.status,200);
  const preview=await m.files.GET(req('/api/media/file?id='+entry.id+'&preview=1&revision='+entry.modifiedAt,undefined,photoToken,'GET'));assert.equal(preview.status,200);assert.equal(preview.headers.get('content-type'),'image/jpeg');assert.deepEqual(new Uint8Array(await preview.arrayBuffer()),light);assert.deepEqual(objects.get('originals/'+done.id).bytes,before);
  assert.equal((await api({action:'deleteFile',id:entry.id,revision:entry.modifiedAt},token)).status,200);assert.equal(objects.has('previews/'+done.id+'.jpg'),false);
+});
+
+const sizedJPEG=edge=>{const bytes=jpeg.slice(),height=Math.floor(edge*0.75);bytes[7]=height>>8;bytes[8]=height&255;bytes[9]=edge>>8;bytes[10]=edge&255;return bytes;};
+function previewImages(output){
+ const transformations=[];
+ globalThis.__r2Fixture.IMAGES={input(stream){return {transform(options){return {async output(encoding){
+  const source=new Uint8Array(await new Response(stream).arrayBuffer());transformations.push({options,encoding,source});
+  const bytes=await (output?.(options,encoding,source)??sizedJPEG(options.width));return {response:()=>new Response(bytes,{headers:{'content-type':'image/jpeg','content-length':String(bytes.length)}})};
+ }}}};}};
+ return transformations;
+}
+async function photoPreviewFixture(){await activate();const parent=await folder(),upload=await start(jpeg,parent),done=await(await send(upload)).json();await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'));return {upload,id:done.fileId,item:(await(await feed(parent)).json()).items[0]};}
+const photoPreview=(id,session=photoToken)=>m.files.GET(req('/api/media/file?id='+id+'&preview=1',undefined,session,'GET'));
+
+test('balanced photo preview is generated once from the original, keeps the grid cover and survives reopening',async()=>{
+ const {id,item}=await photoPreviewFixture(),transforms=previewImages(),before=objects.get('originals/'+id.slice(3)).bytes.slice();
+ for(let attempt=0;attempt<2;attempt++){const response=await photoPreview(id);assert.equal(response.status,200);assert.equal(response.headers.get('x-jac-preview-profile'),'balanced-2400-q84-v2');assert.deepEqual(new Uint8Array(await response.arrayBuffer()),sizedJPEG(2400));}
+ assert.equal(transforms.length,1);assert.deepEqual(transforms[0].options,{width:2400,height:2400,fit:'scale-down'});assert.deepEqual(transforms[0].encoding,{format:'image/jpeg',quality:84});assert.deepEqual(transforms[0].source,before);
+ assert.deepEqual(objects.get('originals/'+id.slice(3)).bytes,before);assert.deepEqual(objects.get('thumbnails/'+id.slice(3)+'.jpg').bytes,jpeg);
+ assert.equal(sql.prepare('SELECT modified_at FROM jac_media_r2_entries WHERE id=?').get(id).modified_at,item.modifiedAt);
+ const original=await m.files.GET(req('/api/media/file?id='+id,undefined,photoToken,'GET'));assert.deepEqual(new Uint8Array(await original.arrayBuffer()),before);
+ assert.equal((await api({action:'deleteFile',id,revision:item.modifiedAt},token)).status,200);assert.equal(objects.has('previews/'+id.slice(3)+'.jpg'),false);
+});
+
+test('balanced photo preview upgrades an existing 1600px copy and keeps moderate quality when a smaller raster is needed',async()=>{
+ const {id,upload}=await photoPreviewFixture();assert.equal((await m.uploads.PUT(req('/api/media/upload?preview=1&id='+upload.data.id,sizedJPEG(1600),photoToken,'PUT'))).status,200);
+ const transforms=previewImages(options=>options.width===2400?new Uint8Array(2*1024*1024+1):sizedJPEG(2048));
+ const response=await photoPreview(id);assert.equal(response.status,200);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),sizedJPEG(2048));assert.deepEqual(transforms.map(value=>[value.options.width,value.encoding.quality]),[[2400,84],[2048,84]]);
+ assert.equal(objects.get('previews/'+id.slice(3)+'.jpg').profile,'balanced-2400-q84-v2');
+});
+
+test('balanced photo preview failures keep an existing intermediate view but never return a thumbnail or original',async()=>{
+ const {id,upload}=await photoPreviewFixture(),transforms=previewImages(()=>{throw Error('quota unavailable');});
+ const unavailable=await photoPreview(id);assert.equal(unavailable.status,503);assert.equal(transforms.length,1);assert.equal(objects.has('previews/'+id.slice(3)+'.jpg'),false);
+ assert.equal((await photoPreview(id)).status,503);assert.equal(transforms.length,1,'Failure cooldown must not repeatedly transform the same photo');
+ assert.equal((await m.uploads.PUT(req('/api/media/upload?preview=1&id='+upload.data.id,sizedJPEG(1600),photoToken,'PUT'))).status,200);
+ const fallback=await photoPreview(id);assert.equal(fallback.status,200);assert.deepEqual(new Uint8Array(await fallback.arrayBuffer()),sizedJPEG(1600));assert.equal(transforms.length,1);
+ assert.equal(calls.some(call=>call.method==='GET'&&call.url.pathname.includes('/thumbnails/')),false);
+});
+
+test('balanced photo preview revocation after transformation prevents publication and returns no bytes',async()=>{
+ const {id}=await photoPreviewFixture();previewImages(()=>{sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(photographer);return sizedJPEG(2400);});
+ assert.equal((await photoPreview(id)).status,403);assert.equal(objects.has('previews/'+id.slice(3)+'.jpg'),false);assert.equal(objects.has('originals/'+id.slice(3)),true);
+ assert.equal(calls.some(call=>call.method==='PUT'&&call.url.pathname.includes('/previews/')),false);
+});
+
+test('balanced photo preview generation cannot revive a photo deleted while its derived PUT is in flight',async()=>{
+ const {id,item}=await photoPreviewFixture();previewImages();let intercepted=false;
+ hook=async request=>{if(!intercepted&&request.method==='PUT'&&new URL(request.url).pathname.includes('/previews/')){intercepted=true;assert.equal((await api({action:'deleteFile',id,revision:item.modifiedAt},token)).status,200);}};
+ assert.ok([403,410].includes((await photoPreview(id)).status));assert.equal(objects.has('previews/'+id.slice(3)+'.jpg'),false);assert.equal(objects.has('originals/'+id.slice(3)),false);
+});
+
+test('balanced photo preview concurrent readers reuse one preparation without changing the photo revision',async()=>{
+ const {id,item}=await photoPreviewFixture();let release,started;
+ const gate=new Promise(resolve=>release=resolve),begun=new Promise(resolve=>started=resolve);
+ const transforms=previewImages(async()=>{started();await gate;return sizedJPEG(2400);});
+ const first=photoPreview(id);await begun;const second=photoPreview(id);release();
+ for(const response of await Promise.all([first,second])){assert.equal(response.status,200);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),sizedJPEG(2400));}
+ assert.equal(transforms.length,1);assert.equal(sql.prepare('SELECT modified_at FROM jac_media_r2_entries WHERE id=?').get(id).modified_at,item.modifiedAt);
+});
+
+test('balanced photo previews through a shared link remain folder scoped and are withdrawn when the link is revoked',async()=>{
+ const {parent,upload,link,token:capability}=await sharedFixture(),id='r2_'+upload.data.id,transforms=previewImages();
+ const response=await publicRead(capability,{id,preview:'1'});assert.equal(response.status,200);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),sizedJPEG(2400));assert.equal(transforms.length,1);
+ const outside=await start(jpeg);await send(outside);assert.equal((await publicRead(capability,{id:'r2_'+outside.data.id,preview:'1'})).status,410);assert.equal(transforms.length,1);
+ assert.equal((await shareCommand({action:'revoke',folderId:parent,id:link.id})).status,200);assert.ok([403,410].includes((await publicRead(capability,{id,preview:'1'})).status));assert.equal(transforms.length,1);
 });
 
 async function videoFixture(){await activate();const parent=await folder(),bytes=new Uint8Array([0,0,0,24,102,116,121,112,105,115,111,109,0,0,0,0,105,115,111,109,109,112,52,50]),done=await (await send(await start(bytes,parent,crypto.randomUUID(),'video/mp4'))).json();return {parent,id:done.fileId};}

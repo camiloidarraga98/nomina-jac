@@ -1,4 +1,5 @@
 import {ensurePresentations,presentation} from './media-presentation-store';
+import {env} from 'cloudflare:workers';
 import {createHash} from 'node:crypto';
 import {database} from '@/db/raw';
 import {mailKey} from './payroll-mail';
@@ -11,6 +12,8 @@ import {MEDIA_IMAGE_LIMITS} from './media-image-policy';
 import {r2Request,r2PartURL,r2Bytes,r2XML,xmlValue,xmlEscape} from './media-r2-s3';
 
 export const R2_ROOT='jac_r2_root',R2_COLLECTION='jac-r2-new-20261016';
+const PHOTO_PREVIEW_EDGE=2400,PHOTO_PREVIEW_LIMIT=2*1024*1024,PHOTO_PREVIEW_PROFILE='balanced-2400-q84-v2';
+type PhotoImages={input(stream:ReadableStream):{transform(options:Record<string,unknown>):{output(options:{format:string;quality:number}):Promise<{response():Response}>}}};
 type Config={credentials:string;enabled:number;version:number};
 type Context={g:MediaGuard;config:Config;secret:MediaR2Secret};
 type Entry={id:string;parent_id:string;name:string;mime_type:string;size:number;object_key:string;thumbnail_key:string;actor_id:string;payload_hash:string;created_at:string;modified_at:string};
@@ -68,15 +71,85 @@ export async function r2Folder(g:MediaGuard,input:Record<string,unknown>){
  const found=await entry(id);await live(c);let legacyDigest='';if(found&&found.payload_hash!==digest&&typeof input.date==='string'){try{legacyDigest=hash([g.actorID,parentID,mediaFolderName(input.name,input.date)]);}catch{}}if(!found||(found.payload_hash!==digest&&found.payload_hash!==legacyDigest)||found.mime_type!==MEDIA_FOLDER_MIME)throw new MediaFailure('Esta solicitud ya pertenece a otra carpeta o cuenta.',409);await parent(c,id);return {folder:{id,name:found.name}};
 }
 export async function r2Metadata(g:MediaGuard,id:string){const c=await context(g),rows=await chain(c,id),row=rows.at(-1);if(!row||row.mime_type===MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una foto o video.');await live(c);return {item:item(row)};}
+
+async function currentPhoto(c:Context,row:Entry){
+ await chain(c,row.id);const current=await entry(row.id);
+ if(!current||current.object_key!==row.object_key||current.modified_at!==row.modified_at||current.size!==row.size)throw new MediaFailure('La foto cambió. Actualiza la carpeta.',409);
+ await live(c);
+}
+const previewResponse=(bytes:Uint8Array<ArrayBuffer>,profile:string)=>new Response(bytes,{headers:{'content-type':'image/jpeg','content-length':String(bytes.byteLength),'x-jac-preview-profile':profile}});
+async function storedPhotoPreview(c:Context,row:Entry){
+ const view=await presentation(row.id);
+ if(!view?.preview_key||view.source_key!==row.object_key||view.connection_version!==c.config.version)return null;
+ const response=await call(c,'GET',view.preview_key);
+ if(response.status===404){await response.body?.cancel();return null;}
+ await checked(response);const profile=response.headers.get('x-amz-meta-jac-preview-profile')||'legacy';
+ const bytes=await r2Bytes(response,PHOTO_PREVIEW_LIMIT);
+ if(!jpegThumbnail(bytes,PHOTO_PREVIEW_EDGE,PHOTO_PREVIEW_LIMIT))throw new MediaFailure('La vista previa no es válida.',502);
+ await currentPhoto(c,row);return {bytes,profile};
+}
+async function photoPreview(c:Context,row:Entry):Promise<Response>{
+ if(!row.mime_type.startsWith('image/'))throw new MediaFailure('Selecciona una fotografía.');
+ const previous=await storedPhotoPreview(c,row);
+ if(previous?.profile===PHOTO_PREVIEW_PROFILE)return previewResponse(previous.bytes,previous.profile);
+ const unavailable=()=>new MediaFailure('No pudimos preparar la vista previa. Vuelve a intentarlo en unos momentos.',503);
+ const images=(env as unknown as {IMAGES?:PhotoImages}).IMAGES;
+ if(!images||row.size>20_000_000){if(previous)return previewResponse(previous.bytes,previous.profile);throw unavailable();}
+ await ensurePresentations(c.g);await currentPhoto(c,row);
+ await database().prepare(`INSERT OR IGNORE INTO jac_media_presentations(file_id,source_key,connection_version,updated_at) SELECT ?,?,?,? WHERE ${same(c)} AND ${availableSQL(row.id)}`).bind(row.id,row.object_key,c.config.version,new Date().toISOString(),...c.g.bindings).run();
+ const claim=crypto.randomUUID(),now=new Date().toISOString();
+ const lock=await database().prepare(`UPDATE jac_media_presentations SET claim=?,claim_at=? WHERE file_id=? AND source_key=? AND connection_version=? AND ((claim='' AND (claim_at='' OR claim_at<?)) OR (claim<>'' AND claim_at<?)) AND ${same(c)} AND ${availableSQL(row.id)}`).bind(claim,now,row.id,row.object_key,c.config.version,new Date(Date.now()-60000).toISOString(),new Date(Date.now()-180000).toISOString(),...c.g.bindings).run();
+ if(lock.meta.changes!==1){
+  // Another reader may be preparing this same private JPEG. Wait briefly for
+  // its indexed result; never substitute a grid thumbnail for a full-screen view.
+  if(!previous)for(let attempt=0;attempt<4;attempt++){
+   const pending=await presentation(row.id);if(!pending?.claim)break;
+   await new Promise(resolve=>setTimeout(resolve,400));await currentPhoto(c,row);
+   const ready=await storedPhotoPreview(c,row);if(ready?.profile===PHOTO_PREVIEW_PROFILE)return previewResponse(ready.bytes,ready.profile);
+  }
+  await currentPhoto(c,row);if(previous)return previewResponse(previous.bytes,previous.profile);throw unavailable();
+ }
+ const key='previews/'+row.id.slice(3)+'.jpg';let wrote=false,published=false;
+ try{
+  const original=await call(c,'GET',row.object_key);await checked(original);
+  const source=await r2Bytes(original,20_000_000);await currentPhoto(c,row);
+  let bytes:Uint8Array<ArrayBuffer>|undefined;
+  for(const edge of [PHOTO_PREVIEW_EDGE,2048]){
+   const output=await images.input(new Response(source).body!).transform({width:edge,height:edge,fit:'scale-down'}).output({format:'image/jpeg',quality:84});
+   const result=output.response();await checked(result);
+   try{bytes=await r2Bytes(result,PHOTO_PREVIEW_LIMIT);}catch(error){if(edge===PHOTO_PREVIEW_EDGE&&error instanceof MediaFailure&&error.status===502)continue;throw error;}
+   if(!jpegThumbnail(bytes,edge,PHOTO_PREVIEW_LIMIT))throw unavailable();break;
+  }
+  if(!bytes)throw unavailable();await currentPhoto(c,row);
+  const renewed=await database().prepare(`UPDATE jac_media_presentations SET claim_at=? WHERE file_id=? AND claim=? AND ${same(c)} AND ${availableSQL(row.id)}`).bind(new Date().toISOString(),row.id,claim,...c.g.bindings).run();
+  if(renewed.meta.changes!==1)throw new MediaFailure('La preparación cambió. Vuelve a abrir la foto.',409);
+  // Stable private derivative key is covered by the existing deletion protocol.
+  // No original, thumbnail, revision or public URL is replaced.
+  wrote=true;const saved=await call(c,'PUT',key,{}, {'content-type':'image/jpeg','x-amz-meta-jac-preview-profile':PHOTO_PREVIEW_PROFILE},bytes);await checked(saved);await saved.body?.cancel();await currentPhoto(c,row);
+  const result=await database().prepare(`UPDATE jac_media_presentations SET preview_key=?,updated_at=? WHERE file_id=? AND claim=? AND source_key=? AND connection_version=? AND ${same(c)} AND ${availableSQL(row.id)}`).bind(key,new Date().toISOString(),row.id,claim,row.object_key,c.config.version,...c.g.bindings).run();
+  if(result.meta.changes!==1)throw new MediaFailure('La foto o el acceso cambió.',403);
+  published=true;await currentPhoto(c,row);return previewResponse(bytes,PHOTO_PREVIEW_PROFILE);
+ }catch(error){
+  if(wrote&&!published){
+   // Roll back only this job's derivative, including a lost PUT acknowledgement.
+   // Cleanup is allowed after revocation; it cannot touch an original or cover.
+   try{const response=await fetch(r2Request(c.secret,'DELETE',key),{redirect:'manual'});await response.body?.cancel();}catch{}
+  }
+  await currentPhoto(c,row);
+  if(previous&&!wrote)return previewResponse(previous.bytes,previous.profile);
+  if(error instanceof MediaFailure&&[401,403,409,410].includes(error.status))throw error;
+  throw unavailable();
+ }finally{await database().prepare("UPDATE jac_media_presentations SET claim='' WHERE file_id=? AND claim=?").bind(row.id,claim).run();}
+}
 export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false){
  const c=await context(g),rows=await chain(c,id),row=rows.at(-1);if(!row||row.mime_type===MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una foto o video.');
- if(revision&&revision!==row.modified_at)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);const view=preview?await presentation(id):null;const key=preview?(view?.source_key===row.object_key&&view.connection_version===c.config.version?view.preview_key||row.thumbnail_key:row.thumbnail_key):thumbnail?row.thumbnail_key:row.object_key;if(!key)throw new MediaFailure('La miniatura todavía no está disponible.',404);
- const requested=thumbnail||preview?null:mediaRange(range),response=await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
+ if(revision&&revision!==row.modified_at)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);const key=thumbnail?row.thumbnail_key:row.object_key;if(!preview&&!key)throw new MediaFailure('La miniatura todavía no está disponible.',404);
+ const requested=thumbnail||preview?null:mediaRange(range),response=preview?await photoPreview(c,row):await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
  if(requested&&response.status!==206){await response.body?.cancel();throw new MediaFailure('R2 no confirmó el rango solicitado.',502);}
  try{await chain(c,id);const after=await entry(id);if(after?.modified_at!==row.modified_at||after.object_key!==row.object_key)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);await live(c);}catch(e){await response.body?.cancel();throw e;}
  const headers=new Headers({'content-type':thumbnail||preview?'image/jpeg':row.mime_type,'content-disposition':"inline; filename*=UTF-8''"+encodeURIComponent(preview?'vista-previa.jpg':thumbnail?'miniatura.jpg':row.name),'x-content-type-options':'nosniff','accept-ranges':thumbnail||preview?'none':'bytes'});
  for(const key of ['content-length','content-range','etag']){const value=response.headers.get(key);if(value)headers.set(key,value);}
- if(thumbnail||preview){const bytes=await r2Bytes(response,preview?2*1024*1024:MEDIA_THUMBNAIL_MAX_BYTES);if(!jpegThumbnail(bytes,preview?1600:640,preview?2*1024*1024:MEDIA_THUMBNAIL_MAX_BYTES))throw new MediaFailure('La miniatura no es válida.',502);await live(c);return new Response(bytes,{headers});}
+ if(thumbnail||preview){const bytes=await r2Bytes(response,preview?PHOTO_PREVIEW_LIMIT:MEDIA_THUMBNAIL_MAX_BYTES);if(!jpegThumbnail(bytes,preview?PHOTO_PREVIEW_EDGE:640,preview?PHOTO_PREVIEW_LIMIT:MEDIA_THUMBNAIL_MAX_BYTES))throw new MediaFailure('La vista previa no es válida.',502);if(preview)headers.set('x-jac-preview-profile',response.headers.get('x-jac-preview-profile')||'legacy');await live(c);return new Response(bytes,{headers});}
  return new Response(response.body,{status:response.status,headers});
 }
 export async function r2PresentationSource(g:MediaGuard,id:string){

@@ -9,6 +9,9 @@
   ],
   "workers_dev": true,
   "preview_urls": false,
+  "images": {
+    "binding": "IMAGES"
+  },
   "assets": {
     "directory": "../../dist/client",
     "binding": "ASSETS",
