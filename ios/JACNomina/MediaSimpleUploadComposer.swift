@@ -90,7 +90,9 @@ enum MediaVideoPreparation {
         instruction.layerInstructions = [layer]
         composition.instructions = [instruction]
         session.videoComposition = composition
-        // Aim for 30% less, without forcing a bitrate below a quality floor.
+        // Leave headroom for the exporter's variable bitrate. A strict 70%
+        // ceiling starves the later frames of detailed clips; 85% typically
+        // yields roughly 20% savings while keeping quality the priority.
         // H.264 needs more bits than HEVC at equal detail, especially for HDR
         // converted to SDR. Already efficient/small sources may save less.
         let formats = try await video.load(.formatDescriptions)
@@ -101,7 +103,7 @@ enum MediaVideoPreparation {
         let qualityRate = min(videoRate > 0 ? videoRate * (hevc ? 1.5 : 1) : .greatestFiniteMagnitude,
                               Double(renderSize.width * renderSize.height) * rate * 0.12)
         let qualityBudget = (qualityRate + audioRate) * duration.seconds / 8 + 64 * 1024
-        let budget = max(Double(file.size) * 0.70, qualityBudget, 256 * 1024).rounded(.up)
+        let budget = max(Double(file.size) * 0.85, qualityBudget, 256 * 1024).rounded(.up)
         guard budget.isFinite, budget < Double(Int64.max - 64 * 1024 * 1024),
               Double(MediaStorageReview.freeBytes) > budget + 64 * 1024 * 1024 else {
             throw APIError.invalid("No hay espacio suficiente para preparar este video conservando su calidad.")
@@ -221,7 +223,7 @@ struct MediaSimpleUploadComposer: View {
                     VStack(alignment: .leading, spacing: 14) {
                         Label("Los videos se comprimen siempre", systemImage: "video.fill")
                             .font(.subheadline.weight(.semibold)).accessibilityIdentifier("media.video.required")
-                        Text("Buscamos reducir el peso alrededor de un 30%, conservando resolución, fluidez y sonido. El ahorro depende del video; los HDR se convierten a SDR para la web. Tu original queda intacto en Fotos o Archivos.")
+                        Text("Buscamos una reducción moderada, priorizando resolución, fluidez y sonido. El ahorro depende del video; los HDR se convierten a SDR para la web. Tu original queda intacto en Fotos o Archivos.")
                             .font(.caption).foregroundStyle(.secondary)
                         HStack(spacing: 12) {
                             PhotosPicker(selection: $draft.selectedPhotos, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current) {

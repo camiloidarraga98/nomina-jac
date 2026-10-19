@@ -69,7 +69,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$JAC_VIDEO_DETAIL_ONLY" = true ]; then
-            checks=(-only-testing:JACNominaTests/MediaVideoPreparationTests/testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression)
+            checks=(
+              -only-testing:JACNominaTests/MediaVideoPreparationTests/testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression
+              -only-testing:JACNominaTests/MediaVideoPreparationTests/testHDRVideoIsConvertedToSDRInsteadOfKeepingTheOriginal
+            )
           elif [ "$JAC_GALLERY_UPDATE" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaVideoPreparationTests

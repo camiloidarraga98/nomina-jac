@@ -328,10 +328,16 @@ final class MediaVideoPreparationTests: XCTestCase {
         writer.add(input)
         XCTAssertTrue(writer.startWriting(), writer.error?.localizedDescription ?? "")
         writer.startSession(atSourceTime: .zero)
+        func waitForHDRWriter() async throws {
+            for _ in 0..<3000 {
+                guard writer.status == .writing else { throw writer.error ?? QueueTestFailure.timeout }
+                if input.isReadyForMoreMediaData { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw QueueTestFailure.timeout
+        }
         for frame in 0..<12 {
-            var retries = 0
-            while !input.isReadyForMoreMediaData && retries < 500 { try await Task.sleep(for: .milliseconds(10)); retries += 1 }
-            XCTAssertTrue(input.isReadyForMoreMediaData)
+            try await waitForHDRWriter()
             var buffer: CVPixelBuffer?
             XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer), kCVReturnSuccess)
             let pixel = try XCTUnwrap(buffer)
@@ -342,6 +348,7 @@ final class MediaVideoPreparationTests: XCTestCase {
                 for index in 0..<count { address[index] = UInt16(plane == 0 ? 256 + frame * 8 : 512) << 6 }
             }
             CVPixelBufferUnlockBaseAddress(pixel, [])
+            try await waitForHDRWriter()
             XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 12)))
         }
         input.markAsFinished()
