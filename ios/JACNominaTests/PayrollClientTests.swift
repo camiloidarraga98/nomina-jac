@@ -565,6 +565,8 @@ final class PayrollClientTests: XCTestCase {
         var refreshed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: feed.root, folder: feed.folder, breadcrumbs: feed.breadcrumbs, items: [revised], nextPageToken: nil, collectionID: feed.collectionID, canDelete: true)
         model.reconcile(refreshed); XCTAssertEqual(model.count, 0, "A changed revision must be selected again before deletion")
         model.select(revised, in: refreshed, client: client); XCTAssertTrue(model.canDelete)
+        var cached = refreshed; cached.canDelete = nil
+        model.reconcile(cached); XCTAssertTrue(model.canDelete, "A cache refresh omits write permissions and must not revoke a confirmed permission")
         refreshed.canDelete = false; model.reconcile(refreshed); XCTAssertFalse(model.canDelete)
     }
     @MainActor func testMediaSelectionIsRemovedOnSessionChangeAndPermissionRevocation() async throws {

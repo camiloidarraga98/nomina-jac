@@ -55,7 +55,9 @@ final class MediaBatchSelection: ObservableObject {
             files.contains(entry.item.id) || !entry.ancestors.isDisjoint(with: folders)
                 || current[entry.item.id].map { $0 != entry.item } == true
         }
-        if feed.canDelete != true {
+        // Cached feeds omit write permissions. Only a confirmed denial changes
+        // the permission already observed in an authorized network listing.
+        if feed.canDelete == false {
             entries = entries.map { Entry(item: $0.item, ancestors: $0.ancestors, canDelete: false) }
         }
     }
