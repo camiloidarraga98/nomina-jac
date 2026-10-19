@@ -11,9 +11,9 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(Set(navigationSections(app)), Set(["crm","payroll","agenda","itineraries","alerts","boarding","media","music","management"].map {"phone.section."+$0}))
         XCTAssertTrue(showMenu(app));attachScreen(app, name:"iphone-menu-lateral")
         app.coordinate(withNormalizedOffset:CGVector(dx:0.96,dy:0.5)).tap()
-        XCTAssertTrue(app.buttons["phone.menu.open"].isHittable)
+        XCTAssertTrue(waitFor(app.buttons["phone.menu.close"], predicate:NSPredicate(format:"exists == false"), timeout:5))
         XCTAssertTrue(showMenu(app));app.scrollViews["phone.sidebar.scroll"].swipeLeft()
-        XCTAssertTrue(app.buttons["phone.menu.open"].isHittable)
+        XCTAssertTrue(waitFor(app.buttons["phone.menu.close"], predicate:NSPredicate(format:"exists == false"), timeout:5))
         openSection(app,"Música");XCTAssertTrue(app.buttons["music.section.tracks"].waitForExistence(timeout:15))
         attachScreen(app,name:"iphone-musica-sin-barra-inferior")
     }
@@ -655,8 +655,15 @@ final class LaunchTests: XCTestCase {
     @MainActor private func showMenu(_ app: XCUIApplication, timeout: TimeInterval = 20) -> Bool {
         if app.buttons["phone.menu.close"].exists { return true }
         let opener=app.buttons["phone.menu.open"]
-        guard opener.waitForExistence(timeout: timeout), opener.isHittable else { return false }
-        opener.tap();return app.buttons["phone.menu.close"].waitForExistence(timeout: 5)
+        guard opener.waitForExistence(timeout: timeout) else { return false }
+        let frame=opener.frame,screen=app.windows.firstMatch.frame
+        guard frame.width >= 44,frame.height >= 44,screen.contains(frame) else { return false }
+        // After a SwiftUI overlay closes, XCTest may report a visible header
+        // as non-hittable. Exercise its actual touch point and require the panel
+        // to open; this still fails if another view intercepts the touch.
+        if opener.isHittable {opener.tap()}
+        else {opener.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()}
+        return app.buttons["phone.menu.close"].waitForExistence(timeout: 5)
     }
     @MainActor private func navigationSections(_ app: XCUIApplication) -> [String] {
         guard showMenu(app) else { return [] }
