@@ -61,13 +61,16 @@ jobs:
         shell: bash
         env:
           JAC_GALLERY_UPDATE: ${{ inputs.scope == 'gallery-update' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-update]')) }}
+          JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
           JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || inputs.scope == 'video-quality' || inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
           JAC_VIDEO_QUALITY_ONLY: ${{ inputs.scope == 'video-quality' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[quality-only]')) }}
           JAC_VIDEO_UI_ONLY: ${{ inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]') && contains(github.event.head_commit.message, '[ui-only]')) }}
         run: |
           set -euo pipefail
-          if [ "$JAC_GALLERY_UPDATE" = true ]; then
+          if [ "$JAC_VIDEO_DETAIL_ONLY" = true ]; then
+            checks=(-only-testing:JACNominaTests/MediaVideoPreparationTests/testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression)
+          elif [ "$JAC_GALLERY_UPDATE" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaVideoPreparationTests
               -only-testing:JACNominaTests/MediaUploadQueueTests/testThumbnailRetryKeepsTheLocalFileAndNeverUploadsTheOriginalTwice

@@ -220,10 +220,18 @@ final class MediaVideoPreparationTests: XCTestCase {
         XCTAssertTrue(writer.startWriting(), writer.error?.localizedDescription ?? "")
         writer.startSession(atSourceTime: .zero)
         var noise: UInt32 = 12345
+        func waitForEncoder() async throws {
+            // A cold simulator's software encoder can take more than five
+            // seconds. Never append after a timeout and corrupt the fixture.
+            for _ in 0..<3000 {
+                guard writer.status == .writing else { throw writer.error ?? QueueTestFailure.timeout }
+                if input.isReadyForMoreMediaData { return }
+                try await Task.sleep(for: .milliseconds(10))
+            }
+            throw QueueTestFailure.timeout
+        }
         for frame in 0..<60 {
-            var retries = 0
-            while !input.isReadyForMoreMediaData && retries < 500 { try await Task.sleep(for: .milliseconds(10)); retries += 1 }
-            XCTAssertTrue(input.isReadyForMoreMediaData)
+            try await waitForEncoder()
             var buffer: CVPixelBuffer?
             XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer), kCVReturnSuccess)
             let pixel = try XCTUnwrap(buffer)
@@ -242,12 +250,16 @@ final class MediaVideoPreparationTests: XCTestCase {
                 }
             }
             CVPixelBufferUnlockBaseAddress(pixel, [])
+            try await waitForEncoder()
             XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 60)))
         }
         input.markAsFinished()
         await writer.finishWriting()
         XCTAssertEqual(writer.status, .completed, writer.error?.localizedDescription ?? "")
         let source = try MediaLocalFile.stage(url, quality: .original); defer { source.remove() }
+        let sourceTracks = try await AVURLAsset(url: source.url).loadTracks(withMediaType: .video)
+        let sourceRate = try await XCTUnwrap(sourceTracks.first).load(.nominalFrameRate)
+        XCTAssertEqual(sourceRate, 60, accuracy: 0.1, "La fuente de la comparación debe tener los 60 fotogramas por segundo")
         let result = try await MediaVideoPreparation.prepare(source); defer { result.file.remove() }
         let original = AVURLAsset(url: source.url), compressed = AVURLAsset(url: result.file.url)
         let tracks = try await compressed.loadTracks(withMediaType: .video)
