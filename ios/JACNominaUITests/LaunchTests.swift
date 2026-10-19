@@ -1226,7 +1226,7 @@ final class IPadTests: XCTestCase {
         XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
         video.tap(); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "2 seleccionados")
         tap(app, "media.selection.cancel")
-        photo.tap(); XCTAssertTrue(app.descendants(matching: .any)["media.fullscreen"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
+        photo.tap(); XCTAssertTrue(app.descendants(matching: .any)["media.photo.document"].waitForExistence(timeout: 15)); tap(app, "media.preview.close")
         tap(app, "media.photo.options.r2_media-video")
         tap(app, "media.photo.delete")
         XCTAssertTrue(app.alerts["Eliminar video"].waitForExistence(timeout: 10))

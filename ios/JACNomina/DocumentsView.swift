@@ -566,7 +566,7 @@ struct MediaGalleryView: View {
     }
     private var showingSelection: Bool {
         #if os(iOS)
-        return compactGallery && selection.active
+        return selection.active
         #else
         return false
         #endif
@@ -648,7 +648,7 @@ struct MediaGalleryView: View {
         galleryContent.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle().jacConnectionStatus(shown:!compactGallery)
             #if os(iOS)
             .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
-            .safeAreaInset(edge: .bottom) { if compactGallery && selection.active { selectionActions } }
+            .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }
             .onChange(of: try? store.client.mediaAccessStamp()) { _, _ in
                 sharingFolder = nil
                 selection.synchronize(client: store.client)
@@ -848,9 +848,7 @@ struct MediaGalleryView: View {
                         LazyVGrid(columns: [GridItem(.adaptive(minimum: 160, maximum: 280), spacing: 14)], spacing: 14) {
                             ForEach(items) { item in
                                 VStack(alignment:.leading,spacing:0) {
-                                    Button { open(item) } label: { MediaTile(item: item, client: store.client, offline: store.isOffline, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
-                                        .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
-                                        .overlay(alignment: .topTrailing) { if item.kind == "image" || item.kind == "video" { MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true).padding(6) } }
+                                    legacyTile(item)
                                     if item.kind == "folder" {
                                         HStack {Text("Carpeta del equipo").font(.caption).foregroundStyle(.secondary);Spacer(minLength:6)
                                             Menu {folderCommands(MediaFolder(id:item.id,name:item.name))} label:{Image(systemName:"ellipsis.circle").font(.title3).padding(4)}.buttonStyle(.plain).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.options."+item.id)
@@ -860,6 +858,23 @@ struct MediaGalleryView: View {
                                     .contextMenu {if item.kind == "folder" {folderCommands(MediaFolder(id:item.id,name:item.name))}}
                             }
                         }
+    }
+    @ViewBuilder private func legacyTile(_ item: MediaItem) -> some View {
+        #if os(iOS)
+        if item.kind != "folder", let feed {
+            MediaSelectableTile(item: item, feed: feed, client: store.client, selection: selection,
+                                offline: store.isOffline, disabled: opening != nil || uploading || deleting || selectionBusy,
+                                opening: opening == item.id, epoch: thumbnailEpoch,
+                                open: { open(item) }, denied: thumbnailDenied)
+        } else { legacyOpenTile(item) }
+        #else
+        legacyOpenTile(item)
+        #endif
+    }
+    private func legacyOpenTile(_ item: MediaItem) -> some View {
+        Button { open(item) } label: { MediaTile(item: item, client: store.client, offline: store.isOffline, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
+            .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
+            .overlay(alignment: .topTrailing) { if item.kind == "image" || item.kind == "video" { MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true).padding(6) } }
     }
     private var photosWriter: any MediaPhotosWriting {
         #if DEBUG
