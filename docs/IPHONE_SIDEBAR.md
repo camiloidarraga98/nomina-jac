@@ -38,3 +38,5 @@ Resultado final: [GitHub39333831553](https://github.com/camiloidarraga98/nomina-
 ## Separación bajo los títulos
 
 Camilo pidió reducir el espacio entre Quincenas y Nueva quincena, también en los otros módulos. La presentación iOS compartida fija a0 el margen superior del contenido desplazable, retirando el inset automático de listas agrupadas sin ignorar el área segura ni mover el contenedor de navegación. Agenda, Gestión y Fotografía reducen su padding superior de18a8puntos; mantienen18en los demás bordes y Mac conserva18arriba. Música adopta el mismo título inline del resto de pantallas. Se conservan buscadores, objetivos táctiles, grupos y navegación. Ajuste de presentación: una compilación con alcance `layout`, reutilizando las pruebas funcionales vigentes; sin nuevos recorridos ni pruebas de servidor.
+
+[GitHub39335369946](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39335369946), fuenteace63ae, aprobó `build-for-testing` de iPhone y los bundles de pruebas. No se ejecutaron pruebas funcionales ni se repitieron Release/Mac. La comprobación visual física queda para el pull y Run en Xcode; no se inspeccionó una captura nativa de esta revisión.
