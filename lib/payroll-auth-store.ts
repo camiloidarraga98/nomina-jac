@@ -13,7 +13,7 @@ export function accountAdministrator(row:Pick<UserRow,'owner'|'email'|'permissio
 const ordinaryPermissions=(row:UserRow)=>(JSON.parse(row.permissions) as string[]).filter((p):p is Permission=>permissionKeys.includes(p as Permission));
 export function storedSections(row:Pick<UserRow,'section_access'>):SectionKey[]|undefined{
  if(row.section_access==null)return undefined;
- try{const parsed:unknown=JSON.parse(row.section_access);if(!Array.isArray(parsed)||parsed.some(key=>!sectionKeys.includes(key as SectionKey)))return [];const keys=[...new Set(parsed)] as SectionKey[];return keys.filter(key=>key!=='mediaUpload'||keys.includes('media'));}catch{return [];}
+ try{const parsed:unknown=JSON.parse(row.section_access);if(!Array.isArray(parsed)||parsed.some(key=>!sectionKeys.includes(key as SectionKey)))return [];const keys=[...new Set(parsed)] as SectionKey[];return keys.filter(key=>(key!=='mediaUpload'||keys.includes('media'))&&(key!=='musicUpload'||keys.includes('music')));}catch{return [];}
 }
 export function accessUser(row:UserRow):AccessUser{
  const sections=storedSections(row),isOwner=accountAdministrator(row),limited=!isOwner&&(sections? !sections.includes('payroll'):row.itineraries_only===1||row.media_only===1),mediaOnly=!isOwner&&(sections?limited&&sections.includes('media'):row.media_only===1);

@@ -283,3 +283,7 @@ Esta tabla orienta, no sustituye leer la implementación/rutas/pruebas del cambi
 8. No subir credenciales, bases reales, comprobantes, contratos generados, RUT, fotos privadas, Llavero o firma personal al repo. No enviar correos/push/Slack/Calendar ni borrar registros reales como pruebas.
 
 Preparación y accesos: [README.md](README.md) y [PROMPT-PARA-EL-NUEVO-CHAT.txt](PROMPT-PARA-EL-NUEVO-CHAT.txt). El nuevo chat debe leerlos desde el repositorio; **esta conversación no se transfiere automáticamente**.
+
+## Música · decisión de Camilo · 19 de octubre de 2026
+
+Música es un módulo propio de web/iPhone/iPad/Mac, con cuatro secciones tipo playlist (nunca carpetas): Para Calentar, Pistas, Maquetas y Música estudio. Pistas y las demás listas mantienen orden alfabético español. Búsqueda general y por sección, reproductor persistente y segundo plano, descargas individuales o de sección completa dentro de JAC para escuchar sin conexión. Importar desde Archivos y abrir archivos de audio enviados desde otras apps eligiendo destino. Camilo aprobó asignar en Gestión los permisos independientes de escuchar/descargar y subir/importar; solo administradores borran. No conceder secciones a cuentas reales basándose en esta documentación. Ver [MUSIC.md](../docs/MUSIC.md) para almacenamiento privado, codecs, caché, límites y verificación. Mantener Team personal y no agregar App Groups ni Associated Domains.

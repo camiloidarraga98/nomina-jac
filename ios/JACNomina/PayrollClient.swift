@@ -135,6 +135,7 @@ final class PayrollClient: ObservableObject {
     private let decoder = JSONDecoder()
     let offlineCache: OfflineResponseCache
     let mediaOffline: MediaOfflineCache
+    let musicOffline: MediaOfflineCache
     @Published private(set) var usingOfflineCopy = false
     @Published private(set) var cacheRevision = 0
     @Published private(set) var offlineSyncMessage: String?
@@ -147,6 +148,7 @@ final class PayrollClient: ObservableObject {
     private var contractDocuments: [String: [ExportedDocument]] = [:]
     private var cacheGeneration = 0
     private var noticeInvalidations: [String: Int] = [:]
+    private var musicPlaybackToken: String?
     private var permissionUser: PayrollUser?
     private var mediaRootRead: (id: UUID, stamp: String, task: Task<MediaFeed, Error>)?
     var accessUser: PayrollUser? { permissionUser }
@@ -160,6 +162,7 @@ final class PayrollClient: ObservableObject {
         self.baseURL = baseURL
         self.vault = vault ?? KeychainSessionStore(account: baseURL.host!)
         self.mediaUploadTransport = mediaUploadTransport
+        self.musicOffline = MediaOfflineCache(root: baseURL.host!.hasSuffix(".invalid") ? FileManager.default.temporaryDirectory.appendingPathComponent("music-fixture-" + UUID().uuidString) : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACMusicOffline", isDirectory: true))
         self.agendaCache = agendaCache ?? AgendaOfflineCache()
         self.automaticOfflineSync = automaticallyDownloadOffline ?? !baseURL.host!.hasSuffix(".invalid")
         self.offlineCache = offlineCache ?? OfflineResponseCache(root: baseURL.host!.hasSuffix(".invalid") ? FileManager.default.temporaryDirectory.appendingPathComponent("offline-fixture-" + UUID().uuidString) : nil)
@@ -177,6 +180,7 @@ final class PayrollClient: ObservableObject {
         mediaSession = URLSession(configuration: mediaConfiguration, delegate: NoRedirects(), delegateQueue: nil)
         if let token = try? self.vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { self.offlineCache.removeOtherSessions(OfflineResponseCache.scope(origin: baseURL.absoluteString, token: token)); self.mediaOffline.removeOtherSessions(AgendaCacheScope(origin: origin + "/media-offline-v1", token: token)) }
         permissionUser = rawCachedWorkspace()?.user ?? cachedAgenda()?.user
+        if let scope = try? musicScope() { musicOffline.removeOtherSessions(scope) }
     }
 
     func hasSession() throws -> Bool { try vault.load() != nil }
@@ -211,6 +215,8 @@ final class PayrollClient: ObservableObject {
         mediaRootRead?.task.cancel(); mediaRootRead = nil
         syncTask?.cancel(); syncTask = nil
         cacheGeneration += 1
+        if let scope = try musicScope() { musicOffline.clear(scope) }
+        musicPlaybackToken = nil
         permissionUser = nil
         if let scope = try offlineScope() { offlineCache.clear(scope) }
         if let scope = try mediaScope() { mediaOffline.clear(scope) }
@@ -240,6 +246,7 @@ final class PayrollClient: ObservableObject {
         if path.hasPrefix("api/calendar") {return user.hasSection(.calendar)}
         if path.hasPrefix("api/crm") || path == "api/mobile/contracts" || path == "api/users" {return user.hasSection(.crm)}
         if path.hasPrefix("api/expenses") {return user.hasSection(.itineraries)}
+        if path.hasPrefix("api/music") {return user.canReadMusic}
         if path.hasPrefix("api/media") {return user.canReadMedia}
         if path.hasPrefix("api/notices") {return query.contains{$0.name == "boarding"} ? user.hasSection(.boarding) : user.hasNotices}
         return true
@@ -293,6 +300,7 @@ final class PayrollClient: ObservableObject {
         return cached(Wrapper.self, path: "api/notices", query: [URLQueryItem(name: "item", value: id)])?.item
     }
     private func cacheable(_ path: String, query: [URLQueryItem]) -> Bool {
+        if path == "api/music" { return query.isEmpty }
         if path == "api/calendar" { return !query.contains { $0.name == "action" } }
         return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file", "api/mobile/contracts", "api/media"].contains(path)
     }
@@ -361,6 +369,7 @@ final class PayrollClient: ObservableObject {
             // every other thumbnail and collapse expanded folder contents.
             if mediaThumbnailRead, [404, 429, 500, 502, 503, 504].contains(response.statusCode) { throw MediaThumbnailUnavailable() }
             if path=="api/media",body==nil,response.statusCode==410,let folder=query.first(where:{$0.name=="folder"})?.value,let mediaScope=try mediaScope() {try mediaOffline.removeFolders([folder],scope:mediaScope);throw MediaFolderRemoved()}
+            if path.hasPrefix("api/music"), response.statusCode == 403, let scope = try musicScope() { musicOffline.clear(scope) }
             if path.hasPrefix("api/media"), response.statusCode == 403, let mediaScope = try mediaScope() { cacheGeneration += 1; mediaOffline.clear(mediaScope); TemporaryDocuments.clear() }
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }
             if let scope, (body == nil || path == "api/crm" || path == "api/mobile/contracts"), [403, 404, 410].contains(response.statusCode) {
@@ -451,6 +460,7 @@ final class PayrollClient: ObservableObject {
         let userChanged = permissionUser.map{$0 != workspace.user} == true
         if let previous=permissionUser, ["itinerary","alert","boarding_pass"].contains(where:{previous.permitsNotice($0) != workspace.user.permitsNotice($0)}),let scope=try? offlineScope() {offlineCache.remove(scope){URL(string:$0.url)?.path.hasPrefix("/api/notices") == true}}
         if userChanged {cacheGeneration += 1;syncTask?.cancel();syncTask=nil;syncingOffline=false;TemporaryDocuments.clear();clearCachedAgenda()}
+        if !workspace.user.canReadMusic, let scope = try? musicScope() { musicOffline.clear(scope); musicPlaybackToken = nil }
         permissionUser=workspace.user
         if !workspace.user.hasSection(.calendar) {clearCachedAgenda()}
         if !workspace.user.canReadMedia, let mediaScope = try? mediaScope() { mediaOffline.clear(mediaScope) }
@@ -1261,4 +1271,108 @@ enum TemporaryDocuments {
     }
     static func remove(_ document: ExportedDocument) { try? FileManager.default.removeItem(at: root.appendingPathComponent(document.id.uuidString)) }
     static func clear() { try? FileManager.default.removeItem(at: root) }
+}
+
+// Música has its own namespace, permission checks and encrypted download cache.
+extension PayrollClient {
+    func beginMusicPlayback() throws {
+        guard permissionUser?.canReadMusic == true else { throw APIError.forbidden("Tu cuenta no tiene acceso a Música.") }
+        if musicPlaybackToken == nil { musicPlaybackToken = try vault.load() }
+    }
+    func endMusicPlayback() { musicPlaybackToken = nil }
+    func musicScope() throws -> AgendaCacheScope? {
+        guard let token = try musicPlaybackToken ?? vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { return nil }
+        return AgendaCacheScope(origin: origin + "/music-offline-v1", token: token)
+    }
+    func cachedMusic() -> MusicLibrary? { cached(MusicLibrary.self, path: "api/music") }
+    func musicLibrary(forceNetwork: Bool = false) async throws -> MusicLibrary {
+        let previous = cachedMusic()
+        let (data, _) = try await request(path: "api/music", forceNetwork: forceNetwork)
+        let result = try decoder.decode(MusicLibrary.self, from: data)
+        if let scope = try musicScope() {
+            let cache = musicOffline, fresh = Dictionary(uniqueKeysWithValues: result.tracks.map { ($0.id, $0) })
+            if let previous { for old in previous.tracks where fresh[old.id]?.revision != old.revision { try cache.forgetLocalFile(old.mediaItem, scope: scope) } }
+            try? cache.allowBackgroundAudio(scope)
+        }
+        return result
+    }
+    func musicPlayback(_ track: MusicTrack) async throws -> (URL, ExportedDocument?) {
+        guard permissionUser?.canReadMusic == true, let scope = try musicScope() else { throw APIError.unauthorized }
+        let cache = musicOffline
+        if cache.hasFile(track.mediaItem, scope: scope) {
+            let document = try await Task.detached(priority: .userInitiated) { try cache.document(track.mediaItem, scope: scope, backgroundAudio: true) }.value
+            guard scope.id == (try musicScope())?.id, permissionUser?.canReadMusic == true else { if let document {MusicPlaybackDocuments.remove(document)}; throw CancellationError() }
+            if let document { return (document.url, document) }
+        }
+        guard let token = musicPlaybackToken else { throw APIError.unauthorized }
+        var req = URLRequest(url: resourceURL(path: "api/music", query: [URLQueryItem(name:"play",value:"1"),URLQueryItem(name:"id",value:track.id),URLQueryItem(name:"revision",value:track.revision)]))
+        req.httpShouldHandleCookies = false; req.setValue("\(cookieName)=\(token)", forHTTPHeaderField: "Cookie")
+        let (data, raw) = try await session.data(for: req)
+        guard musicPlaybackToken == token, permissionUser?.canReadMusic == true else { throw CancellationError() }
+        guard let response = raw as? HTTPURLResponse else {throw APIError.message("No se recibió una respuesta.")}
+        if response.statusCode == 401 {try clearSession(); throw APIError.unauthorized}
+        if response.statusCode == 403 {musicOffline.clear(scope);musicPlaybackToken=nil;throw APIError.forbidden("Tu cuenta ya no tiene acceso a Música.")}
+        guard response.statusCode == 200 else {throw APIError.message("No se pudo abrir el audio. Revisa la conexión.")}
+        struct Playback: Decodable { let url: String }
+        let reply = try decoder.decode(Playback.self, from: data)
+        guard reply.url.hasPrefix("/api/music/file?"), let url = URL(string: reply.url, relativeTo: baseURL)?.absoluteURL, url.host == baseURL.host, url.scheme == "https", url.port == baseURL.port, url.user == nil else { throw APIError.invalid("La dirección del audio no es válida.") }
+        return (url, nil)
+    }
+    func musicHasDownload(_ track: MusicTrack) -> Bool {
+        guard permissionUser?.canReadMusic == true, let scope = try? musicScope() else { return false }
+        return musicOffline.hasFile(track.mediaItem, scope: scope)
+    }
+    func forgetMusic(_ track: MusicTrack) throws {
+        guard let scope = try musicScope() else { return }
+        try musicOffline.forgetLocalFile(track.mediaItem, scope: scope)
+        try? musicOffline.allowBackgroundAudio(scope)
+    }
+    func downloadMusic(_ track: MusicTrack, progress: @escaping @MainActor (Double) -> Void) async throws {
+        guard permissionUser?.canReadMusic == true, let scope = try musicScope(), let token = try vault.load() else { throw APIError.unauthorized }
+        if musicHasDownload(track) { return }
+        var req = URLRequest(url: resourceURL(path: "api/music/file", query: [URLQueryItem(name:"id",value:track.id),URLQueryItem(name:"revision",value:track.revision)]))
+        req.httpShouldHandleCookies = false; req.setValue("\(cookieName)=\(token)", forHTTPHeaderField:"Cookie")
+        let transfer = MediaDownloadProgressObserver(total: track.size, callback: { received, total in progress(total > 0 ? Double(received)/Double(total) : 0) })
+        let (document, raw) = try await transfer.download(session: mediaSession, request: req)
+        defer { TemporaryDocuments.remove(document) }
+        guard token == (try vault.load()), permissionUser?.canReadMusic == true, scope.id == (try musicScope())?.id else { throw CancellationError() }
+        guard let response = raw as? HTTPURLResponse else { throw APIError.message("No se recibió el audio.") }
+        if response.statusCode == 401 { try clearSession(); throw APIError.unauthorized }
+        if response.statusCode == 403 { musicOffline.clear(scope); throw APIError.forbidden("Tu cuenta ya no tiene acceso a Música.") }
+        guard response.statusCode == 200, response.mimeType == track.mimeType, (try document.url.resourceValues(forKeys:[.fileSizeKey])).fileSize == Int(track.size) else { throw APIError.message("El audio cambió o llegó incompleto. Actualiza Música.") }
+        let cache = musicOffline
+        try await Task.detached(priority: .utility) { try cache.saveFile(document.url, item: track.mediaItem, scope: scope); try cache.pinFile(track.mediaItem, scope: scope); try cache.allowBackgroundAudio(scope) }.value
+        guard token == (try vault.load()), permissionUser?.canReadMusic == true else { cache.clear(scope); throw CancellationError() }
+        progress(1)
+    }
+    func deleteMusic(_ track: MusicTrack) async throws {
+        _ = try await request(path:"api/music",body:.object(["action":.string("delete"),"id":.string(track.id),"revision":.string(track.revision)]))
+        try forgetMusic(track)
+    }
+    func uploadMusic(_ file: MusicImportFile, section: MusicSection, progress: @escaping @MainActor (Double) -> Void) async throws {
+        guard permissionUser?.canUploadMusic == true, let token = try vault.load(), let scope = try musicScope() else { throw APIError.forbidden("Tu cuenta no puede subir audios.") }
+        struct Plan: Decodable { let offset: Int64; let ready: Bool; let chunkSize: Int }
+        let (data, _) = try await request(path:"api/music/upload",body:.object(["action":.string("start"),"id":.string(file.id),"section":.string(section.rawValue),"filename":.string(file.name),"size":.number(Double(file.size))]))
+        var plan = try decoder.decode(Plan.self, from:data)
+        guard plan.chunkSize == 8*1024*1024 else { throw APIError.invalid("Actualiza la app antes de subir audio.") }
+        let input = try FileHandle(forReadingFrom:file.url); defer {try? input.close()}
+        while !plan.ready && plan.offset < file.size {
+            try Task.checkCancellation()
+            guard token == (try vault.load()), permissionUser?.canUploadMusic == true else {throw CancellationError()}
+            try input.seek(toOffset: UInt64(plan.offset))
+            guard let bytes = try input.read(upToCount:plan.chunkSize), !bytes.isEmpty else {throw APIError.invalid("El audio está incompleto.")}
+            var req = URLRequest(url:resourceURL(path:"api/music/upload",query:[URLQueryItem(name:"id",value:file.id),URLQueryItem(name:"offset",value:String(plan.offset))]))
+            req.httpMethod="PUT";req.httpShouldHandleCookies=false;req.setValue("\(cookieName)=\(token)",forHTTPHeaderField:"Cookie");req.setValue(origin,forHTTPHeaderField:"Origin");req.setValue("application/octet-stream",forHTTPHeaderField:"Content-Type")
+            let (reply, raw) = try await mediaSession.upload(for:req,from:bytes)
+            guard token == (try vault.load()),scope.id == (try musicScope())?.id,permissionUser?.canUploadMusic == true else {throw CancellationError()}
+            guard let response=raw as? HTTPURLResponse else {throw APIError.message("No se recibió una respuesta.")}
+            if response.statusCode == 401 {try clearSession();throw APIError.unauthorized}
+            guard response.statusCode == 200 else {throw APIError.message((try? decoder.decode(JSONValue.self,from:reply))?["error"].text ?? "No se pudo subir el bloque. Reintenta la subida.")}
+            let updated=try decoder.decode(Plan.self,from:reply)
+            guard updated.offset > plan.offset,updated.offset <= file.size else {throw APIError.invalid("El progreso de la subida no es válido.")}
+            plan=updated;progress(Double(plan.offset)/Double(file.size))
+        }
+        if !plan.ready {_ = try await request(path:"api/music/upload",body:.object(["action":.string("complete"),"id":.string(file.id)]))}
+        progress(1)
+    }
 }

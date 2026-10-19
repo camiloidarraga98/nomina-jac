@@ -14,6 +14,7 @@ export async function POST(req:Request){const user=await payrollUser();if(!user?
  const accountSettings=(row?:UserRow)=>{
   const administrator=input.administrator??(row?JSON.parse(row.permissions).includes(ADMINISTRATOR_ROLE):false),sections=input.sections===undefined?(row?storedSections(row):undefined):[...new Set(input.sections)];
   if(sections?.includes('mediaUpload')&&!sections.includes('media'))throw new UserSettingsFailure('La subida de fotos requiere acceso a Fotografía.');
+  if(sections?.includes('musicUpload')&&!sections.includes('music'))throw new UserSettingsFailure('La subida de audios requiere acceso a Música.');
   if(sections?.includes('crm')&&!administrator)throw new UserSettingsFailure('El CRM solo está disponible para administradores.');
   const legacyLimited=input.itinerariesOnly??row?.itineraries_only===1,legacyMedia=input.mediaOnly??row?.media_only===1;
   if(sections===undefined&&administrator&&(legacyLimited||legacyMedia))throw new UserSettingsFailure('La administración total no puede combinarse con una cuenta limitada.');

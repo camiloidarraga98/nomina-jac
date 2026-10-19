@@ -229,6 +229,12 @@ private final class FixtureProtocol: URLProtocol {
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         let viewer = reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
         let visible = ([itinerary] + boardingFixtures + alerts).map { overrides[$0["id"].text] ?? $0 }.filter { !(ProcessInfo.processInfo.arguments.contains("--uitest-boarding-tomorrow") && ["boarding-fixture-0","boarding-fixture-1"].contains($0["id"].text)) && !deletedNotices.contains($0["id"].text) && ($0["kind"].text != "boarding_pass" || $0["recipients"].elements.contains(.string(viewer))) }
+        if parts.path == "/api/music" {
+            let sections = ["warmup", "tracks", "demos", "studio"]
+            let names = ["Calentamiento vocal", "Árbol", "Maqueta nueva", "Sesión estudio"]
+            let tracks = sections.enumerated().map { index, section in JSONValue.object(["id":.string("00000000-0000-4000-8000-00000000000\(index)"),"section":.string(section),"title":.string(names[index]),"filename":.string(names[index]+".wav"),"mimeType":.string("audio/wav"),"size":.number(128),"revision":.string("fixture-music-revision"),"createdAt":.string("2026-10-19T12:00:00Z")]) }
+            return (200, .object(["tracks":.array(tracks),"canUpload":.bool(user["isOwner"].flag || user["sections"].elements.contains(.string("musicUpload"))),"canDelete":user["isOwner"]]))
+        }
         if parts.path == "/api/media/playback" { return (200,.object(["ready":.bool(true),"url":.string("https://ui-fixture.example.invalid/api/media/playback?lease=fixture&asset=manifest/video.m3u8")])) }
         if parts.path == "/api/media" || parts.path == "/api/media/upload" || parts.path == "/api/media/shares" { return try MediaFixture.response(request) }
         if parts.path == "/api/crm" {return try CRMFixture.response(request,reader:reader)}

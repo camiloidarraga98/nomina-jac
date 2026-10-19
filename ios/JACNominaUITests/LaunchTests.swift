@@ -5,6 +5,21 @@ final class LaunchTests: XCTestCase {
     @MainActor private func waitFor(_ element: XCUIElement, predicate: NSPredicate, timeout: TimeInterval) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: timeout) == .completed
     }
+    @MainActor func testMusicSectionsAndGlobalSearchRespectListeningPermission() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=music"];app.launch()
+        XCTAssertTrue(app.buttons["music.section.warmup"].waitForExistence(timeout:20))
+        for section in ["tracks","demos","studio"] {XCTAssertTrue(app.buttons["music.section."+section].exists)}
+        XCTAssertFalse(app.buttons["music.import"].exists)
+        app.swipeDown();let search=app.searchFields.firstMatch;XCTAssertTrue(search.waitForExistence(timeout:5));search.tap();search.typeText("arbol")
+        XCTAssertTrue(app.buttons["music.track.00000000-0000-4000-8000-000000000001"].waitForExistence(timeout:5))
+        XCTAssertFalse(app.buttons["music.track.00000000-0000-4000-8000-000000000000"].exists)
+    }
+    @MainActor func testMusicSectionSearchAndUploaderControls() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=music,musicUpload"];app.launch()
+        XCTAssertTrue(app.buttons["music.import"].waitForExistence(timeout:20));tap(app,"music.section.tracks")
+        XCTAssertTrue(app.buttons["music.download.section"].waitForExistence(timeout:5));XCTAssertTrue(app.buttons["music.track.00000000-0000-4000-8000-000000000001"].exists)
+        XCTAssertFalse(app.buttons["music.track.00000000-0000-4000-8000-000000000002"].exists)
+    }
     @MainActor func testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-payroll", "--uitest-reader", "--uitest-sections=media,mediaUpload"]

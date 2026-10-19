@@ -23,7 +23,7 @@ struct AccountView: View {
                     LabeledContent("Correo", value: user.email).textSelection(.enabled)
                     if !store.isAgendaOnly { NavigationLink { ChangePasswordView() } label:{ Label("Cambiar contraseña",systemImage:"key") }.disabled(store.isOffline).accessibilityLabel("Cambiar contraseña") }
                 }
-                Section("Secciones de tu cuenta") { ForEach(JACSection.allCases.filter { user.hasSection($0) && $0 != .mediaUpload },id:\.self) { Text($0.title) } }
+                Section("Secciones de tu cuenta") { ForEach(JACSection.allCases.filter { user.hasSection($0) && $0 != .mediaUpload && $0 != .musicUpload },id:\.self) { Text($0.title) } }
                 if user.canReadMedia { Section("Fotografía") {
                     Label(user.canUploadMedia ? "Consultar, crear carpetas y subir fotos o videos" : "Consultar fotos y videos", systemImage: "photo.on.rectangle.angled")
                 } }

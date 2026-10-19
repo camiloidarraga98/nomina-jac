@@ -81,11 +81,11 @@ import AppKit
     func applicationShouldTerminateAfterLastWindowClosed(_ sender:NSApplication)->Bool{false}
 }
 enum MacSection:String,CaseIterable,Identifiable {
-    case payroll,agenda,itineraries,account,management,crm,alerts,media
+    case payroll,agenda,itineraries,account,management,crm,alerts,media,music
     var id:String{rawValue}
-    var title:String{switch self {case .payroll:"Quincena";case .agenda:"Agenda";case .itineraries:"Itinerarios";case .account:"Mi cuenta";case .management:"Configuración";case .crm:"CRM";case .alerts:"Alertas";case .media:"Fotografía"}}
-    var icon:String{switch self {case .payroll:"wallet.pass";case .agenda:"calendar.badge.clock";case .itineraries:"airplane";case .account:"person.crop.circle";case .management:"slider.horizontal.3";case .crm:"briefcase";case .alerts:"bell.badge";case .media:"photo.on.rectangle.angled"}}
-    static let primary: [MacSection] = [.crm, .payroll, .agenda, .itineraries, .alerts, .media]
+    var title:String{switch self {case .payroll:"Quincena";case .agenda:"Agenda";case .itineraries:"Itinerarios";case .account:"Mi cuenta";case .management:"Configuración";case .crm:"CRM";case .alerts:"Alertas";case .media:"Fotografía";case .music:"Música"}}
+    var icon:String{switch self {case .payroll:"wallet.pass";case .agenda:"calendar.badge.clock";case .itineraries:"airplane";case .account:"person.crop.circle";case .management:"slider.horizontal.3";case .crm:"briefcase";case .alerts:"bell.badge";case .media:"photo.on.rectangle.angled";case .music:"music.note.list"}}
+    static let primary: [MacSection] = [.crm, .payroll, .agenda, .itineraries, .alerts, .media, .music]
     static let personal: [MacSection] = [.management]
     static func sidebar(for user:PayrollUser)->[MacSection] { (primary+personal).filter{$0.allowed(user)} }
     func allowed(_ user:PayrollUser)->Bool {
@@ -95,6 +95,7 @@ enum MacSection:String,CaseIterable,Identifiable {
         case .itineraries:return user.hasSection(.itineraries) || user.hasSection(.boarding)
         case .crm:return user.hasSection(.crm)
         case .media:return user.canReadMedia
+        case .music:return user.canReadMusic
         case .alerts:return user.hasSection(.alerts)
         case .management:return true
         case .account:return true
@@ -133,7 +134,7 @@ private struct MacWorkspace:View {
             }.navigationSplitViewColumnWidth(min:210,ideal:235,max:290)
         } detail: {
             Group {
-                if store.isAgendaOnly && selected != .agenda && selected != .account && selected != .management {
+                if store.isAgendaOnly && selected != .agenda && selected != .account && selected != .management && selected != .music {
                     VStack(spacing:16) {
                         ContentUnavailableView("Esta sección todavía no está descargada",systemImage:"wifi.slash",description:Text("Puedes consultar tu Agenda guardada. Conéctate para descargar el resto de JAC."))
                         Button("Reintentar conexión"){Task{try? await store.refresh()}}.buttonStyle(.borderedProminent)
@@ -146,6 +147,7 @@ private struct MacWorkspace:View {
                     case .account:NavigationStack{AccountView(user:overview.user)}
                     case .management:MacManagementView(user:overview.user)
                     case .crm:NavigationStack{MacCRMHomeView(client:store.client)}
+                    case .music:NavigationStack{MusicLibraryView(user:overview.user)}
                     case .media:NavigationStack{MediaGalleryView(user:overview.user)}
                     case .alerts:NavigationStack{NoticesView(user:overview.user,kind:"alert")}
                     }
@@ -156,7 +158,10 @@ private struct MacWorkspace:View {
                     ToolbarItem { Button {Task{try? await store.refresh()}} label:{Image(systemName:"arrow.clockwise")}.help("Actualizar información (⌘R)").disabled(store.busy) }
                 }
             }
-        }.onAppear{if !section.allowed(overview.user){section = MacSection(rawValue: overview.user.firstDestination) ?? .account}}.onChange(of:overview.user){_,user in if !section.allowed(user){section=MacSection(rawValue:user.firstDestination) ?? .account}}
+        }.safeAreaInset(edge:.bottom,spacing:0){MusicMiniPlayer(player:store.music)}
+            .sheet(item:$store.incomingAudio){incoming in MusicImportView(incoming:incoming,initialSection:.warmup).environmentObject(store)}
+            .onOpenURL{url in store.receiveAudio(url)}
+            .onAppear{if !section.allowed(overview.user){section = MacSection(rawValue: overview.user.firstDestination) ?? .account}}.onChange(of:overview.user){_,user in if !section.allowed(user){section=MacSection(rawValue:user.firstDestination) ?? .account}}
     }
     private func sidebarRow(_ item:MacSection)->some View {
         Label(item.title,systemImage:item.icon).font(.body.weight(.medium)).padding(.vertical,4).tag(item).accessibilityIdentifier("mac.nav."+item.rawValue)

@@ -624,6 +624,7 @@
 				<string>44F8ADBE00EB097112B48675</string>
 				<string>FC9C65BB818A8526B2119F2B</string>
 				<string>F06180F4D846EA22D2A6C324</string>
+				<string>F5CAF8DB58E2BF1BB5384D94</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1395,6 +1396,7 @@
 				<string>610A66E61FDC5568E2E40C42</string>
 				<string>1A49D80084FFD00C7F5517E8</string>
 				<string>8BF729FFE074CAEE622C0292</string>
+				<string>FE0391361237D5E0324B8667</string>
 			</array>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
@@ -1533,6 +1535,24 @@
 			<string>PBXBuildFile</string>
 			<key>fileRef</key>
 			<string>E766B6ED100AD043A0875974</string>
+		</dict>
+		<key>FE0391361237D5E0324B8667</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>../ios/JACNomina/Music.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>F5CAF8DB58E2BF1BB5384D94</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>FE0391361237D5E0324B8667</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

@@ -1,0 +1,7 @@
+import {payrollHeaders} from './payroll-access';
+import {MusicFailure} from './music-core';
+export const musicReply=(body:unknown,status=200)=>Response.json(body,{status,headers:payrollHeaders});
+export function musicError(error:unknown){if(error instanceof MusicFailure)return musicReply({error:error.message},error.status);if(error instanceof SyntaxError)return musicReply({error:'Revisa los datos enviados.'},400);console.error('Music request failed');return musicReply({error:'No se pudo completar la operación de Música. Intenta de nuevo.'},503);}
+export async function musicBytes(req:Request,limit:number){const reader=req.body?.getReader();if(!reader)throw new MusicFailure('La solicitud está vacía.');const chunks:Uint8Array[]=[];let size=0;try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>limit){await reader.cancel();throw new MusicFailure('La solicitud es demasiado grande.',413);}chunks.push(value);}}finally{reader.releaseLock();}const bytes=new Uint8Array(size);let offset=0;for(const b of chunks){bytes.set(b,offset);offset+=b.length;}return bytes;}
+export async function musicJson(req:Request){const value:unknown=JSON.parse(new TextDecoder().decode(await musicBytes(req,16384)));if(!value||typeof value!=='object'||Array.isArray(value))throw new MusicFailure('Revisa los datos enviados.');return value as Record<string,unknown>;}
+export function musicOrigin(req:Request){if(req.headers.get('origin')!==new URL(req.url).origin)throw new MusicFailure('Origen no autorizado.',403);}

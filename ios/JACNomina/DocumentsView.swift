@@ -1883,6 +1883,29 @@ final class MediaOfflineCache: @unchecked Sendable {
         index.previewAccess?.removeValue(forKey:item.id)
         try writeIndex(index,scope:scope)
     }
+    // Explicitly remove a local audio download while allowing it to be saved again.
+    // Server deletion continues to use removeFile and its revocation tombstone.
+    func allowBackgroundAudio(_ scope: AgendaCacheScope) throws {
+        #if os(iOS)
+        lock.lock(); defer { lock.unlock() }
+        guard !revoked.contains(scope.id) else { throw CancellationError() }
+        let attributes: [FileAttributeKey: Any] = [.protectionKey: FileProtectionType.completeUntilFirstUserAuthentication]
+        try FileManager.default.setAttributes(attributes, ofItemAtPath: root.path)
+        try FileManager.default.setAttributes(attributes, ofItemAtPath: folder(scope).path)
+        if let enumerator = FileManager.default.enumerator(at: folder(scope), includingPropertiesForKeys: nil) {
+            for case let url as URL in enumerator { try FileManager.default.setAttributes(attributes, ofItemAtPath: url.path) }
+        }
+        #endif
+    }
+    func forgetLocalFile(_ item: MediaItem, scope: AgendaCacheScope) throws {
+        lock.lock(); defer { lock.unlock() }
+        guard !revoked.contains(scope.id) else { throw CancellationError() }
+        var index = readIndex(scope)
+        index.files.removeValue(forKey: item.id); index.pinnedFiles?.removeValue(forKey: item.id)
+        index.previewAccess?.removeValue(forKey: item.id)
+        try? FileManager.default.removeItem(at: encryptedFile(item, scope: scope))
+        try writeIndex(index, scope: scope)
+    }
     func isDeleted(_ id:String,scope:AgendaCacheScope) -> Bool {
         lock.lock();defer{lock.unlock()};return (readIndex(scope).deletedFiles ?? []).contains(id)
     }
@@ -2017,13 +2040,17 @@ final class MediaOfflineCache: @unchecked Sendable {
         }
         try writeIndex(index, scope: scope)
     }
-    func document(_ item: MediaItem, scope: AgendaCacheScope, accessedAt: TimeInterval = Date().timeIntervalSince1970) throws -> ExportedDocument? {
+    func document(_ item: MediaItem, scope: AgendaCacheScope, accessedAt: TimeInterval = Date().timeIntervalSince1970, backgroundAudio: Bool = false) throws -> ExportedDocument? {
+        var directoryAttributes = JACFileSecurity.directoryAttributes, fileAttributes = JACFileSecurity.fileAttributes
+        #if os(iOS)
+        if backgroundAudio { directoryAttributes[.protectionKey] = FileProtectionType.completeUntilFirstUserAuthentication; fileAttributes[.protectionKey] = FileProtectionType.completeUntilFirstUserAuthentication }
+        #endif
         guard hasFile(item, scope: scope) else { return nil }
-        let id = UUID(), destinationFolder = TemporaryDocuments.root.appendingPathComponent(id.uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        let id = UUID(), destinationFolder = (backgroundAudio ? MusicPlaybackDocuments.root : TemporaryDocuments.root).appendingPathComponent(id.uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: destinationFolder, withIntermediateDirectories: true, attributes: directoryAttributes)
         let destination = destinationFolder.appendingPathComponent(MediaLocalFile.safeName(item.name))
         do {
-            guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes: JACFileSecurity.fileAttributes) else { throw APIError.message("No se pudo abrir la copia guardada.") }
+            guard FileManager.default.createFile(atPath: destination.path, contents: nil, attributes: fileAttributes) else { throw APIError.message("No se pudo abrir la copia guardada.") }
             let input = try FileHandle(forReadingFrom: encryptedFile(item, scope: scope)), output = try FileHandle(forWritingTo: destination)
             defer { try? input.close(); try? output.close() }
             guard try readExactly(input, count: 9) == Data("JACMEDIA1".utf8) else { throw APIError.invalid("La copia no es válida.") }

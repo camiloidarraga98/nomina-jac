@@ -41,7 +41,7 @@ struct JACNominaApp: App {
                 }
             }
             .background(WindowPrivacyShield())
-            .onOpenURL { url in if let share = MediaIncomingShare.parse(url) { incomingShare = share } }
+            .onOpenURL { url in if url.isFileURL { store.receiveAudio(url); return }; if let share = MediaIncomingShare.parse(url) { incomingShare = share } }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                 if let url = activity.webpageURL, let share = MediaIncomingShare.parse(url) { incomingShare = share }
             }

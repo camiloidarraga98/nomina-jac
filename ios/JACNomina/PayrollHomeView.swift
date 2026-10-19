@@ -20,6 +20,8 @@ struct PayrollHomeView: View {
             phoneTabs
             #endif
         }.tint(JACTheme.action)
+            .safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
+            .sheet(item: $store.incomingAudio) { incoming in MusicImportView(incoming: incoming, initialSection: .warmup).environmentObject(store) }
             .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.hasNotices { await push.bind(store.client) } }
             .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.hasNotices { Task { await push.bind(store.client) } } }
             .onChange(of: user) { _, value in selected = value.firstDestination; if !value.hasNotices { push.stop() } }
@@ -35,6 +37,7 @@ struct PayrollHomeView: View {
                 NavigationStack { NoticesView(user: user, kind: "alert") }.tabItem { Label("Alertas", systemImage: "bell.badge") }.tag("alerts")
             }
             if showsMediaTab { NavigationStack { MediaGalleryView(user: user) }.tabItem { Label("Fotografía", systemImage: "photo.on.rectangle.angled") }.tag("media") }
+            if user.canReadMusic { NavigationStack { MusicLibraryView(user: user) }.tabItem { Label("Música", systemImage: "music.note.list") }.tag("music") }
             ManagementView(user:user).tabItem { Label("Gestión",systemImage:"slider.horizontal.3") }.tag("management")
         }
     }
@@ -49,6 +52,7 @@ struct PayrollHomeView: View {
         if user.hasSection(.itineraries) || user.hasSection(.boarding) { items.append(("itineraries", user.hasSection(.itineraries) ? "Itinerarios" : "Pases", "doc.text")) }
         else if user.hasSection(.alerts) { items.append(("alerts", "Alertas", "bell.badge")) }
         if user.canReadMedia { items.append(("media", "Fotografía", "photo.on.rectangle.angled")) }
+        if user.canReadMusic { items.append(("music", "Música", "music.note.list")) }
         items.append(("management", "Gestión", "slider.horizontal.3"))
         return items
     }
@@ -100,6 +104,7 @@ struct PayrollHomeView: View {
             NavigationStack { NoticesView(user: user, kind: user.hasSection(.itineraries) ? "itinerary" : "boarding_pass") }
         case "alerts" where user.hasSection(.alerts): NavigationStack { NoticesView(user: user, kind: "alert") }
         case "media" where user.canReadMedia: NavigationStack { MediaGalleryView(user: user) }
+        case "music" where user.canReadMusic: NavigationStack { MusicLibraryView(user: user) }
         default: ManagementView(user: user)
         }
     }

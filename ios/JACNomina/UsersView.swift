@@ -85,6 +85,8 @@ struct UserEditorView: View {
                             var selected=user.sections ?? user.effectiveSections;selected.removeAll{$0 == section.rawValue}
                             if enabled {selected.append(section.rawValue)}
                             if section == .mediaUpload && enabled && !selected.contains("media") {selected.append("media")}
+                            if section == .musicUpload && enabled && !selected.contains("music") {selected.append("music")}
+                            if section == .music && !enabled {selected.removeAll{$0 == "musicUpload"}}
                             if section == .media && !enabled {selected.removeAll{$0 == "mediaUpload"}}
                             if section == .payroll && !enabled {user.permissions.removeAll{$0 != "administrator"}}
                             user.sections=selected

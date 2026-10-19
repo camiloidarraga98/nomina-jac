@@ -1,0 +1,9 @@
+import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
+import {musicGuard,leaseGuard,readyMusic,musicObject,musicLive} from '@/lib/music-store';
+import {MusicFailure,musicRange} from '@/lib/music-core';
+import {musicError} from '@/lib/music-http';
+export const dynamic='force-dynamic';
+export async function GET(req:Request){try{const q=new URL(req.url).searchParams,id=q.get('id')||'',revision=q.get('revision')||'';let g;if(q.has('lease'))g=await leaseGuard(q.get('lease')!,id,revision);else{const u=await payrollUser();if(!u||u.legacy)throw new MusicFailure('Inicia sesión de nuevo.',401);g=musicGuard(req,u);}const r=await readyMusic(g,id,revision);let range;try{range=musicRange(req.headers.get('range'),r.size);}catch(e){if(e instanceof MusicFailure&&e.status===416)return new Response(null,{status:416,headers:{...payrollHeaders,'Content-Range':'bytes */'+r.size,'Accept-Ranges':'bytes'}});throw e;}
+ const {item,object}=await musicObject(g,id,revision,range);const reader=object.body.getReader();let checked=Date.now();const body=new ReadableStream<Uint8Array>({async pull(controller){try{if(Date.now()-checked>10000){await musicLive(g);checked=Date.now();}const next=await reader.read();if(next.done)controller.close();else controller.enqueue(next.value);}catch(error){await reader.cancel();controller.error(error);}},async cancel(){await reader.cancel();}});
+ return new Response(body,{status:range?206:200,headers:{...payrollHeaders,'Content-Type':item.mimeType,'Content-Length':String(range?.length??item.size),'Accept-Ranges':'bytes','Content-Disposition':(q.get('download')==='1'?'attachment':'inline')+"; filename*=UTF-8''"+encodeURIComponent(item.filename),'Referrer-Policy':'no-referrer',...(range?{'Content-Range':`bytes ${range.offset}-${range.offset+range.length-1}/${item.size}`}:{})}});
+ }catch(e){return musicError(e);}}

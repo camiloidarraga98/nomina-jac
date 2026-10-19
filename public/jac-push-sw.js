@@ -1,8 +1,9 @@
-/* No private documents, sessions or API responses are cached here. */
-const MEDIA_SHELL='jac-media-shell-v1',MEDIA_PUBLIC=['/fotografia-offline.html','/jac-media-offline.js'];
+/* Public shells only; explicit private audio stays encrypted in IndexedDB. */
+importScripts('/jac-music-offline.js');
+const MEDIA_SHELL='jac-media-shell-v2',MEDIA_PUBLIC=['/fotografia-offline.html','/jac-media-offline.js','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js'];
 self.addEventListener('install',event=>{self.skipWaiting();event.waitUntil(caches.open(MEDIA_SHELL).then(cache=>cache.addAll(MEDIA_PUBLIC.map(path=>new Request(path,{credentials:'omit',cache:'reload'})))));});
 self.addEventListener('activate',event=>event.waitUntil(self.clients.claim()));
-self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(event.request.method==='GET'&&url.origin===self.location.origin&&MEDIA_PUBLIC.includes(url.pathname)&&!url.search)event.respondWith(fetch(event.request).catch(async()=>{const cached=await caches.match(url.pathname,{cacheName:MEDIA_SHELL});return cached||Response.error();}));});
+self.addEventListener('fetch',event=>{const url=new URL(event.request.url);if(event.request.method==='GET'&&url.origin===self.location.origin&&url.pathname.startsWith('/__jac_music_offline/')){event.respondWith(self.JACMusicOffline.response(event.request));return;}if(event.request.method==='GET'&&url.origin===self.location.origin&&MEDIA_PUBLIC.includes(url.pathname)&&!url.search)event.respondWith(fetch(event.request).catch(async()=>{const cached=await caches.match(url.pathname,{cacheName:MEDIA_SHELL});return cached||Response.error();}));});
 self.addEventListener('push',event=>{
  let data;try{data=event.data.json();}catch{return;}
  if(!data||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(data.id))return;

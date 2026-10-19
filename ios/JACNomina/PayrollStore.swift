@@ -23,9 +23,13 @@ final class PayrollStore: ObservableObject {
     private var prefetchedMediaScope: String?
     var isOffline: Bool { offlineMode || isAgendaOnly }
     var cacheRevision: Int { client.cacheRevision }
+    private var musicPlayer: MusicPlayer?
+    var music: MusicPlayer { if let musicPlayer { return musicPlayer }; let value = MusicPlayer(client: client); musicPlayer = value; return value }
+    @Published var incomingAudio: MusicIncomingAudio?
     let client: PayrollClient
 
     init(client: PayrollClient? = nil) {
+        MusicPlaybackDocuments.clear()
         let client = client ?? PayrollClient(); self.client = client
         hasSavedSession = (try? client.hasSession()) == true
         checkingConnection = hasSavedSession
@@ -36,6 +40,8 @@ final class PayrollStore: ObservableObject {
         }
         client.onSessionInvalidated = { [weak self] in
             guard let self else { return }
+            self.musicPlayer?.stop()
+            self.incomingAudio?.files.forEach { $0.remove() }; self.incomingAudio = nil
             self.cancelAutomaticReads()
             self.revokeMediaUploads()
             self.forgetAgenda(); self.overview = nil; self.workspace = nil; self.pending = nil; self.notice = nil; self.hasSavedSession = false
@@ -55,6 +61,18 @@ final class PayrollStore: ObservableObject {
             Task { await self.resumeMediaUploads() }
         }
         #endif
+    }
+    func receiveAudio(_ url: URL) {
+        guard url.isFileURL else { return }
+        if let user = overview?.user, !user.canUploadMusic { error = "Tu cuenta no puede subir audios a Música."; return }
+        Task {
+            do {
+                let file = try await Task.detached(priority: .userInitiated) { try MusicImportFile.copy(url) }.value
+                if let user = overview?.user, !user.canUploadMusic { file.remove(); return }
+                incomingAudio?.files.forEach { $0.remove() }
+                incomingAudio = MusicIncomingAudio(files: [file])
+            } catch { self.error = error.localizedDescription }
+        }
     }
     var isAgendaOnly: Bool { overview != nil && workspace == nil }
     func cachedAgenda(month: String, userID: String) -> SavedAgenda? {
@@ -182,6 +200,7 @@ final class PayrollStore: ObservableObject {
         if let savedAgenda, savedAgenda.user != result.user || !result.user.hasSection(.calendar) { forgetAgenda() }
         if let previous = overview?.user, previous != result.user { revokeMediaUploads() }
         if !result.user.canUploadMedia { revokeMediaUploads() }
+        if !result.user.canReadMusic { musicPlayer?.stop() }
         workspace = result; overview = result.overview; hasSavedSession = true; client.rememberWorkspace(result)
         #if os(iOS)
         if !Self.isUnitTestHost { Task { await self.resumeMediaUploads() } }
@@ -189,6 +208,8 @@ final class PayrollStore: ObservableObject {
         return true
     }
     func signOut() async {
+        musicPlayer?.stop()
+        incomingAudio?.files.forEach { $0.remove() }; incomingAudio = nil
         cancelAutomaticReads()
         revokeMediaUploads()
         JACNotifications.shared.stop()
@@ -202,7 +223,7 @@ final class PayrollStore: ObservableObject {
     }
     func report(_ failure: Error) {
         if failure is CancellationError { return }
-        if let apiError = failure as? APIError, case .unauthorized = apiError { revokeMediaUploads(); forgetAgenda(); overview = nil; workspace = nil; pending = nil; notice = nil; TemporaryDocuments.clear() }
+        if let apiError = failure as? APIError, case .unauthorized = apiError { musicPlayer?.stop(); revokeMediaUploads(); forgetAgenda(); overview = nil; workspace = nil; pending = nil; notice = nil; TemporaryDocuments.clear() }
         if let apiError = failure as? APIError, case .forbidden = apiError, isAgendaOnly { forgetAgenda(); overview = nil }
         error = failure.localizedDescription
     }

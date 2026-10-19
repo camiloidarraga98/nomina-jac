@@ -168,6 +168,7 @@ private final class MediaVideoExportOperation: @unchecked Sendable {
 @MainActor
 enum MediaVideoAudioPlayback {
     static func activate() throws {
+        NotificationCenter.default.post(name: Notification.Name("JACVideoPlaybackBegan"), object: nil)
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.playback, mode: .moviePlayback)
         try session.setActive(true)

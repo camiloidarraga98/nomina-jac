@@ -2741,3 +2741,47 @@ extension PayrollClientTests {
         }
     }
 }
+
+
+extension PayrollClientTests {
+    func testMusicPermissionsDoNotGrantOtherSectionsAndUploadsRequireListening() {
+        var user=PayrollUser(id:"music",email:"music@example.invalid",username:"music",displayName:"Música ficticia",isOwner:false,permissions:[],sections:["music"])
+        XCTAssertTrue(user.canReadMusic);XCTAssertFalse(user.canUploadMusic);XCTAssertFalse(user.canReadMedia);XCTAssertFalse(user.hasSection(.payroll));XCTAssertEqual(user.firstDestination,"music")
+        user.sections=["musicUpload"];XCTAssertFalse(user.canUploadMusic)
+        user.sections=["music","musicUpload"];XCTAssertTrue(user.canUploadMusic)
+        user.sections=nil;XCTAssertFalse(user.canReadMusic)
+    }
+    @MainActor func testMusicPlaybackAuthorizationSurvivesLockAndIsRemovedWithSession() async throws {
+        let fixture=UITestBackend.client(),workspace=try await fixture.workspace()
+        let vault=MemorySession();vault.token=token;let client=makeClient(vault);client.rememberWorkspace(workspace)
+        let track=MusicTrack(id:UUID().uuidString.lowercased(),section:.tracks,title:"Pista ficticia",filename:"Pista.wav",mimeType:"audio/wav",size:128,revision:"r1",createdAt:"2026-10-19")
+        MockProtocol.handler={ request in
+            XCTAssertEqual(request.url?.path,"/api/music");XCTAssertEqual(request.value(forHTTPHeaderField:"Cookie"),"__Host-jac_session="+self.token)
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,Data("{\"url\":\"/api/music/file?id=fixture&lease=encrypted-fixture\"}".utf8))
+        }
+        try client.beginMusicPlayback();let scope=try XCTUnwrap(client.musicScope());vault.locked=true
+        let result=try await client.musicPlayback(track);XCTAssertEqual(result.0.host,client.baseURL.host);XCTAssertNil(result.1);XCTAssertEqual(try client.musicScope()?.id,scope.id)
+        vault.locked=false;try client.clearSession()
+        do{_ = try await client.musicPlayback(track);XCTFail("Playback must stop after logout")}catch{}
+        XCTAssertNil(try client.musicScope())
+    }
+    @MainActor func testMusicOfflineAudioIsEncryptedRevisionBoundAndCanBeDownloadedAgain() async throws {
+        let fixture=UITestBackend.client(),workspace=try await fixture.workspace();let vault=MemorySession();vault.token=token;let client=makeClient(vault);client.rememberWorkspace(workspace)
+        let track=MusicTrack(id:UUID().uuidString.lowercased(),section:.warmup,title:"Vocalización",filename:"Voz.wav",mimeType:"audio/wav",size:128,revision:"r1",createdAt:"2026-10-19")
+        let source=try TemporaryDocuments.save(Data(repeating:72,count:128),filename:"Voz.wav"),scope=try XCTUnwrap(client.musicScope())
+        try client.musicOffline.saveFile(source.url,item:track.mediaItem,scope:scope);try client.musicOffline.pinFile(track.mediaItem,scope:scope)
+        XCTAssertTrue(client.musicHasDownload(track));let encrypted=try Data(contentsOf:client.musicOffline.encryptedFile(track.mediaItem,scope:scope));XCTAssertNil(encrypted.range(of:Data(repeating:72,count:64)))
+        let opened=try XCTUnwrap(client.musicOffline.document(track.mediaItem,scope:scope,backgroundAudio:true));XCTAssertEqual(try Data(contentsOf:opened.url),Data(repeating:72,count:128));MusicPlaybackDocuments.remove(opened)
+        let changed=MusicTrack(id:track.id,section:track.section,title:track.title,filename:track.filename,mimeType:track.mimeType,size:track.size,revision:"r2",createdAt:track.createdAt);XCTAssertFalse(client.musicHasDownload(changed))
+        try client.forgetMusic(track);XCTAssertFalse(client.musicHasDownload(track));try client.musicOffline.saveFile(source.url,item:track.mediaItem,scope:scope);try client.musicOffline.pinFile(track.mediaItem,scope:scope);XCTAssertTrue(client.musicHasDownload(track))
+        try client.clearSession();XCTAssertFalse(FileManager.default.fileExists(atPath:client.musicOffline.encryptedFile(track.mediaItem,scope:scope).path));TemporaryDocuments.remove(source)
+    }
+    func testMusicAlphabeticalSearchAndFileImportPreserveTheSource() throws {
+        let ids=["b","a","c"],names=["Árbol 10","arbol 2","Zorro"]
+        let tracks=zip(ids,names).map{MusicTrack(id:$0.0,section:.tracks,title:$0.1,filename:"Prueba.wav",mimeType:"audio/wav",size:128,revision:"r1",createdAt:"2026-10-19")}
+        XCTAssertEqual(MusicTrack.sorted(tracks).map(\.title),["arbol 2","Árbol 10","Zorro"]);XCTAssertTrue(tracks[0].matches("arbol"))
+        let source=try TemporaryDocuments.save(Data(repeating:3,count:128),filename:"Audio recibido.wav");defer{TemporaryDocuments.remove(source)}
+        let file=try MusicImportFile.copy(source.url);defer{file.remove()};XCTAssertNotEqual(file.url,source.url);XCTAssertEqual(file.name,"Audio recibido.wav");XCTAssertEqual(file.size,128);XCTAssertTrue(FileManager.default.fileExists(atPath:source.url.path))
+        XCTAssertThrowsError(try MusicImportFile.copy(URL(string:"https://untrusted.example.invalid/Audio.wav")!))
+    }
+}

@@ -2,7 +2,7 @@ import {processMediaPresentations} from '../lib/media-stream';
 import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
-const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/file.svg','/globe.svg','/window.svg']);
+const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js','/file.svg','/globe.svg','/window.svg']);
 
 export default {
   async scheduled(_controller:unknown,env:DeploymentEnv){if(env.JAC_READY==='1')await processMediaPresentations();},
