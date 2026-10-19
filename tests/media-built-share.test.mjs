@@ -20,6 +20,10 @@ test('built Worker serves AASA and a private anonymous page, and rejects an unkn
   // No Stream secret is provided: the real scheduled entry point must return
   // without creating tables, copying media or contacting an external service.
   const scheduled=await mf.dispatchFetch('https://built-share.invalid/cdn-cgi/handler/scheduled?cron='+encodeURIComponent('* * * * *'));assert.equal(scheduled.status,200);
+  // The readiness switch must also pause scheduled paid work, even when its
+  // secret is configured. This database intentionally has no user tables.
+  const paused=new Miniflare({unsafeTriggerHandlers:true,modules:[entry,...paths].map(path=>({type:'ESModule',path})),modulesRoot:root,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],d1Databases:{DB:'fixture-paused-media'},bindings:{JAC_READY:'0',JAC_STREAM_API_TOKEN:'fixture-paused-only'},outboundService:()=>{throw new Error('Paused Worker must not contact Stream');}});
+  try{assert.equal((await paused.dispatchFetch('https://paused-share.invalid/cdn-cgi/handler/scheduled')).status,200);}finally{await paused.dispose();}
   const zip=await mf.dispatchFetch('https://built-share.invalid/api/media/shared/download',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:'a'.repeat(43),mode:'all'}).toString()});assert.equal(zip.status,410);assert.match(zip.headers.get('content-type'),/text\/html/);assert.equal(zip.headers.get('content-disposition'),null);assert.match(await zip.text(),/No se pudo descargar/);
  }finally{await mf.dispose();}
 });

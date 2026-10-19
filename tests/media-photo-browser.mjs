@@ -54,6 +54,7 @@ try{
  await page.getByRole('button',{name:'Abrir Uno.png',exact:true}).click();await until(()=>page.locator('.media-preview-stage img').evaluate(image=>image.complete&&image.naturalWidth>0));
  assert.ok(requests.some(url=>url.includes('preview=1')));assert.ok(!requests.some(value=>{const url=new URL(value,base);return url.pathname==='/api/media/file'&&!url.searchParams.has('thumbnail')&&!url.searchParams.has('preview')&&!url.searchParams.has('metadata');}));
  assert.equal(await page.locator('.media-file-caption').first().evaluate(element=>getComputedStyle(element).display),'none');
+ assert.ok(await page.locator('.media-file-entry').first().evaluate(entry=>{const card=entry.querySelector('.media-file-card').getBoundingClientRect(),menu=entry.querySelector('summary').getBoundingClientRect();return menu.top>=card.top&&menu.bottom<=card.bottom&&entry.getBoundingClientRect().height<=card.height+1;}),'The options control stays over the image without a white strip below.');
  await page.keyboard.press('Escape');
 
  await page.getByLabel('Opciones de Uno.png',{exact:true}).click();

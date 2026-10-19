@@ -850,7 +850,7 @@ struct MediaGalleryView: View {
                                 VStack(alignment:.leading,spacing:0) {
                                     Button { open(item) } label: { MediaTile(item: item, client: store.client, offline: store.isOffline, opening: opening == item.id, epoch:thumbnailEpoch, denied:thumbnailDenied) }
                                         .buttonStyle(.plain).disabled(uploading || opening != nil).accessibilityIdentifier("media.item." + item.id)
-                                    if item.kind == "image" || item.kind == "video" {HStack{Spacer();MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true)}.padding(8)}
+                                        .overlay(alignment: .topTrailing) { if item.kind == "image" || item.kind == "video" { MediaPhotoMenu(item:item,client:store.client,canDelete:user.canDeleteMedia && feed?.canDelete == true).padding(6) } }
                                     if item.kind == "folder" {
                                         HStack {Text("Carpeta del equipo").font(.caption).foregroundStyle(.secondary);Spacer(minLength:6)
                                             Menu {folderCommands(MediaFolder(id:item.id,name:item.name))} label:{Image(systemName:"ellipsis.circle").font(.title3).padding(4)}.buttonStyle(.plain).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.options."+item.id)
