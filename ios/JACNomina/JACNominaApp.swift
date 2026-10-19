@@ -19,6 +19,7 @@ struct JACNominaApp: App {
     @UIApplicationDelegateAdaptor(JACPushDelegate.self) private var pushDelegate
     @StateObject private var store = JACNominaApp.makeStore()
     @StateObject private var connectivity = AgendaConnectivity()
+    @State private var incomingShare: MediaIncomingShare?
     @Environment(\.scenePhase) private var scenePhase
     init() { JACTheme.configure() }
 
@@ -40,6 +41,11 @@ struct JACNominaApp: App {
                 }
             }
             .background(WindowPrivacyShield())
+            .onOpenURL { url in if let share = MediaIncomingShare.parse(url) { incomingShare = share } }
+            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                if let url = activity.webpageURL, let share = MediaIncomingShare.parse(url) { incomingShare = share }
+            }
+            .sheet(item: $incomingShare) { share in MediaSharedFolderBrowser(share: share).id(share.id) }
             .task {
                 guard !Self.isUnitTestHost else { return }
                 await store.restore()

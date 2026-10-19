@@ -33,7 +33,7 @@ enum MediaVideoPreparation {
         guard MediaStorageReview.freeBytes > file.size + 64 * 1024 * 1024 else {
             throw APIError.invalid("No hay espacio suficiente para preparar otra copia.")
         }
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality),
+        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality),
               session.supportedFileTypes.contains(.mp4) else {
             throw APIError.invalid("El iPhone no puede convertir este formato a MP4.")
         }
@@ -51,21 +51,23 @@ enum MediaVideoPreparation {
         session.outputFileType = .mp4
         session.shouldOptimizeForNetworkUse = true
         session.canPerformMultiplePassesOverSourceMediaData = true
-        // Mandatory SDR output: tone-map HDR and flatten alpha rather than
-        // bypassing compression. Medium quality favors smaller uploads.
+        // Keep source dimensions/cadence. The old medium preset plus 1280/30
+        // caps could discard most of the picture before bitrate was considered.
         let duration = try await asset.load(.duration)
         let naturalSize = try await video.load(.naturalSize)
         let transform = try await video.load(.preferredTransform)
         let bounds = CGRect(origin: .zero, size: naturalSize).applying(transform)
-        guard duration.seconds.isFinite, duration.seconds > 0, bounds.width > 0, bounds.height > 0 else {
+        guard duration.seconds.isFinite, duration.seconds > 0, bounds.width.isFinite, bounds.height.isFinite,
+              bounds.width > 0, bounds.height > 0 else {
             throw APIError.invalid("El video no contiene una duración o imagen válidas.")
         }
-        let scale = min(1, 1280 / max(bounds.width, bounds.height))
-        let renderSize = CGSize(width: max(2, floor(bounds.width * scale / 2) * 2), height: max(2, floor(bounds.height * scale / 2) * 2))
+        let renderSize = CGSize(width: max(2, floor(bounds.width / 2) * 2), height: max(2, floor(bounds.height / 2) * 2))
         let composition = AVMutableVideoComposition()
         composition.renderSize = renderSize
         let sourceRate = try await video.load(.nominalFrameRate)
-        let rate = min(30, max(1, Double(sourceRate)))
+        let minimumFrameDuration = try await video.load(.minFrameDuration).seconds
+        let rate = sourceRate.isFinite && sourceRate > 0 ? Double(sourceRate) :
+            (minimumFrameDuration.isFinite && minimumFrameDuration > 0 ? 1 / minimumFrameDuration : 30)
         composition.frameDuration = CMTime(seconds: 1 / rate, preferredTimescale: 60000)
         composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
         composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
@@ -79,6 +81,23 @@ enum MediaVideoPreparation {
         instruction.layerInstructions = [layer]
         composition.instructions = [instruction]
         session.videoComposition = composition
+        // Aim for 30% less, without forcing a bitrate below a quality floor.
+        // H.264 needs more bits than HEVC at equal detail, especially for HDR
+        // converted to SDR. Already efficient/small sources may save less.
+        let formats = try await video.load(.formatDescriptions)
+        let hevc = formats.contains { CMFormatDescriptionGetMediaSubType($0) == kCMVideoCodecType_HEVC }
+        let videoRate = Double(try await video.load(.estimatedDataRate))
+        var audioRate = 0.0
+        for track in audio { audioRate += max(192_000, Double(try await track.load(.estimatedDataRate))) }
+        let qualityRate = min(videoRate > 0 ? videoRate * (hevc ? 1.5 : 1) : .greatestFiniteMagnitude,
+                              Double(renderSize.width * renderSize.height) * rate * 0.12)
+        let qualityBudget = (qualityRate + audioRate) * duration.seconds / 8 + 64 * 1024
+        let budget = max(Double(file.size) * 0.70, qualityBudget, 256 * 1024).rounded(.up)
+        guard budget.isFinite, budget < Double(Int64.max - 64 * 1024 * 1024),
+              Double(MediaStorageReview.freeBytes) > budget + 64 * 1024 * 1024 else {
+            throw APIError.invalid("No hay espacio suficiente para preparar este video conservando su calidad.")
+        }
+        session.fileLengthLimit = Int64(budget)
         let operation = MediaVideoExportOperation(session)
         await withTaskCancellationHandler {
             if !Task.isCancelled { await session.export() }
@@ -91,14 +110,14 @@ enum MediaVideoPreparation {
         let output = AVURLAsset(url: url)
         let outputVideos = try await output.loadTracks(withMediaType: .video)
         let outputAudio = try await output.loadTracks(withMediaType: .audio)
-        guard outputVideos.count == 1, (audio.isEmpty || !outputAudio.isEmpty), let outputVideo = outputVideos.first else {
+        guard outputVideos.count == 1, outputAudio.count == audio.count, let outputVideo = outputVideos.first else {
             throw APIError.invalid("No se pudieron conservar todas las pistas.")
         }
         let descriptions = try await outputVideo.load(.formatDescriptions)
         guard descriptions.allSatisfy({ CMFormatDescriptionGetMediaSubType($0) == kCMVideoCodecType_H264 }), !descriptions.isEmpty else {
             throw APIError.invalid("No se obtuvo un video H.264 compatible con la web.")
         }
-        if let track = outputAudio.first {
+        for track in outputAudio {
             let formats = try await track.load(.formatDescriptions)
             guard !formats.isEmpty, formats.allSatisfy({ CMFormatDescriptionGetMediaSubType($0) == kAudioFormatMPEG4AAC }) else {
                 throw APIError.invalid("No se obtuvo audio AAC compatible con la web.")
@@ -107,7 +126,8 @@ enum MediaVideoPreparation {
         let outputSize = try await displaySize(outputVideo)
         let outputRate = try await outputVideo.load(.nominalFrameRate)
         let outputDuration = try await output.load(.duration).seconds
-        guard max(outputSize.width, outputSize.height) <= 1280, outputRate > 0, outputRate <= 30.1,
+        guard abs(outputSize.width - renderSize.width) <= 2, abs(outputSize.height - renderSize.height) <= 2,
+              outputRate > 0, abs(Double(outputRate) - rate) <= max(0.1, rate * 0.01),
               outputDuration.isFinite, abs(duration.seconds - outputDuration) <= max(0.2, 1 / rate) else {
             throw APIError.invalid("No se pudo completar una copia comprimida válida del video.")
         }
@@ -132,11 +152,27 @@ private final class MediaVideoExportOperation: @unchecked Sendable {
     func cancel() { session.cancelExport() }
 }
 
+// The default ambient audio session obeys the iPhone's silent switch. Explicit
+// video playback should behave like a media player and release other audio on close.
+@MainActor
+enum MediaVideoAudioPlayback {
+    static func activate() throws {
+        let session = AVAudioSession.sharedInstance()
+        try session.setCategory(.playback, mode: .moviePlayback)
+        try session.setActive(true)
+    }
+    static func deactivate() {
+        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+    }
+}
+
 private struct MediaComposerVideoPreview: View {
     @State private var player: AVPlayer
     init(url: URL) { _player = State(initialValue: AVPlayer(url: url)) }
     var body: some View {
-        VideoPlayer(player: player).onDisappear { player.pause() }
+        VideoPlayer(player: player)
+            .onAppear { try? MediaVideoAudioPlayback.activate() }
+            .onDisappear { player.pause(); MediaVideoAudioPlayback.deactivate() }
     }
 }
 
@@ -176,7 +212,7 @@ struct MediaSimpleUploadComposer: View {
                     VStack(alignment: .leading, spacing: 14) {
                         Label("Los videos se comprimen siempre", systemImage: "video.fill")
                             .font(.subheadline.weight(.semibold)).accessibilityIdentifier("media.video.required")
-                        Text("Se preparan como MP4 para reducir el peso, también si tienen HDR. Puede bajar la resolución, la fluidez o cambiar el color. Tu original queda intacto en Fotos o Archivos.")
+                        Text("Buscamos reducir el peso alrededor de un 30%, conservando resolución, fluidez y sonido. El ahorro depende del video; los HDR se convierten a SDR para la web. Tu original queda intacto en Fotos o Archivos.")
                             .font(.caption).foregroundStyle(.secondary)
                         HStack(spacing: 12) {
                             PhotosPicker(selection: $draft.selectedPhotos, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current) {

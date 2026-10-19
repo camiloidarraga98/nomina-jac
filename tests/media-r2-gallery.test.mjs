@@ -21,7 +21,7 @@ class Query {
 }
 globalThis.__r2Fixture={DB:{prepare:text=>new Query(text),batch:async queries=>{sql.exec('BEGIN');try{const out=queries.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'separate-r2-fixture-auth-key-2026',PAYROLL_MAIL_KEY:Buffer.alloc(32,9).toString('base64url')};
 globalThis.__r2Headers=new Headers();
-const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as offline from './app/api/media/offline/route';export * as uploads from './app/api/media/upload/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
+const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as offline from './app/api/media/offline/route';export * as uploads from './app/api/media/upload/route';export * as shares from './app/api/media/shares/route';export * as shared from './app/api/media/shared/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/r2-fixture-')),file=dir+'/fixture.mjs';await writeFile(file,bundled.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const ownerID=await m.bootstrapOwner('independent-new-gallery-owner','fixture'),photographer=crypto.randomUUID(),stamp=new Date().toISOString();
 sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,media_only,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(photographer,'new-photo','photo@example.invalid','Fotógrafo ficticio','fixture','[]',1,stamp,stamp);
@@ -29,7 +29,7 @@ const input={accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.re
 const jpeg=new Uint8Array([255,216,255,192,0,11,8,0,16,0,16,1,1,17,0,255,217]);
 let token,photoToken,calls,objects,multiparts,hook,loseComplete,loseDelete;
 beforeEach(async()=>{
- beforeQuery=undefined;hook=undefined;loseComplete=false;loseDelete=false;calls=[];objects=new Map();multiparts=new Map();sql.exec('DELETE FROM jac_media_r2_entries;DELETE FROM jac_media_operations;DELETE FROM jac_media_r2_connection;UPDATE payroll_users SET active=1');token=await m.makeSession(ownerID);photoToken=await m.makeSession(photographer);
+ beforeQuery=undefined;hook=undefined;loseComplete=false;loseDelete=false;calls=[];objects=new Map();multiparts=new Map();sql.exec('DELETE FROM jac_media_folder_shares;DELETE FROM jac_media_r2_entries;DELETE FROM jac_media_operations;DELETE FROM jac_media_r2_connection;UPDATE payroll_users SET active=1');token=await m.makeSession(ownerID);photoToken=await m.makeSession(photographer);
  sql.prepare("INSERT OR REPLACE INTO jac_media_connection(id,credentials,email,version,updated_at) VALUES('jac','previous-photo-drive','jacmusicestudios@gmail.com',7,?)").run(stamp);
  globalThis.fetch=async(request,options={})=>{
   const r=request instanceof Request?request:new Request(request,options),url=new URL(r.url);assert.equal(url.hostname,host,'No Google, Drive, redirect or other network destination is allowed');assert.ok(url.pathname.startsWith('/jac-fotografia'));assert.equal(r.headers.has('cookie'),false);assert.equal(r.headers.has('origin'),false);
@@ -71,6 +71,73 @@ async function send(upload){const p=upload.plan,bytes=upload.bytes.slice(p.offse
 const partReceipt=(upload,extra={})=>({partNumber:1,etag:'"'+'a'.repeat(32)+'"',size:upload.bytes.length,...extra});
 async function sendPart(upload){await m.sendMediaDirectChunk(upload.plan.uploadURL,upload.data.mimeType,new Blob([upload.bytes]),0,upload.bytes.length,new AbortController().signal);}
 const receiptStatus=(upload,receipt=partReceipt(upload),session=photoToken)=>command({action:'status',transport:'direct',id:upload.data.id,partReceipt:receipt},session);
+
+const shareCommand=(body,session=photoToken,headers={})=>m.shares.POST(req('/api/media/shares',body,session,'POST',headers));
+const publicRead=(token,query={})=>m.shared.GET(new Request(origin+'/api/media/shared?'+new URLSearchParams({token,...query})));
+async function sharedFixture(){
+ await activate();const parent=await folder(),childResponse=await api({action:'createFolder',id:crypto.randomUUID(),parentId:parent,name:'Solo subcarpeta',date:'2026-10-16'}),child=(await childResponse.json()).folder.id;
+ const upload=await start(jpeg,child);assert.equal((await send(upload)).status,200);
+ const response=await shareCommand({action:'create',id:crypto.randomUUID(),folderId:parent,days:30});assert.equal(response.status,200);const {link}=await response.json();return {parent,child,upload,link,token:link.url.split('/').at(-1)};
+}
+
+test('folder links are random, encrypted at rest, bounded in time and idempotent on lost responses',async()=>{
+ const {parent,link,token:capability}=await sharedFixture();assert.match(capability,/^[A-Za-z0-9_-]{43}$/);
+ const row=sql.prepare('SELECT * FROM jac_media_folder_shares WHERE id=?').get(link.id);
+ assert.equal(row.token_hash,createHash('sha256').update(capability).digest('hex'));assert.ok(!JSON.stringify(row).includes(capability));assert.equal(row.actor_id,photographer);
+ const repeat=await shareCommand({action:'create',id:link.id,folderId:parent,days:30});assert.equal(repeat.status,200);assert.deepEqual((await repeat.json()).link,link);
+ assert.equal(sql.prepare('SELECT COUNT(*) AS n FROM jac_media_folder_shares').get().n,1);
+ assert.ok(Date.parse(link.expiresAt)-Date.now()>29*86400000);
+ const list=await m.shares.GET(req('/api/media/shares?folder='+parent,undefined,photoToken,'GET'));assert.deepEqual((await list.json()).links,[link]);
+ assert.equal((await shareCommand({action:'create',id:crypto.randomUUID(),folderId:parent,days:36500})).status,400);
+ assert.equal((await shareCommand({action:'create',id:crypto.randomUUID(),folderId:m.R2_ROOT,days:30})).status,400);
+ assert.equal((await shareCommand({action:'create',id:crypto.randomUUID(),folderId:parent,days:30},'',{})).status,401);
+ assert.equal((await shareCommand({action:'create',id:crypto.randomUUID(),folderId:parent,days:30},photoToken,{origin:'https://evil.invalid'})).status,403);
+});
+test('anonymous link readers see only the shared subtree, never ancestors, siblings or private endpoints',async()=>{
+ const fixture=await sharedFixture(),sibling=await folder(),response=await publicRead(fixture.token),feed=await response.json();
+ assert.equal(response.status,200);assert.deepEqual(feed.breadcrumbs.map(x=>x.id),[fixture.parent]);assert.equal(feed.folder.id,fixture.parent);assert.equal(feed.items[0].id,fixture.child);
+ for(const key of ['root','canUpload','canConnect','canDelete','deletedFolders','pendingDeletions','collectionID'])assert.equal(key in feed,false);
+ const nested=await publicRead(fixture.token,{folder:fixture.child});assert.equal(nested.status,200);assert.deepEqual((await nested.json()).breadcrumbs.map(x=>x.id),[fixture.parent,fixture.child]);
+ assert.equal((await publicRead(fixture.token,{folder:sibling})).status,410);
+ assert.equal((await publicRead(fixture.token,{folder:m.R2_ROOT})).status,400);
+ assert.equal((await publicRead('a'.repeat(43))).status,410);
+ const privateAPI=await m.gallery.GET(req('/api/media?folder='+fixture.parent,undefined,'','GET'));assert.equal(privateAPI.status,401);
+ assert.match(response.headers.get('cache-control'),/no-store/);assert.equal(response.headers.get('referrer-policy'),'no-referrer');assert.match(response.headers.get('x-robots-tag'),/noindex/);
+});
+test('shared originals, thumbnails and ranges retain subtree checks and never return storage credentials',async()=>{
+ const fixture=await sharedFixture(),id=fixture.upload.plan.fileId||'r2_'+fixture.upload.data.id;
+ const cover=await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+fixture.upload.data.id,jpeg,photoToken,'PUT',{'Content-Type':'image/jpeg'}));assert.equal(cover.status,200);
+ const file=await publicRead(fixture.token,{id});assert.equal(file.status,200);assert.deepEqual(new Uint8Array(await file.arrayBuffer()),jpeg);
+ const thumbnail=await publicRead(fixture.token,{id,thumbnail:'1'});assert.equal(thumbnail.status,200);assert.equal(thumbnail.headers.get('content-type'),'image/jpeg');
+ const range=await m.shared.GET(new Request(origin+'/api/media/shared?'+new URLSearchParams({token:fixture.token,id}),{headers:{Range:'bytes=0-3'}}));assert.equal(range.status,206);assert.deepEqual(new Uint8Array(await range.arrayBuffer()),jpeg.slice(0,4));
+ assert.equal(file.headers.has('authorization'),false);assert.equal(file.headers.has('set-cookie'),false);
+ const outside=await start(jpeg,await folder());assert.equal((await send(outside)).status,200);const before=calls.length;
+ assert.equal((await publicRead(fixture.token,{id:'r2_'+outside.data.id})).status,410);assert.equal(calls.length,before);
+});
+test('revocation, expiry and creator permission changes invalidate anonymous links',async()=>{
+ const fixture=await sharedFixture();assert.equal((await publicRead(fixture.token)).status,200);
+ sql.prepare("UPDATE jac_media_folder_shares SET expires_at='2000-01-01T00:00:00.000Z' WHERE id=?").run(fixture.link.id);assert.equal((await publicRead(fixture.token)).status,410);
+ sql.prepare('UPDATE jac_media_folder_shares SET expires_at=? WHERE id=?').run(fixture.link.expiresAt,fixture.link.id);
+ sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(photographer);assert.equal((await publicRead(fixture.token)).status,410);sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(photographer);
+ sql.prepare("UPDATE payroll_users SET section_access='[\"media\"]' WHERE id=?").run(photographer);assert.equal((await publicRead(fixture.token)).status,410);sql.prepare('UPDATE payroll_users SET section_access=NULL WHERE id=?').run(photographer);
+ assert.equal((await publicRead(fixture.token)).status,200);
+ assert.equal((await shareCommand({action:'revoke',folderId:fixture.parent,id:fixture.link.id})).status,200);
+ assert.equal((await publicRead(fixture.token)).status,410);assert.equal((await publicRead(fixture.token,{id:'r2_'+fixture.upload.data.id})).status,410);
+ assert.equal((await shareCommand({action:'revoke',folderId:fixture.parent,id:fixture.link.id})).status,200);
+});
+test('a share revoked while S3 is reading cannot disclose the late bytes',async()=>{
+ const fixture=await sharedFixture();hook=async request=>{if(request.method==='GET'){sql.prepare("UPDATE jac_media_folder_shares SET revoked_at=? WHERE id=?").run(new Date().toISOString(),fixture.link.id);hook=undefined;}};
+ const response=await publicRead(fixture.token,{id:'r2_'+fixture.upload.data.id});assert.equal(response.status,403);assert.ok(!(await response.text()).includes('secretAccessKey'));
+});
+test('moved files, rotated storage and deleted folders cannot remain accessible through an old share',async()=>{
+ const fixture=await sharedFixture(),id='r2_'+fixture.upload.data.id,sibling=await folder();
+ sql.prepare('UPDATE jac_media_r2_entries SET parent_id=? WHERE id=?').run(sibling,id);assert.equal((await publicRead(fixture.token,{id})).status,410);
+ sql.prepare('UPDATE jac_media_r2_entries SET parent_id=? WHERE id=?').run(fixture.child,id);assert.equal((await publicRead(fixture.token,{id})).status,200);
+ sql.prepare("UPDATE jac_media_r2_connection SET version=version+1 WHERE id='jac'").run();assert.equal((await publicRead(fixture.token)).status,410);
+ sql.prepare("UPDATE jac_media_r2_connection SET version=version-1 WHERE id='jac'").run();assert.equal((await publicRead(fixture.token)).status,200);
+ const deletion=await api({action:'deleteFolder',id:fixture.parent},token);assert.equal(deletion.status,200);
+ assert.equal((await publicRead(fixture.token)).status,410);assert.equal((await publicRead(fixture.token,{id})).status,410);
+});
 
 test('a confirmed single-part receipt removes two S3 roundtrips but keeps final metadata and signature validation',async()=>{
  await activate();const legacy=await start();await sendPart(legacy);let before=calls.length;

@@ -227,7 +227,7 @@ private final class FixtureProtocol: URLProtocol {
         let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!
         let viewer = reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
         let visible = ([itinerary] + boardingFixtures + alerts).map { overrides[$0["id"].text] ?? $0 }.filter { !(ProcessInfo.processInfo.arguments.contains("--uitest-boarding-tomorrow") && ["boarding-fixture-0","boarding-fixture-1"].contains($0["id"].text)) && !deletedNotices.contains($0["id"].text) && ($0["kind"].text != "boarding_pass" || $0["recipients"].elements.contains(.string(viewer))) }
-        if parts.path == "/api/media" || parts.path == "/api/media/upload" { return try MediaFixture.response(request) }
+        if parts.path == "/api/media" || parts.path == "/api/media/upload" || parts.path == "/api/media/shares" { return try MediaFixture.response(request) }
         if parts.path == "/api/crm" {return try CRMFixture.response(request,reader:reader)}
         if parts.path == "/api/expenses" {
             if request.httpMethod == "POST" {
@@ -475,11 +475,12 @@ enum MediaFixture {
     static var items: [String: [JSONValue]] = [:]
     static var files: [String: Data] = [:]
     static var uploads: [String: (JSONValue, Data)] = [:]
+    static var sharedLinks: [JSONValue] = []
     static var deletedFolders=Set<String>()
     static let folder: JSONValue = .object(["id": .string("media-root"), "name": .string("Fotografía ficticia")])
     static func reset() {
         lock.lock(); defer { lock.unlock() }
-        files = ["media-photo": photo, "media-video": video]; uploads = [:];deletedFolders=[]
+        files = ["media-photo": photo, "media-video": video]; uploads = [:];deletedFolders=[];sharedLinks=[]
         items = ["media-root": [item(id: "media-day", name: "2026-10-16 · PEREIRA", mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)], "media-day": [item(id: "media-photo", name: "Foto ficticia.png", mime: "image/png", kind: "image", size: photo.count), item(id: "media-video", name: "Video ficticio.mov", mime: "video/quicktime", kind: "video", size: video.count)]]
         if ProcessInfo.processInfo.arguments.contains("--uitest-media-scroll") {
             items["media-day"] = (0..<80).map { index in
@@ -565,6 +566,13 @@ enum MediaFixture {
             return(200,.object(["id":.string(target),"parentId":.string(parent),"name":.string("Carpeta ficticia"),"removed":.number(2),"complete":.bool(true),"waiting":.bool(false)]))
         }
         guard photographer || request.url?.host == "mock.example.invalid" else { return (403, .object(["error": .string("Solo el fotógrafo puede subir archivos.")])) }
+        if parts.path == "/api/media/shares" {
+            if request.httpMethod == "GET" { return (200, .object(["links": .array(sharedLinks)])) }
+            let input = try JSONDecoder().decode(JSONValue.self, from: bytes(request))
+            if input["action"].text == "revoke" { sharedLinks.removeAll { $0["id"].text == input["id"].text }; return (200, .object(["revoked": .bool(true)])) }
+            let link: JSONValue = .object(["id": input["id"], "url": .string("/compartir/" + String(repeating: "f", count: 43)), "createdAt": .string("2026-10-19T12:00:00Z"), "expiresAt": .string("2026-11-18T12:00:00Z")])
+            sharedLinks.append(link); return (200, .object(["link": link]))
+        }
         if parts.path == "/api/media", request.httpMethod == "POST" {
             let input = try JSONDecoder().decode(JSONValue.self, from: bytes(request)), id = "media-" + input["id"].text
             let name = input["name"].text
@@ -572,6 +580,7 @@ enum MediaFixture {
             return (200, .object(["folder": .object(["id": .string(id), "name": .string(name)])]))
         }
         if parts.path == "/api/media/upload" {
+            if q.contains(where: { $0.name == "thumbnail" && $0.value == "1" }) { return (200, .object(["saved": .bool(true)])) }
             var id = ""
             if request.httpMethod == "PUT" {
                 id = q.first { $0.name == "id" }?.value ?? ""

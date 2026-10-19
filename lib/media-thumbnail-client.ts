@@ -11,7 +11,7 @@ export async function mediaBrowserThumbnail(file:File,mime:string):Promise<Blob|
    media!.onerror=()=>reject(new Error('El navegador no decodifica este archivo.'));media!.src=url;
   });
   const width=media instanceof HTMLVideoElement?media.videoWidth:media.naturalWidth,height=media instanceof HTMLVideoElement?media.videoHeight:media.naturalHeight;
-  if(!width||!height)return null;const scale=Math.min(1,640/Math.max(width,height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));const context=canvas.getContext('2d');if(!context)return null;context.drawImage(media,0,0,canvas.width,canvas.height);
-  const blob=await new Promise<Blob|null>(resolve=>canvas.toBlob(resolve,'image/jpeg',0.76));return blob&&blob.size<=512*1024?blob:null;
+  if(!width||!height)return null;const scale=Math.min(1,360/Math.max(width,height)),canvas=document.createElement('canvas');canvas.width=Math.max(1,Math.round(width*scale));canvas.height=Math.max(1,Math.round(height*scale));const context=canvas.getContext('2d');if(!context)return null;context.drawImage(media,0,0,canvas.width,canvas.height);
+  const blob=await new Promise<Blob|null>(resolve=>canvas.toBlob(resolve,'image/jpeg',0.60));return blob&&blob.size<=512*1024?blob:null;
  }catch{return null;}finally{if(timer)clearTimeout(timer);if(media){media.onload=null;media.onerror=null;if(media instanceof HTMLVideoElement){media.onloadeddata=null;media.pause();media.removeAttribute('src');media.load();}else media.removeAttribute('src');}URL.revokeObjectURL(url);}
 }

@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-upload-ui, gallery-media]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update]
         default: full
 
 permissions:
@@ -59,12 +59,26 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_GALLERY_UPDATE: ${{ inputs.scope == 'gallery-update' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-update]')) }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
-          JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+          JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || inputs.scope == 'video-quality' || inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+          JAC_VIDEO_QUALITY_ONLY: ${{ inputs.scope == 'video-quality' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[quality-only]')) }}
           JAC_VIDEO_UI_ONLY: ${{ inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]') && contains(github.event.head_commit.message, '[ui-only]')) }}
         run: |
           set -euo pipefail
-          if [ "$JAC_GALLERY_ONLY" = true ]; then
+          if [ "$JAC_GALLERY_UPDATE" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/MediaVideoPreparationTests
+              -only-testing:JACNominaTests/MediaUploadQueueTests/testThumbnailRetryKeepsTheLocalFileAndNeverUploadsTheOriginalTwice
+              -only-testing:JACNominaTests/PayrollClientTests/testThumbnailFailureRemainsAnErrorUntilTheIndexedJPEGIsConfirmed
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoOnlyFolderPlanTraversesPagesAndSubfoldersWithoutIncludingVideos
+              -only-testing:JACNominaTests/PayrollClientTests/testR2FolderDownloadPlanPreservesCollectionForOfflineAndPhotos
+              -only-testing:JACNominaTests/PayrollClientTests/testFolderShareClientCreatesListsAndRevokesWithTheSameRequestIdentity
+              -only-testing:JACNominaUITests/LaunchTests/testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload
+              -only-testing:JACNominaUITests/LaunchTests/testFolderDownloadCanExcludeVideosOrIncludeTheWholeFolder
+              -only-testing:JACNominaUITests/LaunchTests/testFolderShareCanBeCreatedAndRevoked
+            )
+          elif [ "$JAC_GALLERY_ONLY" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaVideoPreparationTests
               -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests
@@ -79,9 +93,11 @@ jobs:
           elif [ "$JAC_VIDEO_ONLY" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaVideoPreparationTests
-              -only-testing:JACNominaTests/MediaUploadQueueTests
               -only-testing:JACNominaUITests/LaunchTests/testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload
             )
+            if [ "$JAC_VIDEO_QUALITY_ONLY" != true ]; then
+              checks+=(-only-testing:JACNominaTests/MediaUploadQueueTests)
+            fi
           else
             checks=(
               -only-testing:JACNominaTests
@@ -134,7 +150,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -160,7 +176,7 @@ jobs:
           path: native-ci/*.log
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

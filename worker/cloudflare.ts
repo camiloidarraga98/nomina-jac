@@ -6,6 +6,7 @@ const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-lo
 export default {
   async fetch(request:Request,env:DeploymentEnv,ctx:Parameters<typeof application.fetch>[2]){
     const url=new URL(request.url);
+    if(url.pathname==='/.well-known/apple-app-site-association'&&['GET','HEAD'].includes(request.method))return Response.json({applinks:{details:[{appIDs:['AYHVYN8BJF.co.jacmusic.nomina'],components:[{'/':'/compartir/*'}]}]}},{headers:{'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'}});
     if(['/_jac/transfer','/migracion','/api/hosting-transfer','/api/hosting-transfer-inventory'].includes(url.pathname))return new Response(null,{status:404,headers:{'Cache-Control':'no-store'}});
     if(url.pathname==='/_jac/health'){
       return Response.json({service:'JAC',ready:env.JAC_READY==='1'},{headers:{'Cache-Control':'no-store','X-Robots-Tag':'noindex, nofollow'}});
@@ -17,6 +18,8 @@ export default {
     // run_worker_first sends even CSS/JS here. Only public build files bypass
     // the application; APIs and private documents always retain their guards.
     if(['GET','HEAD'].includes(request.method)&&(url.pathname.startsWith('/assets/')||url.pathname.startsWith('/licenses/')||publicFiles.has(url.pathname)))return env.ASSETS.fetch(request);
-    return application.fetch(request,env,ctx);
+    const response=await application.fetch(request,env,ctx);
+    if(url.pathname.startsWith('/compartir/')){const protectedResponse=new Response(response.body,response);protectedResponse.headers.set('Cache-Control','private, no-store');protectedResponse.headers.set('Referrer-Policy','no-referrer');protectedResponse.headers.set('X-Robots-Tag','noindex, nofollow, noarchive');return protectedResponse;}
+    return response;
   }
 };

@@ -364,6 +364,97 @@ final class PayrollClientTests: XCTestCase {
         let revoked=MediaPhotoViewer(selected:first,document:nil,items:[first,second],token:"",folderID:"f",collectionID:nil,load:{_ in throw APIError.forbidden("Acceso retirado")},page:{_ in throw URLError(.notConnectedToInternet)},denied:{_ in denied+=1})
         await revoked.move(1);XCTAssertEqual(denied,1);XCTAssertNil(revoked.document);XCTAssertEqual(revoked.selected.id,"one")
     }
+    #if os(iOS)
+    @MainActor func testFolderShareClientCreatesListsAndRevokesWithTheSameRequestIdentity() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://shares.invalid")!, vault: vault, configuration: config, automaticallyDownloadOffline: false)
+        let id = UUID().uuidString.lowercased(), folder = "r2_" + UUID().uuidString.lowercased()
+        let link: JSONValue = .object(["id": .string(id), "url": .string("/compartir/" + String(repeating: "a", count: 43)), "createdAt": .string("2026-10-19T12:00:00Z"), "expiresAt": .string("2026-11-18T12:00:00Z")])
+        var calls: [String] = []
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/media/shares")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Cookie"), "__Host-jac_session=" + String(repeating: "f", count: 43))
+            let result: JSONValue
+            if request.httpMethod == "GET" {
+                XCTAssertTrue(request.url?.query?.contains(folder) == true); calls.append("list"); result = .object(["links": .array([link])])
+            } else {
+                let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request))
+                XCTAssertEqual(body["folderId"].text, folder); XCTAssertEqual(body["id"].text, id)
+                calls.append(body["action"].text)
+                result = body["action"].text == "create" ? .object(["link": link]) : .object(["revoked": .bool(true)])
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"application/json"])!, try JSONEncoder().encode(result))
+        }; defer { MockProtocol.handler = nil }
+        let created = try await client.createMediaFolderShare(folder, id: id, days: 30)
+        XCTAssertEqual(created.id, id)
+        XCTAssertEqual(created.absoluteURL(origin: client.baseURL)?.host, "shares.invalid")
+        let listed = try await client.mediaFolderShares(folder)
+        XCTAssertEqual(listed.map(\.id), [id])
+        try await client.revokeMediaFolderShare(folder, id: id)
+        XCTAssertEqual(calls, ["create", "list", "revoke"])
+    }
+    #endif
+
+    @MainActor func testThumbnailFailureRemainsAnErrorUntilTheIndexedJPEGIsConfirmed() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let transport = ScriptedUploadTransport()
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://thumbnail-upload.invalid")!, vault: vault,
+            configuration: config, automaticallyDownloadOffline: false, mediaUploadTransport: transport)
+        let document = try TemporaryDocuments.save(MediaFixture.photo, filename: "Foto ficticia.png")
+        defer { TemporaryDocuments.remove(document) }
+        let source = try MediaLocalFile.stage(document.url, quality: .original); defer { source.remove() }
+        var status = 503
+        transport.handler = { request, bytes, _ in
+            XCTAssertEqual(request.httpMethod, "PUT")
+            XCTAssertEqual(request.url?.path, "/api/media/upload")
+            XCTAssertTrue(request.url?.query?.contains("thumbnail=1") == true)
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "image/jpeg")
+            let image = try XCTUnwrap(CGImageSourceCreateWithData(bytes as CFData, nil))
+            let properties = try XCTUnwrap(CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any])
+            XCTAssertLessThanOrEqual(try XCTUnwrap(properties[kCGImagePropertyPixelWidth] as? Int), 360)
+            XCTAssertLessThanOrEqual(try XCTUnwrap(properties[kCGImagePropertyPixelHeight] as? Int), 360)
+            return (Data((status == 200 ? "{\"saved\":true}" : "{\"error\":\"Miniatura pendiente ficticia\"}").utf8),
+                HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type":"application/json"])!)
+        }
+        do { try await client.uploadMediaThumbnail(source); XCTFail("No debe aparentar que la miniatura ya quedó guardada") }
+        catch { XCTAssertFalse(error is CancellationError) }
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.url.path))
+        status = 200
+        try await client.uploadMediaThumbnail(source)
+        XCTAssertEqual(transport.calls, 2)
+        XCTAssertEqual(try Data(contentsOf: source.url), MediaFixture.photo)
+    }
+
+    @MainActor func testPhotoOnlyFolderPlanTraversesPagesAndSubfoldersWithoutIncludingVideos() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://filtered-folder.invalid")!, vault: vault, configuration: config, automaticallyDownloadOffline: false)
+        let root = MediaFolder(id: "root", name: "Carpeta ficticia"), child = MediaFolder(id: "child", name: "Subcarpeta")
+        func item(_ id: String, _ kind: String) -> MediaItem { MediaItem(id: id, name: id, mimeType: kind == "image" ? "image/png" : kind == "video" ? "video/mp4" : "application/vnd.google-apps.folder", kind: kind, size: kind == "folder" ? 0 : 10, modifiedAt: "fixture", thumbnailAvailable: true) }
+        var reads: [String] = []
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/media")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let folder = query.first { $0.name == "folder" }?.value ?? "root"
+            let page = query.first { $0.name == "pageToken" }?.value ?? ""
+            reads.append(folder + ":" + page)
+            let items = folder == "child" ? [item("child-photo", "image"), item("child-video", "video")] :
+                page.isEmpty ? [item("photo", "image"), item("video", "video"), item("child", "folder")] : [item("page-photo", "image"), item("page-video", "video")]
+            let feed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: root,
+                folder: folder == "child" ? child : root, breadcrumbs: [root], items: items,
+                nextPageToken: folder == "root" && page.isEmpty ? "next" : nil, provider: "r2", collectionID: "fixture")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"application/json"])!, try JSONEncoder().encode(feed))
+        }; defer { MockProtocol.handler = nil }
+        let filtered = try await client.mediaDownloadPlan(folder: "root", imagesOnly: true)
+        XCTAssertEqual(filtered.files.map(\.id), ["photo", "page-photo", "child-photo"])
+        XCTAssertEqual(filtered.totalBytes, 30)
+        XCTAssertEqual(reads, ["root:", "root:next", "child:"])
+        let complete = try await client.mediaDownloadPlan(folder: "root")
+        XCTAssertEqual(complete.files.map(\.id), ["photo", "video", "page-photo", "page-video", "child-photo", "child-video"])
+    }
+
     @MainActor func testGalleryThumbnailUsesOnlyAuthenticatedThumbnailEndpointAndBoundsItsPixels() async throws {
         let vault=MemorySession();vault.token=String(repeating:"f",count:43)
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]

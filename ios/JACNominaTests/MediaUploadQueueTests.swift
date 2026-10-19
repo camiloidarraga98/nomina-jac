@@ -8,6 +8,19 @@ import UIKit
 
 @MainActor
 final class MediaVideoPreparationTests: XCTestCase {
+    func testIncomingFolderLinksAcceptOnlyTheJACShareRouteWithoutGrantingAnAccount() throws {
+        let token = String(repeating: "a", count: 43)
+        for value in ["https://jhonalexcastano.com/compartir/" + token, "jacnomina://compartir/" + token] {
+            let share = try XCTUnwrap(MediaIncomingShare.parse(try XCTUnwrap(URL(string: value))))
+            XCTAssertEqual(share.id, token)
+            XCTAssertEqual(share.url.absoluteString, "https://jhonalexcastano.com/compartir/" + token)
+        }
+        for value in ["https://evil.invalid/compartir/" + token, "http://jhonalexcastano.com/compartir/" + token,
+                      "jacnomina://gmail/" + token, "https://jhonalexcastano.com/compartir/" + token + "?other=1",
+                      "https://jhonalexcastano.com/compartir/" + token + "/child", "jacnomina://compartir/short"] {
+            XCTAssertNil(MediaIncomingShare.parse(try XCTUnwrap(URL(string: value))))
+        }
+    }
     private func staged(_ bytes: Data = MediaFixture.video, name: String = "Video.mov") throws -> MediaLocalFile {
         let document = try TemporaryDocuments.save(bytes, filename: name)
         defer { TemporaryDocuments.remove(document) }
@@ -61,15 +74,21 @@ final class MediaVideoPreparationTests: XCTestCase {
         let composedVideo = try XCTUnwrap(composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
         try composedVideo.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: video, at: .zero)
         composedVideo.preferredTransform = CGAffineTransform(rotationAngle: .pi / 2)
-        // Local generated PCM silence verifies a real audio track becomes AAC.
+        // Audible, distinct stereo tones detect silence and a lost/swapped channel.
         let samples = Int(ceil(duration.seconds * 44100))
-        let payload = Data(repeating: 0, count: samples * 2)
+        var payload = Data()
+        for sample in 0..<samples {
+            for frequency in [440.0, 880.0] {
+                var value = Int16(sin(Double(sample) * frequency * 2 * .pi / 44100) * 16000).littleEndian
+                withUnsafeBytes(of: &value) { payload.append(contentsOf: $0) }
+            }
+        }
         var wav = Data("RIFF".utf8)
         func word<T: FixedWidthInteger>(_ value: T) { var little = value.littleEndian; withUnsafeBytes(of: &little) { wav.append(contentsOf: $0) } }
         word(UInt32(36 + payload.count)); wav.append(Data("WAVEfmt ".utf8))
-        word(UInt32(16)); word(UInt16(1)); word(UInt16(1)); word(UInt32(44100)); word(UInt32(88200)); word(UInt16(2)); word(UInt16(16))
+        word(UInt32(16)); word(UInt16(1)); word(UInt16(2)); word(UInt32(44100)); word(UInt32(176400)); word(UInt16(4)); word(UInt16(16))
         wav.append(Data("data".utf8)); word(UInt32(payload.count)); wav.append(payload)
-        let sound = try TemporaryDocuments.save(wav, filename: "Silencio ficticio.wav")
+        let sound = try TemporaryDocuments.save(wav, filename: "Tonos ficticios.wav")
         defer { TemporaryDocuments.remove(sound) }
         let soundAsset = AVURLAsset(url: sound.url)
         let audioTracks = try await soundAsset.loadTracks(withMediaType: .audio)
@@ -102,7 +121,8 @@ final class MediaVideoPreparationTests: XCTestCase {
         let inSize = try await video.load(.naturalSize)
         let rect = CGRect(origin: .zero, size: outSize).applying(outTransform)
         XCTAssertEqual(abs(rect.width / rect.height), inSize.height / inSize.width, accuracy: 0.02)
-        XCTAssertLessThanOrEqual(max(abs(rect.width), abs(rect.height)), 1280)
+        XCTAssertEqual(abs(rect.width), inSize.height, accuracy: 2)
+        XCTAssertEqual(abs(rect.height), inSize.width, accuracy: 2)
         XCTAssertTrue(result.file.videoPrepared)
         let outputDuration = try await output.load(.duration)
         XCTAssertEqual(outputDuration.seconds, duration.seconds, accuracy: 0.1)
@@ -110,6 +130,165 @@ final class MediaVideoPreparationTests: XCTestCase {
         XCTAssertEqual(formats.map { CMFormatDescriptionGetMediaSubType($0) }, [kCMVideoCodecType_H264])
         let soundFormats = try await outputAudio[0].load(.formatDescriptions)
         XCTAssertEqual(soundFormats.map { CMFormatDescriptionGetMediaSubType($0) }, [kAudioFormatMPEG4AAC])
+        let soundDescription = try XCTUnwrap(soundFormats.first)
+        XCTAssertEqual(try XCTUnwrap(CMAudioFormatDescriptionGetStreamBasicDescription(soundDescription)).pointee.mChannelsPerFrame, 2)
+        let sourceSound = try await decodedStereoAudio(AVURLAsset(url: source.url))
+        let outputSound = try await decodedStereoAudio(output)
+        // Include the full sample timeline, not just the AAC track's existence.
+        XCTAssertEqual(Double(outputSound.count) / 88200, Double(sourceSound.count) / 88200, accuracy: 0.06)
+        for channel in 0..<2 {
+            let before = rms(sourceSound, channel: channel), after = rms(outputSound, channel: channel)
+            XCTAssertGreaterThan(before, 0.2)
+            XCTAssertEqual(after, before, accuracy: 0.025)
+            XCTAssertGreaterThan(toneEnergy(outputSound, channel: channel, frequency: channel == 0 ? 440 : 880), 0.12)
+            XCTAssertLessThan(toneEnergy(outputSound, channel: channel, frequency: channel == 0 ? 880 : 440), 0.015)
+        }
+    }
+
+    private func decodedStereoAudio(_ asset: AVAsset) async throws -> [Int16] {
+        let tracks = try await asset.loadTracks(withMediaType: .audio)
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: try XCTUnwrap(tracks.first), outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 2,
+            AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false
+        ])
+        reader.add(output)
+        XCTAssertTrue(reader.startReading(), reader.error?.localizedDescription ?? "")
+        var samples: [Int16] = []
+        while let buffer = output.copyNextSampleBuffer() {
+            let block = try XCTUnwrap(CMSampleBufferGetDataBuffer(buffer))
+            let count = CMBlockBufferGetDataLength(block)
+            var data = Data(count: count)
+            let status = data.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count, destination: $0.baseAddress!) }
+            XCTAssertEqual(status, kCMBlockBufferNoErr)
+            data.withUnsafeBytes { raw in
+                for index in stride(from: 0, to: count, by: 2) { samples.append(Int16(littleEndian: raw.loadUnaligned(fromByteOffset: index, as: Int16.self))) }
+            }
+        }
+        XCTAssertEqual(reader.status, .completed, reader.error?.localizedDescription ?? "")
+        XCTAssertFalse(samples.isEmpty)
+        return samples
+    }
+
+    private func rms(_ samples: [Int16], channel: Int) -> Double {
+        let energy = stride(from: channel, to: samples.count, by: 2).reduce(0.0) { $0 + pow(Double(samples[$1]) / 32768, 2) }
+        return sqrt(energy / Double(max(1, samples.count / 2)))
+    }
+
+    private func toneEnergy(_ samples: [Int16], channel: Int, frequency: Double) -> Double {
+        var real = 0.0, imaginary = 0.0
+        let count = samples.count / 2
+        for frame in 0..<count {
+            let phase = Double(frame) * frequency * 2 * .pi / 44100
+            let value = Double(samples[frame * 2 + channel]) / 32768
+            real += value * cos(phase); imaginary += value * sin(phase)
+        }
+        return hypot(real, imaginary) / Double(max(1, count))
+    }
+
+    func testVideoPlaybackUsesAnAudioCategoryThatIgnoresTheSilentSwitch() throws {
+        let session = AVAudioSession.sharedInstance()
+        let previousCategory = session.category, previousMode = session.mode, previousOptions = session.categoryOptions
+        defer {
+            MediaVideoAudioPlayback.deactivate()
+            try? session.setCategory(previousCategory, mode: previousMode, options: previousOptions)
+        }
+        try MediaVideoAudioPlayback.activate()
+        XCTAssertEqual(session.category, .playback)
+        XCTAssertEqual(session.mode, .moviePlayback)
+    }
+
+    func testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("Detalle ficticio.mov")
+        let width = 1600, height = 900
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
+            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
+            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 24_000_000,
+                AVVideoExpectedSourceFrameRateKey: 60, AVVideoMaxKeyFrameIntervalKey: 60,
+                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel]
+        ])
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
+            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height
+        ])
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting(), writer.error?.localizedDescription ?? "")
+        writer.startSession(atSourceTime: .zero)
+        var noise: UInt32 = 12345
+        for frame in 0..<60 {
+            var retries = 0
+            while !input.isReadyForMoreMediaData && retries < 500 { try await Task.sleep(for: .milliseconds(10)); retries += 1 }
+            XCTAssertTrue(input.isReadyForMoreMediaData)
+            var buffer: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer), kCVReturnSuccess)
+            let pixel = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixel, [])
+            let bytes = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixel)).assumingMemoryBound(to: UInt8.self)
+            let stride = CVPixelBufferGetBytesPerRow(pixel)
+            for y in 0..<height {
+                for x in 0..<width {
+                    noise = noise &* 1664525 &+ 1013904223
+                    let grain = Int(noise >> 27) - 16
+                    let index = y * stride + x * 4
+                    bytes[index] = UInt8(clamping: 32 + ((x + frame * 7) % 192) + grain)
+                    bytes[index + 1] = UInt8(clamping: 32 + ((y + frame * 3) % 192) + grain)
+                    bytes[index + 2] = UInt8(clamping: 32 + ((x / 2 + y / 2 + frame * 5) % 192) + grain)
+                    bytes[index + 3] = 255
+                }
+            }
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 60)))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed, writer.error?.localizedDescription ?? "")
+        let source = try MediaLocalFile.stage(url, quality: .original); defer { source.remove() }
+        let result = try await MediaVideoPreparation.prepare(source); defer { result.file.remove() }
+        let original = AVURLAsset(url: source.url), compressed = AVURLAsset(url: result.file.url)
+        let tracks = try await compressed.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        let size = try await track.load(.naturalSize), rate = try await track.load(.nominalFrameRate)
+        XCTAssertEqual(size, CGSize(width: width, height: height))
+        XCTAssertEqual(rate, 60, accuracy: 0.1)
+        // A content-based encoder may undershoot its budget. Prevent a repeat
+        // of the drastic reduction on this moving, detailed fixture.
+        let ratio = Double(result.file.size) / Double(source.size)
+        XCTAssertGreaterThan(ratio, 0.5)
+        XCTAssertLessThan(ratio, 0.85)
+        for frame in [12, 30, 48] {
+            XCTAssertGreaterThan(try framePSNR(original, compressed, at: CMTime(value: Int64(frame), timescale: 60)), 34)
+        }
+        print("JAC video fixture: \(source.size) → \(result.file.size) bytes; \(Int((1 - ratio) * 100))% less, 1600×900, 60 fps")
+    }
+
+    private func framePSNR(_ original: AVAsset, _ compressed: AVAsset, at time: CMTime) throws -> Double {
+        func pixels(_ asset: AVAsset) throws -> [UInt8] {
+            let generator = AVAssetImageGenerator(asset: asset)
+            generator.appliesPreferredTrackTransform = true
+            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
+            let image = try generator.copyCGImage(at: time, actualTime: nil)
+            var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
+            try bytes.withUnsafeMutableBytes { buffer in
+                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
+                    bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
+                context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+            }
+            return bytes
+        }
+        let before = try pixels(original), after = try pixels(compressed)
+        XCTAssertEqual(before.count, after.count)
+        guard before.count == after.count, !before.isEmpty else { return 0 }
+        var squaredError = 0.0, count = 0
+        for pixel in stride(from: 0, to: before.count, by: 4 * 16) {
+            for channel in 0..<3 { squaredError += pow(Double(before[pixel + channel]) - Double(after[pixel + channel]), 2); count += 1 }
+        }
+        return squaredError == 0 ? 100 : 10 * log10(255 * 255 / (squaredError / Double(count)))
     }
 
     func testHDRVideoIsConvertedToSDRInsteadOfKeepingTheOriginal() async throws {
@@ -220,6 +399,28 @@ final class MediaGridThumbnailLoaderTests: XCTestCase {
 
 @MainActor
 final class MediaUploadQueueTests: XCTestCase {
+    func testThumbnailRetryKeepsTheLocalFileAndNeverUploadsTheOriginalTwice() async throws {
+        let (main, _) = try await client()
+        let location = root(), vault = QueueTestVault(), key = QueueTestVault()
+        let source = try file()
+        var originals = 0, covers = 0
+        let queue = MediaUploadQueue(root: location, vault: vault, encryptionKeyStore: key,
+            transportFactory: { _, _ in nil }, retryDelays: [], original: { _, _, _, _, _ in originals += 1; return "r2" },
+            thumbnail: { _, file in
+                covers += 1
+                XCTAssertEqual(try Data(contentsOf: file.url), MediaFixture.photo)
+                if covers == 1 { throw APIError.message("Miniatura pendiente ficticia") }
+            })
+        defer { queue.revoke(); source.remove(); try? FileManager.default.removeItem(at: location) }
+        try await queue.enqueue([source], destination: folder, client: main)
+        try await waitFor("El error de miniatura debe dejar pendiente el trabajo") { queue.jobs.first?.error != nil && !queue.uploading }
+        XCTAssertEqual(originals, 1); XCTAssertFalse(queue.jobs[0].completed)
+        XCTAssertEqual(queue.jobs[0].progress, 0.99)
+        queue.retry()
+        try await waitFor("El reintento debe completar únicamente la miniatura") { queue.jobs.first?.completed == true && !queue.uploading }
+        XCTAssertEqual(originals, 1); XCTAssertEqual(covers, 2)
+    }
+
     func testUncompressedVideoCannotEnterTheUploadQueue() async throws {
         let (main, _) = try await client()
         let location = root(), vault = QueueTestVault(), key = QueueTestVault()

@@ -182,15 +182,15 @@ enum MediaThumbnail {
         let image: CGImage?
         if file.mimeType.hasPrefix("video/") {
             let generator = AVAssetImageGenerator(asset: AVURLAsset(url: file.url))
-            generator.appliesPreferredTrackTransform = true; generator.maximumSize = CGSize(width: 640, height: 640)
+            generator.appliesPreferredTrackTransform = true; generator.maximumSize = CGSize(width: 360, height: 360)
             image = try? await generator.image(at: .zero).image
         } else if let source = CGImageSourceCreateWithURL(file.url as CFURL, nil) {
-            image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 640, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: false] as CFDictionary)
+            image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceThumbnailMaxPixelSize: 360, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceShouldCacheImmediately: false] as CFDictionary)
         } else { image = nil }
         guard !Task.isCancelled, let image else { return nil }
         let data = NSMutableData()
         guard let destination = CGImageDestinationCreateWithData(data, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
-        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.76] as CFDictionary)
+        CGImageDestinationAddImage(destination, image, [kCGImageDestinationLossyCompressionQuality: 0.60] as CFDictionary)
         guard CGImageDestinationFinalize(destination), data.length <= 512 * 1024 else { return nil }
         return data as Data
     }
@@ -489,6 +489,7 @@ struct MediaGalleryView: View {
     @State private var handingOffUploads = false
     @State private var uploadRefreshPending = false
     @State private var galleryVisible = false
+    @State private var sharingFolder: MediaFolder?
     private var uploading: Bool { handingOffUploads }
     #else
     @State private var uploading = false
@@ -598,6 +599,7 @@ struct MediaGalleryView: View {
             .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if compactGallery && selection.active { selectionActions } }
             .onChange(of: try? store.client.mediaAccessStamp()) { _, _ in
+                sharingFolder = nil
                 selection.synchronize(client: store.client)
                 selectionDownloadChoices = false
                 folderTransfer.cancel(); transferReview = nil; confirmedTransfer = nil
@@ -666,6 +668,9 @@ struct MediaGalleryView: View {
     }
     var body: some View {
         galleryUpdates.sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
+            #if os(iOS)
+            .sheet(item: $sharingFolder) { folder in MediaFolderShareSheet(folder: folder, client: store.client) }
+            #endif
             .sheet(isPresented:$choosingDestination) {if let location=feed?.folder ?? feed?.root {MediaUploadDestinationPicker(root:location,isRoot:location.id == feed?.root?.id) {selectDestination($0)}}}
             .sheet(item:$uploadComposition,onDismiss:{
                 if confirmedUpload {confirmedUpload=false;if !queue.isEmpty {uploadTask=Task {await uploadAll()}}}
@@ -829,7 +834,12 @@ struct MediaGalleryView: View {
         Button {Task {await prepareTransfer(folder:folder.id,photos:false)}} label:{Label("Disponible sin conexión",systemImage:"arrow.down.circle")}.accessibilityIdentifier("media.offline")
             .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
         #if os(iOS)
-        Button {Task {await prepareTransfer(folder:folder.id,photos:true)}} label:{Label("Guardar carpeta en Fotos",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.savePhotos")
+        if writable, folder.id != feed?.root?.id {
+            Button { sharingFolder = folder } label: { Label("Compartir carpeta", systemImage: "link") }.accessibilityIdentifier("media.share.folder")
+        }
+        Button {Task {await prepareTransfer(folder:folder.id,photos:true,imagesOnly:true)}} label:{Label("Descargar todas las fotos",systemImage:"photo.on.rectangle")}.accessibilityIdentifier("media.savePhotosOnly")
+            .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
+        Button {Task {await prepareTransfer(folder:folder.id,photos:true)}} label:{Label("Descargar fotos y videos",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.savePhotos")
             .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
         #endif
         if user.canDeleteMedia,feed?.canDelete == true,folder.id != feed?.root?.id {
@@ -851,14 +861,14 @@ struct MediaGalleryView: View {
             }catch{if let message=store.reportReadFailure(error){deletionError=message};if !Task.isCancelled {await reload()}}
         }
     }
-    private func prepareTransfer(folder:String,photos:Bool) async {
+    private func prepareTransfer(folder:String,photos:Bool,imagesOnly:Bool=false) async {
         guard !preparingTransfer,!folderTransfer.running else {return};preparingTransfer=true;defer{preparingTransfer=false}
         do {
-            let stamp=try store.client.mediaAccessStamp(),plan=try await store.client.mediaDownloadPlan(folder:folder)
+            let stamp=try store.client.mediaAccessStamp(),plan=try await store.client.mediaDownloadPlan(folder:folder,imagesOnly:imagesOnly)
             guard !Task.isCancelled,stamp == (try store.client.mediaAccessStamp()) else {throw CancellationError()}
             let scope=try store.client.mediaScope(),cache=store.client.mediaOffline
             let pending=photos ? plan.files:plan.files.filter{item in scope.map{!cache.hasFile(item,scope:$0)} ?? true}
-            transferReview=MediaTransferReview(plan:plan,photos:photos,requiredBytes:MediaStorageReview.required(pending),stamp:stamp)
+            transferReview=MediaTransferReview(plan:plan,photos:photos,requiredBytes:MediaStorageReview.required(pending),imagesOnly:imagesOnly,stamp:stamp)
         } catch {if let message=store.reportReadFailure(error){self.error=message}else if !Task.isCancelled {self.error="No se pudo preparar la carpeta. Actualiza Fotografía e inténtalo de nuevo."}}
     }
     private func beginUpload() {
@@ -1967,6 +1977,7 @@ private struct MediaTransferReview: Identifiable {
     let photos: Bool
     let requiredBytes: Int64
     var selection = false
+    var imagesOnly = false
     var stamp: String? = nil
 }
 private struct MediaTransferReviewSheet: View {
@@ -1979,12 +1990,13 @@ private struct MediaTransferReviewSheet: View {
                 Section {
                     Text(review.plan.folder.name).font(.headline)
                     LabeledContent("Archivos", value: String(review.plan.files.count))
+                    if review.imagesOnly { Text("Solo fotos · Sin videos · Incluye subcarpetas").font(.subheadline).accessibilityIdentifier("media.transfer.photosOnly") }
                     LabeledContent("Tamaño total", value: ByteCountFormatter.string(fromByteCount: review.plan.totalBytes, countStyle: .file))
                     LabeledContent("Espacio disponible", value: ByteCountFormatter.string(fromByteCount: MediaStorageReview.freeBytes, countStyle: .file))
                     if review.requiredBytes > MediaStorageReview.freeBytes { Text("No hay espacio suficiente. Se necesitan aproximadamente " + ByteCountFormatter.string(fromByteCount: review.requiredBytes, countStyle: .file) + " libres, incluyendo los archivos temporales.").font(.footnote).foregroundStyle(.red) }
                     Text(review.selection
                          ? (review.photos ? "Se agregarán a Fotos solo las fotos y videos seleccionados, conservando los originales. JAC pedirá permiso para agregar archivos; no leerá tu biblioteca." : "Se guardará una copia privada y cifrada solo de los archivos seleccionados para abrirlos dentro de JAC sin internet. Se elimina al cerrar sesión o al revocarse el acceso.")
-                         : (review.photos ? "Se agregarán a Fotos las fotos y videos de esta carpeta y sus subcarpetas. JAC pedirá permiso para agregar archivos; no leerá tu biblioteca." : "Se guardará una copia privada y cifrada de esta carpeta y sus subcarpetas para abrirlas dentro de JAC sin internet. Se elimina al cerrar sesión o al revocarse el acceso.")).font(.footnote).foregroundStyle(.secondary)
+                         : (review.photos ? (review.imagesOnly ? "Se agregarán a Fotos únicamente las fotos de esta carpeta y sus subcarpetas. Los videos quedan excluidos. JAC pedirá permiso para agregar archivos; no leerá tu biblioteca." : "Se agregarán a Fotos las fotos y videos de esta carpeta y sus subcarpetas. JAC pedirá permiso para agregar archivos; no leerá tu biblioteca.") : "Se guardará una copia privada y cifrada de esta carpeta y sus subcarpetas para abrirlas dentro de JAC sin internet. Se elimina al cerrar sesión o al revocarse el acceso.")).font(.footnote).foregroundStyle(.secondary)
                 }
                 Section { Button(review.photos ? "Guardar todos en Fotos" : review.selection ? "Descargar selección" : "Descargar carpeta completa") { begin(); dismiss() }.buttonStyle(JACPrimaryButtonStyle()).disabled(review.plan.files.isEmpty || review.requiredBytes > MediaStorageReview.freeBytes).accessibilityIdentifier("media.transfer.begin") }
                 Section("Archivos incluidos") { ForEach(review.plan.files) { file in HStack { Image(systemName: file.kind == "video" ? "video" : "photo"); Text(file.name); Spacer(); Text(file.sizeLabel).font(.caption).foregroundStyle(.secondary) } } }
@@ -2006,10 +2018,11 @@ private final class MediaCreatedAssetFlag: @unchecked Sendable {
 private struct MediaNativePlayer: UIViewControllerRepresentable {
     let player: AVPlayer?
     func makeUIViewController(context: Context) -> AVPlayerViewController {
+        try? MediaVideoAudioPlayback.activate()
         let controller = AVPlayerViewController(); controller.player = player; controller.view.accessibilityIdentifier = "media.video"; return controller
     }
     func updateUIViewController(_ controller: AVPlayerViewController, context: Context) { controller.player = player }
-    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: ()) { controller.player?.pause(); controller.player = nil }
+    static func dismantleUIViewController(_ controller: AVPlayerViewController, coordinator: ()) { controller.player?.pause(); controller.player = nil; MediaVideoAudioPlayback.deactivate() }
 }
 #else
 private struct MediaNativePlayer: NSViewRepresentable {

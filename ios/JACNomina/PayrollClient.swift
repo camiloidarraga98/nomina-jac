@@ -979,18 +979,15 @@ final class PayrollClient: ObservableObject {
             guard stamp == (try mediaAccessStamp()), !Task.isCancelled else { throw CancellationError() }
             let (request, token, generation) = try mediaRequest(path: "api/media/upload", query: [URLQueryItem(name: "thumbnail", value: "1"), URLQueryItem(name: "id", value: file.id)], method: "PUT")
             var upload = request; upload.setValue("image/jpeg", forHTTPHeaderField: "Content-Type")
-            do {
                 let data: Data, response: URLResponse
                 if let mediaUploadTransport { (data, response) = try await mediaUploadTransport.send(upload, body: thumbnail, key: "thumbnail:" + (try mediaScope())!.id + ":" + file.id, progress: { _ in }) }
                 else { (data, response) = try await mediaSession.upload(for: upload, from: thumbnail) }
                 _ = try validateMediaResponse(response, data: data, token: token, generation: generation)
-            } catch {
-                if error is CancellationError { throw error }
-                if case APIError.unauthorized = error { throw error }
-                if case APIError.forbidden = error { throw error }
-                // The original is already safely committed; a thumbnail failure
-                // must never duplicate it or delete the photographer's source.
-            }
+        } else {
+            try Task.checkCancellation()
+            // Keep the durable job/local source until its cover is confirmed.
+            // Retrying this phase must never repeat the committed original.
+            throw APIError.message("El archivo ya está subido, pero su miniatura sigue pendiente. Reintenta para completarla.")
         }
     }
     static func directMediaRequest(_ url: URL, mime: String, offset: Int64, count: Int, total: Int64) throws -> URLRequest {
@@ -1112,7 +1109,25 @@ final class PayrollClient: ObservableObject {
         return try TemporaryDocuments.move(temporary, filename: MediaLocalFile.safeName(item.name))
     }
 
-    func mediaDownloadPlan(folder: String = "") async throws -> MediaDownloadPlan {
+    #if os(iOS)
+    func mediaFolderShares(_ folder: String) async throws -> [MediaSharedLink] {
+        let (data, _) = try await request(path: "api/media/shares", query: [URLQueryItem(name: "folder", value: folder)], forceNetwork: true)
+        struct Response: Decodable { let links: [MediaSharedLink] }
+        return try decoder.decode(Response.self, from: data).links
+    }
+    func createMediaFolderShare(_ folder: String, id: String, days: Int) async throws -> MediaSharedLink {
+        let (data, _) = try await request(path: "api/media/shares", method: "POST", body: .object([
+            "action": .string("create"), "folderId": .string(folder), "id": .string(id), "days": .number(Double(days))]), forceNetwork: true)
+        struct Response: Decodable { let link: MediaSharedLink }
+        return try decoder.decode(Response.self, from: data).link
+    }
+    func revokeMediaFolderShare(_ folder: String, id: String) async throws {
+        _ = try await request(path: "api/media/shares", method: "POST", body: .object([
+            "action": .string("revoke"), "folderId": .string(folder), "id": .string(id)]), forceNetwork: true)
+    }
+    #endif
+
+    func mediaDownloadPlan(folder: String = "", imagesOnly: Bool = false) async throws -> MediaDownloadPlan {
         var pending = [folder], seenFolders = Set<String>(), seenFiles = Set<String>(), files: [MediaItem] = [], root: MediaFolder?
         let stamp=try mediaAccessStamp();var firstFeed:MediaFeed?
         while !pending.isEmpty {
@@ -1128,7 +1143,7 @@ final class PayrollClient: ObservableObject {
                 folderItems += feed.items; lastFeed = feed
                 for item in feed.items {
                     if item.kind == "folder" { if !seenFolders.contains(item.id) { pending.append(item.id) } }
-                    else if seenFiles.insert(item.id).inserted { files.append(item) }
+                    else if (!imagesOnly || item.kind == "image"), seenFiles.insert(item.id).inserted { files.append(item) }
                 }
                 cursor = feed.nextPageToken ?? ""
                 guard cursor.isEmpty || seenPages.insert(cursor).inserted else { throw APIError.message("No se pudo completar el listado. Actualiza la carpeta.") }

@@ -308,6 +308,38 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mp4")).firstMatch.waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-subida-multiple-nativa")
         openAccount(app); XCTAssertTrue(app.staticTexts["Fotografía JAC"].waitForExistence(timeout: 10)); XCTAssertFalse(app.staticTexts["Administrador de JAC"].exists)
     }
+    @MainActor func testFolderDownloadCanExcludeVideosOrIncludeTheWholeFolder() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2", "--uitest-reset-content", "--uitest-reset-media"]
+        app.launch()
+        tap(app, "media.options.r2_media-day"); tap(app, "media.savePhotosOnly")
+        XCTAssertTrue(app.staticTexts["media.transfer.photosOnly"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Foto ficticia.png"].exists)
+        XCTAssertFalse(app.staticTexts["Video ficticio.mov"].exists)
+        tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["1 de 1 archivos guardados en Fotos."].waitForExistence(timeout: 20))
+        tap(app, "media.options.r2_media-day"); tap(app, "media.savePhotos")
+        XCTAssertTrue(app.staticTexts["Video ficticio.mov"].waitForExistence(timeout: 10))
+        tap(app, "media.transfer.begin")
+        XCTAssertTrue(app.staticTexts["2 de 2 archivos guardados en Fotos."].waitForExistence(timeout: 20))
+    }
+
+    @MainActor func testFolderShareCanBeCreatedAndRevoked() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2", "--uitest-reset-content", "--uitest-reset-media"]
+        app.launch()
+        tap(app, "media.options.r2_media-day"); tap(app, "media.share.folder")
+        let create = app.buttons["media.share.create"]
+        XCTAssertTrue(create.waitForExistence(timeout: 10))
+        for _ in 0..<50 where !create.isEnabled { Thread.sleep(forTimeInterval: 0.1) }
+        create.tap()
+        let link = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media.share.link.")).firstMatch
+        XCTAssertTrue(link.waitForExistence(timeout: 10))
+        let revoke = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media.share.revoke.")).firstMatch
+        XCTAssertTrue(revoke.waitForExistence(timeout: 10)); revoke.tap()
+        XCTAssertTrue(link.waitForNonExistence(timeout: 10))
+    }
+
     @MainActor func testPhotographerDownloadsFolderOfflineAndSavesPhotosThroughFakeWriter() {
         let app = XCUIApplication(); let base = ["--uitest-payroll", "--uitest-media-only", "--uitest-offline-content", "--uitest-media-r2"]
         app.launchArguments = base + ["--uitest-reset-content", "--uitest-reset-media"]; app.launch()
