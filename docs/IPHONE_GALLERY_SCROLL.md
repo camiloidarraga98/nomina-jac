@@ -11,6 +11,7 @@ Camilo reportó que las miniaturas cargaban y desaparecían al desplazarse o esp
 - Los contenedores LazyVStack anidados estimaban la altura de carpetas completas. Su onDisappear cancelaba la lectura y vaciaba metadatos mientras se desplazaban sus hijos; esa pérdida de altura causaba huecos y saltos.
 - Las notificaciones generales de cacheRevision reemplazaban la lista visible por cachedMedia, que podía contener solo la primera página o una copia fijada anterior. Un error de refresco también podía reemplazar una lista completa por esa copia parcial.
 - La ordenación reconstruía formateadores de fecha dentro de cada comparación, añadiendo trabajo innecesario al hilo de interfaz.
+- Para archivos con la misma fecha, el cliente usaba comparación localizada/numérica y el servidor SQLite usaba nombre binario. Al cargar otra página, el cliente podía insertar el archivo2 delante del10 que ya estaba visible.
 
 El servidor R2 ya conserva una miniatura indexada por archivo y lista por creación/nombre/ID. El diagnóstico no requiere migrar R2, modificar datos reales ni desplegar de nuevo el Worker.
 
@@ -26,7 +27,7 @@ El servidor R2 ya conserva una miniatura indexada por archivo y lista por creaci
 - Hasta cuatro cargas/decodificaciones simultáneas, cola cancelable y decodificación ImageIO fuera de interfaz, máximo360píxeles/512KiB. Nunca se solicitan originales para poblar la cuadrícula.
 - Una miniatura conocida como pendiente no genera peticiones fallidas. Un404/429/5xx aislado no invalida el resto; una celda visible hace hasta tres intentos ante indisponibilidad transitoria. Un fallo de esa petición no cambia la conectividad global. Un401/403 mantiene su retirada normal.
 - Ante una pérdida temporal de conexión se pueden reutilizar únicamente píxeles ya presentes en memoria de esa sesión autorizada. No se crean nuevas descargas offline ni se ignoran denegaciones.
-- Fechas de creación analizadas una vez por valor y orden determinista por creación, nombre e ID. La modificación de una miniatura no cambia la fecha usada para ordenar.
+- Fechas de creación analizadas una vez por valor, con dos formateadores reutilizados, y orden por creación, nombre binario e ID, coincidiendo con el servidor entre páginas. La modificación de una miniatura no cambia la fecha usada para ordenar.
 
 Esto corrige la pérdida y recarga de miniaturas existentes; no genera miniaturas históricas que nunca quedaron indexadas. Tampoco garantiza carga instantánea tras un arranque sin caché y con red lenta.
 

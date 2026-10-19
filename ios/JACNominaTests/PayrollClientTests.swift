@@ -550,6 +550,18 @@ final class PayrollClientTests: XCTestCase {
         } catch { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
         XCTAssertEqual(calls, ["", "second"])
     }
+    @MainActor func testGalleryNameTiesMatchServerOrderSoLoadingAnotherPageDoesNotMoveExistingFiles() async throws {
+        let names = ["IMG_1.jpg", "IMG_10.jpg", "IMG_2.jpg"]
+        let items = names.enumerated().map { index, name in
+            MediaItem(id: "photo-\(index)", name: name, mimeType: "image/jpeg", kind: "image", size: 100, modifiedAt: "same", thumbnailAvailable: true, createdAt: "2026-10-19T12:00:00.000Z")
+        }
+        let read = try await MediaGalleryListing.read(minimumPages: 2, minimumItems: 0) { cursor in
+            MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: nil, folder: nil, breadcrumbs: [],
+                      items: cursor.isEmpty ? Array(items.prefix(2)) : [items[2]], nextPageToken: cursor.isEmpty ? "next" : nil)
+        }
+        XCTAssertEqual(read.feed.items.map(\.name), names)
+        XCTAssertEqual(Array(read.feed.items.prefix(2)), Array(items.prefix(2)), "Cargar más conserva las posiciones de las páginas anteriores")
+    }
     @MainActor func testGalleryRefreshRejectsRepeatedCursorsAndMixedCollections() async throws {
         let first = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: nil, folder: nil, breadcrumbs: [], items: [], nextPageToken: "repeated", collectionID: "original")
         var calls = 0

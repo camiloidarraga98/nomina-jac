@@ -77,6 +77,7 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testCacheNotificationsPreserveLoadedPagesAndOrderWhileApplyingExplicitDeletions
               -only-testing:JACNominaTests/PayrollClientTests/testCachedGalleryIncludesDeletionMarkersForVisibleAndPinnedFolders
               -only-testing:JACNominaTests/PayrollClientTests/testGalleryRefreshRestoresAllVisiblePagesBeforeReturningTheReplacement
+              -only-testing:JACNominaTests/PayrollClientTests/testGalleryNameTiesMatchServerOrderSoLoadingAnotherPageDoesNotMoveExistingFiles
               -only-testing:JACNominaTests/PayrollClientTests/testGalleryRefreshDoesNotPublishAPartialReplacementWhenALaterPageFails
               -only-testing:JACNominaTests/PayrollClientTests/testGalleryRefreshRejectsRepeatedCursorsAndMixedCollections
               -only-testing:JACNominaTests/PayrollClientTests/testMediaGalleryUsesCreationDateAndKeepsLegacyFoldersAtTheEnd

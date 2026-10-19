@@ -180,8 +180,11 @@ enum MediaGalleryOrder {
             if (left.kind == "folder") != (right.kind == "folder") {return left.kind == "folder"}
             let first=left.createdAt.flatMap { dates[$0] },second=right.createdAt.flatMap { dates[$0] }
             if first != second {if let first,let second {return first > second};return first != nil}
-            let order=left.name.localizedStandardCompare(right.name)
-            return order == .orderedSame ? left.id < right.id : order == .orderedAscending
+            // Match R2's SQLite BINARY name/id tie-break across page boundaries.
+            // A localized/numeric comparator inserts later pages ahead of files
+            // already visible (for example 1,10 followed by 2).
+            if left.name.utf8.elementsEqual(right.name.utf8) { return left.id < right.id }
+            return left.name.utf8.lexicographicallyPrecedes(right.name.utf8)
         }
     }
     static func applyingDeletions(to items: [MediaItem], from feed: MediaFeed) -> [MediaItem] {
