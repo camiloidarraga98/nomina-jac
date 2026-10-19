@@ -435,7 +435,10 @@ private enum CRMFixture {
                 let day=ReceiptParser.civilDate(value("week")) ?? Date(),cal=CalendarClock.calendar,offset=(cal.component(.weekday,from:day)+5)%7
                 let from=BoardingClock.today(cal.date(byAdding:.day,value:-offset,to:day)!),to=BoardingClock.today(cal.date(byAdding:.day,value:6-offset,to:day)!)
                 let list=shows.filter{$0["sourceState"].text != "deleted" && $0["showDate"].text>=max(from,BoardingClock.today()) && $0["showDate"].text<=to}
-                let received=payments.values.flatMap{$0}.filter{$0["status"].text=="recorded" && $0["paymentDate"].text>=from && $0["paymentDate"].text<=to}.reduce(0){$0+$1["amount"].number}
+                let recordedPayments: [JSONValue] = payments.values.flatMap { $0 }.filter {
+                    $0["status"].text == "recorded" && $0["paymentDate"].text >= from && $0["paymentDate"].text <= to
+                }
+                let received: Double = recordedPayments.reduce(0.0) { $0 + $1["amount"].number }
                 return(200,.object(["week":.object(["from":.string(from),"to":.string(to),"today":.string(BoardingClock.today())]),"shows":.array(list),"tasks":.array([]),"pending":.number(list.reduce(0){$0+$1["balance"].number}),"received":.number(received),"expensesRegistered":.number(300000),"costs":.number(list.contains{$0["id"].text==showID} ? 1400000:0),"unpriced":.number(0),"unknownCosts":.number(Double(list.filter{$0["id"].text != showID}.count))]))
             }
             if !id.isEmpty{return(200,.object(["show":shows.first{$0["id"].text==id} ?? .null,"payments":.array(payments[id] ?? [])]))}
@@ -575,7 +578,7 @@ enum MediaFixture {
             guard let upload = uploads[id] else { return (404, .object(["error": .string("Subida ficticia no encontrada")])) }
             let complete = upload.1.count == Int(upload.0["size"].number)
             if complete, files[id] == nil { files[id] = upload.1; items[upload.0["parentId"].text, default: []].append(item(id: id, name: upload.0["filename"].text, mime: upload.0["mimeType"].text, kind: upload.0["mimeType"].text.hasPrefix("video/") ? "video" : "image", size: upload.1.count)) }
-            var state: JSONValue = .object(["id": .string(id), "offset": .number(Double(upload.1.count)), "chunkSize": .number(8 * 1024 * 1024), "complete": .bool(complete)])
+            var state: JSONValue = .object(["id": .string(id), "offset": .number(Double(upload.1.count)), "chunkSize": .number(8.0 * 1024 * 1024), "complete": .bool(complete)])
             if !complete { state["uploadURL"] = .string("https://www.googleapis.com/upload/drive/v3/files?upload_id=" + id) }
             return (200, state)
         }
