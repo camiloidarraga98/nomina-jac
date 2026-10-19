@@ -6,8 +6,6 @@ import CoreTransferable
 import AVFoundation
 import AVKit
 
-enum MediaVideoMode: Sendable { case original, web }
-
 struct MediaPreparedVideo: Sendable {
     let file: MediaLocalFile
     let detail: String?
@@ -16,27 +14,14 @@ struct MediaPreparedVideo: Sendable {
 /// Runs before the upload UUID is reserved remotely. Retries upload these exact
 /// bytes through the existing encrypted queue; the library file is never edited.
 enum MediaVideoPreparation {
-    static func worthKeeping(original: Int64, candidate: Int64) -> Bool {
-        original > 0 && candidate > 0 && Double(candidate) <= Double(original) * 0.95
-    }
-
-    static func prepare(_ file: MediaLocalFile, mode: MediaVideoMode) async throws -> MediaPreparedVideo {
+    static func prepare(_ file: MediaLocalFile) async throws -> MediaPreparedVideo {
         try Task.checkCancellation()
-        guard mode == .web, file.mimeType.hasPrefix("video/") else { return MediaPreparedVideo(file: file, detail: nil) }
-        do {
-            let candidate = try await exportCandidate(file)
-            if worthKeeping(original: file.size, candidate: candidate.size) {
-                let percent = Int((1 - Double(candidate.size) / Double(file.size)) * 100)
-                let before = ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file)
-                let after = ByteCountFormatter.string(fromByteCount: candidate.size, countStyle: .file)
-                return MediaPreparedVideo(file: candidate, detail: "\(before) → \(after) · \(percent)% menos · MP4 para web")
-            }
-            candidate.remove()
-            return MediaPreparedVideo(file: file, detail: "Original conservado: la conversión no ahorra al menos un 5%.")
-        } catch {
-            if error is CancellationError || Task.isCancelled { throw CancellationError() }
-            return MediaPreparedVideo(file: file, detail: "Original conservado: " + error.localizedDescription)
-        }
+        guard file.mimeType.hasPrefix("video/") else { return MediaPreparedVideo(file: file, detail: nil) }
+        let candidate = try await exportCandidate(file)
+        let before = ByteCountFormatter.string(fromByteCount: file.size, countStyle: .file)
+        let after = ByteCountFormatter.string(fromByteCount: candidate.size, countStyle: .file)
+        let saving = file.size > candidate.size ? " · \((file.size - candidate.size) * 100 / file.size)% menos" : " · Recomprimido"
+        return MediaPreparedVideo(file: candidate, detail: "\(before) → \(after)\(saving) · MP4 para web")
     }
 
     static func exportCandidate(_ file: MediaLocalFile) async throws -> MediaLocalFile {
@@ -44,17 +29,11 @@ enum MediaVideoPreparation {
         let asset = AVURLAsset(url: file.url)
         let videos = try await asset.loadTracks(withMediaType: .video)
         let audio = try await asset.loadTracks(withMediaType: .audio)
-        guard videos.count == 1, audio.count <= 1, let video = videos.first else {
-            throw APIError.invalid("Este video necesita conservar sus pistas originales.")
-        }
-        // H.264 SDR cannot preserve HDR/alpha. Never silently flatten those files.
-        guard !video.hasMediaCharacteristic(.containsHDRVideo), !video.hasMediaCharacteristic(.containsAlphaChannel) else {
-            throw APIError.invalid("Se conserva el HDR o la transparencia del video.")
-        }
+        guard let video = videos.first else { throw APIError.invalid("No se pudo leer este video para comprimirlo. No se subió el original.") }
         guard MediaStorageReview.freeBytes > file.size + 64 * 1024 * 1024 else {
             throw APIError.invalid("No hay espacio suficiente para preparar otra copia.")
         }
-        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetHighestQuality),
+        guard let session = AVAssetExportSession(asset: asset, presetName: AVAssetExportPresetMediumQuality),
               session.supportedFileTypes.contains(.mp4) else {
             throw APIError.invalid("El iPhone no puede convertir este formato a MP4.")
         }
@@ -72,19 +51,47 @@ enum MediaVideoPreparation {
         session.outputFileType = .mp4
         session.shouldOptimizeForNetworkUse = true
         session.canPerformMultiplePassesOverSourceMediaData = true
+        // Mandatory SDR output: tone-map HDR and flatten alpha rather than
+        // bypassing compression. Medium quality favors smaller uploads.
+        let duration = try await asset.load(.duration)
+        let naturalSize = try await video.load(.naturalSize)
+        let transform = try await video.load(.preferredTransform)
+        let bounds = CGRect(origin: .zero, size: naturalSize).applying(transform)
+        guard duration.seconds.isFinite, duration.seconds > 0, bounds.width > 0, bounds.height > 0 else {
+            throw APIError.invalid("El video no contiene una duración o imagen válidas.")
+        }
+        let scale = min(1, 1280 / max(bounds.width, bounds.height))
+        let renderSize = CGSize(width: max(2, floor(bounds.width * scale / 2) * 2), height: max(2, floor(bounds.height * scale / 2) * 2))
+        let composition = AVMutableVideoComposition()
+        composition.renderSize = renderSize
+        let sourceRate = try await video.load(.nominalFrameRate)
+        let rate = min(30, max(1, Double(sourceRate)))
+        composition.frameDuration = CMTime(seconds: 1 / rate, preferredTimescale: 60000)
+        composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
+        composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
+        composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
+        let instruction = AVMutableVideoCompositionInstruction()
+        instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
+        instruction.backgroundColor = CGColor(gray: 0, alpha: 1)
+        let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: video)
+        let normalized = transform.concatenating(CGAffineTransform(translationX: -bounds.minX, y: -bounds.minY))
+        layer.setTransform(normalized.concatenating(CGAffineTransform(scaleX: renderSize.width / bounds.width, y: renderSize.height / bounds.height)), at: .zero)
+        instruction.layerInstructions = [layer]
+        composition.instructions = [instruction]
+        session.videoComposition = composition
         let operation = MediaVideoExportOperation(session)
         await withTaskCancellationHandler {
             if !Task.isCancelled { await session.export() }
         } onCancel: { operation.cancel() }
         try Task.checkCancellation()
         guard session.status == .completed else {
-            throw APIError.invalid("No se pudo completar la conversión; puedes subirlo sin compresión.")
+            throw APIError.invalid("No se pudo comprimir este video. Vuelve a seleccionarlo; no se enviará el original.")
         }
         try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: url.path)
         let output = AVURLAsset(url: url)
         let outputVideos = try await output.loadTracks(withMediaType: .video)
         let outputAudio = try await output.loadTracks(withMediaType: .audio)
-        guard outputVideos.count == 1, outputAudio.count == audio.count, let outputVideo = outputVideos.first else {
+        guard outputVideos.count == 1, (audio.isEmpty || !outputAudio.isEmpty), let outputVideo = outputVideos.first else {
             throw APIError.invalid("No se pudieron conservar todas las pistas.")
         }
         let descriptions = try await outputVideo.load(.formatDescriptions)
@@ -97,22 +104,18 @@ enum MediaVideoPreparation {
                 throw APIError.invalid("No se obtuvo audio AAC compatible con la web.")
             }
         }
-        let inputSize = try await displaySize(video)
         let outputSize = try await displaySize(outputVideo)
-        let inputRate = try await video.load(.nominalFrameRate)
         let outputRate = try await outputVideo.load(.nominalFrameRate)
-        let duration = try await asset.load(.duration).seconds
         let outputDuration = try await output.load(.duration).seconds
-        guard inputSize == outputSize, inputRate > 0, abs(inputRate - outputRate) <= max(0.1, inputRate * 0.01),
-              duration.isFinite, duration > 0, outputDuration.isFinite,
-              abs(duration - outputDuration) <= max(0.1, 1 / Double(inputRate)) else {
-            throw APIError.invalid("La conversión cambió la resolución, duración o fluidez.")
+        guard max(outputSize.width, outputSize.height) <= 1280, outputRate > 0, outputRate <= 30.1,
+              outputDuration.isFinite, abs(duration.seconds - outputDuration) <= max(0.2, 1 / rate) else {
+            throw APIError.invalid("No se pudo completar una copia comprimida válida del video.")
         }
         try Task.checkCancellation()
         let count = try url.resourceValues(forKeys: [.fileSizeKey]).fileSize ?? 0
         guard count > 0 else { throw APIError.invalid("La copia convertida está vacía.") }
         retained = true
-        return MediaLocalFile(id: file.id, url: url, name: name, mimeType: "video/mp4", size: Int64(count))
+        return MediaLocalFile(id: file.id, url: url, name: name, mimeType: "video/mp4", size: Int64(count), videoPrepared: true)
     }
 
     private static func displaySize(_ track: AVAssetTrack) async throws -> CGSize {
@@ -171,10 +174,9 @@ struct MediaSimpleUploadComposer: View {
                     }
 
                     VStack(alignment: .leading, spacing: 14) {
-                        Toggle("Optimizar videos para web", isOn: $draft.optimizeVideos)
-                            .disabled(draft.importing || draft.creating || !draft.files.isEmpty)
-                            .accessibilityIdentifier("media.video.optimize")
-                        Text("Elige antes de agregar archivos. MP4 de alta calidad, sin fijar un tamaño máximo ni bajar la resolución. Tu original queda intacto. La reducción depende del video; HDR y formatos especiales se conservan originales.")
+                        Label("Los videos se comprimen siempre", systemImage: "video.fill")
+                            .font(.subheadline.weight(.semibold)).accessibilityIdentifier("media.video.required")
+                        Text("Se preparan como MP4 para reducir el peso, también si tienen HDR. Puede bajar la resolución, la fluidez o cambiar el color. Tu original queda intacto en Fotos o Archivos.")
                             .font(.caption).foregroundStyle(.secondary)
                         HStack(spacing: 12) {
                             PhotosPicker(selection: $draft.selectedPhotos, matching: .any(of: [.images, .videos]), preferredItemEncoding: .current) {
@@ -316,7 +318,6 @@ private final class MediaComposerStaging {
     @Published private(set) var importing = false
     @Published private(set) var creating = false
     @Published private(set) var attemptedName: String?
-    @Published var optimizeVideos = false
     @Published private(set) var videoDetails: [String: String] = [:]
     @Published private(set) var preparingMessage = "Preparando archivos…"
     @Published var error: String?
@@ -353,8 +354,8 @@ private final class MediaComposerStaging {
         // after encoding and the session/permission check have both completed.
         var accepted = false
         defer { if !accepted { source.remove() } }
-        preparingMessage = optimizeVideos && source.mimeType.hasPrefix("video/") ? "Optimizando \(source.name)…" : "Preparando archivos…"
-        let result = try await MediaVideoPreparation.prepare(source, mode: optimizeVideos ? .web : .original)
+        preparingMessage = source.mimeType.hasPrefix("video/") ? "Comprimiendo \(source.name)…" : "Preparando archivos…"
+        let result = try await MediaVideoPreparation.prepare(source)
         guard isCurrent(stamp, store: store) else { if result.file.url != source.url { result.file.remove() }; throw CancellationError() }
         if result.file.url != source.url { source.remove() }
         staging.retain(result.file)

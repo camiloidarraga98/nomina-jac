@@ -2,6 +2,8 @@
 import XCTest
 import CryptoKit
 import AVFoundation
+import VideoToolbox
+import UIKit
 @testable import JACNomina
 
 @MainActor
@@ -12,31 +14,29 @@ final class MediaVideoPreparationTests: XCTestCase {
         return try MediaLocalFile.stage(document.url, quality: .original)
     }
 
-    func testOriginalModeAndPhotosKeepIdenticalBytes() async throws {
-        for (bytes, name) in [(MediaFixture.video, "Original.mov"), (MediaFixture.photo, "Foto.png")] {
-            let file = try staged(bytes, name: name); defer { file.remove() }
-            let result = try await MediaVideoPreparation.prepare(file, mode: name.hasSuffix("png") ? .web : .original)
-            XCTAssertEqual(result.file.url, file.url)
-            XCTAssertEqual(result.file.id, file.id)
-            XCTAssertNil(result.detail)
-            XCTAssertEqual(try Data(contentsOf: result.file.url), bytes)
-        }
+    func testPhotosKeepIdenticalBytes() async throws {
+        let file = try staged(MediaFixture.photo, name: "Foto.png"); defer { file.remove() }
+        let result = try await MediaVideoPreparation.prepare(file)
+        XCTAssertEqual(result.file.url, file.url)
+        XCTAssertNil(result.detail)
+        XCTAssertEqual(try Data(contentsOf: result.file.url), MediaFixture.photo)
     }
 
-    func testSavingsThresholdRejectsEmptyLargerAndInsignificantCopies() {
-        XCTAssertFalse(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 0))
-        XCTAssertFalse(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 1100))
-        XCTAssertFalse(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 951))
-        XCTAssertTrue(MediaVideoPreparation.worthKeeping(original: 1000, candidate: 950))
-        XCTAssertTrue(MediaVideoPreparation.worthKeeping(original: 1_000_000, candidate: 250_000))
+    func testSmallVideosAlwaysProduceACompressedMP4InsteadOfTheOriginal() async throws {
+        let file = try staged(); defer { file.remove() }
+        let result = try await MediaVideoPreparation.prepare(file); defer { result.file.remove() }
+        XCTAssertNotEqual(result.file.url, file.url)
+        XCTAssertEqual(result.file.mimeType, "video/mp4")
+        XCTAssertTrue(result.file.videoPrepared)
+        XCTAssertTrue(result.detail?.contains("MP4 para web") == true)
+        XCTAssertEqual(try Data(contentsOf: file.url), MediaFixture.video)
     }
 
-    func testInvalidVideoKeepsOriginalAndExplainsFallback() async throws {
+    func testInvalidVideoIsRejectedWithoutOriginalFallback() async throws {
         let bytes = Data("Ficticio, sin contenido audiovisual".utf8)
         let file = try staged(bytes); defer { file.remove() }
-        let result = try await MediaVideoPreparation.prepare(file, mode: .web)
-        XCTAssertEqual(result.file.url, file.url)
-        XCTAssertTrue(result.detail?.hasPrefix("Original conservado:") == true)
+        do { _ = try await MediaVideoPreparation.prepare(file); XCTFail("No debe devolverse el original sin comprimir") }
+        catch { XCTAssertFalse(error is CancellationError) }
         XCTAssertEqual(try Data(contentsOf: file.url), bytes)
     }
 
@@ -44,7 +44,7 @@ final class MediaVideoPreparationTests: XCTestCase {
         let file = try staged(); defer { file.remove() }
         let task = Task {
             withUnsafeCurrentTask { $0?.cancel() }
-            return try await MediaVideoPreparation.prepare(file, mode: .web)
+            return try await MediaVideoPreparation.prepare(file)
         }
         do { _ = try await task.value; XCTFail("La preparación cancelada no debe devolver un archivo para subir") }
         catch { XCTAssertTrue(error is CancellationError) }
@@ -83,7 +83,7 @@ final class MediaVideoPreparationTests: XCTestCase {
         XCTAssertEqual(session.status, .completed, session.error?.localizedDescription ?? "")
         let source = try MediaLocalFile.stage(sourceURL, quality: .original); defer { source.remove() }
         let original = try Data(contentsOf: source.url)
-        let result = try await MediaVideoPreparation.prepare(source, mode: .web)
+        let result = try await MediaVideoPreparation.prepare(source)
         defer { if result.file.url != source.url { result.file.remove() } }
         XCTAssertNotEqual(result.file.url, source.url, result.detail ?? "")
         XCTAssertEqual(result.file.id, source.id)
@@ -101,8 +101,9 @@ final class MediaVideoPreparationTests: XCTestCase {
         let outTransform = try await outVideo.load(.preferredTransform)
         let inSize = try await video.load(.naturalSize)
         let rect = CGRect(origin: .zero, size: outSize).applying(outTransform)
-        XCTAssertEqual(abs(rect.width).rounded(), inSize.height.rounded())
-        XCTAssertEqual(abs(rect.height).rounded(), inSize.width.rounded())
+        XCTAssertEqual(abs(rect.width / rect.height), inSize.height / inSize.width, accuracy: 0.02)
+        XCTAssertLessThanOrEqual(max(abs(rect.width), abs(rect.height)), 1280)
+        XCTAssertTrue(result.file.videoPrepared)
         let outputDuration = try await output.load(.duration)
         XCTAssertEqual(outputDuration.seconds, duration.seconds, accuracy: 0.1)
         let formats = try await outVideo.load(.formatDescriptions)
@@ -110,10 +111,128 @@ final class MediaVideoPreparationTests: XCTestCase {
         let soundFormats = try await outputAudio[0].load(.formatDescriptions)
         XCTAssertEqual(soundFormats.map { CMFormatDescriptionGetMediaSubType($0) }, [kAudioFormatMPEG4AAC])
     }
+
+    func testHDRVideoIsConvertedToSDRInsteadOfKeepingTheOriginal() async throws {
+        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let url = folder.appendingPathComponent("HDR ficticio.mov")
+        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
+        let settings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.hevc, AVVideoWidthKey: 128, AVVideoHeightKey: 96,
+            AVVideoCompressionPropertiesKey: [AVVideoProfileLevelKey: kVTProfileLevel_HEVC_Main10_AutoLevel],
+            AVVideoColorPropertiesKey: [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_2020,
+                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_2100_HLG, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_2020]
+        ]
+        guard writer.canApply(outputSettings: settings, forMediaType: .video) else { throw XCTSkip("El simulador no dispone de codificador HEVC Main10 para generar el fixture HDR") }
+        let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
+        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
+            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,
+            kCVPixelBufferWidthKey as String: 128, kCVPixelBufferHeightKey as String: 96
+        ])
+        writer.add(input)
+        XCTAssertTrue(writer.startWriting(), writer.error?.localizedDescription ?? "")
+        writer.startSession(atSourceTime: .zero)
+        for frame in 0..<12 {
+            var retries = 0
+            while !input.isReadyForMoreMediaData && retries < 500 { try await Task.sleep(for: .milliseconds(10)); retries += 1 }
+            XCTAssertTrue(input.isReadyForMoreMediaData)
+            var buffer: CVPixelBuffer?
+            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer), kCVReturnSuccess)
+            let pixel = try XCTUnwrap(buffer)
+            CVPixelBufferLockBaseAddress(pixel, [])
+            for plane in 0..<CVPixelBufferGetPlaneCount(pixel) {
+                let address = try XCTUnwrap(CVPixelBufferGetBaseAddressOfPlane(pixel, plane)).assumingMemoryBound(to: UInt16.self)
+                let count = CVPixelBufferGetBytesPerRowOfPlane(pixel, plane) * CVPixelBufferGetHeightOfPlane(pixel, plane) / 2
+                for index in 0..<count { address[index] = UInt16(plane == 0 ? 256 + frame * 8 : 512) << 6 }
+            }
+            CVPixelBufferUnlockBaseAddress(pixel, [])
+            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 12)))
+        }
+        input.markAsFinished()
+        await writer.finishWriting()
+        XCTAssertEqual(writer.status, .completed, writer.error?.localizedDescription ?? "")
+        let source = try MediaLocalFile.stage(url, quality: .original); defer { source.remove() }
+        let sourceAsset = AVURLAsset(url: source.url)
+        let sourceTracks = try await sourceAsset.loadTracks(withMediaType: .video)
+        XCTAssertTrue(try XCTUnwrap(sourceTracks.first).hasMediaCharacteristic(.containsHDRVideo))
+        let result = try await MediaVideoPreparation.prepare(source); defer { result.file.remove() }
+        XCTAssertNotEqual(result.file.url, source.url)
+        XCTAssertTrue(result.file.videoPrepared)
+        let output = AVURLAsset(url: result.file.url)
+        let tracks = try await output.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        XCTAssertFalse(track.hasMediaCharacteristic(.containsHDRVideo))
+        let formats = try await track.load(.formatDescriptions)
+        XCTAssertEqual(formats.map { CMFormatDescriptionGetMediaSubType($0) }, [kCMVideoCodecType_H264])
+    }
+}
+
+@MainActor
+final class MediaGridThumbnailLoaderTests: XCTestCase {
+    func testReturningToTheSameRevisionReusesDecodedImageButAnotherRevisionLoads() async throws {
+        let loader = MediaGridThumbnailLoader(); var count = 0
+        let first = try await loader.load(key: "session|revision1", authorized: { true }, bytes: { count += 1; return MediaFixture.photo })
+        let again = try await loader.load(key: "session|revision1", authorized: { true }, bytes: { count += 1; return MediaFixture.photo })
+        XCTAssertNotNil(first); XCTAssertTrue(first === again); XCTAssertEqual(count, 1)
+        _ = try await loader.load(key: "session|revision2", authorized: { true }, bytes: { count += 1; return MediaFixture.photo })
+        XCTAssertEqual(count, 2)
+    }
+    func testThumbnailWorkIsBoundedWhenManyCellsAppearTogether() async throws {
+        let loader = MediaGridThumbnailLoader(limit: 3); var active = 0; var maximum = 0
+        let tasks = (0..<15).map { index in Task { @MainActor in
+            try await loader.load(key: String(index), authorized: { true }, bytes: {
+                active += 1; maximum = max(maximum, active); defer { active -= 1 }
+                try await Task.sleep(for: .milliseconds(20)); return MediaFixture.photo
+            })
+        } }
+        for task in tasks { let image = try await task.value; XCTAssertNotNil(image) }
+        XCTAssertEqual(maximum, 3); XCTAssertEqual(active, 0)
+    }
+    func testLeavingTheViewportCancelsQueuedWorkAndDoesNotLeakCapacity() async throws {
+        let loader = MediaGridThumbnailLoader(limit: 1); var entered = false; var unwanted = 0
+        let first = Task { try await loader.load(key: "visible", authorized: { true }, bytes: {
+            entered = true; try await Task.sleep(for: .milliseconds(80)); return MediaFixture.photo
+        }) }
+        while !entered { await Task.yield() }
+        let cancelled = Task { try await loader.load(key: "gone", authorized: { true }, bytes: { unwanted += 1; return MediaFixture.photo }) }
+        await Task.yield(); cancelled.cancel()
+        do { _ = try await cancelled.value; XCTFail("Una celda retirada no debe iniciar una descarga pendiente") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        _ = try await first.value
+        let image = try await loader.load(key: "next", authorized: { true }, bytes: { MediaFixture.photo })
+        XCTAssertNotNil(image); XCTAssertEqual(unwanted, 0)
+    }
+    func testRevocationRejectsCachedAndLateImagesWithoutFallback() async throws {
+        let loader = MediaGridThumbnailLoader(); var authorized = true; var count = 0
+        _ = try await loader.load(key: "private", authorized: { authorized }, bytes: { count += 1; return MediaFixture.photo })
+        authorized = false
+        do { _ = try await loader.load(key: "private", authorized: { authorized }, bytes: { count += 1; return MediaFixture.photo }); XCTFail("No se permite una copia de sesión revocada") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        authorized = true
+        do { _ = try await loader.load(key: "late", authorized: { authorized }, bytes: { authorized = false; return MediaFixture.photo }); XCTFail("La imagen tardía debe descartarse") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        authorized = true
+        _ = try await loader.load(key: "private", authorized: { authorized }, bytes: { count += 1; return MediaFixture.photo })
+        XCTAssertEqual(count, 2)
+    }
 }
 
 @MainActor
 final class MediaUploadQueueTests: XCTestCase {
+    func testUncompressedVideoCannotEnterTheUploadQueue() async throws {
+        let (main, _) = try await client()
+        let location = root(), vault = QueueTestVault(), key = QueueTestVault()
+        let queue = MediaUploadQueue(root: location, vault: vault, encryptionKeyStore: key, transportFactory: { _, _ in nil }, automaticallyStart: false)
+        let document = try TemporaryDocuments.save(MediaFixture.video, filename: "Sin comprimir.mov")
+        defer { TemporaryDocuments.remove(document) }
+        let source = try MediaLocalFile.stage(document.url, quality: .original)
+        defer { queue.revoke(); source.remove(); try? FileManager.default.removeItem(at: location) }
+        do { try await queue.enqueue([source], destination: folder, client: main); XCTFail("No debe enviar el original") }
+        catch { XCTAssertFalse(error is CancellationError) }
+        XCTAssertTrue(queue.jobs.isEmpty)
+        XCTAssertEqual(try Data(contentsOf: source.url), MediaFixture.video)
+    }
     private func waitFor(_ message: String, file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async throws {
         for _ in 0..<250 {
             if condition() { return }

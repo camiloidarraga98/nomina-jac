@@ -194,8 +194,8 @@ enum MediaThumbnail {
         guard CGImageDestinationFinalize(destination), data.length <= 512 * 1024 else { return nil }
         return data as Data
     }
-    static func image(_ data:Data) -> JACPlatformImage? {
-        guard data.count <= 512*1024,let source=CGImageSourceCreateWithData(data as CFData,nil),let thumbnail=CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:360,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceShouldCacheImmediately:false] as CFDictionary) else{return nil}
+    static func image(_ data:Data, decodeImmediately: Bool = false) -> JACPlatformImage? {
+        guard data.count <= 512*1024,let source=CGImageSourceCreateWithData(data as CFData,nil),let thumbnail=CGImageSourceCreateThumbnailAtIndex(source,0,[kCGImageSourceCreateThumbnailFromImageAlways:true,kCGImageSourceThumbnailMaxPixelSize:360,kCGImageSourceCreateThumbnailWithTransform:true,kCGImageSourceShouldCacheImmediately:decodeImmediately] as CFDictionary) else{return nil}
         #if os(iOS)
         return UIImage(cgImage:thumbnail)
         #else
@@ -219,6 +219,7 @@ struct MediaPhotoMenu: View {
     @State private var ownedDocument:ExportedDocument?
     @State private var operation:Task<Void,Never>?
     @State private var pinned=false
+    @State private var pinTask:Task<Void,Never>?
     var body:some View {
         Menu {
             if !resuming {
@@ -252,10 +253,20 @@ struct MediaPhotoMenu: View {
                     }
                 }
             }
-            .onDisappear {operation?.cancel();operation=nil;clearDocument()}
+            .onDisappear {operation?.cancel();operation=nil;pinTask?.cancel();pinTask=nil;clearDocument()}
     }
     private enum Action {case download,offline,delete}
-    private func updatePinned(){pinned=(try? client.mediaScope()).map{client.mediaOffline.isPinned(item,scope:$0)} ?? false}
+    private func updatePinned(){
+        pinTask?.cancel()
+        guard let scope=try? client.mediaScope(),let stamp=try? client.mediaAccessStamp() else{pinned=false;return}
+        let cache=client.mediaOffline
+        pinTask=Task {
+            let worker=Task.detached(priority:.utility){cache.isPinned(item,scope:scope)}
+            let value=await withTaskCancellationHandler {await worker.value} onCancel:{worker.cancel()}
+            guard !Task.isCancelled,stamp == (try? client.mediaAccessStamp()) else{return}
+            pinned=value
+        }
+    }
     private func clearDocument(){if let ownedDocument {TemporaryDocuments.remove(ownedDocument)};ownedDocument=nil}
     private func perform(_ action:Action){
         guard !busy else{return};let selected=item,stamp=try? client.mediaAccessStamp();busy=true;failure=nil
@@ -386,6 +397,7 @@ struct MediaLocalFile: Identifiable, Sendable {
     let mimeType: String
     let size: Int64
     var imageLimit: Int64 = 0
+    var videoPrepared = false
     static func safeName(_ value: String) -> String {
         let name = (value as NSString).lastPathComponent.replacingOccurrences(of: "\u{0}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
         return name.isEmpty || name == "." || name == ".." ? "Archivo" : String(name.prefix(220))
@@ -512,7 +524,7 @@ struct MediaGalleryView: View {
     }
     private var galleryContent: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 22) {
+            LazyVStack(alignment: .leading, spacing: 22) {
                 #if os(iOS)
                 if compactGallery {
                     HStack {
@@ -757,7 +769,7 @@ struct MediaGalleryView: View {
         transferReview = MediaTransferReview(plan: plan, photos: photos, requiredBytes: MediaStorageReview.required(pending), selection: true, stamp: try? store.client.mediaAccessStamp())
     }
     private var inlineFolders: some View {
-        VStack(spacing:12) {
+        LazyVStack(spacing:12) {
             ForEach(items.filter { $0.kind == "folder" }) { item in
                 MediaInlineFolder(folder:MediaFolder(id:item.id,name:item.name),collectionID:feed?.collectionID,expanded:$expandedFolders,epoch:thumbnailEpoch,disabled:uploading || opening != nil || deleting || selectionBusy,opening:opening,open:{item,context in open(item,in:context)},denied:thumbnailDenied,commands:{AnyView(folderCommands($0))},selection:selection)
             }
@@ -881,7 +893,18 @@ struct MediaGalleryView: View {
             if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar foto ficticia") { Task {
                 do {
                     for (name, bytes) in [("Foto de prueba.png", MediaFixture.photo), ("Video de prueba.mov", MediaFixture.video)] {
-                        let document = try TemporaryDocuments.save(bytes, filename: name); defer { TemporaryDocuments.remove(document) }; queue.append(try MediaLocalFile.stage(document.url))
+                        let document = try TemporaryDocuments.save(bytes, filename: name); defer { TemporaryDocuments.remove(document) }
+                        let source = try MediaLocalFile.stage(document.url)
+                        #if os(iOS)
+                        var prepared = false
+                        defer { if !prepared { source.remove() } }
+                        let result = try await MediaVideoPreparation.prepare(source)
+                        if result.file.url != source.url { source.remove() }
+                        queue.append(result.file)
+                        prepared = true
+                        #else
+                        queue.append(source)
+                        #endif
                     }
                 } catch { self.error = error.localizedDescription }
             } }.accessibilityIdentifier("media.fixture") }
@@ -1084,7 +1107,16 @@ struct MediaGalleryView: View {
                 let worker = Task.detached(priority: .userInitiated) { try MediaLocalFile.stage(url) }
                 let file = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
                 guard !Task.isCancelled, stamp == (try? store.client.mediaAccessStamp()), store.overview?.user.canUploadMedia == true else { file.remove(); return }
+                #if os(iOS)
+                var prepared = false
+                defer { if !prepared { file.remove() } }
+                let result = try await MediaVideoPreparation.prepare(file)
+                guard !Task.isCancelled, stamp == (try? store.client.mediaAccessStamp()), store.overview?.user.canUploadMedia == true else { if result.file.url != file.url { result.file.remove() }; return }
+                if result.file.url != file.url { file.remove() }
+                queue.append(result.file); prepared = true
+                #else
                 queue.append(file)
+                #endif
             }
             catch { self.error = error.localizedDescription }
         }
@@ -1095,7 +1127,16 @@ struct MediaGalleryView: View {
             do {
                 guard let file = try await photo.loadTransferable(type: MediaLibraryFile.self) else { throw APIError.message("No se pudo leer esa foto o video.") }
                 guard !Task.isCancelled, stamp == (try? store.client.mediaAccessStamp()), store.overview?.user.canUploadMedia == true else { file.staged.remove(); return }
+                #if os(iOS)
+                var prepared = false
+                defer { if !prepared { file.staged.remove() } }
+                let result = try await MediaVideoPreparation.prepare(file.staged)
+                guard !Task.isCancelled, stamp == (try? store.client.mediaAccessStamp()), store.overview?.user.canUploadMedia == true else { if result.file.url != file.staged.url { result.file.remove() }; return }
+                if result.file.url != file.staged.url { file.staged.remove() }
+                queue.append(result.file); prepared = true
+                #else
                 queue.append(file.staged)
+                #endif
             } catch { self.error = error.localizedDescription }
         }
     }
@@ -1188,7 +1229,16 @@ struct MediaTile: View {
             .task(id: item.id + item.modifiedAt + epoch.uuidString + (offline ? "offline":"online")) {
                 guard item.kind != "folder",!offline,loadedRevision != item.modifiedAt else{return}
                 if loadedRevision != nil {image=nil;loadedRevision=nil}
-                do {let data=try await client.mediaThumbnail(item);try Task.checkCancellation();if let thumbnail=MediaThumbnail.image(data){image=thumbnail;loadedRevision=item.modifiedAt}}
+                do {
+                    #if os(iOS)
+                    let thumbnail = try await MediaGridThumbnailLoader.shared.image(item, client: client, epoch: epoch)
+                    #else
+                    let data = try await client.mediaThumbnail(item)
+                    let thumbnail = MediaThumbnail.image(data)
+                    #endif
+                    try Task.checkCancellation()
+                    if let thumbnail { image = thumbnail; loadedRevision = item.modifiedAt }
+                }
                 catch {if case APIError.unauthorized = error {denied(error)}else if case APIError.forbidden = error {denied(error)}}
             }.onDisappear {image=nil;loadedRevision=nil}
     }

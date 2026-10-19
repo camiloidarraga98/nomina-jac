@@ -8,13 +8,12 @@ final class LaunchTests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout: 20))
         tap(app, "media.add")
-        let option = app.switches["media.video.optimize"]
-        XCTAssertTrue(option.waitForExistence(timeout: 10)); XCTAssertEqual(option.value as? String, "0")
-        option.tap(); XCTAssertEqual(option.value as? String, "1")
+        XCTAssertTrue(app.staticTexts["media.video.required"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.switches["media.video.optimize"].exists)
         tap(app, "media.fixture")
         let result = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media.video.result.")).firstMatch
         XCTAssertTrue(result.waitForExistence(timeout: 30))
-        XCTAssertTrue(result.label.contains("Original conservado:") || result.label.contains("% menos"))
+        XCTAssertTrue(result.label.contains("MP4 para web")); XCTAssertFalse(result.label.contains("Original conservado"))
         let preview = app.buttons["Ver video antes de subir"]
         if !preview.isHittable { app.swipeUp() }
         XCTAssertTrue(preview.isHittable); preview.tap()
@@ -23,6 +22,24 @@ final class LaunchTests: XCTestCase {
         tap(app, "media.composer.cancel")
         XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["media.upload.progress"].exists)
+    }
+    @MainActor func testExpandedPhotographyFolderScrollsAndKeepsSelectionUsable() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2", "--uitest-media-scroll"]
+        app.launch()
+        tap(app, "media.item.r2_media-day")
+        let first = app.buttons["media.item.r2_media-scroll-0"]
+        XCTAssertTrue(first.waitForExistence(timeout: 15)); XCTAssertTrue(first.isHittable)
+        let scroll = app.scrollViews.firstMatch
+        scroll.swipeUp(); scroll.swipeUp()
+        XCTAssertFalse(first.isHittable)
+        scroll.swipeDown(); scroll.swipeDown()
+        if !first.isHittable { scroll.swipeDown() }
+        XCTAssertTrue(first.waitForExistence(timeout: 15)); XCTAssertTrue(first.isHittable)
+        first.press(forDuration: 0.65)
+        XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
+        tap(app, "media.selection.cancel")
+        XCTAssertFalse(app.staticTexts["media.selection.count"].exists)
     }
     @MainActor override func tearDownWithError() throws {
         if let run = testRun, run.failureCount > 0 {
@@ -101,7 +118,7 @@ final class LaunchTests: XCTestCase {
         if folder.value as? String != "Abierta" { folder.tap() }
         XCTAssertEqual(folder.value as? String,"Abierta")
         let photo=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch
-        let video=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mov")).firstMatch
+        let video=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mp4")).firstMatch
         XCTAssertTrue(photo.waitForExistence(timeout:20));XCTAssertTrue(video.waitForExistence(timeout:20))
         attachScreen(app,name:"fotografia-cola-conservada-al-salir")
     }
@@ -288,7 +305,7 @@ final class LaunchTests: XCTestCase {
         tap(app,"media.item.media-day");tap(app,"media.add"); let field = app.textFields["media.folder.name"]; XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("Ensayo ficticio")
         XCTAssertTrue(app.buttons["media.fixture"].waitForExistence(timeout: 15)); tap(app, "media.fixture"); tap(app, "media.upload");XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["media.upload.speed"].exists);attachScreen(app,name:"fotografia-progreso-general")
         let uploaded = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Foto de prueba.png")).firstMatch
-        XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mov")).firstMatch.waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-subida-multiple-nativa")
+        XCTAssertTrue(uploaded.waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "media.item.", "Video de prueba.mp4")).firstMatch.waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-subida-multiple-nativa")
         openAccount(app); XCTAssertTrue(app.staticTexts["Fotografía JAC"].waitForExistence(timeout: 10)); XCTAssertFalse(app.staticTexts["Administrador de JAC"].exists)
     }
     @MainActor func testPhotographerDownloadsFolderOfflineAndSavesPhotosThroughFakeWriter() {
@@ -313,7 +330,7 @@ final class LaunchTests: XCTestCase {
         tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
         tap(app,"media.item.media-day");tap(app,"media.options.media-day");tap(app,"media.upload.here");XCTAssertFalse(app.textFields["media.folder.name"].exists,"Subir aquí debe recibir la carpeta seleccionada desde la primera apertura");tap(app,"media.fixture");tap(app,"media.upload")
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Foto de prueba.png")).firstMatch.waitForExistence(timeout:15))
-        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mov")).firstMatch.waitForExistence(timeout:15));attachScreen(app,name:"fotografia-administrador-sube")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mp4")).firstMatch.waitForExistence(timeout:15));attachScreen(app,name:"fotografia-administrador-sube")
     }
     @MainActor func testAgendaDayEdgesSelectTheWholeVisibleCell() {
         let app=fixture();app.tabBars.buttons["Agenda"].tap()

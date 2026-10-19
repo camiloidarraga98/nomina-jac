@@ -1,5 +1,84 @@
 #if os(iOS)
 import SwiftUI
+import UIKit
+
+/// Decoded, bounded session memory, never original files or a disk fallback.
+/// A cell leaving the viewport cancels its wait/request without blocking a pan.
+@MainActor
+final class MediaGridThumbnailLoader {
+    static let shared = MediaGridThumbnailLoader()
+    private final class Entry: NSObject {
+        let image: UIImage
+        let expires: Date
+        init(_ image: UIImage) { self.image = image; expires = Date().addingTimeInterval(30) }
+    }
+    private let cache = NSCache<NSString, Entry>()
+    private let limit: Int
+    private var running = 0
+    private var generation = 0
+    private var waiting: [(UUID, CheckedContinuation<Void, Error>)] = []
+    init(limit: Int = 4) {
+        self.limit = max(1, limit)
+        cache.countLimit = 96
+        cache.totalCostLimit = 12 * 1024 * 1024
+    }
+    func clear() { generation += 1; cache.removeAllObjects() }
+
+    func load(key: String, authorized: () -> Bool, bytes: () async throws -> Data) async throws -> UIImage? {
+        try Task.checkCancellation()
+        guard authorized() else { clear(); throw CancellationError() }
+        if let entry = cache.object(forKey: key as NSString), entry.expires > Date() { return entry.image }
+        try await acquire()
+        defer { release() }
+        try Task.checkCancellation()
+        guard authorized() else { clear(); throw CancellationError() }
+        if let entry = cache.object(forKey: key as NSString), entry.expires > Date() { return entry.image }
+        let expected = generation
+        do {
+            let data = try await bytes()
+            try Task.checkCancellation()
+            let decoder = Task.detached(priority: .utility) { MediaThumbnail.image(data, decodeImmediately: true) }
+            let image = await withTaskCancellationHandler { await decoder.value } onCancel: { decoder.cancel() }
+            try Task.checkCancellation()
+            guard expected == generation, authorized() else { throw CancellationError() }
+            if let image {
+                cache.setObject(Entry(image), forKey: key as NSString, cost: Int(image.size.width * image.size.height * 4))
+            }
+            return image
+        } catch {
+            if case APIError.unauthorized = error { clear() }
+            if case APIError.forbidden = error { clear() }
+            throw error
+        }
+    }
+
+    func image(_ item: MediaItem, client: PayrollClient, epoch: UUID) async throws -> UIImage? {
+        guard let stamp = try client.mediaAccessStamp(), client.accessUser?.canReadMedia != false, !client.usingOfflineCopy else { throw CancellationError() }
+        let key = "\(ObjectIdentifier(client))|\(stamp)|\(epoch)|\(item.id)|\(item.modifiedAt)|\(item.size)"
+        return try await load(key: key, authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false && !client.usingOfflineCopy }, bytes: { try await client.mediaThumbnail(item) })
+    }
+
+    private func acquire() async throws {
+        let id = UUID()
+        try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+                if running < limit { running += 1; continuation.resume() }
+                else { waiting.append((id, continuation)) }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                if let index = self.waiting.firstIndex(where: { $0.0 == id }) {
+                    self.waiting.remove(at: index).1.resume(throwing: CancellationError())
+                }
+            }
+        }
+    }
+    private func release() {
+        if waiting.isEmpty { running -= 1 }
+        else { waiting.removeFirst().1.resume() }
+    }
+}
 
 /// One selection spans the expanded folders, but never another session or
 /// collection. Keep the observed revision until the user explicitly reselects.
@@ -246,7 +325,7 @@ struct MediaInlineFolder: View {
             .contextMenu { commands(folder) }
 
             if isExpanded && validPath {
-                VStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 14) {
                     if loading && items.isEmpty {
                         ProgressView().frame(maxWidth: .infinity).padding(.vertical, 18)
                     }

@@ -481,6 +481,13 @@ enum MediaFixture {
         lock.lock(); defer { lock.unlock() }
         files = ["media-photo": photo, "media-video": video]; uploads = [:];deletedFolders=[]
         items = ["media-root": [item(id: "media-day", name: "2026-10-16 · PEREIRA", mime: "application/vnd.google-apps.folder", kind: "folder", size: 0)], "media-day": [item(id: "media-photo", name: "Foto ficticia.png", mime: "image/png", kind: "image", size: photo.count), item(id: "media-video", name: "Video ficticio.mov", mime: "video/quicktime", kind: "video", size: video.count)]]
+        if ProcessInfo.processInfo.arguments.contains("--uitest-media-scroll") {
+            items["media-day"] = (0..<80).map { index in
+                let id = "media-scroll-\(index)"
+                files[id] = photo
+                return item(id: id, name: String(format: "Foto ficticia %03d.png", index), mime: "image/png", kind: "image", size: photo.count)
+            }
+        }
         if ProcessInfo.processInfo.arguments.contains("--uitest-media-slideshow") {
             // Trailing padding preserves the fictitious PNG while making each
             // streamed half large enough to flush URLSession's disk buffer.

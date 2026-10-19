@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-upload-ui]
+        options: [full, video-upload, video-upload-ui, gallery-media]
         default: full
 
 permissions:
@@ -59,11 +59,22 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
           JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
           JAC_VIDEO_UI_ONLY: ${{ inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]') && contains(github.event.head_commit.message, '[ui-only]')) }}
         run: |
           set -euo pipefail
-          if [ "$JAC_VIDEO_UI_ONLY" = true ]; then
+          if [ "$JAC_GALLERY_ONLY" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/MediaVideoPreparationTests
+              -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests
+              -only-testing:JACNominaTests/MediaUploadQueueTests
+              -only-testing:JACNominaTests/PayrollClientTests/testGalleryThumbnailUsesOnlyAuthenticatedThumbnailEndpointAndBoundsItsPixels
+              -only-testing:JACNominaUITests/LaunchTests/testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload
+              -only-testing:JACNominaUITests/LaunchTests/testExpandedPhotographyFolderScrollsAndKeepsSelectionUsable
+              -only-testing:JACNominaUITests/LaunchTests/testPhotoUploadQueueSurvivesLeavingGalleryAndGoingHome
+            )
+          elif [ "$JAC_VIDEO_UI_ONLY" = true ]; then
             checks=(-only-testing:JACNominaUITests/LaunchTests/testVideoOptimizationCanBeReviewedAndCancelledBeforeUpload)
           elif [ "$JAC_VIDEO_ONLY" = true ]; then
             checks=(
@@ -123,7 +134,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
