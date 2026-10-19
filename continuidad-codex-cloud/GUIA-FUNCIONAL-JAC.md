@@ -287,3 +287,8 @@ Preparación y accesos: [README.md](README.md) y [PROMPT-PARA-EL-NUEVO-CHAT.txt]
 ## Música · decisión de Camilo · 19 de octubre de 2026
 
 Música es un módulo propio de web/iPhone/iPad/Mac, con cuatro secciones tipo playlist (nunca carpetas): Para Calentar, Pistas, Maquetas y Música estudio. Pistas y las demás listas mantienen orden alfabético español. Búsqueda general y por sección, reproductor persistente y segundo plano, descargas individuales o de sección completa dentro de JAC para escuchar sin conexión. Importar desde Archivos y abrir archivos de audio enviados desde otras apps eligiendo destino. Camilo aprobó asignar en Gestión los permisos independientes de escuchar/descargar y subir/importar; solo administradores borran. No conceder secciones a cuentas reales basándose en esta documentación. Ver [MUSIC.md](../docs/MUSIC.md) para almacenamiento privado, codecs, caché, límites y verificación. Mantener Team personal y no agregar App Groups ni Associated Domains.
+
+
+## Navegación iPhone y subida de Música · 19 octubre de 2026
+
+El iPhone sustituye la barra inferior por un menú lateral desplegable desde el botón superior izquierdo, disponible dentro de los módulos. Incluye Música y cada sección permitida, conserva estado y reproducción; Mi cuenta sigue en Gestión. iPad/Mac mantienen su distribución. Ver [menú iPhone](../docs/IPHONE_SIDEBAR.md). La subida web de Música muestra destino, archivos/estados, barra general por bytes y confirmación final; reintenta solo pendientes. Ver [Música](../docs/MUSIC.md).

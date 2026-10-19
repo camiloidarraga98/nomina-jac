@@ -8,7 +8,7 @@ La app existente es universal para iPhone y iPad. Se actualiza en el mismo `ios/
 - Agenda coloca el mes y los eventos del día en dos columnas cuando el ancho disponible lo permite. En ventanas más estrechas los coloca verticalmente; la selección del día permanece al girar. El área completa de cada día es seleccionable.
 - La barra lateral se puede ocultar con el control nativo. En ancho compacto la navegación usa las columnas adaptadas del sistema. No se fuerza pantalla completa.
 - Acceso y Gestión tienen un ancho máximo para evitar formularios excesivamente extendidos. Las hojas, el visor PDF, fotos y video usan los componentes nativos existentes.
-- El iPhone conserva sus pestañas y el Mac su distribución. Se mantienen funciones, cálculos, permisos del servidor, pases privados, Llavero, caché cifrada y cubierta de privacidad, también sobre formularios al pasar a segundo plano.
+- El iPhone usa ahora el [menú lateral desplegable](IPHONE_SIDEBAR.md) solicitado por Camilo; el Mac conserva su distribución. Se mantienen funciones, cálculos, permisos del servidor, pases privados, Llavero, caché cifrada y cubierta de privacidad, también sobre formularios al pasar a segundo plano.
 
 ## Navegación y pruebas
 

@@ -5,6 +5,30 @@ final class LaunchTests: XCTestCase {
     @MainActor private func waitFor(_ element: XCUIElement, predicate: NSPredicate, timeout: TimeInterval) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: timeout) == .completed
     }
+    @MainActor func testPhoneSidebarShowsAllModulesAndCanBeDismissed() {
+        let app=fixture()
+        XCTAssertEqual(app.tabBars.count, 0)
+        XCTAssertEqual(Set(navigationSections(app)), Set(["crm","payroll","agenda","itineraries","alerts","boarding","media","music","management"].map {"phone.section."+$0}))
+        XCTAssertTrue(showMenu(app));attachScreen(app, name:"iphone-menu-lateral")
+        app.coordinate(withNormalizedOffset:CGVector(dx:0.96,dy:0.5)).tap()
+        XCTAssertTrue(app.buttons["phone.menu.open"].isHittable)
+        XCTAssertTrue(showMenu(app));app.scrollViews["phone.sidebar.scroll"].swipeLeft()
+        XCTAssertTrue(app.buttons["phone.menu.open"].isHittable)
+        openSection(app,"Música");XCTAssertTrue(app.buttons["music.section.tracks"].waitForExistence(timeout:15))
+        attachScreen(app,name:"iphone-musica-sin-barra-inferior")
+    }
+    @MainActor func testPhoneSidebarKeepsMusicAndNestedAccountState() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=calendar,media,music"];app.launch()
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20))
+        openSection(app,"Música");tap(app,"music.section.tracks")
+        XCTAssertTrue(app.buttons["music.download.section"].waitForExistence(timeout:10))
+        openSection(app,"Gestión");tap(app,"management.account")
+        XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout:10))
+        openSection(app,"Música");XCTAssertTrue(app.buttons["music.download.section"].waitForExistence(timeout:5))
+        openSection(app,"Fotografía");XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:15))
+        openSection(app,"Gestión");XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout:5))
+        XCTAssertFalse(hasSection(app,"Quincena"));XCTAssertFalse(hasSection(app,"CRM"));XCTAssertFalse(hasSection(app,"Pases"))
+    }
     @MainActor func testMusicSectionsAndGlobalSearchRespectListeningPermission() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=music"];app.launch()
         XCTAssertTrue(app.buttons["music.section.warmup"].waitForExistence(timeout:20))
@@ -136,7 +160,7 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-r2", "--uitest-media-slideshow", "--uitest-media-two-folders"]; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout: 20)); app.tabBars.buttons["Fotografía"].tap()
+        XCTAssertTrue(hasSection(app, "Fotografía", timeout: 20)); openSection(app, "Fotografía")
         tap(app, "media.item.r2_media-day")
         let photo = app.buttons["media.item.r2_media-photo"], video = app.buttons["media.item.r2_media-video"], kept = app.buttons["media.item.r2_media-photo-2"]
         XCTAssertTrue(photo.waitForExistence(timeout: 15)); photo.press(forDuration: 0.65); video.tap()
@@ -152,22 +176,19 @@ final class LaunchTests: XCTestCase {
         let app=XCUIApplication()
         app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=calendar,alerts,media,mediaUpload","--uitest-slow-media-upload"]
         app.launch()
-        app.tabBars.buttons["Fotografía"].tap()
+        openSection(app, "Fotografía")
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:20))
         tap(app,"media.add")
         let field=app.textFields["media.folder.name"];XCTAssertTrue(field.waitForExistence(timeout:10));field.tap();field.typeText("Cola ficticia")
         tap(app,"media.fixture");tap(app,"media.upload")
         XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10))
-        app.tabBars.buttons["Agenda"].tap()
+        openSection(app, "Agenda")
         XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:10))
         XCUIDevice.shared.press(.home)
         Thread.sleep(forTimeInterval:6)
         app.activate()
         XCTAssertTrue(app.wait(for:.runningForeground,timeout:10))
-        let mediaTab=app.tabBars.buttons["Fotografía"]
-        let ready=XCTNSPredicateExpectation(predicate:NSPredicate(format:"hittable == true"),object:mediaTab)
-        XCTAssertEqual(XCTWaiter.wait(for:[ready],timeout:10),.completed)
-        mediaTab.tap()
+        openSection(app, "Fotografía")
         XCTAssertTrue(app.descendants(matching:.any)["media.upload.progress"].waitForExistence(timeout:10))
         XCTAssertTrue(app.staticTexts["2 de 2 completados"].waitForExistence(timeout:20))
         let folder=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Cola ficticia")).firstMatch
@@ -211,7 +232,7 @@ final class LaunchTests: XCTestCase {
         let base=["--uitest-payroll","--uitest-offline-content"]+(photographer ? ["--uitest-media-only"]:[])
         app.launchArguments=base+["--uitest-reset-content","--uitest-reset-media"];app.launch()
         if !photographer {
-            XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout:20));app.tabBars.buttons["Fotografía"].tap()
+            XCTAssertTrue(hasSection(app, "Fotografía", timeout: 20));openSection(app, "Fotografía")
         }
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:20))
         XCTAssertFalse(app.buttons["media.item.media-other"].exists)
@@ -222,8 +243,8 @@ final class LaunchTests: XCTestCase {
         app.launchArguments=base+["--uitest-slow-content","--uitest-slow-media","--uitest-media-two-folders"]
         let reopenedAt=Date();app.launch()
         if !photographer {
-            XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout:3));app.tabBars.buttons["Fotografía"].tap()
-            XCTAssertTrue(app.tabBars.buttons["Quincena"].exists)
+            XCTAssertTrue(hasSection(app, "Fotografía", timeout: 3));openSection(app, "Fotografía")
+            XCTAssertTrue(hasSection(app, "Quincena"))
         }
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:3),"La carpeta descargada debe aparecer mientras se revalida la sesión lenta.")
         XCTAssertFalse(app.textFields["login.username"].exists)
@@ -236,7 +257,7 @@ final class LaunchTests: XCTestCase {
         }
         XCTAssertTrue(revalidated,"La galería visible debe actualizarse al validar la sesión, sin esperar los treinta segundos del sondeo.")
         XCTAssertTrue(app.buttons["media.add"].waitForExistence(timeout:max(0,15-Date().timeIntervalSince(reopenedAt))));XCTAssertTrue(app.buttons["media.add"].isEnabled)
-        if photographer {XCTAssertFalse(app.tabBars.buttons["Quincena"].exists);XCTAssertFalse(app.tabBars.buttons["Agenda"].exists)}
+        if photographer {XCTAssertFalse(hasSection(app, "Quincena"));XCTAssertFalse(hasSection(app, "Agenda"))}
         attachScreen(app,name:photographer ? "fotografia-cache-revalidada-fotografo":"fotografia-cache-revalidada-administrador")
     }
     @MainActor func testRootUploadChoosesExistingFolderAndContextMenuDownloadsOnlyItsTarget() {
@@ -265,51 +286,51 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testEmptyProfileCanReachAccountAndLogOutThroughManagement() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections="];app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Gestión"].waitForExistence(timeout:20));XCTAssertEqual(app.tabBars.buttons.count,1);XCTAssertFalse(app.tabBars.buttons["Mi cuenta"].exists)
+        XCTAssertTrue(hasSection(app, "Gestión", timeout: 20));XCTAssertEqual(navigationSections(app).count,1);XCTAssertFalse(hasSection(app, "Mi cuenta"))
         tap(app,"management.account");XCTAssertTrue(app.buttons["Cerrar sesión"].waitForExistence(timeout:10));tap(app,"Cerrar sesión")
         let confirm=app.sheets.buttons["Cerrar sesión"];XCTAssertTrue(confirm.waitForExistence(timeout:10));confirm.tap();XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout:15))
     }
     @MainActor func testModernHybridSectionsShowMediaAndItinerariesWithoutFinanceOrBoarding() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=media,itineraries,alerts"];app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Itinerarios"].waitForExistence(timeout:20));XCTAssertTrue(app.tabBars.buttons["Fotografía"].exists)
-        XCTAssertFalse(app.tabBars.buttons["Quincena"].exists);XCTAssertFalse(app.tabBars.buttons["Agenda"].exists);XCTAssertFalse(app.buttons["boarding.open"].exists)
-        app.tabBars.buttons["Fotografía"].tap();XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons["media.createFolder"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
+        XCTAssertTrue(hasSection(app, "Itinerarios", timeout: 20));XCTAssertTrue(hasSection(app, "Fotografía"))
+        XCTAssertFalse(hasSection(app, "Quincena"));XCTAssertFalse(hasSection(app, "Agenda"));XCTAssertFalse(app.buttons["boarding.open"].exists)
+        openSection(app, "Fotografía");XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:15));XCTAssertFalse(app.buttons["media.createFolder"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
         tap(app,"media.item.media-day");tap(app,"media.item.media-photo");tap(app,"media.preview.close")
-        app.tabBars.buttons["Gestión"].tap();XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.employees"].exists);XCTAssertFalse(app.buttons["management.crm"].exists)
+        openSection(app, "Gestión");XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.employees"].exists);XCTAssertFalse(app.buttons["management.crm"].exists)
         attachScreen(app,name:"secciones-hibridas-sin-finanzas")
     }
     @MainActor func testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-sections=calendar,alerts,media,mediaUpload","--uitest-media-r2"];app.launch()
         XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20))
-        for title in ["Agenda","Alertas","Fotografía","Gestión"] {XCTAssertTrue(app.tabBars.buttons[title].exists)}
-        for title in ["Quincena","Itinerarios","Pases"] {XCTAssertFalse(app.tabBars.buttons[title].exists)}
+        for title in ["Agenda","Alertas","Fotografía","Gestión"] {XCTAssertTrue(hasSection(app, title))}
+        for title in ["Quincena","Itinerarios","Pases"] {XCTAssertFalse(hasSection(app, title))}
         let formatter=DateFormatter();formatter.calendar=Calendar(identifier:.gregorian);formatter.timeZone=TimeZone(identifier:"America/Bogota");formatter.dateFormat="yyyy-MM-dd"
         let current=formatter.string(from:Date()),prefix=String(current.prefix(8))
         for (index,menu) in ["Fotografía","Alertas","Gestión"].enumerated() {
-            app.tabBars.buttons[menu].tap()
+            openSection(app, menu)
             if menu=="Fotografía" {XCTAssertTrue(app.buttons["media.item.r2_media-day"].waitForExistence(timeout:15))}
             if menu=="Gestión" {XCTAssertTrue(app.buttons["management.account"].waitForExistence(timeout:10));tap(app,"management.account");for _ in 0..<4 {if app.buttons["Cerrar sesión"].exists {break};app.swipeUp()};XCTAssertTrue(app.buttons["Cerrar sesión"].waitForExistence(timeout:10))}
-            app.tabBars.buttons["Agenda"].tap();let cell=app.buttons["agenda.day."+prefix+String(format:"%02d",index+1)]
+            openSection(app, "Agenda");let cell=app.buttons["agenda.day."+prefix+String(format:"%02d",index+1)]
             XCTAssertTrue(cell.waitForExistence(timeout:15));cell.tap();XCTAssertEqual(cell.value as? String,"Seleccionado");XCTAssertTrue(app.wait(for:.runningForeground,timeout:5))
             app.buttons["Hoy"].tap();tap(app,"agenda.event.fixture-concert");XCTAssertTrue(app.staticTexts["Concierto simulado"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["agenda.edit"].exists);tap(app,"Listo");XCTAssertTrue(app.wait(for:.runningForeground,timeout:5))
         }
         XCUIDevice.shared.press(.home);app.activate();XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:15));let today=app.buttons["agenda.day."+current];today.tap();XCTAssertEqual(today.value as? String,"Seleccionado")
         tap(app,"agenda.event.fixture-concert");XCTAssertTrue(app.staticTexts["Concierto simulado"].waitForExistence(timeout:10));app.buttons["Listo"].tap()
-        app.tabBars.buttons["Fotografía"].tap();app.tabBars.buttons["Agenda"].tap();XCTAssertTrue(app.buttons["agenda.day."+current].waitForExistence(timeout:10));attachScreen(app,name:"alex-agenda-fechas-cambio-menu")
+        openSection(app, "Fotografía");openSection(app, "Agenda");XCTAssertTrue(app.buttons["agenda.day."+current].waitForExistence(timeout:10));attachScreen(app,name:"alex-agenda-fechas-cambio-menu")
     }
     @MainActor func testCalendarOnlyAndAlertsOnlyAccountsStayInTheirOwnSections() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-sections=calendar"];app.launch()
-        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20));XCTAssertTrue(app.tabBars.buttons["Agenda"].exists)
-        for title in ["Quincena","Itinerarios","Fotografía","Mi cuenta","Alertas"] {XCTAssertFalse(app.tabBars.buttons[title].exists)}
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20));XCTAssertTrue(hasSection(app, "Agenda"))
+        for title in ["Quincena","Itinerarios","Fotografía","Mi cuenta","Alertas"] {XCTAssertFalse(hasSection(app, title))}
         app.terminate();app.launchArguments=["--uitest-payroll","--uitest-sections=alerts"];app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Alertas"].waitForExistence(timeout:20));XCTAssertTrue(app.staticTexts["Lo importante, cerca."].waitForExistence(timeout:15))
-        for title in ["Quincena","Agenda","Itinerarios","Fotografía"] {XCTAssertFalse(app.tabBars.buttons[title].exists)}
-        app.tabBars.buttons["Gestión"].tap();XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.media"].exists)
+        XCTAssertTrue(hasSection(app, "Alertas", timeout: 20));XCTAssertTrue(app.staticTexts["Lo importante, cerca."].waitForExistence(timeout:15))
+        for title in ["Quincena","Agenda","Itinerarios","Fotografía"] {XCTAssertFalse(hasSection(app, title))}
+        openSection(app, "Gestión");XCTAssertTrue(app.buttons["notices.alerts"].waitForExistence(timeout:10));XCTAssertFalse(app.buttons["management.expenses"].exists);XCTAssertFalse(app.buttons["management.archive"].exists);XCTAssertFalse(app.buttons["management.media"].exists)
         attachScreen(app,name:"solo-alertas-sin-modulos-adicionales")
     }
     @MainActor func testAdministratorCanCancelThenDeleteFolderFromItsMenu() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll"];app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Fotografía"].waitForExistence(timeout:20));app.tabBars.buttons["Fotografía"].tap()
+        XCTAssertTrue(hasSection(app, "Fotografía", timeout: 20));openSection(app, "Fotografía")
         tap(app,"media.options.media-day");tap(app,"media.delete.folder");XCTAssertTrue(app.alerts["Eliminar carpeta"].waitForExistence(timeout:10));app.alerts.buttons["Cancelar"].tap();XCTAssertTrue(app.buttons["media.item.media-day"].exists)
         tap(app,"media.options.media-day");tap(app,"media.delete.folder");let confirm=app.alerts["Eliminar carpeta"].buttons.matching(identifier:"media.delete.confirm").firstMatch;XCTAssertTrue(confirm.waitForExistence(timeout:10));confirm.tap()
         expectation(for:NSPredicate(format:"exists == false"),evaluatedWith:app.buttons["media.item.media-day"]);waitForExpectations(timeout:20)
@@ -320,9 +341,9 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testImageQualityPreferenceCanBeSelectedAndPersistsAcrossRelaunch() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only"];app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Gestión"].waitForExistence(timeout:20));app.tabBars.buttons["Gestión"].tap();tap(app,"management.imageQuality")
+        XCTAssertTrue(hasSection(app, "Gestión", timeout: 20));openSection(app, "Gestión");tap(app,"management.imageQuality")
         XCTAssertTrue(app.buttons["media.quality.option.0"].waitForExistence(timeout:10));XCTAssertEqual(app.buttons["media.quality.option.0"].label,"Sin compresión");tap(app,"media.quality.option.6000000")
-        app.terminate();app.launch();app.tabBars.buttons["Gestión"].tap();tap(app,"management.imageQuality")
+        app.terminate();app.launch();openSection(app, "Gestión");tap(app,"management.imageQuality")
         let selected=app.buttons["media.quality.option.6000000"];XCTAssertTrue(selected.waitForExistence(timeout:10));XCTAssertEqual(selected.value as? String,"Seleccionado","La preferencia debe persistir al relanzar")
         tap(app,"media.quality.option.2000000")
     }
@@ -339,7 +360,7 @@ final class LaunchTests: XCTestCase {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-slideshow","--uitest-media-r2","--uitest-slow-photo-preview"];app.launch()
         tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-photo")
         let image=app.descendants(matching:.any).matching(identifier:"media.photo.document").firstMatch
-        XCTAssertTrue(image.waitForExistence(timeout:15));XCTAssertFalse(app.tabBars.buttons["Fotografía"].isHittable)
+        XCTAssertTrue(image.waitForExistence(timeout:15));XCTAssertFalse(hasSection(app, "Fotografía"))
         image.swipeLeft()
         XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertEqual(app.staticTexts["media.preview.name"].label,"Segunda foto ficticia.png")
         let ring=app.descendants(matching:.any).matching(identifier:"media.photo.progress.r2_media-photo-2").firstMatch
@@ -355,8 +376,8 @@ final class LaunchTests: XCTestCase {
     @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-slow-media-upload"]; app.launch()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 20))
-        XCTAssertTrue(app.tabBars.buttons["Fotografía"].exists);XCTAssertTrue(app.tabBars.buttons["Gestión"].exists);XCTAssertFalse(app.tabBars.buttons["Mi cuenta"].exists)
-        for forbidden in ["Quincena", "Agenda", "Itinerarios", "Mi cuenta"] { XCTAssertFalse(app.tabBars.buttons[forbidden].exists) }
+        XCTAssertTrue(hasSection(app, "Fotografía"));XCTAssertTrue(hasSection(app, "Gestión"));XCTAssertFalse(hasSection(app, "Mi cuenta"))
+        for forbidden in ["Quincena", "Agenda", "Itinerarios", "Mi cuenta"] { XCTAssertFalse(hasSection(app, forbidden)) }
         tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
         tap(app, "media.item.media-video"); XCTAssertTrue(app.descendants(matching: .any)["media.video"].waitForExistence(timeout: 15)); attachScreen(app, name: "fotografia-video-nativo"); tap(app, "media.preview.close")
         tap(app,"media.item.media-day");tap(app,"media.add"); let field = app.textFields["media.folder.name"]; XCTAssertTrue(field.waitForExistence(timeout: 10)); field.tap(); field.typeText("Ensayo ficticio")
@@ -414,7 +435,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(app.buttons["media.upload"].exists); XCTAssertFalse(app.buttons["media.createFolder"].exists)
     }
     @MainActor func testAdministratorGalleryAllowsUploadAndPreview() {
-        let app = fixture();app.tabBars.buttons["Fotografía"].tap()
+        let app = fixture();openSection(app, "Fotografía")
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 15)); XCTAssertTrue(app.buttons["media.add"].exists);XCTAssertFalse(app.buttons["media.files"].exists)
         tap(app, "media.item.media-day"); tap(app, "media.item.media-photo"); tap(app, "media.preview.close")
         tap(app,"media.item.media-day");tap(app,"media.options.media-day");tap(app,"media.upload.here");XCTAssertFalse(app.textFields["media.folder.name"].exists,"Subir aquí debe recibir la carpeta seleccionada desde la primera apertura");tap(app,"media.fixture");tap(app,"media.upload")
@@ -422,7 +443,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@ AND label CONTAINS %@","media.item.","Video de prueba.mp4")).firstMatch.waitForExistence(timeout:15));attachScreen(app,name:"fotografia-administrador-sube")
     }
     @MainActor func testAgendaDayEdgesSelectTheWholeVisibleCell() {
-        let app=fixture();app.tabBars.buttons["Agenda"].tap()
+        let app=fixture();openSection(app, "Agenda")
         var c=Calendar(identifier:.gregorian);c.timeZone=TimeZone(identifier:"America/Bogota")!
         let f=DateFormatter();f.timeZone=c.timeZone;f.dateFormat="yyyy-MM-dd"
         let date=c.date(byAdding:.day,value:1,to:Date())!
@@ -542,7 +563,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testCRMNativeAutocompleteBudgetPreparationAndPrivateReceipt() {
-        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm")
+        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm")
         attachScreen(app,name:"nuevo-crm-acciones")
         let show="77777777-7777-4777-8777-777777777777",contact="88888888-8888-4888-8888-888888888888"
         tap(app,"crm.show."+show);tap(app,"crm.price");fill(app,"crm.entrepreneur","jose");tap(app,"crm.suggestion."+contact)
@@ -561,16 +582,16 @@ final class LaunchTests: XCTestCase {
         let saved=app.staticTexts["Presupuesto y preparación guardados."];for _ in 0..<8 {if saved.exists{break};app.swipeDown()};XCTAssertTrue(saved.waitForExistence(timeout:10))
     }
     @MainActor func testCRMContactFilesWeeklyAndReaderRestriction() {
-        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Empresarios")
+        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm");tap(app,"Empresarios")
         tap(app,"crm.contact.88888888-8888-4888-8888-888888888888");tap(app,"crm.contact.files");tap(app,"travel.fixture");tap(app,"crm.editor.save")
         XCTAssertTrue(app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH 'crm.file.'")).firstMatch.waitForExistence(timeout:10))
         app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH 'crm.file.'")).firstMatch.tap();XCTAssertTrue(app.navigationBars["Documento"].waitForExistence(timeout:10));tap(app,"Listo")
         attachScreen(app,name:"crm-empresario-nativo")
-        app.terminate();let reader=fixture(["--uitest-reader"]);reader.tabBars.buttons["Gestión"].tap();XCTAssertFalse(reader.buttons["management.crm"].exists)
+        app.terminate();let reader=fixture(["--uitest-reader"]);openSection(reader, "Gestión");XCTAssertFalse(reader.buttons["management.crm"].exists)
     }
 
     @MainActor func testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary() {
-        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"crm.add");tap(app,"Crear show")
+        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm");tap(app,"crm.add");tap(app,"Crear show")
         fill(app,"crm.create.title","PEREIRA · Nuevo ficticio");fill(app,"crm.amount.Valor de venta (COP)","140000000")
         fill(app,"crm.entrepreneur","jose");attachScreen(app,name:"crm-autocompletar-legible");tap(app,"crm.suggestion.88888888-8888-4888-8888-888888888888")
         let first=app.switches["crm.firstPayment"];for _ in 0..<5{if first.exists && first.isHittable{break};app.swipeUp()};XCTAssertTrue(first.exists);first.coordinate(withNormalizedOffset:CGVector(dx:0.9,dy:0.5)).tap();XCTAssertEqual(first.value as? String,"1")
@@ -582,7 +603,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testDeleteArchivedContractRequiresConfirmationAndKeepsShow() {
         let app=fixture(["--uitest-contract-archive"]),id="11111111-1234-4234-8234-111111111111"
-        app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Contratos")
+        openSection(app, "Gestión");tap(app,"management.crm");tap(app,"Contratos")
         tap(app,"contracts.delete."+id);XCTAssertTrue(app.alerts["Eliminar contrato"].waitForExistence(timeout:10))
         attachScreen(app,name:"contrato-eliminar-confirmacion-ficticia");tap(app,"contracts.delete.cancel")
         XCTAssertTrue(app.buttons["contracts.open."+id].exists)
@@ -595,7 +616,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testCRMContractsRUTEditableFieldsManualEntryAndPDFPreview() {
-        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.crm");tap(app,"Contratos");tap(app,"contracts.create")
+        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm");tap(app,"Contratos");tap(app,"contracts.create")
         XCTAssertTrue(app.buttons["contracts.rut.upload"].waitForExistence(timeout:10))
         XCTAssertTrue(app.textFields["contracts.company"].exists,"Los campos manuales deben existir sin cargar RUT")
         tap(app,"contracts.rut.fixture")
@@ -628,13 +649,43 @@ final class LaunchTests: XCTestCase {
         open.tap();XCTAssertTrue(app.navigationBars["Contrato JAC"].waitForExistence(timeout:10));XCTAssertTrue(pdfText.waitForExistence(timeout:15));attachScreen(app,name:"contratos-archivo-nativo-ficticio")
     }
 
+    @MainActor private func sectionID(_ title: String) -> String {
+        ["CRM":"crm", "Quincena":"payroll", "Agenda":"agenda", "Itinerarios":"itineraries", "Pases":"boarding", "Alertas":"alerts", "Fotografía":"media", "Música":"music", "Gestión":"management"][title] ?? title
+    }
+    @MainActor private func showMenu(_ app: XCUIApplication, timeout: TimeInterval = 20) -> Bool {
+        if app.buttons["phone.menu.close"].exists { return true }
+        let opener=app.buttons["phone.menu.open"]
+        guard opener.waitForExistence(timeout: timeout), opener.isHittable else { return false }
+        opener.tap();return app.buttons["phone.menu.close"].waitForExistence(timeout: 5)
+    }
+    @MainActor private func navigationSections(_ app: XCUIApplication) -> [String] {
+        guard showMenu(app) else { return [] }
+        let result=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@", "phone.section.")).allElementsBoundByIndex.map(\.identifier)
+        app.buttons["phone.menu.close"].tap();return result
+    }
+    @MainActor private func hasSection(_ app: XCUIApplication, _ title: String, timeout: TimeInterval = 1) -> Bool {
+        guard showMenu(app, timeout: timeout) else { return false }
+        var result=app.buttons["phone.section."+sectionID(title)].exists
+        if title == "Pases" { result = result || (app.buttons["phone.section.itineraries"].label == "Pases") }
+        app.buttons["phone.menu.close"].tap();return result
+    }
+    @MainActor private func openSection(_ app: XCUIApplication, _ title: String) {
+        XCTAssertTrue(showMenu(app), "Debe abrirse el menú lateral")
+        var button=app.buttons["phone.section."+sectionID(title)]
+        if title == "Pases" && !button.exists {button=app.buttons["phone.section.itineraries"]}
+        XCTAssertTrue(button.waitForExistence(timeout: 5), "Debe existir la sección \(title)")
+        let scroll=app.scrollViews["phone.sidebar.scroll"]
+        for _ in 0..<5 {if button.isHittable {break};scroll.swipeUp()}
+        XCTAssertTrue(button.isHittable);button.tap()
+        XCTAssertTrue(app.buttons["phone.menu.open"].waitForExistence(timeout: 5))
+    }
     @MainActor private func fixture(_ arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"] + arguments; app.launch()
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 20))
         return app
     }
     @MainActor private func openAccount(_ app:XCUIApplication) {
-        app.tabBars.buttons["Gestión"].tap();tap(app,"management.account")
+        openSection(app, "Gestión");tap(app,"management.account")
     }
     @MainActor private func tap(_ app: XCUIApplication, _ label: String) {
         if !label.hasPrefix("crm.suggestion."),label != "crm.keyboard.done",app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
@@ -682,15 +733,15 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Recargo nocturno")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
         attachScreen(app, name: "horas-guardadas")
     }
-    @MainActor func testFiveTabsAndManagementKeepArchiveTeamAndAccountAccessible() {
+    @MainActor func testSidebarAndManagementKeepArchiveTeamAndAccountAccessible() {
         let app = fixture()
-        XCTAssertEqual(app.tabBars.buttons.count, 5)
-        for title in ["Quincena", "Agenda", "Itinerarios", "Fotografía", "Gestión"] { XCTAssertTrue(app.tabBars.buttons[title].exists) }
-        XCTAssertFalse(app.tabBars.buttons["Archivo"].exists); XCTAssertFalse(app.tabBars.buttons["Equipo"].exists)
+        XCTAssertEqual(navigationSections(app).count, 9)
+        for title in ["Quincena", "Agenda", "Itinerarios", "Fotografía", "Gestión"] { XCTAssertTrue(hasSection(app, title)) }
+        XCTAssertFalse(hasSection(app, "Archivo")); XCTAssertFalse(hasSection(app, "Equipo"))
         attachScreen(app,name:"nueva-quincena-inicio")
         openAccount(app)
         XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
-        app.navigationBars.buttons.firstMatch.tap();app.tabBars.buttons["Gestión"].tap(); attachScreen(app,name:"nueva-gestion-tarjetas"); tap(app, "management.archive")
+        app.navigationBars.buttons.firstMatch.tap();openSection(app, "Gestión"); attachScreen(app,name:"nueva-gestion-tarjetas"); tap(app, "management.archive")
         XCTAssertTrue(app.navigationBars["Archivo"].waitForExistence(timeout: 10))
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.employees")
         XCTAssertTrue(app.navigationBars["Equipo JAC"].waitForExistence(timeout: 10))
@@ -723,13 +774,13 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<8 { if app.buttons["period.close"].exists { break }; app.swipeUp() }
         XCTAssertTrue(app.buttons["period.close"].exists); XCTAssertFalse(app.buttons["period.close"].isEnabled)
         attachScreen(app, name: "nomina-descargada-sin-internet")
-        app.tabBars.buttons["Agenda"].tap()
+        openSection(app, "Agenda")
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["agenda.create"].exists)
         tap(app, "agenda.event.fixture-concert")
         XCTAssertTrue(app.staticTexts["Teatro simulado"].waitForExistence(timeout: 5))
         tap(app, "Listo")
-        app.tabBars.buttons["Itinerarios"].tap()
+        openSection(app, "Itinerarios")
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.pdf")
         XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 5))
@@ -742,7 +793,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout: 5))
         attachScreen(app, name: "pase-de-abordar-pdf-sin-internet")
         tap(app, "notices.pdf.close")
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts")
+        openSection(app, "Gestión"); tap(app, "notices.alerts")
         XCTAssertTrue(app.staticTexts["Alerta guardada de prueba"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.buttons["notices.create"].isEnabled)
         attachScreen(app, name: "alertas-descargadas-sin-internet")
@@ -781,7 +832,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testAgendaSurvivesOfflineRelaunchAndDisplaysCacheDuringInternetRefresh() {
         let app = fixture(["--uitest-agenda-cache", "--uitest-reset-agenda"])
-        app.tabBars.buttons["Agenda"].tap()
+        openSection(app, "Agenda")
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["agenda.create"].waitForExistence(timeout: 10))
         app.terminate()
@@ -819,7 +870,7 @@ final class LaunchTests: XCTestCase {
         tap(app, "period.fixture-period"); tap(app, "period.close")
         tap(app, "Cerrar quincena")
         XCTAssertTrue(app.staticTexts["Neto del cierre"].waitForExistence(timeout: 15))
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.archive"); tap(app, "period.fixture-period")
+        openSection(app, "Gestión"); tap(app, "management.archive"); tap(app, "period.fixture-period")
         tap(app, "Documentos")
         XCTAssertTrue(app.buttons["Resumen PDF"].waitForExistence(timeout: 10))
         attachScreen(app, name: "archivo-documentos")
@@ -836,15 +887,15 @@ final class LaunchTests: XCTestCase {
         tap(app, "period.fixture-period")
         XCTAssertFalse(app.buttons["period.close"].exists); XCTAssertFalse(app.buttons["period.delete"].exists)
         tap(app, "Actividad"); tap(app, "activity.shows"); XCTAssertFalse(app.buttons["activity.add"].exists)
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.employees"); XCTAssertFalse(app.buttons["employee.create"].exists)
+        openSection(app, "Gestión"); tap(app, "management.employees"); XCTAssertFalse(app.buttons["employee.create"].exists)
         app.navigationBars.buttons.firstMatch.tap(); XCTAssertFalse(app.buttons["Usuarios y permisos"].exists)
         tap(app, "Conceptos y reglas"); XCTAssertFalse(app.buttons["concept.create"].exists)
-        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertTrue(app.buttons["agenda.create"].exists)
+        openSection(app, "Agenda"); XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15)); XCTAssertFalse(app.buttons["agenda.configure"].exists); XCTAssertTrue(app.buttons["agenda.create"].exists)
         attachScreen(app, name: "permisos-solo-consulta")
     }
     @MainActor func testAgendaMonthUpcomingDetailsAndAccountRemainAccessible() {
         let app = fixture()
-        app.tabBars.buttons["Agenda"].tap()
+        openSection(app, "Agenda")
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["Mes siguiente"].isHittable, "El calendario aparece al abrir Agenda, sin bloques previos.")
         XCTAssertFalse(app.staticTexts["Agenda simulada"].exists)
@@ -863,7 +914,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout: 10))
     }
     @MainActor func testCreateAndEditAgendaEventKeepNativeFormsAndSharedFeed() {
-        let app = fixture(); app.tabBars.buttons["Agenda"].tap()
+        let app = fixture(); openSection(app, "Agenda")
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 15))
         tap(app, "agenda.create"); fill(app, "agenda.editor.title", "Evento móvil de prueba"); fill(app, "agenda.editor.location", "Lugar de prueba")
         attachScreen(app, name: "agenda-crear-evento"); tap(app, "agenda.editor.save")
@@ -888,25 +939,25 @@ final class LaunchTests: XCTestCase {
         tap(app, "period.fixture-period")
         XCTAssertTrue(app.navigationBars["Quincena"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.archive")
+        openSection(app, "Gestión"); tap(app, "management.archive")
         XCTAssertTrue(app.navigationBars["Archivo"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists, "Una consulta cancelada no debe dejar un error en Archivo")
-        app.tabBars.buttons["Quincena"].tap()
+        openSection(app, "Quincena")
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "period.fixture-period")
         XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Agenda"].tap()
+        openSection(app, "Agenda")
         XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
         tap(app, "Actualizar agenda")
         XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout: 10))
-        app.tabBars.buttons["Itinerarios"].tap()
+        openSection(app, "Itinerarios")
         XCTAssertTrue(app.navigationBars["Itinerarios"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
-        app.tabBars.buttons["Quincena"].tap(); app.tabBars.buttons["Itinerarios"].tap()
+        openSection(app, "Quincena"); openSection(app, "Itinerarios")
         XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].waitForExistence(timeout: 10))
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.detail.close")
-        app.tabBars.buttons["Gestión"].tap(); app.navigationBars.buttons.firstMatch.tap(); tap(app, "Correos y Gmail")
+        openSection(app, "Gestión"); app.navigationBars.buttons.firstMatch.tap(); tap(app, "Correos y Gmail")
         XCTAssertTrue(app.buttons["Actualizar estados"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
         tap(app, "Actualizar estados")
@@ -920,12 +971,12 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testItineraryPDFAndSelectiveAlertAreAccessibleInManagement() {
-        let app = fixture(); app.tabBars.buttons["Itinerarios"].tap()
+        let app = fixture(); openSection(app, "Itinerarios")
         attachScreen(app,name:"nuevos-itinerarios")
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
         attachScreen(app, name: "itinerario-pdf"); tap(app, "notices.pdf.close"); tap(app, "notices.detail.close")
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts"); tap(app, "notices.create")
+        openSection(app, "Gestión"); tap(app, "notices.alerts"); tap(app, "notices.create")
         fill(app, "notices.editor.title", "Alerta simulada iPhone")
         let message = app.descendants(matching: .any).matching(identifier: "notices.editor.message").firstMatch
         XCTAssertTrue(message.waitForExistence(timeout: 10)); message.tap(); message.typeText("Mensaje para el equipo simulado")
@@ -937,10 +988,10 @@ final class LaunchTests: XCTestCase {
         attachScreen(app, name: "alerta-guardada")
     }
     @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
-        let app = fixture(["--uitest-reader", "--uitest-push-settings"]); app.tabBars.buttons["Itinerarios"].tap()
+        let app = fixture(["--uitest-reader", "--uitest-push-settings"]); openSection(app, "Itinerarios")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
         app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].swipeLeft(); XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "notices.alerts")
+        openSection(app, "Gestión"); tap(app, "notices.alerts")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.create"].exists)
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.notifications")
         XCTAssertTrue(app.buttons["notices.enable"].waitForExistence(timeout: 10)); XCTAssertTrue(app.buttons["notices.disable"].exists)
@@ -950,14 +1001,14 @@ final class LaunchTests: XCTestCase {
         let app = fixture()
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         XCTAssertFalse(springboard.alerts.firstMatch.exists)
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.notifications")
+        openSection(app, "Gestión"); tap(app, "management.notifications")
         XCTAssertTrue(app.staticTexts["notifications.suspended"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
         attachScreen(app, name: "push-suspendido-personal-team")
         XCUIDevice.shared.press(.home); app.activate()
         XCTAssertTrue(app.staticTexts["notifications.suspended"].waitForExistence(timeout: 10))
         XCTAssertFalse(springboard.alerts.firstMatch.exists)
-        app.tabBars.buttons["Itinerarios"].tap()
+        openSection(app, "Itinerarios")
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
     }
@@ -970,7 +1021,7 @@ final class LaunchTests: XCTestCase {
         attachScreen(springboard, name: "permiso-ios-al-entrar")
         let deny = alert.buttons.matching(NSPredicate(format: "label IN %@", ["Don’t Allow", "Don't Allow", "No permitir"])).firstMatch
         XCTAssertTrue(deny.exists, springboard.debugDescription); deny.tap()
-        app.tabBars.buttons["Gestión"].tap(); tap(app, "management.notifications")
+        openSection(app, "Gestión"); tap(app, "management.notifications")
         XCTAssertTrue(app.staticTexts["notifications.status"].waitForExistence(timeout: 10))
         XCUIDevice.shared.press(.home); app.activate()
         XCTAssertFalse(springboard.alerts.firstMatch.exists, "No se debe repetir un permiso rechazado al volver a primer plano.")
@@ -978,7 +1029,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testAlertComposerIncludesPendingJhonAndAlexWithoutSending() {
-        let app=fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
+        let app=fixture(); openSection(app, "Gestión"); tap(app,"notices.alerts"); tap(app,"notices.create")
         for id in ["77777777-7777-4777-8777-777777777777","88888888-8888-4888-8888-888888888888"] {
             let recipient=app.switches["notices.recipient."+id]
             for _ in 0..<5 { if recipient.exists && recipient.isHittable { break }; app.swipeUp() }
@@ -988,7 +1039,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testManualItineraryWithAttachmentAndDeleteConfirmation() {
-        let app = fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
+        let app = fixture(); openSection(app, "Gestión"); tap(app,"notices.alerts"); tap(app,"notices.create")
         app.segmentedControls["notices.editor.kind"].buttons["Itinerario"].tap()
         fill(app,"notices.editor.title","Itinerario manual ficticio"); app.textFields["notices.editor.title"].typeText("\n")
         tap(app,"notices.editor.fixture"); XCTAssertTrue(app.staticTexts["Prueba.pdf"].waitForExistence(timeout:10)); app.swipeUp(); tap(app,"notices.editor.save")
@@ -1005,7 +1056,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testBoardingCodesFullScreenMultiplePagesAndReturnToFullPDF() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-boarding-code"];app.launch()
-        app.tabBars.buttons["Itinerarios"].tap();tap(app,"boarding.open");tap(app,"boarding.code.boarding-fixture-0-pdf")
+        openSection(app, "Itinerarios");tap(app,"boarding.open");tap(app,"boarding.code.boarding-fixture-0-pdf")
         XCTAssertTrue(app.images["boarding.code.image"].waitForExistence(timeout:30))
         XCTAssertTrue(app.staticTexts["1 de 2 · QR · Pág. 1"].exists)
         attachScreen(app,name:"pase-codigo-qr-ficticio")
@@ -1021,14 +1072,14 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testBoardingWithoutCodeOffersOriginalPDFInsteadOfAFabricatedCode() {
-        let app=fixture();app.tabBars.buttons["Itinerarios"].tap();tap(app,"boarding.open");tap(app,"boarding.code.boarding-fixture-0-pdf")
+        let app=fixture();openSection(app, "Itinerarios");tap(app,"boarding.open");tap(app,"boarding.code.boarding-fixture-0-pdf")
         XCTAssertTrue(app.staticTexts["boarding.code.error"].waitForExistence(timeout:30));XCTAssertFalse(app.images["boarding.code.image"].exists)
         tap(app,"boarding.code.fullpass");XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15))
         tap(app,"notices.pdf.close");XCTAssertTrue(app.buttons["notices.item.boarding-fixture-0"].waitForExistence(timeout:10))
     }
 
     @MainActor func testBoardingPassesTodayFutureHiddenHistoryAndPrivatePDF() {
-        let app=fixture(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
+        let app=fixture(); openSection(app, "Itinerarios"); tap(app,"boarding.open")
         XCTAssertTrue(app.staticTexts["Pases de abordar para hoy · 2"].waitForExistence(timeout:10))
         XCTAssertTrue(app.buttons["notices.item.boarding-fixture-0"].exists); XCTAssertFalse(app.buttons["notices.item.boarding-fixture-3"].exists)
         tap(app,"notices.item.boarding-fixture-0"); XCTAssertFalse(app.buttons["notices.delete"].exists); XCTAssertFalse(app.buttons["notices.detail.close"].exists)
@@ -1037,7 +1088,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testTomorrowPassesHavePriorityWithoutTodayAndOpenPDFDirectly() {
-        let app=XCUIApplication(); app.launchArguments=["--uitest-payroll","--uitest-boarding-tomorrow"]; app.launch(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
+        let app=XCUIApplication(); app.launchArguments=["--uitest-payroll","--uitest-boarding-tomorrow"]; app.launch(); openSection(app, "Itinerarios"); tap(app,"boarding.open")
         let tomorrow=app.staticTexts["Pases de abordar para mañana · 1"],today=app.staticTexts["Pases de abordar para hoy · 0"]
         XCTAssertTrue(tomorrow.waitForExistence(timeout:15)); XCTAssertTrue(today.exists); XCTAssertLessThan(tomorrow.frame.minY,today.frame.minY)
         XCTAssertTrue(app.staticTexts["Pereira → Bogota"].exists); attachScreen(app,name:"nuevo-pase-tipo-boleto"); tap(app,"notices.item.boarding-fixture-2")
@@ -1046,14 +1097,14 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testAccountWithoutPayrollCanReadAgendaAndAlertsButCannotAdminister() {
         let app=XCUIApplication(); app.launchArguments=["--uitest-payroll","--uitest-reader","--uitest-itineraries-only"]; app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Itinerarios"].waitForExistence(timeout:15)); XCTAssertFalse(app.tabBars.buttons["Quincena"].exists); XCTAssertTrue(app.tabBars.buttons["Agenda"].exists)
-        app.tabBars.buttons["Gestión"].tap(); XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["management.archive"].exists); XCTAssertTrue(app.buttons["notices.alerts"].exists)
+        XCTAssertTrue(hasSection(app, "Itinerarios", timeout: 15)); XCTAssertFalse(hasSection(app, "Quincena")); XCTAssertTrue(hasSection(app, "Agenda"))
+        openSection(app, "Gestión"); XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["management.archive"].exists); XCTAssertTrue(app.buttons["notices.alerts"].exists)
         tap(app,"notices.alerts"); XCTAssertTrue(app.navigationBars["Alertas"].waitForExistence(timeout:10)); XCTAssertFalse(app.buttons["notices.create"].exists)
-        app.tabBars.buttons["Agenda"].tap(); XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["agenda.create"].exists); XCTAssertFalse(app.buttons["agenda.configure"].exists); attachScreen(app,name:"alex-agenda-sin-nomina")
+        openSection(app, "Agenda"); XCTAssertTrue(app.segmentedControls["agenda.mode"].waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["agenda.create"].exists); XCTAssertFalse(app.buttons["agenda.configure"].exists); attachScreen(app,name:"alex-agenda-sin-nomina")
     }
 
     @MainActor func testManualPrivateBoardingPassWithRecipientAndAttachment() {
-        let app=fixture(); app.tabBars.buttons["Gestión"].tap(); tap(app,"notices.alerts"); tap(app,"notices.create")
+        let app=fixture(); openSection(app, "Gestión"); tap(app,"notices.alerts"); tap(app,"notices.create")
         app.segmentedControls["notices.editor.kind"].buttons["Pase"].tap(); fill(app,"notices.editor.title","Pase privado manual ficticio"); app.textFields["notices.editor.title"].typeText("\n"); tap(app,"notices.editor.fixture"); XCTAssertTrue(app.staticTexts["Prueba.pdf"].waitForExistence(timeout:10),"El PDF ficticio debe quedar adjunto antes de guardar")
         app.swipeUp(); tap(app,"boarding.recipient"); app.buttons["Camilo simulado"].tap(); tap(app,"notices.editor.save")
         let item=app.buttons.matching(NSPredicate(format:"label CONTAINS %@","Pase privado manual ficticio")).firstMatch
@@ -1061,7 +1112,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testDeletePrivatePassFromListConfirmsAndRefreshDoesNotRestoreIt() {
-        let app=fixture(); app.tabBars.buttons["Itinerarios"].tap(); tap(app,"boarding.open")
+        let app=fixture(); openSection(app, "Itinerarios"); tap(app,"boarding.open")
         let item=app.buttons["notices.item.boarding-fixture-0"]
         XCTAssertTrue(item.waitForExistence(timeout:15)); XCTAssertFalse(app.buttons["notices.list.delete.boarding-fixture-0"].exists); XCTAssertFalse(app.buttons["Eliminar pase de abordar"].exists); item.swipeLeft(); attachScreen(app,name:"pase-accion-deslizar"); tap(app,"Eliminar pase de abordar")
         XCTAssertTrue(app.staticTexts["¿Estás seguro de que quieres eliminar este pase de abordar?"].exists); tap(app,"notices.list.delete.cancel"); XCTAssertTrue(item.exists)
@@ -1078,7 +1129,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testExplicitReceiptAndUpdatedItineraryRequireNewConfirmation() {
-        let app=fixture();app.tabBars.buttons["Itinerarios"].tap();tap(app,"notices.item.33333333-3333-4333-8333-333333333333");tap(app,"notices.confirm")
+        let app=fixture();openSection(app, "Itinerarios");tap(app,"notices.item.33333333-3333-4333-8333-333333333333");tap(app,"notices.confirm")
         XCTAssertTrue(app.buttons["notices.confirm"].waitForExistence(timeout:10));XCTAssertEqual(app.buttons["notices.confirm"].label,"✓ Recibido")
         tap(app,"notices.update")
         let summary=app.descendants(matching:.any).matching(identifier:"itinerary.update.summary").firstMatch
@@ -1090,7 +1141,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(app.buttons["notices.confirm"].label,"✓ Recibido")
     }
     @MainActor func testTravelExpenseWithReceiptCanBeSubmittedAndReviewed() {
-        let app=fixture();app.tabBars.buttons["Gestión"].tap();tap(app,"management.expenses");tap(app,"expenses.create")
+        let app=fixture();openSection(app, "Gestión");tap(app,"management.expenses");tap(app,"expenses.create")
         fill(app,"expenses.concept","Taxi ficticio");fill(app,"expenses.amount","35000");tap(app,"travel.fixture");tap(app,"expenses.submit")
         XCTAssertTrue(app.staticTexts["Taxi ficticio"].waitForExistence(timeout:15));let created=app.buttons.matching(NSPredicate(format:"identifier BEGINSWITH %@","expense.")).firstMatch;XCTAssertTrue(created.waitForExistence(timeout:10));created.tap()
         XCTAssertTrue(app.staticTexts["Pendiente de revisión"].waitForExistence(timeout:10))
@@ -1122,7 +1173,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testReceiptStylizedMerchantConceptCanBeAppliedAndReviewed() {
         let app=fixture(["--uitest-offline-content","--uitest-reset-content"])
-        app.tabBars.buttons["Gestión"].tap();tap(app,"management.expenses");tap(app,"expenses.create");tap(app,"expenses.scan");tap(app,"receipt.logoFixture")
+        openSection(app, "Gestión");tap(app,"management.expenses");tap(app,"expenses.create");tap(app,"expenses.scan");tap(app,"receipt.logoFixture")
         let concept=app.descendants(matching:.any)["receipt.concept"].firstMatch
         XCTAssertTrue(concept.waitForExistence(timeout:30));XCTAssertTrue(concept.label.contains("Frisby"),app.debugDescription)
         attachScreen(app,name:"factura-encabezado-estilizado-ficticio")
@@ -1136,7 +1187,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testReceiptOCRReviewOfflineDraftRelaunchAndExplicitSubmission() {
         let app=fixture(["--uitest-offline-content","--uitest-reset-content"])
-        app.tabBars.buttons["Gestión"].tap();tap(app,"management.expenses");tap(app,"expenses.create");tap(app,"expenses.scan")
+        openSection(app, "Gestión");tap(app,"management.expenses");tap(app,"expenses.create");tap(app,"expenses.scan")
         tap(app,"receipt.fixture")
         let suggested=app.descendants(matching:.any)["receipt.concept"].firstMatch
         XCTAssertTrue(suggested.waitForExistence(timeout:30),app.debugDescription)
@@ -1155,7 +1206,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertEqual(app.buttons["expenses.create"].label,"Continuar borrador")
         XCTAssertFalse(app.staticTexts["Almuerzo ficticio revisado"].exists,"El borrador todavía no se envía")
         app.terminate();app.launchArguments=["--uitest-payroll","--uitest-offline-content","--uitest-offline"];app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Gestión"].waitForExistence(timeout:15));app.tabBars.buttons["Gestión"].tap()
+        XCTAssertTrue(hasSection(app, "Gestión", timeout: 15));openSection(app, "Gestión")
         tap(app,"management.expenses");tap(app,"expenses.create")
         XCTAssertEqual(app.textFields["expenses.concept"].value as? String,"Almuerzo ficticio revisado")
         XCTAssertEqual(app.textFields["expenses.amount"].value as? String,"47600")
@@ -1170,7 +1221,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(submit.isEnabled);XCTAssertTrue(app.staticTexts["Factura.jpg"].exists)
         attachScreen(app,name:"factura-borrador-sin-internet");tap(app,"expenses.saveDraft")
         app.terminate();app.launchArguments=["--uitest-payroll","--uitest-offline-content"];app.launch()
-        XCTAssertTrue(app.tabBars.buttons["Gestión"].waitForExistence(timeout:15));app.tabBars.buttons["Gestión"].tap()
+        XCTAssertTrue(hasSection(app, "Gestión", timeout: 15));openSection(app, "Gestión")
         tap(app,"management.expenses");tap(app,"expenses.create")
         fill(app,"expenses.time","25:75");tap(app,"expenses.submit")
         for _ in 0..<4 { if app.textFields["expenses.time"].isHittable { break };app.swipeDown() }

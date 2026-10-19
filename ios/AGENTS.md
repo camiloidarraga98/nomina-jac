@@ -1,3 +1,7 @@
+## Menú lateral iPhone · decisión vigente · 19 octubre de 2026
+
+Camilo pidió sustituir la barra inferior del iPhone por un menú lateral desde la esquina superior izquierda, con todos los módulos permitidos, incluida Música. Conservar rutas/selecciones de las secciones visitadas y el reproductor persistente. Mi cuenta permanece en Gestión. iPad y Mac conservan su distribución. Ver `../docs/IPHONE_SIDEBAR.md`. Esta decisión sustituye las referencias históricas a pestañas de iPhone.
+
 ## Fotografía: vistas ligeras, Stream y caché temporal · 19 de octubre de 2026
 
 Camilo eligió expresamente **Cloudflare Stream adaptativo**, con su cobro por uso, para reproducir videos en web y apps. Confirmó haber agregado el secreto `JAC_STREAM_API_TOKEN` al Worker; se verificó su nombre, nunca su valor. Esta decisión sustituye la propuesta histórica de no contratar procesamiento. Los originales permanecen en R2 y solo se obtienen al descargar/guardar; abrir fotos usa JPEG ligero y abrir videos usa HLS adaptativo privado. El procesamiento gradual de videos existentes es trabajo de producción solicitado, nunca una prueba con archivos reales. Las pruebas usan exclusivamente fixtures locales y servicios interceptados.

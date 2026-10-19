@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, media-delete, media-light, music]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, media-delete, media-light, music, navigation]
         default: full
 
 permissions:
@@ -60,6 +60,7 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
           JAC_MUSIC: ${{ inputs.scope == 'music' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-music]')) }}
           JAC_MEDIA_LIGHT: ${{ inputs.scope == 'media-light' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-light]')) }}
           JAC_MEDIA_DELETE: ${{ inputs.scope == 'media-delete' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-delete]')) }}
@@ -74,7 +75,16 @@ jobs:
           JAC_VIDEO_UI_ONLY: ${{ inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]') && contains(github.event.head_commit.message, '[ui-only]')) }}
         run: |
           set -euo pipefail
-          if [ "$JAC_MUSIC" = true ]; then
+          if [ "$JAC_NAVIGATION" = true ]; then
+            checks=(
+              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
+              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
+              -only-testing:JACNominaUITests/LaunchTests/testEmptyProfileCanReachAccountAndLogOutThroughManagement
+              -only-testing:JACNominaUITests/LaunchTests/testModernHybridSectionsShowMediaAndItinerariesWithoutFinanceOrBoarding
+              -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
+              -only-testing:JACNominaUITests/LaunchTests/testSidebarAndManagementKeepArchiveTeamAndAccountAccessible
+            )
+          elif [ "$JAC_MUSIC" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testMusicPermissionsDoNotGrantOtherSectionsAndUploadsRequireListening
               -only-testing:JACNominaTests/PayrollClientTests/testMusicPlaybackAuthorizationSurvivesLockAndIsRemovedWithSession
@@ -249,7 +259,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -275,7 +285,7 @@ jobs:
           path: native-ci/*.log
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

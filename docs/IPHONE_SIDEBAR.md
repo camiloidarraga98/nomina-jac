@@ -1,0 +1,9 @@
+# Menú lateral de iPhone · 19 octubre de 2026
+
+Camilo pidió retirar la barra inferior y abrir todas las secciones desde la esquina superior izquierda. El iPhone usa un botón persistente «Abrir menú», incluso dentro de las pantallas de cada módulo. Abre un panel lateral opaco y desplazable, con selección actual, iconos y nombre de cuenta. Se cierra al elegir destino, con la X, tocando fuera o deslizando el panel a la izquierda. Respeta VoiceOver y Reducir movimiento. El teclado se retira al abrirlo.
+
+Las secciones autorizadas aparecen directamente: CRM, Quincena, Agenda, Itinerarios, Alertas, Pases, Fotografía, Música y Gestión. No concede permisos nuevos. Mi cuenta y la administración secundaria permanecen en Gestión. Las hojas de edición y los visores conservan sus controles de cierre antes de volver al menú principal.
+
+Solo se montan las secciones visitadas. Cambiar de sección conserva sus rutas, búsqueda, selección de Agenda y desplazamiento; la pantalla anterior deja de recibir interacción y desaparece de accesibilidad. El reproductor de Música permanece fuera de las secciones y continúa al navegar. Un cambio de usuario/permisos retira destinos no autorizados y vuelve al destino válido. iPad mantiene NavigationSplitView y Mac conserva su distribución; no cambian firma personal AYHVYN8BJF, bundle ni entitlements/push NO.
+
+Las pruebas de LaunchTests navegan ahora mediante el menú. La comprobación final de esta entrega usa solo los recorridos afectados: apertura/cierre y destinos completos, Música y Mi cuenta con estado conservado, cuenta sin secciones, permisos híbridos, Agenda al cambiar de menú y administración secundaria. GitHub Actions tiene el alcance `navigation`, sin repetir compilaciones Release ni Mac para este cambio exclusivo de iPhone. Las pruebas usan `.invalid`, backend interceptado y simulador desechable. El resultado se anota tras finalizar la ejecución real; Linux no compila Xcode.
