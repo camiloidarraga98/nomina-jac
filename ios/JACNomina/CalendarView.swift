@@ -360,7 +360,7 @@ private struct AgendaPage<Content:View>:View {
     init(@ViewBuilder content:()->Content){self.content=content()}
     var body:some View {
         #if os(iOS)
-        ScrollView {LazyVStack(alignment:.leading,spacing:18){content}.padding(18).frame(maxWidth:1160).frame(maxWidth:.infinity)}
+        ScrollView {LazyVStack(alignment:.leading,spacing:18){content}.padding(.horizontal,18).padding(.top,JACTheme.pageTopSpacing).padding(.bottom,18).frame(maxWidth:1160).frame(maxWidth:.infinity)}
         #else
         List {content}
         #endif

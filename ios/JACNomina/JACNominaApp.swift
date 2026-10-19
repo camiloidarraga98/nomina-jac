@@ -200,6 +200,7 @@ enum JACTheme {
     static let highlight = Color(red: 98/255, green: 206/255, blue: 255/255)
     static let primary = Color(red: 0/255, green: 111/255, blue: 189/255)
     #if os(iOS)
+    static let pageTopSpacing: CGFloat = 8
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
     static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 11/255, green: 24/255, blue: 35/255, alpha: 1) : UIColor(red: 243/255, green: 247/255, blue: 251/255, alpha: 1) })
     static let action = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 98/255, green: 206/255, blue: 255/255, alpha: 1) : UIColor(red: 0/255, green: 111/255, blue: 189/255, alpha: 1) })
@@ -214,6 +215,7 @@ enum JACTheme {
         UITabBar.appearance().standardAppearance = tabs; UITabBar.appearance().scrollEdgeAppearance = tabs
     }
     #else
+    static let pageTopSpacing: CGFloat = 18
     static let card = Color(nsColor: .controlBackgroundColor)
     static let canvas = JACAdaptiveColor(light: (0.953,0.969,0.984), dark: (0.043,0.094,0.137))
     static let action = JACAdaptiveColor(light: (0,0.435,0.741), dark: (0.384,0.808,1))
@@ -405,7 +407,7 @@ extension View {
     }
     @ViewBuilder func jacListSpacing() -> some View {
         #if os(iOS)
-        listSectionSpacing(18)
+        listSectionSpacing(18).contentMargins(.top, 0, for: .scrollContent)
         #else
         formStyle(.grouped).frame(minWidth:620,minHeight:440)
         #endif

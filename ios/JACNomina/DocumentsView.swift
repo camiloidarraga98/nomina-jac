@@ -641,7 +641,7 @@ struct MediaGalleryView: View {
                         }
                     }
                 }
-            }.padding(18).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
+            }.padding(.horizontal,18).padding(.top,JACTheme.pageTopSpacing).padding(.bottom,18).frame(maxWidth: 1160, alignment: .leading).frame(maxWidth: .infinity)
         }
     }
     private var galleryNavigation: some View {
