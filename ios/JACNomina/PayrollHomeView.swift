@@ -86,26 +86,29 @@ struct PayrollHomeView: View {
     private var phoneWorkspace: some View {
         // Keep only visited sections mounted, preserving their routes, calendar
         // selection and gallery scroll without loading every module at launch.
-        ZStack {
-            ForEach(phoneDestinations.filter { $0.id == selected || phoneVisited.contains($0.id) }, id: \.id) { item in
-                phoneContent(item.id)
-                    .opacity(selected == item.id ? 1 : 0)
-                    .allowsHitTesting(selected == item.id && !phoneMenuOpen)
-                    .accessibilityHidden(selected != item.id || phoneMenuOpen)
-            }
-        }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            HStack(spacing: 8) {
-                Button { setPhoneMenu(true) } label: { Image(systemName: "line.3.horizontal").font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
-                    .accessibilityLabel("Abrir menú").accessibilityIdentifier("phone.menu.open").accessibilityFocused($menuOpenFocused)
-                Text(phoneDestinations.first(where: { $0.id == selected })?.title ?? "JAC Music").font(.subheadline.weight(.semibold)).lineLimit(1)
-                Spacer(minLength: 8)
-                Text("JAC Music").font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.trailing, 16)
-            }.foregroundStyle(JACTheme.ink).background(JACTheme.card)
-                .overlay(alignment: .bottom) { Divider() }
-                .accessibilityHidden(phoneMenuOpen)
+        VStack(spacing: 0) {
+            phoneMenuBar.zIndex(1)
+            ZStack {
+                ForEach(phoneDestinations.filter { $0.id == selected || phoneVisited.contains($0.id) }, id: \.id) { item in
+                    phoneContent(item.id)
+                        .opacity(selected == item.id ? 1 : 0)
+                        .allowsHitTesting(selected == item.id && !phoneMenuOpen)
+                        .accessibilityHidden(selected != item.id || phoneMenuOpen)
+                }
+            }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
         }
         .onChange(of: selected) { old, new in phoneVisited.insert(old); phoneVisited.insert(new) }
+    }
+    private var phoneMenuBar: some View {
+        HStack(spacing: 8) {
+            Button { setPhoneMenu(true) } label: { Image(systemName: "line.3.horizontal").font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
+                .accessibilityLabel("Abrir menú").accessibilityIdentifier("phone.menu.open").accessibilityFocused($menuOpenFocused)
+            Text(phoneDestinations.first(where: { $0.id == selected })?.title ?? "JAC Music").font(.subheadline.weight(.semibold)).lineLimit(1)
+            Spacer(minLength: 8)
+            Text("JAC Music").font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.trailing, 16)
+        }.foregroundStyle(JACTheme.ink).background(JACTheme.card)
+            .overlay(alignment: .bottom) { Divider() }
+            .accessibilityHidden(phoneMenuOpen)
     }
     @ViewBuilder private func phoneContent(_ destination: String) -> some View {
         switch destination {
