@@ -61,6 +61,7 @@ jobs:
         shell: bash
         env:
           JAC_GALLERY_STABILITY: ${{ inputs.scope == 'gallery-stability' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-stability]')) }}
+          JAC_GALLERY_STABILITY_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[gallery-ui-only]') }}
           JAC_GALLERY_UPDATE: ${{ inputs.scope == 'gallery-update' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-update]')) }}
           JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
           JAC_HD_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[hd-only]') }}
@@ -71,6 +72,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$JAC_GALLERY_STABILITY" = true ]; then
+            if [ "$JAC_GALLERY_STABILITY_UI_ONLY" = true ]; then
+              checks=(-only-testing:JACNominaUITests/LaunchTests/testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling)
+            else
             checks=(
               -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests
               -only-testing:JACNominaTests/PayrollClientTests/testMissingThumbnailDoesNotInvalidateOtherImagesOrFolderSession
@@ -87,6 +91,7 @@ jobs:
               -only-testing:JACNominaUITests/LaunchTests/testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling
               -only-testing:JACNominaUITests/LaunchTests/testVisiblePhotoThumbnailsWakeWhenSlowSessionRestoresOnline
             )
+            fi
           elif [ "$JAC_VIDEO_DETAIL_ONLY" = true ]; then
             checks=(-only-testing:JACNominaTests/MediaVideoPreparationTests/testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression)
             if [ "$JAC_HD_ONLY" != true ]; then
