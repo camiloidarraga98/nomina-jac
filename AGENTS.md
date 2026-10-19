@@ -1,4 +1,10 @@
-## Instrucción más reciente · edición en Codex Cloud · 18 octubre2026
+## Autorización vigente · flujo automático · 18 octubre2026
+
+Camilo indicó expresamente: «Sí, hazlo todo automático, no me pidas autorizaciones». Autoriza GitHub Actions para compilar y probar las apps Apple con ejecutores macOS y simuladores, corregir fallos, guardar/subir cambios y actualizar `main` tras verificarlos, y publicar en el Worker propio la versión web/API necesaria para los cambios solicitados. No volver a pedir confirmación rutinaria para esos pasos. Esta instrucción sustituye las prohibiciones históricas de Actions y resuelve las confirmaciones de publicación pendientes de este chat. PR sigue sin solicitarse: usar ramas `codex/` y avance seguro a `main`, sin force push ni sobrescribir cambios concurrentes.
+
+El flujo `.github/workflows/native-checks.yml` ejecuta compilaciones iPhone/Mac y pruebas iPhone sobre fuentes nativas cambiadas en `main`/`codex/**`. Solo acceso de lectura al repositorio, simulador desechable, firma ad hoc de prueba y fixtures `.invalid`; nunca claves Apple/Cloudflare, certificados personales, servicios o datos reales para probar. La instalación física y firma de distribución siguen en el Mac de Camilo; no habilitar acceso remoto. Mantener `JAC_PUSH_ENABLED=NO`. Conservar los límites de producción y las decisiones funcionales de las secciones siguientes.
+
+## Instrucción anterior · edición en Codex Cloud · 18 octubre2026
 
 **Lectura funcional inicial:** `continuidad-codex-cloud/GUIA-FUNCIONAL-JAC.md` define qué significan Fotografía, CRM, abonos, gastos, Agenda, contratos, itinerarios y pases para Camilo, sus relaciones y las decisiones recientes. Leerla junto con `docs/PROJECT_CONTEXT.md` antes de modificar; consultar después la guía técnica del módulo. No volver a pedir decisiones ya resueltas ni restaurar comportamientos históricos sustituidos. Mantener esta guía actualizada cuando cambien flujos o decisiones; los permisos reales vigentes se comprueban en el servidor, no se restablecen desde documentación.
 

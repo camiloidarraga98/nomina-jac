@@ -1,3 +1,7 @@
+## Flujo automático autorizado · 18 de octubre de 2026
+
+Camilo respondió expresamente «Sí, hazlo todo automático, no me pidas autorizaciones» después de preparar la CI Apple y explicar los bloqueos de main/Cloudflare. Autoriza activar GitHub Actions de compilación/pruebas nativas, corregir, guardar/subir cambios e incorporar la fuente verificada a main y publicar el web/API necesario, sin más confirmaciones rutinarias. Sustituye la prohibición anterior de Actions y resuelve las aprobaciones pendientes de este chat; PR no solicitado y sin control remoto del Mac. El workflow nativo usa macOS, simulador nuevo, firma ad hoc y servicios `.invalid`, permisos de lectura y ningún secreto personal/producción. Compilación instalada y verificación real se registran al terminar; el runner GitHub no es el Mac/iPhone físico de Camilo.
+
 ## Selección múltiple de fotos y videos en iPhone · 18 de octubre de 2026
 
 Camilo pidió mantener presionada una foto/video para seleccionarla y seguir marcando elementos, con borrado y descarga en bloque. Implementado en la galería compacta del mismo proyecto: selección compartida entre carpetas desplegadas, marcas/contador/barra inferior, Fotos u offline cifrado solo de lo seleccionado y borrado administrativo confirmado con las revisiones de cada archivo. Se conservan carpetas, otros archivos, acciones individuales, sesión, firma/bundle/entitlements y push NO. Ver [selección múltiple](IPHONE_PHOTOGRAPHY_SELECTION.md).

@@ -1,5 +1,7 @@
 # Continuar JAC desde un único chat Codex Cloud
 
+**Actualización vigente, 18 de octubre:** Camilo autorizó el flujo automático sin confirmaciones rutinarias: GitHub Actions para compilación/pruebas Apple, correcciones, commits/pushes y avance verificado a main, además de publicar los cambios web/API necesarios en el Worker propio. Véanse el encabezado de AGENTS y `.github/workflows/native-checks.yml`. Esto sustituye las prohibiciones anteriores de Actions. PR y acceso remoto al Mac no solicitados; firma/instalación física sigue en su mismo proyecto Xcode.
+
 Petición vigente de Camilo,18 de octubre2026: toda la edición de web/servidor/iPhone/iPad/Mac desde un nuevo chat Cloud con este GitHub privado. Las compilaciones de Apple se realizan después con pull y Xcode en su Mac. No habilitar acceso remoto, SSH o VPN al Mac. No se requieren dos chats.
 
 ## Contexto funcional que debe leer el nuevo chat
