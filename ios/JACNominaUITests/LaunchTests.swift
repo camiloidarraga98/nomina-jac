@@ -58,12 +58,12 @@ final class LaunchTests: XCTestCase {
         let firstThumbnail = app.images["media.thumbnail.r2_media-scroll-0"]
         XCTAssertTrue(first.waitForExistence(timeout: 15))
         XCTAssertTrue(firstThumbnail.waitForExistence(timeout: 10), "Una miniatura inicialmente pendiente debe reintentarse")
-        let scroll = app.scrollViews.firstMatch, more = app.buttons["media.more.r2_media-day"]
-        for _ in 0..<10 { if more.isHittable { break }; scroll.swipeUp() }
+        let scroll = app.scrollViews.firstMatch, more = app.buttons["Cargar más"]
+        for _ in 0..<10 { if more.exists && more.isHittable { break }; scroll.swipeUp() }
         XCTAssertTrue(more.isHittable); more.tap()
         let secondPage = app.buttons["media.item.r2_media-scroll-12"]
         let secondThumbnail = app.images["media.thumbnail.r2_media-scroll-12"]
-        for _ in 0..<8 { if secondPage.isHittable { break }; scroll.swipeUp() }
+        for _ in 0..<8 { if secondPage.exists && secondPage.isHittable { break }; scroll.swipeUp() }
         XCTAssertTrue(secondPage.isHittable)
         XCTAssertTrue(secondThumbnail.waitForExistence(timeout: 10))
         let visible = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "media.item.r2_media-scroll-")).allElementsBoundByIndex.filter(\.isHittable)
@@ -81,7 +81,7 @@ final class LaunchTests: XCTestCase {
             XCTAssertTrue(element.isHittable)
             XCTAssertEqual(element.frame.minY, position.minY, accuracy: 2, "Actualizar no debe mover el contenido")
         }
-        for _ in 0..<12 { if first.isHittable { break }; scroll.swipeDown() }
+        for _ in 0..<12 { if first.exists && first.isHittable { break }; scroll.swipeDown() }
         XCTAssertTrue(first.isHittable); XCTAssertTrue(firstThumbnail.waitForExistence(timeout: 10))
         first.press(forDuration: 0.65)
         XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
