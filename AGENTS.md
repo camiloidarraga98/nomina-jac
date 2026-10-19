@@ -1,3 +1,7 @@
+## Permiso vigente de Fotografía · Anderson · 19 de octubre de 2026
+
+Camilo pidió habilitar a `anderson` para borrar archivos ya subidos y carpetas de Fotografía. El permiso se limita a esa cuenta y requiere Fotografía y sesión activa; no conceder CRM, administración ni derechos financieros. Mantener la misma regla en API, guardas SQL y modelos nativos, con revalidación durante borrados, confirmación y revisión del archivo. Los otros usuarios que solo suben no reciben borrado. Ver `docs/PHOTOGRAPHY_ANDERSON_DELETE.md`. Esta decisión sustituye la restricción histórica de borrado exclusivo para administradores.
+
 ## Instrucción más reciente · publicar la fuente y retomar Actions
 
 Después de suspender CI por cuota, Camilo pidió expresamente: «hagámoslo público y sigue ejecutando las acciones de prueba online». Autoriza cambiar la visibilidad de `camiloidarraga98/nomina-jac` a pública y reactivar las compilaciones/pruebas Apple en GitHub Actions. Esta instrucción sustituye la pausa anterior. No volver a pedir autorización rutinaria para publicar el código, activar las pruebas, corregir fallos o guardar/subir la entrega.

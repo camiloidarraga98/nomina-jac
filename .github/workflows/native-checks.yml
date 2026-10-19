@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, media-delete]
         default: full
 
 permissions:
@@ -60,6 +60,7 @@ jobs:
       - name: Test the affected iPhone flows
         shell: bash
         env:
+          JAC_MEDIA_DELETE: ${{ inputs.scope == 'media-delete' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-delete]')) }}
           JAC_GALLERY_STABILITY: ${{ inputs.scope == 'gallery-stability' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-stability]')) }}
           JAC_GALLERY_STABILITY_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[gallery-ui-only]') }}
           JAC_GALLERY_UPDATE: ${{ inputs.scope == 'gallery-update' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-update]')) }}
@@ -71,7 +72,14 @@ jobs:
           JAC_VIDEO_UI_ONLY: ${{ inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]') && contains(github.event.head_commit.message, '[ui-only]')) }}
         run: |
           set -euo pipefail
-          if [ "$JAC_GALLERY_STABILITY" = true ]; then
+          if [ "$JAC_MEDIA_DELETE" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testAndersonCanDeleteOnlyWhilePhotographyIsGranted
+              -only-testing:JACNominaTests/PayrollClientTests/testAndersonCanDeleteExistingPhotoVideoBatchAndFolder
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotographerRoleDoesNotInheritPayrollOrGeneralAccess
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaBatchDeletionStopsImmediatelyWhenAuthorizationIsRevoked
+            )
+          elif [ "$JAC_GALLERY_STABILITY" = true ]; then
             if [ "$JAC_GALLERY_STABILITY_UI_ONLY" = true ]; then
               checks=(-only-testing:JACNominaUITests/LaunchTests/testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling)
             else
@@ -181,7 +189,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'media-delete' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-media-delete]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

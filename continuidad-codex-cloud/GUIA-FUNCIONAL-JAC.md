@@ -43,7 +43,7 @@ JAC Music coordina la operación de los shows de Jhon Alex Castaño: agenda, ven
 - **Camilo:** administrador de control total y propietario que autoriza las conexiones. Hablarle en español, con explicaciones claras y sin exigirle repetir el contexto.
 - **Jhon Alex Castaño, usuario `jac`:** administrador de control total, incluyendo nómina y gestión/borrado de itinerarios. Las notas antiguas que lo limitan a consultar nómina están superadas.
 - **Alex Zuluaga, usuario `alex`:** última selección confirmada: **Agenda, Alertas y Fotografía con creación de carpetas/subida**. Sin Nómina, CRM, Itinerarios ni Pases. Sustituye su antiguo perfil «Solo itinerarios».
-- **Anderson:** fotógrafo; cuenta ya creada como `anderson`. La autorización inicial fue Fotografía y subida. Ahora el administrador puede elegir sus secciones una por una; no volver a bloquearlas con un perfil exclusivo obligatorio.
+- **Anderson:** fotógrafo; cuenta ya creada como `anderson`. Desde el 19 de octubre de 2026 Camilo autoriza también borrar archivos ya subidos (fotos/videos, incluso de otros usuarios) y carpetas con su contenido en Fotografía. Requiere que conserve acceso a Fotografía y sesión activa; no concede CRM, administración ni otros módulos. La autorización inicial fue Fotografía y subida. Ahora el administrador puede elegir sus secciones una por una; no volver a bloquearlas con un perfil exclusivo obligatorio.
 - **Luisa y Paula:** pueden editar Agenda por la política existente; tener acceso a Agenda no concede automáticamente edición a cualquier usuario. El código vigente también permite editar a administradores válidos.
 - Camilo y `jac` también pueden crear carpetas y subir fotos/videos. La subida no es exclusiva de Anderson.
 

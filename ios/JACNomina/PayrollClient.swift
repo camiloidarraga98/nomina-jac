@@ -844,7 +844,7 @@ final class PayrollClient: ObservableObject {
         }
     }
     func deleteMediaFolderStep(_ folder:MediaFolder) async throws -> MediaFolderDeletion {
-        guard permissionUser?.canDeleteMedia != false else{throw APIError.forbidden("Solo un administrador puede eliminar carpetas.")}
+        guard permissionUser?.canDeleteMedia != false else{throw APIError.forbidden("Tu cuenta no tiene permiso para eliminar carpetas de Fotografía.")}
         guard !usingOfflineCopy else{throw APIError.invalid("Conéctate para eliminar una carpeta.")}
         let (data,_)=try await request(path:"api/media",body:.object(["action":.string("deleteFolder"),"id":.string(folder.id)]))
         let result=try decoder.decode(MediaFolderDeletion.self,from:data)
@@ -853,7 +853,7 @@ final class PayrollClient: ObservableObject {
         return result
     }
     func deleteMediaFileStep(_ item:MediaItem) async throws -> MediaFolderDeletion {
-        guard permissionUser?.canDeleteMedia != false else {throw APIError.forbidden("Solo un administrador puede eliminar fotos.")}
+        guard permissionUser?.canDeleteMedia != false else {throw APIError.forbidden("Tu cuenta no tiene permiso para eliminar archivos de Fotografía.")}
         guard !usingOfflineCopy else {throw APIError.invalid("Conéctate para eliminar una foto.")}
         var body:[String:JSONValue]=["action":.string("deleteFile"),"id":.string(item.id)]
         if !item.modifiedAt.isEmpty {body["revision"] = .string(item.modifiedAt)}

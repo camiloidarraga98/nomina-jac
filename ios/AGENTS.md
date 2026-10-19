@@ -1,3 +1,7 @@
+## Fotografía · borrado de Anderson · 19 de octubre de 2026
+
+La cuenta `anderson` también puede borrar fotos/videos y carpetas si conserva Fotografía. `PayrollUser.canDeleteMedia` y la API/SQL aplican esa autorización sin conceder CRM o administración. El feed debe confirmar `canDelete`; conservar confirmación, revisión, bloqueo offline y cancelación/revocación del lote. Subir no concede borrado a las demás cuentas.
+
 # Instrucciones recientes de Fotografía y firma
 
 Camilo reportó desaparición de miniaturas/contenido y cambios de distribución durante el scroll. La corrección vigente está en `../docs/IPHONE_GALLERY_SCROLL.md`: solo las cuadrículas son lazy, los contenedores de carpetas mantienen su altura y metadatos fuera de pantalla; la caché no caduca a los30segundos ni incluye la época de refresco. Un404 de miniatura o un fallo aislado de esa petición no invalida la sesión ni desconecta toda la app. Cada refresco conserva todas las páginas visibles hasta tener el reemplazo completo. Las notificaciones generales de caché solo aplican borrados explícitos, nunca sustituyen la lista por una página parcial. No restaurar las invalidaciones ni los LazyVStack anidados de la intervención anterior. Mantener límites, cancelación, decodificación fuera de interfaz, revalidación de permisos y retirada ante401/403. Las miniaturas históricas ausentes no se consideran generadas por corregir el cliente.

@@ -599,6 +599,19 @@ final class PayrollClientTests: XCTestCase {
         let reopened=PayrollClient(baseURL:client.baseURL,vault:vault,agendaCache:client.agendaCache,offlineCache:client.offlineCache,automaticallyDownloadOffline:false),store=PayrollStore(client:reopened)
         XCTAssertNil(store.overview);XCTAssertTrue(store.hasSavedSession,"A failed cache write must keep login while withholding stale permissions")
     }
+    func testAndersonCanDeleteOnlyWhilePhotographyIsGranted() {
+        let anderson = PayrollUser(id: "photo", email: "anderson@example.invalid", username: "anderson", displayName: "Anderson ficticio", isOwner: false, permissions: [], mediaOnly: true)
+        XCTAssertTrue(anderson.canDeleteMedia)
+        XCTAssertFalse(anderson.hasSection(.crm)); XCTAssertFalse(anderson.can("payroll"))
+        var readOnly = anderson; readOnly.sections = ["media"]
+        XCTAssertTrue(readOnly.canDeleteMedia); XCTAssertFalse(readOnly.canUploadMedia)
+        var revoked = anderson; revoked.sections = []
+        XCTAssertFalse(revoked.canDeleteMedia)
+        let other = PayrollUser(id: "other", email: anderson.email, username: "other", displayName: anderson.displayName, isOwner: false, permissions: [], mediaOnly: true)
+        XCTAssertTrue(other.canUploadMedia); XCTAssertFalse(other.canDeleteMedia)
+        let admin = PayrollUser(id: "admin", email: "admin@example.invalid", username: "jac", displayName: "Admin ficticio", isOwner: true, permissions: [])
+        XCTAssertTrue(admin.canDeleteMedia)
+    }
     func testModernSectionsAreExactAndLegacyRestrictionsRemainDefensive() throws {
         var user=PayrollUser(id:"sections",email:"sections@example.invalid",username:"sections",displayName:"Cuenta ficticia",isOwner:false,permissions:["payroll","export"],itinerariesOnly:true,mediaOnly:true,sections:["media","itineraries"])
         XCTAssertTrue(user.canReadMedia);XCTAssertTrue(user.hasSection(.itineraries));XCTAssertFalse(user.canUploadMedia)
@@ -787,6 +800,28 @@ final class PayrollClientTests: XCTestCase {
         let feed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: folder, folder: folder, breadcrumbs: [folder], items: items, nextPageToken: nil, provider: "r2", collectionID: "jac-r2-selection", canDelete: true)
         try cache.saveFeed(feed, key: folder.id, append: false, scope: XCTUnwrap(client.mediaScope()))
         return (client, feed)
+    }
+    @MainActor func testAndersonCanDeleteExistingPhotoVideoBatchAndFolder() async throws {
+        let (client, feed) = try await selectionDeletionFixture(), model = MediaBatchSelection()
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        var payload = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(try await UITestBackend.client().workspace()))
+        payload["user"]["username"] = .string("anderson"); payload["user"]["isOwner"] = .bool(false)
+        payload["user"]["permissions"] = .array([]); payload["user"]["sections"] = .array([.string("media")])
+        client.rememberWorkspace(try payload.decoded(PayrollWorkspace.self))
+        let targets = Array(feed.items.prefix(2))
+        for item in targets { model.select(item, in: feed, client: client) }
+        var commands: [String] = []
+        MockProtocol.handler = { request in
+            let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request))
+            commands.append(body["action"].text)
+            let result = MediaFolderDeletion(id: body["id"].text, parentId: "r2_parent", name: body["id"].text, removed: 1, complete: true)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(result))
+        }
+        model.delete(targets, client: client) { XCTFail("Unexpected denial: \($0)") }
+        for _ in 0..<400 where model.deleting { try await Task.sleep(for: .milliseconds(10)) }
+        XCTAssertFalse(model.deleting); XCTAssertEqual(model.completed, 2); XCTAssertTrue(model.failures.isEmpty)
+        _ = try await client.deleteMediaFolderStep(try XCTUnwrap(feed.folder))
+        XCTAssertEqual(commands, ["deleteFile", "deleteFile", "deleteFolder"])
     }
     @MainActor func testMediaBatchDeletionRetriesTheSameRevisionAndKeepsUnselectedFiles() async throws {
         let (client, feed) = try await selectionDeletionFixture(), model = MediaBatchSelection()
