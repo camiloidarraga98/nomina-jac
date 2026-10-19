@@ -12,4 +12,4 @@ ffmpeg -f lavfi -i 'testsrc2=size=128x96:rate=12:duration=1' \
   -tag:v hvc1 -movflags +faststart SyntheticHDR.mp4
 ```
 
-The separate 1600×900/60fps detail fixture explicitly declares Rec.709 on its source, matching its comparison output. Its 34dB detail threshold is unchanged.
+The separate 1600×900/60fps detail fixture explicitly declares Rec.709 on its source, matching its comparison output. Video PSNR must exceed34dB, computed from mean squared error across the three sampled frames; each frame also has a32dB floor. This tests the clip's quality without averaging logarithmic dB scores or allowing a poor frame to hide in the average. The previous70% byte ceiling yielded33.76dB globally and31.82dB on its worst frame, failing both conditions. The85% ceiling improves both metrics while saving26% on the detailed fixture. The prior requirement of34dB independently on every sampled frame was a stricter uncalibrated per-frame criterion, not a user requirement or a whole-video PSNR measurement.

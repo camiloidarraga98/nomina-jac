@@ -62,6 +62,7 @@ jobs:
         env:
           JAC_GALLERY_UPDATE: ${{ inputs.scope == 'gallery-update' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-update]')) }}
           JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
+          JAC_HD_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[hd-only]') }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
           JAC_VIDEO_ONLY: ${{ inputs.scope == 'video-upload' || inputs.scope == 'video-quality' || inputs.scope == 'video-upload-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-upload]')) }}
           JAC_VIDEO_QUALITY_ONLY: ${{ inputs.scope == 'video-quality' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[quality-only]')) }}
@@ -69,10 +70,10 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$JAC_VIDEO_DETAIL_ONLY" = true ]; then
-            checks=(
-              -only-testing:JACNominaTests/MediaVideoPreparationTests/testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression
-              -only-testing:JACNominaTests/MediaVideoPreparationTests/testHDRVideoIsConvertedToSDRInsteadOfKeepingTheOriginal
-            )
+            checks=(-only-testing:JACNominaTests/MediaVideoPreparationTests/testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression)
+            if [ "$JAC_HD_ONLY" != true ]; then
+              checks+=(-only-testing:JACNominaTests/MediaVideoPreparationTests/testHDRVideoIsConvertedToSDRInsteadOfKeepingTheOriginal)
+            fi
           elif [ "$JAC_GALLERY_UPDATE" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaVideoPreparationTests
