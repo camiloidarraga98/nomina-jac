@@ -24,21 +24,24 @@ El borrado usa `deleteMediaFileStep` y la API `deleteFile` existente, un archivo
 ## Verificación y entrega
 
 - **97 regresiones Node/Workerd aprobadas:** 5 de accesos, 37 de Drive histórico, 36 de galería R2, 3 del cliente de transferencia y 16 de Workerd. Todos los servicios externos son simulados, sin contenido, cuentas, envíos ni borrados reales de prueba. Informe local ignorado: `work/local/iphone-media-selection-regressions.log`.
-- Se añadieron **nueve regresiones unitarias nativas y tres recorridos de interfaz**, incluyendo selección mixta, exclusión de otros archivos, revisiones, permisos, cancelación/reintentos, originales y cambio de sesión durante el permiso de Fotos. GitHub Actions ejecuta Xcode 16.4 con SDK iOS18.5 en macOS15; los resultados definitivos se registran al terminar. No se instaló en un iPhone físico.
+- Se añadieron **nueve regresiones unitarias nativas y tres recorridos de interfaz**, incluyendo selección mixta, exclusión de otros archivos, revisiones, permisos, cancelación/reintentos, originales y cambio de sesión durante el permiso de Fotos. Se conservan en el proyecto para Xcode.
+- **Release iPhone compilado** con Xcode16.4/SDK iOS18.5 en macOS15: fuente `64c7e508fe0546ee6140a115f469ca8a2978f4c5`, [ejecución39182175127](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39182175127). Incluye las correcciones finales del gesto y de permisos de selección. **Pruebas unitarias/UI completas y Release Mac finales pendientes**: Camilo pidió detener Actions al agotar el100% de minutos. La ejecución quedó cancelada y el workflow se retiró; no iniciar más pruebas/reintentos ni reactivar CI sin nueva petición. No se instaló en un iPhone físico.
+- Antes de las correcciones finales, la ejecución39181483191 detectó un fixture de caché R2 con IDs sin prefijo y tres fallos UI al activar la selección. Se corrigieron los IDs y se pasó el gesto exclusivo a la miniatura con acciones explícitas para VoiceOver; la última ejecución se interrumpió antes del resultado completo. No declarar aprobadas las pruebas finales de esos recorridos. Las correcciones de compatibilidad del compilador dividen las expresiones SwiftUI grandes de Fotografía/Avisos y especifican tipos numéricos del backend ficticio; no cambian funciones ni firma.
 - TypeScript, las 43 pruebas de nómina/auth/correo/Cloudflare y el build web ya habían pasado al preparar este chat. Se reutilizan porque ningún archivo de entrada web/API ni dependencia cambió por esta modificación.
 
 **Web/API publicada, 19 de octubre:** Camilo autorizó expresamente el flujo automático, resolviendo los bloqueos iniciales de publicación. El Worker `jac-nomina` tiene activo al100% el despliegue `9875443e-9ed9-4435-8aae-81b49a36d553`, versión `b4c4b3a7-3823-45c5-b6c5-cafc34215a15`. Su código contiene `deleteFile`, `r2-delete-file` y `/api/media/offline`; DB y BUCKET conservan sus identificadores y permanecen los tres secretos de ejecución. Se usó `--keep-vars`, sin migraciones ni borrados/envíos reales de prueba.
 
 Wrangler publicó el Worker y luego terminó con error al consultar `/workers/subdomain`, operación que el token de cuenta no permite. La API de despliegues y la lectura posterior del código confirman la versión activa; no se declara que todo el comando terminó correctamente. No se cambió configuración DNS ni dominio. La política de red del entorno no incluye el dominio público, por lo que no se repite aquí una prueba HTTP sobre él. Informes ignorados en `work/local/iphone-selection-*`.
 
-**Entrega de la fuente:** rama privada `codex/iphone-media-selection`; implementación inicial `93fbf07`. Camilo autorizó incorporar a `main` después de verificar Apple; esa verificación está en curso. El workflow `.github/workflows/native-checks.yml` comprueba automáticamente cambios nativos en `main`/`codex/**`, sin claves Apple/Cloudflare ni servicios reales para probar.
+**Entrega de la fuente:** se incorpora a `main` por petición expresa de Camilo para hacer pull y comprobar manualmente con el mismo Xcode. La implementación inicial fue `93fbf07` en `codex/iphone-media-selection`. La instrucción de entrega manual sustituye el requisito anterior de esperar una CI completa aprobada. No hay workflows activos en `.github/workflows`; su historial queda en Git, sin nuevas ejecuciones de pruebas por el pull o el push de esta entrega.
 
-Para probar desde esa rama, en la misma carpeta del Mac:
+En la misma carpeta del Mac, estando en `main`:
 
 ```sh
 git status --short
-git fetch origin
-git switch codex/iphone-media-selection
+git pull --ff-only origin main
 ```
 
 Conservar y conciliar cualquier cambio personal si Git advierte un conflicto; no usar reset/checkout forzados ni retirar la firma. Abrir el mismo proyecto y usar **JACNomina → iPhone → Run**. La fuente nueva no instala por sí misma un binario en el teléfono.
+
+Comprobación manual pendiente: mantener presionada una foto y luego un video, tocar para agregar/retirar, cancelar y volver al visor; descargar solo la selección en Fotos/offline; con archivos de prueba elegidos por Camilo, cancelar la confirmación de borrado y comprobar luego que el lote conserva las carpetas y archivos no seleccionados. Los permisos administrativos y el guardado de originales deben conservarse.

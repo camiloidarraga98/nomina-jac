@@ -1,4 +1,10 @@
-## Flujo automático autorizado · 18 de octubre de 2026
+## Actions suspendido y entrega para Xcode manual · 19 de octubre de2026
+
+Camilo agotó el100% de la cuota de minutos de Actions y pidió detener las pruebas, dejar la fuente en GitHub y hacer pull/pruebas manuales en su Xcode. Se canceló la ejecución de pruebas en curso y se retira el workflow de `.github/workflows`; no reactivar/reintentar CI sin petición expresa ni ejecutar más pruebas en esta entrega. Esta instrucción sustituye el flujo automático anterior. Autoriza entregar en `main` las fuentes con verificación Apple pendiente, conservando el mismo proyecto/firma/bundle y push NO. Web/API ya publicado con sus recursos y secretos; no repetir el despliegue.
+
+La selección múltiple, los controles por revisión/sesión y las pruebas nativas quedan en el proyecto. La CI detectó y motivó correcciones de compatibilidad SwiftUI/fixtures y del gesto; las correcciones finales no tienen una ejecución completa aprobada. Ver [estado preciso y comprobación manual](IPHONE_PHOTOGRAPHY_SELECTION.md).
+
+## Flujo automático anterior · 18 de octubre de 2026
 
 Camilo respondió expresamente «Sí, hazlo todo automático, no me pidas autorizaciones» después de preparar la CI Apple y explicar los bloqueos de main/Cloudflare. Autoriza activar GitHub Actions de compilación/pruebas nativas, corregir, guardar/subir cambios e incorporar la fuente verificada a main y publicar el web/API necesario, sin más confirmaciones rutinarias. Sustituye la prohibición anterior de Actions y resuelve las aprobaciones pendientes de este chat; PR no solicitado y sin control remoto del Mac. El workflow nativo usa macOS, simulador nuevo, firma ad hoc y servicios `.invalid`, permisos de lectura y ningún secreto personal/producción. Compilación instalada y verificación real se registran al terminar; el runner GitHub no es el Mac/iPhone físico de Camilo.
 
@@ -6,11 +12,11 @@ Camilo respondió expresamente «Sí, hazlo todo automático, no me pidas autori
 
 Camilo pidió mantener presionada una foto/video para seleccionarla y seguir marcando elementos, con borrado y descarga en bloque. Implementado en la galería compacta del mismo proyecto: selección compartida entre carpetas desplegadas, marcas/contador/barra inferior, Fotos u offline cifrado solo de lo seleccionado y borrado administrativo confirmado con las revisiones de cada archivo. Se conservan carpetas, otros archivos, acciones individuales, sesión, firma/bundle/entitlements y push NO. Ver [selección múltiple](IPHONE_PHOTOGRAPHY_SELECTION.md).
 
-97 regresiones Node/Workerd aprobadas y sintaxis de los cinco Swift comprobada. Nueve pruebas unitarias y tres UI añadidas quedan pendientes de compilar/ejecutar con Xcode en el Mac; Linux no verifica SDK, tipos, firma o instalación física. TypeScript/43 pruebas base/build Cloudflare correctos de la preparación se reutilizan: sus entradas web/API no cambiaron.
+97 regresiones Node/Workerd aprobadas. Nueve pruebas unitarias y tres UI añadidas; verificación final Apple pendiente de Camilo tras suspender Actions por cuota. TypeScript/43 pruebas base/build Cloudflare correctos de la preparación se reutilizan: sus entradas web/API no cambiaron.
 
 Web/API publicado el19 de octubre con la autorización automática de Camilo: versión Cloudflare `b4c4b3a7-3823-45c5-b6c5-cafc34215a15`, despliegue `9875443e-9ed9-4435-8aae-81b49a36d553` activo al100%. Código publicado con `deleteFile`, `r2-delete-file` y `/api/media/offline`; DB/BUCKET y secretos conservados con `--keep-vars`, sin migraciones ni datos reales de prueba. Wrangler terminó con error al consultar workers.dev después de publicar; la API confirmó la versión activa. Ver la guía técnica para evidencias y límites.
 
-Fuente en la rama privada `codex/iphone-media-selection`, implementación inicial `93fbf07`. La revisión automática rechazó además actualizar `main` por la compilación/pruebas Xcode pendientes; se guardó en su rama como alternativa de menor alcance. Hasta autorizar expresamente esa incorporación o verificar Apple, un pull de main no entrega este cambio. Ver la guía técnica para cambiar de rama en la misma carpeta del Mac, conservando sus ajustes personales.
+Implementación inicial `93fbf07` en `codex/iphone-media-selection`; la instrucción posterior de Camilo autoriza entregar en `main` para pull y prueba manual con Xcode, resolviendo el bloqueo inicial por verificación pendiente. Conservar sus ajustes personales.
 
 ## Fotos individuales · web, iPhone, iPad y Mac · 18 de octubre de 2026
 

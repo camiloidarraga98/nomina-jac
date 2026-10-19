@@ -1,6 +1,8 @@
 # Continuar JAC desde un único chat Codex Cloud
 
-**Actualización vigente, 18 de octubre:** Camilo autorizó el flujo automático sin confirmaciones rutinarias: GitHub Actions para compilación/pruebas Apple, correcciones, commits/pushes y avance verificado a main, además de publicar los cambios web/API necesarios en el Worker propio. Véanse el encabezado de AGENTS y `.github/workflows/native-checks.yml`. Esto sustituye las prohibiciones anteriores de Actions. PR y acceso remoto al Mac no solicitados; firma/instalación física sigue en su mismo proyecto Xcode.
+**Instrucción vigente, 19 de octubre:** Camilo agotó los minutos de Actions y pidió detener las pruebas, dejar el proyecto en GitHub y verificar manualmente con pull/Xcode. Se cancela la ejecución activa y se retira el workflow; no reactivar Actions ni iniciar más pruebas sin petición expresa. Entregar la fuente en main con verificación Apple pendiente. Esto sustituye la autorización anterior de CI automática; conservar la autonomía para guardar/subir esta entrega. Firma e instalación siguen en su mismo proyecto, sin control remoto ni PR.
+
+**Entorno comprobado, 19 de octubre:** Linux con Node24/npm11, instalación limpia con el lockfile intacto, claves independientes de desarrollo y27 migraciones en D1 exclusivamente local. TypeScript,43 pruebas base,97 regresiones de Fotografía y build web aprobados. Lectura/push del GitHub privado y ejecuciones reales de Actions funcionan. El token de cuenta Cloudflare permite publicar/leer el Worker, sus despliegues y sus bindings; no permite consultar workers.dev ni listar dominios. Web/API de Fotografía ya está activo: versión `b4c4b3a7-3823-45c5-b6c5-cafc34215a15`. Conservar el proxy y las credenciales configuradas del entorno; para Wrangler usar directorios de configuración/logs bajo `.wrangler/`, sin reutilizar el HOME personal del Mac. Ver [evidencias y límites](../docs/IPHONE_PHOTOGRAPHY_SELECTION.md).
 
 Petición vigente de Camilo,18 de octubre2026: toda la edición de web/servidor/iPhone/iPad/Mac desde un nuevo chat Cloud con este GitHub privado. Las compilaciones de Apple se realizan después con pull y Xcode en su Mac. No habilitar acceso remoto, SSH o VPN al Mac. No se requieren dos chats.
 
@@ -44,15 +46,15 @@ Abre el mismo `ios/JACNomina.xcodeproj` (esquema JACNomina) para iPhone/iPad o `
 
 Existen tres cambios personales de Xcode en este Mac, preservados fuera de los commits: proyecto iOS, esquema compartido e Info.plist. Si un pull coincide con esos cambios, Git puede detenerlo. No uses reset --hard, clean, checkout forzado ni sobrescribas la firma. Conserva/revisa esos ajustes y concílialos con los cambios nuevos. No se ha hecho un pull ni una instalación física como parte de esta preparación.
 
-La edición Swift en Cloud no equivale a compilar con Xcode: el chat debe informar las pruebas nativas pendientes si su ejecutor no dispone de macOS/Xcode. La publicación web sigue siendo en Cloudflare, no en GitHub Pages ni Actions.
+El ejecutor Linux no tiene Xcode y Actions está suspendido por la cuota agotada: Camilo compila y prueba manualmente con su mismo Xcode. Declarar las comprobaciones pendientes; no reactivar CI. No confundir un resultado anterior de simulador con la instalación física. La publicación web sigue siendo en Cloudflare, no en GitHub Pages.
 
-## Accesos todavía por comprobar en el nuevo entorno
+## Lista histórica de accesos para preparar otro entorno
 
 - Conexión Cloud → repositorio privado y capacidad de guardar/subir cambios.
 - Node24 y npm ci en el sistema operativo de Cloud; no se ha afirmado una instalación Linux desde este Mac.
 - Acceso de publicación Cloudflare si se quiere desplegar directamente desde Cloud. Configurarlo mediante la interfaz segura del entorno, sin copiar la sesión Wrangler del Mac o las claves de la aplicación.
 - No trasladar bases, sesiones, Llavero, certificados o claves reales. Las pruebas usan claves nuevas y D1 local/fakes.
 
-No se ha creado ni activado un entorno Cloud ni trasladado esta conversación automáticamente; esta carpeta deja preparado el relevo en GitHub.
+La lista anterior correspondía a la preparación inicial del relevo; el entorno actual está comprobado en el encabezado. Las conversaciones y credenciales no se trasladan automáticamente a otro entorno.
 
 Guía oficial consultada: [Entornos Cloud de Codex](https://learn.chatgpt.com/docs/environments/cloud-environments).

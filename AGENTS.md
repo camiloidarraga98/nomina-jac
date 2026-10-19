@@ -1,8 +1,14 @@
-## Autorización vigente · flujo automático · 18 octubre2026
+## Instrucción más reciente · Actions suspendido por cuota · 19 octubre2026
+
+Camilo agotó el100% de sus minutos de GitHub Actions y pidió: «que no se hagan pruebas, deja el proyecto listo en GitHub y yo hago pull con Xcode y pruebo manualmente». Detener las ejecuciones activas y retirar los workflows de Actions; no iniciar ni reintentar compilaciones/pruebas automáticas, ni reactivar Actions sin nueva petición expresa. No ejecutar más pruebas para esta entrega. Esta decisión sustituye la autorización de CI automática que sigue en el historial.
+
+Guardar y subir la fuente a `main` para pull y verificación manual en el mismo Xcode, aun con las comprobaciones Apple pendientes; no volver a pedir autorización rutinaria para esta entrega. No declarar comprobada una corrección o compilación que no terminó. Conservar firma/bundles/proyectos, `JAC_PUSH_ENABLED=NO`, datos, conexiones, secretos y demás reglas funcionales. La API requerida de Fotografía ya quedó publicada antes de esta instrucción; no repetir el despliegue.
+
+## Autorización anterior · flujo automático · 18 octubre2026
 
 Camilo indicó expresamente: «Sí, hazlo todo automático, no me pidas autorizaciones». Autoriza GitHub Actions para compilar y probar las apps Apple con ejecutores macOS y simuladores, corregir fallos, guardar/subir cambios y actualizar `main` tras verificarlos, y publicar en el Worker propio la versión web/API necesaria para los cambios solicitados. No volver a pedir confirmación rutinaria para esos pasos. Esta instrucción sustituye las prohibiciones históricas de Actions y resuelve las confirmaciones de publicación pendientes de este chat. PR sigue sin solicitarse: usar ramas `codex/` y avance seguro a `main`, sin force push ni sobrescribir cambios concurrentes.
 
-El flujo `.github/workflows/native-checks.yml` ejecuta compilaciones iPhone/Mac y pruebas iPhone sobre fuentes nativas cambiadas en `main`/`codex/**`. Solo acceso de lectura al repositorio, simulador desechable, firma ad hoc de prueba y fixtures `.invalid`; nunca claves Apple/Cloudflare, certificados personales, servicios o datos reales para probar. La instalación física y firma de distribución siguen en el Mac de Camilo; no habilitar acceso remoto. Mantener `JAC_PUSH_ENABLED=NO`. Conservar los límites de producción y las decisiones funcionales de las secciones siguientes.
+El flujo `.github/workflows/native-checks.yml` se preparó para compilar iPhone/Mac y probar iPhone; fue retirado después por la cuota agotada, según la instrucción más reciente. Su historial se conserva en Git. Solo acceso de lectura al repositorio, simulador desechable, firma ad hoc de prueba y fixtures `.invalid`; nunca claves Apple/Cloudflare, certificados personales, servicios o datos reales para probar. La instalación física y firma de distribución siguen en el Mac de Camilo; no habilitar acceso remoto. Mantener `JAC_PUSH_ENABLED=NO`. Conservar los límites de producción y las decisiones funcionales de las secciones siguientes.
 
 ## Instrucción anterior · edición en Codex Cloud · 18 octubre2026
 

@@ -1,5 +1,7 @@
 # Acciones individuales de Fotografía
 
+**Actualización vigente · 19 octubre2026:** web/API publicado en el Worker propio con recursos/secretos conservados, junto con [selección múltiple de iPhone](IPHONE_PHOTOGRAPHY_SELECTION.md). Camilo agotó los minutos de Actions y pidió retirar el workflow y hacer pull/pruebas manuales en su mismo Xcode. La comprobación final nativa sigue pendiente; no reactivar CI ni repetir el despliegue para esta entrega. Los apartados siguientes conservan las verificaciones de la preparación original.
+
 18 de octubre de 2026. Cambio solicitado para web, iPhone, iPad y Mac, sobre los mismos proyectos y el archivo privado R2 existente.
 
 ## Uso
