@@ -736,7 +736,7 @@ struct MediaGalleryView: View {
                     ScrollView { VStack(alignment: .leading, spacing: 6) { ForEach(Array(folderTransfer.failures.enumerated()), id: \.offset) { _, failure in Text(failure).font(.caption).foregroundStyle(.red) } } }.frame(maxHeight: 120)
                 }.font(.footnote)
             }
-        }.padding(16).background(.regularMaterial).accessibilityIdentifier("media.selection.actions")
+        }.padding(16).background(.regularMaterial)
     }
     private func prepareSelectionTransfer(photos: Bool) {
         selection.synchronize(client: store.client)

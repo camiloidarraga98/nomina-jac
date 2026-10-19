@@ -16,7 +16,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["media.selection.count"].waitForExistence(timeout: 5)); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
         XCTAssertFalse(app.buttons["media.preview.close"].exists, "Lifting a long press must not open the viewer")
         video.tap(); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "2 seleccionados")
-        XCTAssertEqual(photo.value as? String, "Seleccionado"); XCTAssertEqual(video.value as? String, "Seleccionado")
+        XCTAssertTrue(photo.isSelected); XCTAssertTrue(video.isSelected)
         photo.tap(); XCTAssertEqual(app.staticTexts["media.selection.count"].label, "1 seleccionado")
         XCTAssertFalse(app.buttons["media.selection.delete"].exists, "An uploader does not gain administrative deletion")
         tap(app, "media.selection.cancel"); photo.tap()

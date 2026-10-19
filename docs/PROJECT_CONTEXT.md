@@ -1,6 +1,6 @@
 ## Instrucción vigente: fuente pública y Actions reanudado
 
-Camilo pidió hacer público el repositorio y continuar las pruebas online, sustituyendo la pausa por cuota. La autorización está registrada en AGENTS; el cambio de visibilidad debe comprobarse realmente. El workflow se prepara para ejecutarse solo en repositorio público, con runners estándar macOS, sin secretos ni servicios reales de prueba; mientras siga privado se omite sin consumir runners. Ver [estado y acceso pendiente](PUBLIC_REPOSITORY_ACTIONS.md). La aplicación, datos y recursos privados de producción se conservan. No volver a pedir autorización rutinaria ni repetir el despliegue de la API.
+Camilo pidió hacer público el repositorio y continuar las pruebas online, sustituyendo la pausa por cuota. GitHub confirmó `visibility: public` y el evento public inició automáticamente la ejecución39183661700 en main. El workflow se ejecuta solo en repositorio público, con runners estándar macOS, sin secretos ni servicios reales de prueba; mientras siga privado se omite sin consumir runners. Ver [estado y resultados online](PUBLIC_REPOSITORY_ACTIONS.md). La aplicación, datos y recursos privados de producción se conservan. No volver a pedir autorización rutinaria ni repetir el despliegue de la API.
 
 ## Actions suspendido y entrega para Xcode manual · 19 de octubre de2026
 

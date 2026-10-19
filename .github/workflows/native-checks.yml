@@ -73,15 +73,6 @@ jobs:
             -only-testing:JACNominaUITests/LaunchTests/testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo \
             CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
             test 2>&1 | tee native-ci/iphone-tests.log
-      - name: Build the Mac app that shares the modified sources
-        if: ${{ !cancelled() }}
-        shell: bash
-        run: |
-          set -euo pipefail
-          xcodebuild -project macos/JACMac.xcodeproj -scheme JACMac \
-            -configuration Release -destination 'generic/platform=macOS' \
-            -derivedDataPath native-ci/mac CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
-            build 2>&1 | tee native-ci/mac-release.log
       - name: Export compact test diagnostics
         if: always()
         shell: bash
@@ -100,6 +91,15 @@ jobs:
             native-ci/*.log
             native-ci/*.json
             native-ci/attachments/**/*.png
+      - name: Build the Mac app that shares the modified sources
+        if: ${{ !cancelled() }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          xcodebuild -project macos/JACMac.xcodeproj -scheme JACMac \
+            -configuration Release -destination 'generic/platform=macOS' \
+            -derivedDataPath native-ci/mac CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
+            build 2>&1 | tee native-ci/mac-release.log
       - name: Save test results and build logs
         if: always()
         uses: actions/upload-artifact@v4

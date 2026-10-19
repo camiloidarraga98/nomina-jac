@@ -4,6 +4,8 @@ Después de suspender CI por cuota, Camilo pidió expresamente: «hagámoslo pú
 
 Usar exclusivamente runners estándar `macos-15`, permisos de lectura, simulador desechable, firma ad hoc, fixtures `.invalid` y `JAC_PUSH_ENABLED=NO`, sin secretos ni datos reales de producción en CI. El job tiene una guarda `github.event.repository.private == false`: mientras siga privado no debe iniciar runners ni gastar la cuota agotada. Se dispara al hacerse público, al cambiar fuentes nativas/workflow y manualmente. Verificar la visibilidad real y los resultados; no confundir autorización con un cambio ya ejecutado. Si falta la capacidad de cambiar visibilidad, preparar todo y explicar exactamente ese acceso pendiente.
 
+GitHub confirmó el mismo repositorio como público y el evento public inició automáticamente la ejecución39183661700 en main; no hay que repetir el cambio de visibilidad.
+
 La publicación del repositorio hace visible la fuente/historial; la aplicación, sesiones, D1/R2, documentos, fotografías, pases y secretos conservan sus permisos y privacidad. No volver a desplegar el Worker para reactivar CI. PR/control remoto del Mac siguen sin solicitarse. Ver `docs/PUBLIC_REPOSITORY_ACTIONS.md` y registrar allí la visibilidad y pruebas realmente observadas.
 
 ## Instrucción anterior · Actions suspendido por cuota · 19 octubre2026

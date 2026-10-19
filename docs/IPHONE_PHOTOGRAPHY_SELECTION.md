@@ -1,5 +1,7 @@
 # Selección múltiple de Fotografía en iPhone
 
+**Actualización vigente:** después de la pausa por cuota, Camilo hizo público el repositorio y pidió seguir ejecutando pruebas online. GitHub confirmó el cambio y el evento public inició la ejecución39183661700 en main. Se restauró el workflow, que solo usa runners estándar cuando el repositorio es público. Los resultados actuales quedan en [fuente pública y Actions](PUBLIC_REPOSITORY_ACTIONS.md); los resultados/interrupciones anteriores descritos abajo son históricos. La instalación física sigue mediante Run en el mismo Xcode.
+
 18 de octubre de 2026. Mismo proyecto `ios/JACNomina.xcodeproj`, esquema JACNomina y bundle `co.jacmusic.nomina`. Se conservan firma, entitlements, push suspendido y la distribución existente de iPad/Mac/web.
 
 ## Uso
