@@ -6,6 +6,10 @@ import {mediaGuardActive,type MediaGuard} from './media-drive';
 import {r2Feed,r2File,R2_ROOT} from './media-r2-gallery';
 import {MediaFailure,validMediaRequestID} from './media-core';
 import {sectionSql,type AccessUser} from './payroll-permissions';
+import {mediaArchiveName,uniqueMediaArchiveName,type MediaZipFile} from './media-download-zip';
+import type {MediaItem} from './media-core';
+import {r2Request} from './media-r2-s3';
+import type {MediaR2Secret} from './media-r2';
 
 type Share={id:string;folder_id:string;token_hash:string;token_cipher:string;actor_id:string;actor_version:number;connection_version:number;expires_at:string;revoked_at:string;created_at:string};
 let storageReady=false;
@@ -75,4 +79,54 @@ export async function sharedFolderFeed(token:unknown,folder?:string,page?:string
 }
 export async function sharedFolderFile(token:unknown,id:string,thumbnail:boolean,range:string|null,revision?:string){
  const {g}=await sharedGuard(token,id);return r2File(g,id,thumbnail,range,revision);
+}
+
+export type SharedDownloadMode='selected'|'photos'|'all';
+export async function sharedFolderDownloadPlan(token:unknown,folder:string,mode:SharedDownloadMode,selected:{id:string;revision:string}[]=[]){
+ if(!['selected','photos','all'].includes(mode)||mode==='selected'&&(!selected.length||selected.length>5000))throw new MediaFailure('Selecciona las fotos o videos que quieres descargar.');
+ const wanted=new Map(selected.map(item=>[folderID(item.id),item.revision]));
+ if(wanted.size!==selected.length||selected.some(item=>typeof item.revision!=='string'||item.revision.length>100))throw new MediaFailure('La selección no es válida.');
+ const first=await sharedFolderFeed(token,folder||undefined),pending:{id:string;path:string;feed?:typeof first}[]=[{id:first.folder.id,path:'',feed:first}],visited=new Set<string>(),seen=new Set<string>(),used=new Set<string>(),files:MediaZipFile[]=[];
+ const {g}=await sharedGuard(token,first.folder.id),connection=await database().prepare("SELECT credentials FROM jac_media_r2_connection WHERE id='jac' AND enabled=1").first<{credentials:string}>();
+ if(!connection)throw invalid();const secret=await decryptMail<MediaR2Secret>(connection.credentials,mailKey());
+ while(pending.length){
+  const current=pending.shift()!;if(visited.has(current.id))throw new MediaFailure('La estructura de la carpeta cambió. Actualiza y reintenta.',409);visited.add(current.id);
+  let feed=current.feed??await sharedFolderFeed(token,current.id);
+  while(true){
+   for(const item of feed.items){
+    if(item.kind==='folder'){
+     if(mode!=='selected')pending.push({id:item.id,path:uniqueMediaArchiveName(current.path+mediaArchiveName(item.name),used)+'/'});
+    }else if(mode==='selected'?wanted.has(item.id):mode==='all'||item.kind==='image'){
+     if(seen.has(item.id))continue;seen.add(item.id);
+     if(mode==='selected'&&wanted.get(item.id)!==item.modifiedAt)throw new MediaFailure('Un archivo seleccionado cambió. Actualiza la carpeta.',409);
+     if(!Number.isSafeInteger(item.size)||item.size<=0)throw new MediaFailure('El tamaño de un archivo no es válido.',409);
+     const name=uniqueMediaArchiveName(current.path+mediaArchiveName(item.name),used);
+     files.push({name,size:item.size,open:signal=>openSharedDownloadFile(g,connection.credentials,secret,item,signal)});wanted.delete(item.id);
+    }
+   }
+   if(!feed.nextPageToken)break;feed=await sharedFolderFeed(token,current.id,feed.nextPageToken);
+  }
+ }
+ if(mode==='selected'&&wanted.size)throw new MediaFailure('Un archivo seleccionado ya no está en esta carpeta.',409);
+ if(!files.length)throw new MediaFailure(mode==='photos'?'No hay fotos para descargar en esta carpeta.':'No hay archivos para descargar en esta carpeta.',404);
+ await sharedGuard(token,first.folder.id);
+ return {name:mediaArchiveName(first.folder.name)+(mode==='photos'?' - Fotos':mode==='selected'?' - Selección':'')+'.zip',files};
+}
+
+async function openSharedDownloadFile(folderGuard:MediaGuard,credentials:string,secret:MediaR2Secret,item:MediaItem,signal?:AbortSignal){
+ const g={...folderGuard,bindings:[folderGuard.bindings[0],item.id]};
+ const check=async()=>{
+  // One checked query per streamed window: current capability, creator and
+  // connection, current ancestry/revision/key and deletion of any ancestor.
+  const row=await database().prepare(`SELECT 1 FROM jac_media_r2_entries e WHERE e.id=? AND e.modified_at=? AND e.size=? AND e.object_key=? AND e.mime_type=? AND ${g.sql}
+   AND EXISTS(SELECT 1 FROM jac_media_r2_connection c WHERE c.id='jac' AND c.enabled=1 AND c.credentials=?)
+   AND NOT EXISTS(WITH RECURSIVE ancestors(id) AS (SELECT e.id UNION SELECT p.parent_id FROM jac_media_r2_entries p JOIN ancestors a ON p.id=a.id WHERE a.id<>'${R2_ROOT}') SELECT 1 FROM ancestors a JOIN jac_media_operations d ON d.id='r2-delete:'||a.id AND d.kind IN ('r2-delete-folder','r2-delete-file'))`)
+   .bind(item.id,item.modifiedAt,item.size,'originals/'+item.id.slice(3),item.mimeType,...g.bindings,credentials).first();
+  if(!row)throw invalid();
+ };
+ await check();signal?.throwIfAborted();const timeout=new AbortController(),timer=setTimeout(()=>timeout.abort(),60000);let response:Response;
+ try{response=await fetch(r2Request(secret,'GET','originals/'+item.id.slice(3)),{redirect:'manual',signal:signal?AbortSignal.any([signal,timeout.signal]):timeout.signal});}finally{clearTimeout(timer);}
+ try{if(!response.ok||response.status!==200||!response.body)throw new MediaFailure('No se pudo leer el archivo completo.',502);await check();}catch(e){await response.body?.cancel();throw e;}
+ if(!response.body)throw new MediaFailure('No se pudo leer el archivo.',502);
+ return {body:response.body,check};
 }

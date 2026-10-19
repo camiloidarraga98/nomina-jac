@@ -14,5 +14,6 @@ test('built Worker serves AASA and a private anonymous page, and rejects an unkn
   const aasa=await mf.dispatchFetch('https://built-share.invalid/.well-known/apple-app-site-association');assert.equal(aasa.status,200);assert.deepEqual((await aasa.json()).applinks.details[0].appIDs,['AYHVYN8BJF.co.jacmusic.nomina']);
   const page=await mf.dispatchFetch('https://built-share.invalid/compartir/'+'a'.repeat(43)),html=await page.text();assert.equal(page.status,200,html.slice(0,300));assert.ok(html.includes('Carpeta compartida'));assert.match(page.headers.get('cache-control'),/no-store/);assert.equal(page.headers.get('referrer-policy'),'no-referrer');
   const denied=await mf.dispatchFetch('https://built-share.invalid/api/media/shared?token='+'a'.repeat(43));assert.equal(denied.status,410);assert.match(denied.headers.get('cache-control'),/no-store/);
+  const zip=await mf.dispatchFetch('https://built-share.invalid/api/media/shared/download',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams({token:'a'.repeat(43),mode:'all'}).toString()});assert.equal(zip.status,410);assert.match(zip.headers.get('content-type'),/text\/html/);assert.equal(zip.headers.get('content-disposition'),null);assert.match(await zip.text(),/No se pudo descargar/);
  }finally{await mf.dispose();}
 });
