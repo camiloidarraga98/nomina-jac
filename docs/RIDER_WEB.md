@@ -27,3 +27,8 @@ Verificación adicional con ASSETS/Workerd local: `/rider` y `/rider/`, HTML/CSS
 Publicación en Cloudflare propio mediante `npm run deploy:cloudflare` con `--keep-vars`. La API confirma despliegue `cfa6277e-7b81-478c-b2e4-fb12ed0e70f2`, versión `8386f054-4bfd-4fc7-b90c-b54982a03ec2`, activa al100% a las17:55UTC (12:55Colombia). Se conservaron DB `74f39547-ed41-4456-a4b3-e32b2dd13b03`, BUCKET `jac-documentos`, IMAGES y los cuatro nombres de secretos existentes, sin migraciones ni modificación de datos o DNS.
 
 Wrangler cargó el Worker y14 recursos estáticos nuevos/modificados; después terminó con error en las consultas auxiliares `workers/subdomain` y `memberships`, por permisos del token. La consulta posterior de despliegues confirmó la activación; no se repitió la publicación. La lectura directa de `https://jhonalexcastano.com/rider` desde este ejecutor recibe403 del proxy de red, por lo que el smoke HTTP/navegador completo corresponde al Worker local. El despliegue de producción se acredita por la API de Cloudflare y se solicitó abrir su URL en Codex.
+
+
+## Segunda versión interactiva
+
+Camilo pidió una segunda versión en `/rider2`, con simulación espacial a escala, equipos movibles, previsualización de efectos y sin checklist. `/rider` conserva su versión original. Ver [implementación, cantidades, limitaciones y publicación confirmada](RIDER2_SIMULATOR.md).

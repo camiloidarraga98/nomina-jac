@@ -23,3 +23,10 @@ Montajes y cues se guardan en localStorage independiente; importar/exportar JSON
 ## Verificación y publicación
 
 Sintaxis JavaScript y TypeScript; regresiones del Worker incluyendo ambas rutas rider y límites de método/READY/privacidad; pruebas base de nómina/auth/correo; build Cloudflare. Chromium verificó inventario completo, ausencia de checklist, campos numéricos, arrastre, teclado, persistencia, siete sistemas de efectos, blackout, transporte, cues editables, exportación/importación válida y rechazo atómico de archivos incompletos, buscador, planos, movimiento reducido y ausencia de desbordamiento en 320/390/768/1024/1440px. Cero errores JavaScript o recursos faltantes. La publicación se registra tras confirmarla.
+
+
+## Publicación confirmada · 20 de octubre de 2026
+
+Cloudflare confirmó despliegue `dcd59f9e-6576-449b-b9a6-088f02535650`, versión `2e97dc01-0e9b-44f5-ab46-36c04d9113b9`, activa al100%, a las18:53UTC (13:53Colombia). Fuente de aplicación `452e3f8` en main. Se cargaron los cinco recursos de `/rider2`; el Worker conserva DB, BUCKET, IMAGES, ASSETS y los cuatro nombres de secretos existentes con `--keep-vars`. Sin migraciones ni modificación de datos o DNS.
+
+Wrangler finalizó con error después de cargar Worker/Assets en las consultas auxiliares `workers/subdomain` y `memberships`, igual que en la publicación anterior. La API de despliegues confirmó la activación posterior, por lo que no se repitió el deploy. La lectura directa del dominio desde este ejecutor recibe403 del proxy: no se afirma un recorrido visual remoto de producción. El recorrido completo de Chromium se ejecutó también contra el artefacto final en Workerd local bajo la CSP real (compatibilidad local2026-05-22; producción mantiene2026-10-17), con cero errores JS/recursos y todas las comprobaciones correctas. No se invocaron cron ni servicios reales para probar.

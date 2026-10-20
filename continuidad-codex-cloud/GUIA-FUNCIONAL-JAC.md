@@ -1,3 +1,7 @@
+## Rider técnico público · segunda versión · 20 de octubre de 2026
+
+`/rider` conserva el original. Camilo pidió `/rider2` como versión interactiva: montaje espacial con cantidades del inventario principal del PDF, posiciones editables, luces/pantallas y previsualización virtual de efectos. Sin checklist en rider2. Los planos tienen diferencias de inventario: usar páginas5–7 para cantidades y mostrar como propuestas las posiciones/alturas sin cotas. Montajes/cues locales exportables, sin control de equipos físicos ni cuentas/datos de JAC. Fuente y despliegue propio en [docs/RIDER2_SIMULATOR.md](../docs/RIDER2_SIMULATOR.md).
+
 # Cómo funciona JAC y qué quiere decir Camilo
 
 Estado de continuidad: **18 de octubre de 2026**. Esta guía resume decisiones de producto ya tomadas; no es una lista de funcionalidades por implementar. Léela al comenzar el nuevo chat Cloud, antes de reinterpretar los módulos. Complétala cuando Camilo cambie una regla o un flujo.
