@@ -17,6 +17,19 @@ export default {
     // or expose the CRM. Readiness is a runtime secret set after migration QA;
     // it is deliberately absent from the build configuration and GitHub.
     if(env.JAC_READY!=='1')return new Response('JAC está preparando este entorno. El sitio habitual sigue disponible.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','Retry-After':'3600','X-Robots-Tag':'noindex, nofollow'}});
+    // The artist's rider is explicitly public. Keep its static namespace apart
+    // from the application router and all authenticated API/document routes.
+    if(url.pathname==='/rider'||url.pathname.startsWith('/rider/')){
+      if(!['GET','HEAD'].includes(request.method))return new Response(null,{status:405,headers:{Allow:'GET, HEAD'}});
+      if(url.pathname==='/rider')url.pathname='/rider/';
+      const response=await env.ASSETS.fetch(new Request(url,request));
+      const rider=new Response(response.body,response);
+      rider.headers.set('X-Content-Type-Options','nosniff');
+      rider.headers.set('Referrer-Policy','strict-origin-when-cross-origin');
+      rider.headers.set('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'");
+      rider.headers.set('Cache-Control',url.pathname.endsWith('.pdf')?'public, max-age=3600':'public, max-age=300, stale-while-revalidate=86400');
+      return rider;
+    }
     // run_worker_first sends even CSS/JS here. Only public build files bypass
     // the application; APIs and private documents always retain their guards.
     if(['GET','HEAD'].includes(request.method)&&(url.pathname.startsWith('/assets/')||url.pathname.startsWith('/licenses/')||publicFiles.has(url.pathname)))return env.ASSETS.fetch(request);

@@ -73,3 +73,22 @@ test('Cloudflare independiente rechaza identidad de Sites falsificada y conserva
  delete globalThis.__cfTestEnv.JAC_HOSTING;
  assert.equal((await m.getChatGPTUser()).email,'camilo@mac2you.co');
 });
+
+test('rider público entrega GET/HEAD desde Assets sin ejecutar la aplicación ni ampliar el acceso privado',async()=>{
+ const before=globalThis.__cfCalls,seen=[];
+ const env={JAC_READY:'1',ASSETS:{async fetch(request){seen.push([request.method,new URL(request.url).pathname]);return new Response(request.method==='HEAD'?null:'rider-static',{headers:{'Content-Type':'text/html'}});}}};
+ for(const path of ['/rider','/rider/','/rider/style.css','/rider/assets/superior.webp','/rider/rider-tecnico-2026.pdf'])for(const method of ['GET','HEAD']){
+  const response=await m.worker.fetch(new Request('https://example.invalid'+path,{method}),env,{});
+  assert.equal(response.status,200);assert.equal(await response.text(),method==='HEAD'?'':'rider-static');
+  assert.equal(response.headers.get('X-Content-Type-Options'),'nosniff');assert.match(response.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);
+ }
+ assert.equal(seen[0][1],'/rider/');assert.equal(globalThis.__cfCalls,before);
+ for(const method of ['POST','PUT','DELETE']){
+  const response=await m.worker.fetch(new Request('https://example.invalid/rider/',{method}),env,{});assert.equal(response.status,405);assert.equal(response.headers.get('Allow'),'GET, HEAD');
+ }
+ assert.equal(seen.length,10);
+ for(const path of ['/rider-private','/rider.json','/api/users','/api/crm/file?id=private']){
+  const response=await m.worker.fetch(new Request('https://example.invalid'+path),env,{});assert.equal(await response.text(),'application');
+ }
+ const paused=await m.worker.fetch(new Request('https://example.invalid/rider'),{ASSETS:env.ASSETS},{});assert.equal(paused.status,503);
+});
