@@ -11,7 +11,9 @@ Camilo sigue observando tirones y pidió que las miniaturas se descarguen desde 
 - El índice cifrado de metadatos se conserva en memoria bajo el mismo bloqueo y se invalida si cambia el archivo, se corrompe, se retira la sesión o se escriben metadatos nuevos. Se evita descifrar y decodificar el índice completo por cada celda/miniatura. El guardado de páginas se ejecuta fuera del hilo de interfaz, con comprobación de sesión antes y después.
 - La precarga no publica progreso por archivo sobre la cuadrícula y se detiene al cerrar/salir de la carpeta, perder acceso o conexión.401/403 retiran la caché; una miniatura ausente no detiene las demás.
 
-Verificación prevista al finalizar: alcance `gallery-prefetch`, únicamente cargador/precarga/caché/sesión, regresión del índice compartido con audio y recorrido UI existente de scroll, orden y refresco. Una compilación Mac por las fuentes compartidas; sin repetir subidas, compresión, web ni finanzas. La fluidez física debe comprobarse en el iPhone de Camilo; no se afirma una medición de fps desde Cloud.
+Verificación acotada: alcance `gallery-prefetch`, únicamente cargador/precarga/caché/sesión, regresión del índice compartido con audio y recorrido UI existente de scroll, orden y refresco. Una compilación Mac por las fuentes compartidas; sin repetir subidas, compresión, web ni finanzas. La fluidez física debe comprobarse en el iPhone de Camilo; no se afirma una medición de fps desde Cloud.
+
+Fuente publicada en `main`: `130ee1f`. `git diff --check` y las referencias de la selección CI pasaron. La ejecución [39432451207](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39432451207) se lanzó automáticamente una vez. A20 de octubre13:48UTC, los jobs iPhone118660681517 y Mac118660682111 siguen `queued`, sin ejecutor asignado; Release iPhone se omite por alcance. **Compilación/pruebas Apple pendientes por la cola externa de GitHub**, no aprobadas ni fallidas. No se repiten ejecuciones para saltar la cola. Instalar con pull de `main` y Run en el mismo Xcode; Linux no dispone de Xcode ni se ha verificado físicamente el iPhone.
 
 ## Corrección vigente · 19 de octubre de 2026
 
