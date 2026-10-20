@@ -72,10 +72,10 @@ async function cleanupMusicTrack(id:string){
   }
   await env.BUCKET.delete(key);
   await db.prepare("UPDATE jac_music_tracks SET status=?,upload_id='',parts='[]' WHERE id=? AND status=? AND revision=? AND claim=?").bind(r.status+'_clean',id,r.status,r.revision,lock).run();
- }finally{await db.prepare("UPDATE jac_music_tracks SET claim='',claim_at='' WHERE id=? AND claim=?").bind(id,lock).run();}
+ }finally{await db.prepare("UPDATE jac_music_tracks SET claim='' WHERE id=? AND claim=?").bind(id,lock).run();}
 }
 export async function cleanupMusic(limit=5){
- const pending=await database().prepare("SELECT id FROM jac_music_tracks WHERE status IN ('deleted','cancelled') AND (claim='' OR claim_at<?) ORDER BY created_at,id LIMIT ?").bind(new Date(Date.now()-300000).toISOString(),Math.max(1,Math.min(20,limit))).all<{id:string}>();
+ const pending=await database().prepare("SELECT id FROM jac_music_tracks WHERE status IN ('deleted','cancelled') AND (claim_at='' OR claim_at<?) ORDER BY created_at,id LIMIT ?").bind(new Date(Date.now()-300000).toISOString(),Math.max(1,Math.min(20,limit))).all<{id:string}>();
  const results=await Promise.allSettled(pending.results.map(r=>cleanupMusicTrack(r.id)));
  return {processed:results.filter(r=>r.status==='fulfilled').length,pending:results.filter(r=>r.status==='rejected').length};
 }

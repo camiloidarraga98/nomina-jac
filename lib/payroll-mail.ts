@@ -41,7 +41,9 @@ export async function drainMail(batchId:string,onlyEmployee?:string,options:{lim
 
 export async function processMailQueue(){
  const db=database(),cutoff=new Date(Date.now()-120000).toISOString();
- const batches=(await db.prepare("SELECT DISTINCT batch_id FROM payroll_mail_jobs WHERE status='pending' OR (status='sending' AND started_at<?) ORDER BY batch_id LIMIT 2").bind(cutoff).all<{batch_id:string}>()).results;
- for(const batch of batches){await mailJobs(batch.batch_id);await drainMail(batch.batch_id,undefined,{limit:6,retryErrors:false});}
+ await db.prepare("UPDATE payroll_mail_jobs SET status='uncertain',error=? WHERE status='sending' AND (started_at IS NULL OR started_at<?)").bind('No se confirmó el envío anterior. Revisa Enviados antes de tomar otra acción.',cutoff).run();
+ // A reopened/superseded closure must not occupy the front of this queue.
+ const batches=(await db.prepare(`SELECT DISTINCT b.id AS batch_id,b.created_at FROM payroll_mail_jobs j JOIN payroll_mail_batches b ON b.id=j.batch_id JOIN payroll_periods p ON p.id=b.period_id WHERE j.status='pending' AND json_extract(p.data,'$.status')='cerrada' AND json_extract(p.data,'$.snapshot.closedAt')=json_extract(b.data,'$.snapshot.closedAt') ORDER BY b.created_at,b.id LIMIT 2`).all<{batch_id:string}>()).results;
+ for(const batch of batches)await drainMail(batch.batch_id,undefined,{limit:6,retryErrors:false});
  return {batches:batches.length};
 }

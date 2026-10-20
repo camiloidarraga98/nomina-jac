@@ -69,12 +69,12 @@ test('failed physical deletion remains invisible and is recovered by the durable
  const track=await putAudio({name:'Recoverable deletion.wav'}),key='music/audio/'+track.id,original=bucket.delete;
  try{bucket.delete=async()=>{throw new Error('Injected R2 outage');};await json(m.api,'/api/music','POST',{action:'delete',id:track.id,revision:track.revision},'admin',503);assert(objects.has(key));assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(track.id).status,'deleted');assert(!(await json(m.api,'/api/music')).tracks.some(t=>t.id===track.id));}
  finally{bucket.delete=original;}
- await m.cleanupMusic();assert(!objects.has(key));assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(track.id).status,'deleted_clean');await json(m.api,'/api/music','POST',{action:'delete',id:track.id,revision:track.revision});
+ sql.prepare("UPDATE jac_music_tracks SET claim_at='2000-01-01T00:00:00Z' WHERE status IN ('deleted','cancelled')").run();await m.cleanupMusic();assert(!objects.has(key));assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(track.id).status,'deleted_clean');await json(m.api,'/api/music','POST',{action:'delete',id:track.id,revision:track.revision});
 });
 test('a lost deletion acknowledgement retries safely and cleanup never deletes an object with a different revision',async()=>{
  const track=await putAudio({name:'Lost acknowledgement.wav'}),key='music/audio/'+track.id,original=bucket.delete;
  try{bucket.delete=async key=>{await original(key);throw new Error('Lost acknowledgement');};await json(m.api,'/api/music','POST',{action:'delete',id:track.id,revision:track.revision},'admin',503);}finally{bucket.delete=original;}
- await m.cleanupMusic();assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(track.id).status,'deleted_clean');
+ sql.prepare("UPDATE jac_music_tracks SET claim_at='2000-01-01T00:00:00Z' WHERE status IN ('deleted','cancelled')").run();await m.cleanupMusic();assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(track.id).status,'deleted_clean');
  const other=await putAudio({name:'Wrong revision.wav'}),otherKey='music/audio/'+other.id;objects.get(otherKey).customMetadata.revision='replacement';await json(m.api,'/api/music','POST',{action:'delete',id:other.id,revision:other.revision},'admin',409);await m.cleanupMusic();assert(objects.has(otherKey));
 });
 
@@ -83,5 +83,15 @@ test('multipart cancellation survives an abort failure and finishes through clea
  const uploadID=sql.prepare('SELECT upload_id FROM jac_music_tracks WHERE id=?').get(given).upload_id,original=bucket.resumeMultipartUpload;
  try{bucket.resumeMultipartUpload=(...args)=>({...original(...args),abort:async()=>{throw new Error('Injected abort outage');}});await json(m.upload,'/api/music/upload','POST',{action:'cancel',id:given},'uploader',503);assert(uploads.has(uploadID));assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(given).status,'cancelled');}
  finally{bucket.resumeMultipartUpload=original;}
- await m.cleanupMusic();assert(!uploads.has(uploadID));assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(given).status,'cancelled_clean');await json(m.upload,'/api/music/upload','POST',{action:'cancel',id:given},'uploader');
+ sql.prepare("UPDATE jac_music_tracks SET claim_at='2000-01-01T00:00:00Z' WHERE status IN ('deleted','cancelled')").run();await m.cleanupMusic();assert(!uploads.has(uploadID));assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(given).status,'cancelled_clean');await json(m.upload,'/api/music/upload','POST',{action:'cancel',id:given},'uploader');
+});
+
+
+test('a blocked cleanup backs off so newer deletions can advance',async()=>{
+ const ids=Array.from({length:6},()=>id());
+ for(const given of ids)sql.prepare("INSERT INTO jac_music_tracks(id,actor_id,section,title,filename,mime_type,size,revision,created_at,status) VALUES(?,'fixture','tracks','fixture','fixture.wav','audio/wav',1,'expected','2000-01-01T00:00:00Z','deleted')").run(given);
+ for(const given of ids.slice(0,5))objects.set('music/audio/'+given,{bytes:new Uint8Array(1),customMetadata:{revision:'other'}});
+ await m.cleanupMusic(5);await m.cleanupMusic(5);
+ assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(ids[5]).status,'deleted_clean');
+ for(const given of ids.slice(0,5))assert(objects.has('music/audio/'+given));
 });

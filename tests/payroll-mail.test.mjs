@@ -29,3 +29,9 @@ test('autonomous mail processing delivers durable pending jobs without a screen 
  sql.prepare("UPDATE payroll_mail_jobs SET status='error' WHERE batch_id=?").run(plan.id);await m.processMailQueue();assert.equal(recipients.length,2);
  sql.prepare("UPDATE payroll_mail_jobs SET status='sending',started_at='2000-01-01T00:00:00Z' WHERE batch_id=?").run(plan.id);await m.processMailQueue();assert.equal(recipients.length,2);assert((await mailJobs(plan.id)).every(job=>job.status==='uncertain'));
 });
+
+test('superseded pending closures cannot starve the current durable mail batch',async()=>{
+ const current=await readPayroll(),{s,p}=fixture();
+ for(let i=0;i<3;i++){const obsolete=structuredClone(p);obsolete.snapshot.closedAt='2020-01-0'+(i+1)+'T00:00:00Z';const plan=planMail(obsolete,s.employees);sql.prepare('INSERT INTO payroll_mail_batches(id,period_id,data,created_at) VALUES(?,?,?,?)').run(plan.id,plan.periodId,JSON.stringify(plan.period),'2000-01-01T00:00:00Z');for(const j of plan.jobs)sql.prepare('INSERT INTO payroll_mail_jobs(id,batch_id,employee_id,name,email,status) VALUES(?,?,?,?,?,?)').run(j.id,j.batchId,j.employeeId,j.name,j.email,'pending');}
+ p.snapshot.closedAt='2026-10-20T23:00:00Z';const plan=planMail(p,s.employees);await writePayroll(s,current.version,'fixture@example.invalid',(db,nonce)=>mailWrites(db,plan,{nonce}));recipients=[];mode='ok';await m.processMailQueue();assert.equal(recipients.length,2);assert((await mailJobs(plan.id)).every(job=>job.status==='sent'));
+});
