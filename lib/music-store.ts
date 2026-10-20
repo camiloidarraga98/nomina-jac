@@ -67,7 +67,7 @@ async function cleanupMusicTrack(id:string){
   if(object&&object.customMetadata?.revision!==r.revision)throw new MusicFailure('La copia del audio cambió; se detuvo la limpieza.',409);
   if(r.status==='cancelled'&&r.upload_id){
    try{await env.BUCKET.resumeMultipartUpload(key,r.upload_id).abort();}
-   catch(e){const error=e as {code?:string;message?:string};if(error.code!=='NoSuchUpload'&&!/^The specified multipart upload does not exist/i.test(error.message??''))throw e;}
+   catch(e){const error=e as {code?:string|number;message?:string};if(error.code!=='NoSuchUpload'&&Number(error.code)!==10024&&!/\bThe specified multipart upload does not exist\b/i.test(error.message??''))throw e;}
    await db.prepare("UPDATE jac_music_tracks SET upload_id='' WHERE id=? AND claim=? AND status='cancelled'").bind(id,lock).run();
   }
   await env.BUCKET.delete(key);

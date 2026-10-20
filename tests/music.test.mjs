@@ -95,3 +95,13 @@ test('a blocked cleanup backs off so newer deletions can advance',async()=>{
  assert.equal(sql.prepare('SELECT status FROM jac_music_tracks WHERE id=?').get(ids[5]).status,'deleted_clean');
  for(const given of ids.slice(0,5))assert(objects.has('music/audio/'+given));
 });
+
+test('lost multipart abort acknowledgements recognize the R2 NoSuchUpload result and finish idempotently',async()=>{
+ const given=id();await json(m.upload,'/api/music/upload','POST',{action:'start',id:given,section:'tracks',filename:'Lost abort.wav',size:128},'uploader');await json(m.upload,'/api/music/upload?id='+given+'&offset=0','PUT',wav(128),'uploader');
+ const original=bucket.resumeMultipartUpload;
+ try{
+  bucket.resumeMultipartUpload=(key,uploadID)=>{if(!uploads.has(uploadID))return {abort:async()=>{const error=new Error('R2 abortMultipartUpload: The specified multipart upload does not exist. (10024)');error.code=10024;throw error;}};const upload=original(key,uploadID);return {...upload,abort:async()=>{await upload.abort();throw new Error('Lost abort acknowledgement');}};};
+  await json(m.upload,'/api/music/upload','POST',{action:'cancel',id:given},'uploader',503);
+  sql.prepare("UPDATE jac_music_tracks SET claim_at='2000-01-01T00:00:00Z' WHERE id=?").run(given);await m.cleanupMusic();assert.equal(sql.prepare('SELECT status,upload_id FROM jac_music_tracks WHERE id=?').get(given).status,'cancelled_clean');assert.equal(sql.prepare('SELECT upload_id FROM jac_music_tracks WHERE id=?').get(given).upload_id,'');
+ }finally{bucket.resumeMultipartUpload=original;}
+});
