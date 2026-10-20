@@ -245,7 +245,7 @@ final class MediaFolderThumbnailPrefetch: ObservableObject {
     private func warm(_ item: MediaItem, client: PayrollClient) async throws {
         do { _ = try await loader.image(item, client: client, priority: .prefetch) }
         catch {
-            if failureIsCancelled(error) { throw error }
+            if error is CancellationError || (error as? URLError)?.code == .cancelled { throw error }
             if case APIError.unauthorized = error { throw error }
             if case APIError.forbidden = error { throw error }
             if AgendaOfflineCache.isUnavailable(error) { throw error }

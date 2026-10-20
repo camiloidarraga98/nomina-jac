@@ -15,6 +15,8 @@ Verificación acotada: alcance `gallery-prefetch`, únicamente cargador/precarga
 
 Fuente publicada en `main`: `130ee1f`. `git diff --check` y las referencias de la selección CI pasaron. La ejecución [39432451207](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39432451207) se lanzó automáticamente una vez. A20 de octubre13:48UTC, los jobs iPhone118660681517 y Mac118660682111 siguen `queued`, sin ejecutor asignado; Release iPhone se omite por alcance. **Compilación/pruebas Apple pendientes por la cola externa de GitHub**, no aprobadas ni fallidas. No se repiten ejecuciones para saltar la cola. Instalar con pull de `main` y Run en el mismo Xcode; Linux no dispone de Xcode ni se ha verificado físicamente el iPhone.
 
+Corrección posterior de compilación: Camilo reportó `Cannot find 'failureIsCancelled' in scope`. La precarga invocaba un método privado perteneciente a `MediaInlineFolder`; se sustituye esa llamada por la comprobación directa de `CancellationError`/`URLError.cancelled`. La nueva ejecución verifica solo iPhone y reutiliza la compilación Mac anterior, cuyas fuentes no cambian con este ajuste exclusivo de iOS. No se añade una prueba que duplique esa comprobación de tipos; las comprobaciones de cancelación, precarga y caché existentes permanecen en el alcance.
+
 ## Corrección vigente · 19 de octubre de 2026
 
 Camilo reportó que las miniaturas cargaban y desaparecían al desplazarse o esperar en una carpeta, que todo el contenido podía quedar vacío hasta volver arriba y que los archivos cambiaban de distribución. La intervención anterior con LazyVStack y caché de 30 segundos no resolvió esos casos. No se atribuye el problema al hardware ni se afirma haber medido fps físicos desde Cloud.
