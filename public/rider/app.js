@@ -17,19 +17,6 @@ menuButton.addEventListener('click',()=>{const open=menuButton.getAttribute('ari
 $$('a',mobileNav).forEach(link=>link.addEventListener('click',closeMenu));
 window.addEventListener('keydown',event=>{if(event.key==='Escape')closeMenu();});
 
-// This checklist is a personal, local planning aid. It never sends approvals.
-const checkboxes=$$('[data-check]'),storageKey='jac-rider-2026-checklist-v1';
-let checked={};
-try{const value=JSON.parse(localStorage.getItem(storageKey)||'{}');if(value&&typeof value==='object'&&!Array.isArray(value))checked=value;}catch{}
-checkboxes.forEach(input=>{input.checked=checked[input.dataset.check]===true;});
-let toastTimer;
-function toast(message){const el=$('#toast');el.textContent=message;el.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(()=>{el.hidden=true;},4000);}
-function updateChecklist(save=false){const selected=checkboxes.filter(input=>input.checked);$('#check-count').textContent=selected.length+' / '+checkboxes.length;$('#check-progress').value=selected.length;if(save){checked=Object.fromEntries(selected.map(input=>[input.dataset.check,true]));try{localStorage.setItem(storageKey,JSON.stringify(checked));}catch{toast('Tu lista funciona, pero este navegador no permite guardarla.');}}}
-checkboxes.forEach(input=>input.addEventListener('change',()=>updateChecklist(true)));
-$('#reset-checklist').addEventListener('click',()=>{if(!checkboxes.some(input=>input.checked)){toast('Tu lista ya está vacía.');return;}if(window.confirm('¿Reiniciar tu lista de montaje en este dispositivo?')){checkboxes.forEach(input=>{input.checked=false;});updateChecklist(true);toast('Lista de montaje reiniciada.');}});
-window.addEventListener('storage',event=>{if(event.key!==storageKey)return;try{const v=JSON.parse(event.newValue||'{}');checkboxes.forEach(input=>{input.checked=v?.[input.dataset.check]===true;});updateChecklist();}catch{}});
-updateChecklist();
-
 const screenData={central:['1 central · 6 × 4 m','Pitch máximo 4 mm. Un procesador para todas las pantallas del escenario.'],lagrimas:['4 lágrimas · 1 × 4 m cada una','Pitch máximo 4 mm. Conectadas al mismo procesador del escenario.'],cenefa:['1 cenefa · 6 × 0,50 m','Pitch máximo 4 mm. Instalada en el frente de la sobretarima.'],cctv:['2 laterales CCTV · 4 × 5 m cada una','Pitch máximo 6 mm. Un procesador compartido, con salidas independientes full screen y sin duplicar.']};
 function selectScreen(key){$$('[data-screen]').forEach(button=>button.setAttribute('aria-pressed',String(button.dataset.screen===key)));$$('[data-screen-shape]').forEach(shape=>shape.classList.toggle('selected',shape.dataset.screenShape===key));$('#screen-detail b').textContent=screenData[key][0];$('#screen-detail span').textContent=screenData[key][1];}
 $$('[data-screen]').forEach(button=>button.addEventListener('click',()=>selectScreen(button.dataset.screen)));

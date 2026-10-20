@@ -8,7 +8,7 @@ Landing pública en `https://jhonalexcastano.com/rider`, integrada en el Worker 
 - Directorio de cinco contactos con enlaces telefónicos y de correo; los enlaces no envían mensajes automáticamente.
 - Tres planos originales optimizados a WebP, pestañas accesibles, ampliación y zoom; leyenda de la vista superior. Se conserva la advertencia sobre las diferencias entre planos e inventario y su conciliación con iluminación.
 - Escenario conceptual SVG con cuatro puntos interactivos y mapa de pantallas por sistema. Las medidas finales siguen requiriendo coordinación con producción/video.
-- Búsqueda en requisitos y contactos, navegación por anclas y seguimiento de sección. Lista personal de 54 filas, guardada exclusivamente en localStorage del navegador, con reinicio; no constituye aceptación ni aprobación de producción.
+- Búsqueda en requisitos y contactos, navegación por anclas y seguimiento de sección. Se retiró Mi Lista según la petición de Camilo; los54elementos se consultan como inventario, sin casillas ni persistencia de checklist.
 - Animaciones CSS, aparición de encabezados, pausa y respeto de `prefers-reduced-motion`. Diseño adaptable y controles por teclado.
 - PDF original disponible como descarga explícita; la página no usa un visor PDF ni necesita descargar ese archivo para funcionar. No carga React, analítica ni bibliotecas externas; tipografías y recursos son locales.
 
@@ -32,3 +32,7 @@ Wrangler cargó el Worker y14 recursos estáticos nuevos/modificados; después t
 ## Segunda versión interactiva
 
 Camilo pidió una segunda versión en `/rider2`, con simulación espacial a escala, equipos movibles, previsualización de efectos y sin checklist. `/rider` conserva su versión original. Ver [implementación, cantidades, limitaciones y publicación confirmada](RIDER2_SIMULATOR.md).
+
+## Discotecas y privados
+
+El selector superior de `/rider` permite elegir **Shows en vivo** o **Discotecas y privados**. La segunda modalidad abre `/rider/privados/` con sus requisitos, cuatro referencias gráficas yPDF específicos, según el nuevo documento entregado por Camilo. Ver [RIDER_PRIVADOS.md](RIDER_PRIVADOS.md). Las referencias previas a la verificación de persistencia de lista describen la primera entrega; esa función fue retirada.
