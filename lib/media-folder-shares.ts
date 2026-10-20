@@ -77,8 +77,8 @@ export async function sharedFolderFeed(token:unknown,folder?:string,page?:string
  // Omit full-gallery roots, deleted IDs, roles, upload state and actor details.
  return {folder:feed.folder,breadcrumbs:feed.breadcrumbs.slice(index),items:feed.items,nextPageToken:feed.nextPageToken||'',expiresAt:row.expires_at};
 }
-export async function sharedFolderFile(token:unknown,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false){
- const {g}=await sharedGuard(token,id);return r2File(g,id,thumbnail,range,revision,preview);
+export async function sharedFolderFile(token:unknown,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false,background?:(work:Promise<unknown>)=>void){
+ const {g}=await sharedGuard(token,id);return r2File(g,id,thumbnail,range,revision,preview,background);
 }
 
 export type SharedDownloadMode='selected'|'photos'|'all';

@@ -193,6 +193,12 @@ enum MediaGalleryOrder {
     }
 }
 struct MediaThumbnailUnavailable: Error {}
+struct MediaPreviewUnavailable: LocalizedError {
+    let message: String
+    let preparing: Bool
+    let retryAfter: Double
+    var errorDescription: String? { message }
+}
 enum MediaThumbnail {
     static func jpeg(for file: MediaLocalFile, edge: Int = 360, quality: Double = 0.60, limit: Int = 512 * 1024) async -> Data? {
         let image: CGImage?

@@ -316,7 +316,8 @@ final class PayrollClient: ObservableObject {
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false) async throws -> (Data, HTTPURLResponse) {
-        let mediaThumbnailRead = path == "api/media/file" && query.contains { ["thumbnail", "preview"].contains($0.name) && $0.value == "1" }
+        let mediaThumbnailRead = path == "api/media/file" && query.contains { $0.name == "thumbnail" && $0.value == "1" }
+        let mediaPreviewRead = path == "api/media/file" && query.contains { $0.name == "preview" && $0.value == "1" }
         guard allowsResource(path,query:query) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
@@ -354,7 +355,7 @@ final class PayrollClient: ObservableObject {
         catch {
             guard sentToken == (try vault.load()), generation == cacheGeneration else { throw CancellationError() }
             if path.hasPrefix("api/crm") || path == "api/mobile/contracts",body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
-            if AgendaOfflineCache.isUnavailable(error), !mediaThumbnailRead {
+            if AgendaOfflineCache.isUnavailable(error), !mediaThumbnailRead, !mediaPreviewRead {
                 usingOfflineCopy = true
                 if let saved, let response = saved.response, !forceNetwork { return (try authorizedNoticeData(saved.data,path:path), response) }
             }
@@ -377,6 +378,11 @@ final class PayrollClient: ObservableObject {
             // A pending/missing cover is not a revoked session or a deleted
             // original. Invalidating the global generation here used to cancel
             // every other thumbnail and collapse expanded folder contents.
+            if mediaPreviewRead, [404, 429, 500, 502, 503, 504].contains(response.statusCode) {
+                struct PreviewError: Decodable { let error: String?; let code: String? }
+                let failure = try? decoder.decode(PreviewError.self, from: data)
+                throw MediaPreviewUnavailable(message: failure?.error ?? "La vista previa no está disponible en este momento. Puedes reintentar.", preparing: failure?.code == "preview_preparing", retryAfter: min(5, max(0, Double(response.value(forHTTPHeaderField: "Retry-After") ?? "1") ?? 1)))
+            }
             if mediaThumbnailRead, [404, 429, 500, 502, 503, 504].contains(response.statusCode) { throw MediaThumbnailUnavailable() }
             if path=="api/media",body==nil,response.statusCode==410,let folder=query.first(where:{$0.name=="folder"})?.value,let mediaScope=try mediaScope() {try mediaOffline.removeFolders([folder],scope:mediaScope);throw MediaFolderRemoved()}
             if path.hasPrefix("api/music"), response.statusCode == 403, let scope = try musicScope() { musicOffline.clear(scope) }
@@ -1093,12 +1099,23 @@ final class PayrollClient: ObservableObject {
     func mediaPhotoPreview(_ item: MediaItem, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
         if usingOfflineCopy { return try await mediaDocument(item, progress: progress) }
         let stamp = try mediaAccessStamp()
-        let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "preview", value: "1"), URLQueryItem(name: "revision", value: item.modifiedAt)], document: true, forceNetwork: true)
-        guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
-        guard !data.isEmpty, data.count <= 2 * 1024 * 1024, response.mimeType == "image/jpeg" else { throw APIError.invalid("No se recibió una vista previa ligera.") }
-        progress(Int64(data.count), Int64(data.count))
-        return try TemporaryDocuments.save(data, filename: "vista-previa.jpg")
+        var retries = 0
+        while true {
+            do {
+                let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "preview", value: "1"), URLQueryItem(name: "revision", value: item.modifiedAt)], document: true, forceNetwork: true)
+                guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+                guard !data.isEmpty, data.count <= 2 * 1024 * 1024, response.mimeType == "image/jpeg" else { throw APIError.invalid("No se recibió una vista previa ligera.") }
+                progress(Int64(data.count), Int64(data.count))
+                return try TemporaryDocuments.save(data, filename: "vista-previa.jpg")
+            } catch let failure as MediaPreviewUnavailable {
+                guard failure.preparing, retries < 2 else { throw failure }
+                retries += 1
+                try await Task.sleep(for: .seconds(failure.retryAfter))
+                guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+            }
+        }
     }
+
     private func restoredMediaDocument(_ item: MediaItem, scope: AgendaCacheScope) async throws -> ExportedDocument? {
         let generation = cacheGeneration
         let cache = mediaOffline, work = Task.detached(priority: .userInitiated) { try cache.document(item, scope: scope) }

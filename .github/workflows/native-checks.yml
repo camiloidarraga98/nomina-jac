@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview]
         default: full
 
 permissions:
@@ -63,6 +63,7 @@ jobs:
       - name: Build and check the affected iPhone flows
         shell: bash
         env:
+          JAC_PHOTO_PREVIEW: ${{ inputs.scope == 'photo-preview' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-preview]')) }}
           JAC_AUDIT: ${{ inputs.scope == 'audit' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-audit]')) }}
           JAC_LAYOUT_ONLY: ${{ inputs.scope == 'layout' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-layout]')) }}
           JAC_NAVIGATION_DRAWER_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-drawer-only]') }}
@@ -89,6 +90,17 @@ jobs:
           if [ "$JAC_LAYOUT_ONLY" = true ]; then
             checks=()
             build_action=build-for-testing
+          elif [ "$JAC_PHOTO_PREVIEW" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testPendingPhotoPreviewRetriesOnlyTheLightVersionAndKeepsItsSession
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoPreviewFailureIsReadableBoundedAndDoesNotBecomeAMissingThumbnail
+              -only-testing:JACNominaTests/PayrollClientTests/testForbiddenPhotoPreviewNeverRetriesOrFallsBackToAnOriginal
+              -only-testing:JACNominaTests/PayrollClientTests/testLightPhotoPreviewAndAdaptiveVideoNeverRequestOriginalBytes
+              -only-testing:JACNominaTests/PayrollClientTests/testMissingThumbnailDoesNotInvalidateOtherImagesOrFolderSession
+              -only-testing:JACNominaTests/PayrollClientTests/testIdenticalWorkspaceDoesNotRewriteEncryptedCopyAndOfflineSyncIsThrottled
+              -only-testing:JACNominaTests/PayrollClientTests/testFullCopyRestoresBeforeNetworkAndOpensPayrollAgendaItineraryAndPrivatePassOffline
+              -only-testing:JACNominaTests/MediaFullscreenPhotoModelTests
+            )
           elif [ "$JAC_AUDIT" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testIdenticalWorkspaceDoesNotRewriteEncryptedCopyAndOfflineSyncIsThrottled
@@ -322,7 +334,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'audit' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-audit]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'audit' && inputs.scope != 'photo-preview' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-audit]') || contains(github.event.head_commit.message, '[check-photo-preview]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

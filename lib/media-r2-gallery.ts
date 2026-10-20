@@ -5,7 +5,7 @@ import {database} from '@/db/raw';
 import {mailKey} from './payroll-mail';
 import {encryptMail,decryptMail} from './payroll-mail-core';
 import {mediaGuardActive,type MediaGuard} from './media-drive';
-import {MediaFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_DIRECT_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,canReadMedia,canUploadMedia,canDeleteMedia,canConnectMedia,mediaName,mediaFolderName,mediaUploadInput,mediaSignature,mediaRange,validMediaRequestID,type MediaItem} from './media-core';
+import {MediaFailure,MediaPreviewFailure,MEDIA_ROOT_ID,MEDIA_FOLDER_MIME,MEDIA_DIRECT_CHUNK_SIZE,MEDIA_THUMBNAIL_MAX_BYTES,canReadMedia,canUploadMedia,canDeleteMedia,canConnectMedia,mediaName,mediaFolderName,mediaUploadInput,mediaSignature,mediaRange,validMediaRequestID,type MediaItem} from './media-core';
 import type {AccessUser} from './payroll-permissions';
 import type {MediaR2Secret} from './media-r2';
 import {MEDIA_IMAGE_LIMITS} from './media-image-policy';
@@ -15,13 +15,13 @@ export const R2_ROOT='jac_r2_root',R2_COLLECTION='jac-r2-new-20261016';
 const PHOTO_PREVIEW_EDGE=2400,PHOTO_PREVIEW_LIMIT=2*1024*1024,PHOTO_PREVIEW_PROFILE='balanced-2400-q84-v2';
 type PhotoImages={input(stream:ReadableStream):{transform(options:Record<string,unknown>):{output(options:{format:string;quality:number}):Promise<{response():Response}>}}};
 type Config={credentials:string;enabled:number;version:number};
-type Context={g:MediaGuard;config:Config;secret:MediaR2Secret};
+type Context={g:MediaGuard;config:Config;secret:MediaR2Secret;signal?:AbortSignal};
 type Entry={id:string;parent_id:string;name:string;mime_type:string;size:number;object_key:string;thumbnail_key:string;actor_id:string;payload_hash:string;created_at:string;modified_at:string};
 type Upload={id:string;actor_id:string;parent_id:string;payload_hash:string;drive_id:string;name:string;mime_type:string;size:number;offset:number;status:string;session_payload:string;connection_version:number;claim:string;claim_at:string;expires_at:string};
 const config=()=>database().prepare("SELECT credentials,enabled,version FROM jac_media_r2_connection WHERE id='jac'").first<Config>();
 export async function usesMediaR2(){return (await config())?.enabled===1;}
 const same=(c:Context)=>`EXISTS(SELECT 1 FROM jac_media_r2_connection WHERE id='jac' AND enabled=1 AND version=${c.config.version}) AND ${c.g.sql}`;
-async function live(c:Context){const row=await config();if(!row||row.enabled!==1||row.version!==c.config.version||row.credentials!==c.config.credentials||!await mediaGuardActive(c.g))throw new MediaFailure('La sesión, los permisos o la galería cambiaron. Actualiza Fotografía.',403);}
+async function live(c:Context){const row=await config();if(!row||row.enabled!==1||row.version!==c.config.version||row.credentials!==c.config.credentials||!await mediaGuardActive(c.g))throw new MediaFailure('La sesión, los permisos o la galería cambiaron. Actualiza Fotografía.',403);if(c.signal?.aborted)throw new MediaPreviewFailure('preview_timeout');}
 async function context(g:MediaGuard){if(!await mediaGuardActive(g))throw new MediaFailure('Tu sesión cambió.',403);const row=await config();if(!row?.enabled||!row.credentials)throw new MediaFailure('El archivo nuevo de Fotografía todavía no está activo.',409);const c={g,config:row,secret:await decryptMail<MediaR2Secret>(row.credentials,mailKey())};await live(c);return c;}
 const hash=(v:unknown)=>createHash('sha256').update(JSON.stringify(v)).digest('hex');
 const entry=(id:string)=>database().prepare('SELECT * FROM jac_media_r2_entries WHERE id=?').bind(id).first<Entry>();
@@ -47,7 +47,7 @@ async function parent(c:Context,id:string){const rows=await chain(c,id);if(rows.
 const item=(r:Entry):MediaItem=>({id:r.id,name:r.name,mimeType:r.mime_type,kind:r.mime_type===MEDIA_FOLDER_MIME?'folder':r.mime_type.startsWith('image/')?'image':'video',size:r.size,createdAt:r.created_at,modifiedAt:r.modified_at,thumbnailAvailable:!!r.thumbnail_key});
 async function call(c:Context,method:Parameters<typeof r2Request>[1],key='',query:Record<string,string>={},headers:Record<string,string>={},body?:string|Uint8Array){
  await live(c);const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),60000);let response:Response;
- try{response=await fetch(r2Request(c.secret,method,key,query,headers,body),{redirect:'manual',signal:controller.signal});}catch{throw new MediaFailure('La conexión con Fotografía se interrumpió. Puedes reintentar sin duplicar archivos.',502);}finally{clearTimeout(timer);}
+ try{response=await fetch(r2Request(c.secret,method,key,query,headers,body),{redirect:'manual',signal:c.signal?AbortSignal.any([c.signal,controller.signal]):controller.signal});}catch{throw new MediaFailure('La conexión con Fotografía se interrumpió. Puedes reintentar sin duplicar archivos.',502);}finally{clearTimeout(timer);}
  try{await live(c);}catch(e){await response.body?.cancel();throw e;}
  if(response.status>=300&&response.status<400){await response.body?.cancel();throw new MediaFailure('R2 devolvió una redirección inesperada.',502);}return response;
 }
@@ -104,11 +104,11 @@ async function storedPhotoPreview(c:Context,row:Entry){
  if(!jpegThumbnail(bytes,PHOTO_PREVIEW_EDGE,PHOTO_PREVIEW_LIMIT))throw new MediaFailure('La vista previa no es válida.',502);
  await currentPhoto(c,row);return {bytes,profile};
 }
-async function photoPreview(c:Context,row:Entry):Promise<Response>{
+async function photoPreview(c:Context,row:Entry,background?:(work:Promise<unknown>)=>void):Promise<Response>{
  if(!row.mime_type.startsWith('image/'))throw new MediaFailure('Selecciona una fotografía.');
  const previous=await storedPhotoPreview(c,row);
  if(previous?.profile===PHOTO_PREVIEW_PROFILE)return previewResponse(previous.bytes,previous.profile);
- const unavailable=()=>new MediaFailure('No pudimos preparar la vista previa. Vuelve a intentarlo en unos momentos.',503);
+ const unavailable=()=>new MediaPreviewFailure('preview_unavailable');
  const images=(env as unknown as {IMAGES?:PhotoImages}).IMAGES;
  if(!images||row.size>20_000_000){if(previous)return previewResponse(previous.bytes,previous.profile);throw unavailable();}
  await ensurePresentations(c.g);await currentPhoto(c,row);
@@ -118,20 +118,36 @@ async function photoPreview(c:Context,row:Entry):Promise<Response>{
  if(lock.meta.changes!==1){
   // Another reader may be preparing this same private JPEG. Wait briefly for
   // its indexed result; never substitute a grid thumbnail for a full-screen view.
-  if(!previous)for(let attempt=0;attempt<4;attempt++){
+  if(!previous)for(let attempt=0;attempt<8;attempt++){
    const pending=await presentation(row.id);if(!pending?.claim)break;
-   await new Promise(resolve=>setTimeout(resolve,400));await currentPhoto(c,row);
+   await new Promise(resolve=>setTimeout(resolve,750));await currentPhoto(c,row);
    const ready=await storedPhotoPreview(c,row);if(ready?.profile===PHOTO_PREVIEW_PROFILE)return previewResponse(ready.bytes,ready.profile);
   }
-  await currentPhoto(c,row);if(previous)return previewResponse(previous.bytes,previous.profile);throw unavailable();
+  await currentPhoto(c,row);if(previous)return previewResponse(previous.bytes,previous.profile);
+  if((await presentation(row.id))?.claim)throw new MediaPreviewFailure('preview_preparing',1);throw unavailable();
  }
+ const work=preparePhotoPreview(c,row,previous,images,claim);
+ // Swiping away cancels the HTTP consumer, not the already reserved derivative.
+ // Each consumer still validates its own session/resource before receiving bytes.
+ background?.(work.then(()=>{},()=>{}));return work;
+}
+async function photoOutput<T>(work:Promise<T>,signal:AbortSignal):Promise<T>{
+ if(signal.aborted){void work.catch(()=>{});throw new MediaPreviewFailure('preview_timeout');}
+ return new Promise((resolve,reject)=>{
+  const abort=()=>reject(new MediaPreviewFailure('preview_timeout'));signal.addEventListener('abort',abort,{once:true});
+  work.then(value=>{signal.removeEventListener('abort',abort);resolve(value);},error=>{signal.removeEventListener('abort',abort);reject(error);});
+ });
+}
+async function preparePhotoPreview(c:Context,row:Entry,previous:{bytes:Uint8Array<ArrayBuffer>;profile:string}|null,images:PhotoImages,claim:string){
+ const authorized=c,controller=new AbortController(),timer=setTimeout(()=>controller.abort(),20000);c={...c,signal:controller.signal};
+ const unavailable=()=>new MediaPreviewFailure(controller.signal.aborted?'preview_timeout':'preview_unavailable');
  const key='previews/'+row.id.slice(3)+'.jpg';let wrote=false,published=false;
  try{
   const original=await call(c,'GET',row.object_key);await checked(original);
   const source=await r2Bytes(original,20_000_000);await currentPhoto(c,row);
   let bytes:Uint8Array<ArrayBuffer>|undefined;
   for(const edge of [PHOTO_PREVIEW_EDGE,2048]){
-   const output=await images.input(new Response(source).body!).transform({width:edge,height:edge,fit:'scale-down'}).output({format:'image/jpeg',quality:84});
+   const output=await photoOutput(images.input(new Response(source).body!).transform({width:edge,height:edge,fit:'scale-down'}).output({format:'image/jpeg',quality:84}),controller.signal);
    const result=output.response();await checked(result);
    try{bytes=await r2Bytes(result,PHOTO_PREVIEW_LIMIT);}catch(error){if(edge===PHOTO_PREVIEW_EDGE&&error instanceof MediaFailure&&error.status===502)continue;throw error;}
    if(!jpegThumbnail(bytes,edge,PHOTO_PREVIEW_LIMIT))throw unavailable();break;
@@ -149,18 +165,19 @@ async function photoPreview(c:Context,row:Entry):Promise<Response>{
   if(wrote&&!published){
    // Roll back only this job's derivative, including a lost PUT acknowledgement.
    // Cleanup is allowed after revocation; it cannot touch an original or cover.
-   try{const response=await fetch(r2Request(c.secret,'DELETE',key),{redirect:'manual'});await response.body?.cancel();}catch{}
+   try{const response=await fetch(r2Request(c.secret,'DELETE',key),{redirect:'manual',signal:AbortSignal.timeout(5000)});await response.body?.cancel();}catch{}
   }
-  await currentPhoto(c,row);
+  await currentPhoto(authorized,row);
+  console.warn(JSON.stringify({event:'photo-preview-failed',reason:controller.signal.aborted?'timeout':'upstream',sourceBytes:row.size}));
   if(previous&&!wrote)return previewResponse(previous.bytes,previous.profile);
   if(error instanceof MediaFailure&&[401,403,409,410].includes(error.status))throw error;
   throw unavailable();
- }finally{await database().prepare("UPDATE jac_media_presentations SET claim='' WHERE file_id=? AND claim=?").bind(row.id,claim).run();}
+ }finally{clearTimeout(timer);await database().prepare("UPDATE jac_media_presentations SET claim='' WHERE file_id=? AND claim=?").bind(row.id,claim).run();}
 }
-export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false){
+export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false,background?:(work:Promise<unknown>)=>void){
  const c=await context(g),rows=await chain(c,id),row=rows.at(-1);if(!row||row.mime_type===MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una foto o video.');
  if(revision&&revision!==row.modified_at)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);const key=thumbnail?row.thumbnail_key:row.object_key;if(!preview&&!key)throw new MediaFailure('La miniatura todavía no está disponible.',404);
- const requested=thumbnail||preview?null:mediaRange(range),response=preview?await photoPreview(c,row):await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
+ const requested=thumbnail||preview?null:mediaRange(range),response=preview?await photoPreview(c,row,background):await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
  if(requested&&response.status!==206){await response.body?.cancel();throw new MediaFailure('R2 no confirmó el rango solicitado.',502);}
  try{await chain(c,id);const after=await entry(id);if(after?.modified_at!==row.modified_at||after.object_key!==row.object_key)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);await live(c);}catch(e){await response.body?.cancel();throw e;}
  const headers=new Headers({'content-type':thumbnail||preview?'image/jpeg':row.mime_type,'content-disposition':"inline; filename*=UTF-8''"+encodeURIComponent(preview?'vista-previa.jpg':thumbnail?'miniatura.jpg':row.name),'x-content-type-options':'nosniff','accept-ranges':thumbnail||preview?'none':'bytes'});

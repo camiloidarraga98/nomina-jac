@@ -608,6 +608,55 @@ final class PayrollClientTests: XCTestCase {
         let url = try await client.mediaPlayback(video), stream = try MediaVideoStream(client: client, item: video, playbackURL: url)
         XCTAssertEqual(stream.asset.url, url); stream.cancel(); XCTAssertEqual(requests, 2)
     }
+    @MainActor func testPendingPhotoPreviewRetriesOnlyTheLightVersionAndKeepsItsSession() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://preview-pending.invalid")!, vault: vault, configuration: configuration, automaticallyDownloadOffline: false)
+        let stamp = try client.mediaAccessStamp(), revision = client.cacheRevision
+        let item = MediaItem(id: "photo", name: "Original.jpg", mimeType: "image/jpeg", kind: "image", size: 3000000, modifiedAt: "fixture", thumbnailAvailable: true)
+        var reads = 0
+        MockProtocol.handler = { request in
+            reads += 1; XCTAssertTrue(request.url?.query?.contains("preview=1") == true); XCTAssertFalse(request.url?.query?.contains("thumbnail=1") == true)
+            if reads == 1 { return (HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: ["Content-Type":"application/json","Retry-After":"0"])!, Data("{\"code\":\"preview_preparing\",\"error\":\"Preparando vista previa\"}".utf8)) }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"image/jpeg"])!, MediaFixture.photo)
+        }
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        let document = try await client.mediaPhotoPreview(item); defer { TemporaryDocuments.remove(document) }
+        XCTAssertEqual(reads, 2); XCTAssertEqual(try Data(contentsOf: document.url), MediaFixture.photo)
+        XCTAssertEqual(try client.mediaAccessStamp(), stamp); XCTAssertEqual(client.cacheRevision, revision); XCTAssertFalse(client.usingOfflineCopy)
+    }
+    @MainActor func testPhotoPreviewFailureIsReadableBoundedAndDoesNotBecomeAMissingThumbnail() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://preview-failure.invalid")!, vault: vault, configuration: configuration, automaticallyDownloadOffline: false)
+        let stamp = try client.mediaAccessStamp(), revision = client.cacheRevision
+        let item = MediaItem(id: "photo", name: "Original.jpg", mimeType: "image/jpeg", kind: "image", size: 3000000, modifiedAt: "fixture", thumbnailAvailable: true)
+        var reads = 0, preparing = true
+        MockProtocol.handler = { request in
+            reads += 1; XCTAssertTrue(request.url?.query?.contains("preview=1") == true)
+            let code = preparing ? "preview_preparing" : "preview_unavailable"
+            return (HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: ["Content-Type":"application/json","Retry-After":"0"])!, Data("{\"code\":\"\(code)\",\"error\":\"La vista previa está pendiente. Puedes reintentar.\"}".utf8))
+        }
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        do { _ = try await client.mediaPhotoPreview(item); XCTFail("The retry budget must stop") }
+        catch let failure as MediaPreviewUnavailable { XCTAssertTrue(failure.preparing); XCTAssertTrue(failure.localizedDescription.contains("vista previa")); XCTAssertFalse(failure.localizedDescription.contains("JACNomina")) }
+        XCTAssertEqual(reads, 3)
+        preparing = false; reads = 0
+        do { _ = try await client.mediaPhotoPreview(item); XCTFail("A definitive failure requires explicit retry") }
+        catch let failure as MediaPreviewUnavailable { XCTAssertFalse(failure.preparing) }
+        XCTAssertEqual(reads, 1); XCTAssertEqual(try client.mediaAccessStamp(), stamp); XCTAssertEqual(client.cacheRevision, revision); XCTAssertFalse(client.usingOfflineCopy)
+    }
+    @MainActor func testForbiddenPhotoPreviewNeverRetriesOrFallsBackToAnOriginal() async throws {
+        let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "https://preview-denial.invalid")!, vault: vault, configuration: configuration, automaticallyDownloadOffline: false)
+        let item = MediaItem(id: "photo", name: "Original.jpg", mimeType: "image/jpeg", kind: "image", size: 3000000, modifiedAt: "fixture", thumbnailAvailable: true)
+        var reads = 0
+        MockProtocol.handler = { request in reads += 1; XCTAssertTrue(request.url?.query?.contains("preview=1") == true);return (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: ["Content-Type":"application/json"])!, Data("{\"error\":\"Sin acceso\"}".utf8)) }
+        defer { MockProtocol.handler = nil; try? client.clearSession() }
+        do { _ = try await client.mediaPhotoPreview(item); XCTFail("A denied preview cannot fall back") } catch APIError.forbidden { }
+        XCTAssertEqual(reads, 1)
+    }
     @MainActor func testGalleryThumbnailUsesOnlyAuthenticatedThumbnailEndpointAndBoundsItsPixels() async throws {
         let vault=MemorySession();vault.token=String(repeating:"f",count:43)
         let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MockProtocol.self]

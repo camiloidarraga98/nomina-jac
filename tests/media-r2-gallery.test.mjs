@@ -21,7 +21,7 @@ class Query {
 }
 globalThis.__r2Fixture={DB:{prepare:text=>new Query(text),batch:async queries=>{sql.exec('BEGIN');try{const out=queries.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'separate-r2-fixture-auth-key-2026',PAYROLL_MAIL_KEY:Buffer.alloc(32,9).toString('base64url')};
 globalThis.__r2Headers=new Headers();
-const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as offline from './app/api/media/offline/route';export * as uploads from './app/api/media/upload/route';export * as playback from './app/api/media/playback/route';export {processMediaPresentations} from './lib/media-stream';export * as shares from './app/api/media/shares/route';export * as shared from './app/api/media/shared/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
+const bundled=await build({stdin:{contents:"export * from './lib/media-r2';export * from './lib/media-r2-gallery';export * from './lib/media-r2-s3';export * from './lib/media-upload-client';export * from './lib/media-drive';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {decryptMail} from './lib/payroll-mail-core';export * as api from './app/api/media/storage/route';export * as gallery from './app/api/media/route';export * as files from './app/api/media/file/route';export * as offline from './app/api/media/offline/route';export * as uploads from './app/api/media/upload/route';export * as playback from './app/api/media/playback/route';export {processMediaPresentations} from './lib/media-stream';export * as shares from './app/api/media/shares/route';export * as shared from './app/api/media/shared/route';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'r2-fixtures',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__r2Fixture;export const waitUntil=p=>{globalThis.__r2Background.push(p);};':'export const headers=async()=>globalThis.__r2Headers;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/r2-fixture-')),file=dir+'/fixture.mjs';await writeFile(file,bundled.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const ownerID=await m.bootstrapOwner('independent-new-gallery-owner','fixture'),photographer=crypto.randomUUID(),anderson=crypto.randomUUID(),stamp=new Date().toISOString();
 sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,media_only,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(photographer,'new-photo','photo@example.invalid','Fotógrafo ficticio','fixture','[]',1,stamp,stamp);
@@ -29,9 +29,9 @@ sql.prepare('INSERT INTO payroll_users(id,username,email,name,password_hash,perm
 const input={accountId:'1'.repeat(32),bucket:'jac-fotografia',accessKeyId:'2'.repeat(32),secretAccessKey:'3'.repeat(64),version:0},origin='https://r2.example.invalid',host=input.accountId+'.r2.cloudflarestorage.com';
 const jpeg=new Uint8Array([255,216,255,192,0,11,8,0,16,0,16,1,1,17,0,255,217]);
 let token,photoToken,calls,objects,multiparts,hook,loseComplete,loseDelete;
-let streamCalls,streamVideos,streamReady,streamHook;
+let streamCalls,streamVideos,streamReady,streamHook;globalThis.__r2Background=[];
 beforeEach(async()=>{
- delete globalThis.__r2Fixture.IMAGES;
+ globalThis.__r2Background=[];delete globalThis.__r2Fixture.IMAGES;
  globalThis.__r2Fixture.JAC_STREAM_API_TOKEN='fixture-stream-only';streamCalls=[];streamVideos=new Map();streamReady=true;streamHook=undefined;
  beforeQuery=undefined;hook=undefined;loseComplete=false;loseDelete=false;calls=[];objects=new Map();multiparts=new Map();sql.exec('DELETE FROM jac_media_folder_shares;DELETE FROM jac_media_r2_entries;DELETE FROM jac_media_operations;DELETE FROM jac_media_r2_connection;UPDATE payroll_users SET active=1');sql.prepare('UPDATE payroll_users SET section_access=NULL WHERE id IN (?,?)').run(photographer,anderson);token=await m.makeSession(ownerID);photoToken=await m.makeSession(photographer);
  sql.prepare("INSERT OR REPLACE INTO jac_media_connection(id,credentials,email,version,updated_at) VALUES('jac','previous-photo-drive','jacmusicestudios@gmail.com',7,?)").run(stamp);
@@ -627,4 +627,33 @@ test('stable gallery cursors do not skip or repeat older files after an earlier 
 
 test('concurrent private HLS readers share one provider signing request without bypassing their live access checks',async()=>{
  const {id}=await videoFixture(),info=await readyVideo(id);const responses=await Promise.all(Array.from({length:8},()=>leased(info.url)));for(const response of responses){assert.equal(response.status,200);await response.text();}assert.equal(streamCalls.filter(call=>call.url.pathname.endsWith('/token')).length,1);
+});
+
+test('a reserved preview registers its background lifetime and stays private if its viewer leaves',async()=>{
+ const {id}=await photoPreviewFixture();let release,begun;const entered=new Promise(resolve=>begun=resolve),output=new Promise(resolve=>release=resolve);
+ globalThis.__r2Fixture.IMAGES={input:()=>({transform:()=>({output:()=>{begun();return output;}})})};
+ const abort=new AbortController(),request=req('/api/media/file?id='+id+'&preview=1',undefined,photoToken,'GET');
+ const response=m.files.GET(new Request(request,{signal:abort.signal}));await entered;assert.equal(globalThis.__r2Background.length,1);abort.abort();release({response:()=>new Response(sizedJPEG(2400),{headers:{'content-type':'image/jpeg'}})});
+ await globalThis.__r2Background[0];assert.equal((await response).status,200);assert.equal(sql.prepare('SELECT preview_key,claim FROM jac_media_presentations WHERE file_id=?').get(id).claim,'');assert(objects.has('previews/'+id.slice(3)+'.jpg'));
+});
+test('a stuck image transform times out, releases its reservation, and cannot publish a late result',async t=>{
+ const {id}=await photoPreviewFixture();let release,begun;const entered=new Promise(resolve=>begun=resolve),output=new Promise(resolve=>release=resolve);
+ globalThis.__r2Fixture.IMAGES={input:()=>({transform:()=>({output:()=>{begun();return output;}})})};t.mock.timers.enable({apis:['setTimeout']});
+ try{const first=photoPreview(id);await entered;t.mock.timers.tick(20000);const response=await first;assert.equal(response.status,503);const body=await response.json();assert.equal(body.code,'preview_timeout');assert.equal(response.headers.get('Retry-After'),'60');assert(!JSON.stringify(body).includes('Error:'));
+  assert.equal(sql.prepare('SELECT claim FROM jac_media_presentations WHERE file_id=?').get(id).claim,'');release({response:()=>new Response(sizedJPEG(2400))});await new Promise(resolve=>setImmediate(resolve));assert(!objects.has('previews/'+id.slice(3)+'.jpg'));assert(objects.has('originals/'+id.slice(3)));
+ }finally{t.mock.timers.reset();}
+});
+test('a cooling-down failed preview returns a readable error without downloading another original',async()=>{
+ const {id}=await photoPreviewFixture();previewImages(()=>{throw Error('upstream private failure');});await photoPreview(id);const before=calls.length;
+ const response=await photoPreview(id),body=await response.json();assert.equal(response.status,503);assert.equal(body.code,'preview_unavailable');assert.equal(response.headers.get('Retry-After'),'60');assert(body.error.includes('vista previa'));assert(!JSON.stringify(body).includes('upstream private failure'));assert.equal(calls.length,before);
+});
+
+test('concurrent preview readers receive a bounded preparing state while the reserved worker continues',async t=>{
+ const {id}=await photoPreviewFixture();let release,begun,locked;const entered=new Promise(resolve=>begun=resolve),output=new Promise(resolve=>release=resolve),secondLock=new Promise(resolve=>locked=resolve);
+ globalThis.__r2Fixture.IMAGES={input:()=>({transform:()=>({output:()=>{begun();return output;}})})};t.mock.timers.enable({apis:['setTimeout']});
+ let first;
+ try{first=photoPreview(id);await entered;beforeQuery=q=>{if(q.text.startsWith('UPDATE jac_media_presentations SET claim=?,claim_at=? WHERE file_id='))locked();};const second=photoPreview(id);await secondLock;await new Promise(resolve=>setImmediate(resolve));
+  for(let i=0;i<8;i++){t.mock.timers.tick(750);await new Promise(resolve=>setImmediate(resolve));}
+  const response=await second;assert.equal(response.status,503);assert.equal((await response.json()).code,'preview_preparing');assert.equal(response.headers.get('Retry-After'),'1');assert.equal(globalThis.__r2Background.length,1);
+ }finally{beforeQuery=undefined;release({response:()=>new Response(sizedJPEG(2400))});if(first)assert.equal((await first).status,200);t.mock.timers.reset();}
 });
