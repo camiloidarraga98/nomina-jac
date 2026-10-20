@@ -19,9 +19,9 @@ export default {
     if(env.JAC_READY!=='1')return new Response('JAC está preparando este entorno. El sitio habitual sigue disponible.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','Retry-After':'3600','X-Robots-Tag':'noindex, nofollow'}});
     // The artist's rider is explicitly public. Keep its static namespace apart
     // from the application router and all authenticated API/document routes.
-    if(url.pathname==='/rider'||url.pathname.startsWith('/rider/')){
+    if(url.pathname==='/rider'||url.pathname.startsWith('/rider/')||url.pathname==='/rider2'||url.pathname.startsWith('/rider2/')){
       if(!['GET','HEAD'].includes(request.method))return new Response(null,{status:405,headers:{Allow:'GET, HEAD'}});
-      if(url.pathname==='/rider')url.pathname='/rider/';
+      if(url.pathname==='/rider'||url.pathname==='/rider2')url.pathname+='/';
       const response=await env.ASSETS.fetch(new Request(url,request));
       const rider=new Response(response.body,response);
       rider.headers.set('X-Content-Type-Options','nosniff');

@@ -92,3 +92,18 @@ test('rider público entrega GET/HEAD desde Assets sin ejecutar la aplicación n
  }
  const paused=await m.worker.fetch(new Request('https://example.invalid/rider'),{ASSETS:env.ASSETS},{});assert.equal(paused.status,503);
 });
+
+test('rider2 independiente conserva lectura pública, CSP, READY y límites de ruta',async()=>{
+ const before=globalThis.__cfCalls,seen=[];
+ const env={JAC_READY:'1',ASSETS:{async fetch(request){seen.push([request.method,new URL(request.url).pathname]);return new Response(request.method==='HEAD'?null:'simulator',{headers:{'Content-Type':'text/html'}});}}};
+ for(const path of ['/rider2','/rider2/','/rider2/simulator.js','/rider2/simulator.css','/rider2/index.html'])for(const method of ['GET','HEAD']){
+  const r=await m.worker.fetch(new Request('https://example.invalid'+path,{method}),env,{});
+  assert.equal(r.status,200);assert.equal(await r.text(),method==='HEAD'?'':'simulator');
+  assert.match(r.headers.get('Content-Security-Policy'),/script-src 'self'/);
+ }
+ assert.equal(seen[0][1],'/rider2/');assert.equal(globalThis.__cfCalls,before);
+ for(const method of ['POST','PUT','DELETE']){const r=await m.worker.fetch(new Request('https://example.invalid/rider2/',{method}),env,{});assert.equal(r.status,405);}
+ assert.equal(seen.length,10);
+ for(const path of ['/rider2-private','/rider2.json','/api/crm/file?id=private']){const r=await m.worker.fetch(new Request('https://example.invalid'+path),env,{});assert.equal(await r.text(),'application');}
+ const blocked=await m.worker.fetch(new Request('https://example.invalid/rider2'),{ASSETS:env.ASSETS},{});assert.equal(blocked.status,503);
+});
