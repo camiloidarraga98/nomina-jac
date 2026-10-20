@@ -1,0 +1,29 @@
+name: JAC web and API checks
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'lib/**', 'db/**', 'drizzle/**', 'public/**', 'worker/**', 'tests/**', 'scripts/*.mjs', 'package*.json', 'vite.config.*', 'deploy/cloudflare/**', '.github/workflows/web-checks.yml']
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: jac-web-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  web:
+    if: ${{ github.event.repository.private == false && !contains(github.event.head_commit.message, '[web-verified-locally]') }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx --no-install tsc --noEmit
+      - run: npm run build
+      - run: node scripts/affected-tests.mjs

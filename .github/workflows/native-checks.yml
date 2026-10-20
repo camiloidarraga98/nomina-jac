@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit]
         default: full
 
 permissions:
@@ -63,6 +63,7 @@ jobs:
       - name: Build and check the affected iPhone flows
         shell: bash
         env:
+          JAC_AUDIT: ${{ inputs.scope == 'audit' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-audit]')) }}
           JAC_LAYOUT_ONLY: ${{ inputs.scope == 'layout' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-layout]')) }}
           JAC_NAVIGATION_DRAWER_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-drawer-only]') }}
           JAC_NAVIGATION_AGENDA_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-agenda-only]') }}
@@ -88,6 +89,17 @@ jobs:
           if [ "$JAC_LAYOUT_ONLY" = true ]; then
             checks=()
             build_action=build-for-testing
+          elif [ "$JAC_AUDIT" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testIdenticalWorkspaceDoesNotRewriteEncryptedCopyAndOfflineSyncIsThrottled
+              -only-testing:JACNominaTests/PayrollClientTests/testFullCopyRestoresBeforeNetworkAndOpensPayrollAgendaItineraryAndPrivatePassOffline
+              -only-testing:JACNominaTests/PayrollClientTests/testAlertImageAndExpenseReceiptDownloadAutomaticallyAndRemainReadableOffline
+              -only-testing:JACNominaTests/PayrollClientTests/testFullOfflineCopyIsEncryptedSessionBoundAndRejectsTampering
+              -only-testing:JACNominaTests/PayrollClientTests/testForbiddenPrivateAttachmentPurgesNoticeAndNeverReturnsCachedPDFOnline
+              -only-testing:JACNominaTests/PayrollClientTests/testNativeWorkspaceAndActionsUseTheSameVersionedServerContract
+              -only-testing:JACNominaTests/PayrollClientTests/testLightPhotoPreviewAndAdaptiveVideoNeverRequestOriginalBytes
+              -only-testing:JACNominaTests/PayrollClientTests/testRevokedAgendaSessionAndForbiddenCalendarPurgeOfflineCopy
+            )
           elif [ "$JAC_NAVIGATION" = true ]; then
             if [ "$JAC_NAVIGATION_DRAWER_ONLY" = true ]; then
               checks=(-only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed)

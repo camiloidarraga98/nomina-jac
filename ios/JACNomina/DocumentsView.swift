@@ -1723,14 +1723,19 @@ private struct MediaAdaptivePlaybackView: View {
     let client: PayrollClient
     let denied: (Error) -> Void
     @State private var stream: MediaVideoStream?
+    @State private var preparing = true
+    @State private var retry = 0
     @State private var message = "Preparando reproducción adaptativa…"
     var body: some View {
         Group {
             if let stream { MediaStreamingPlayer(stream: stream) }
-            else { VStack(spacing: 16) { ProgressView(); Text(message).font(.footnote).multilineTextAlignment(.center) }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity) }
-        }.task {
+            else { VStack(spacing: 16) { if preparing { ProgressView() }; Text(message).font(.footnote).multilineTextAlignment(.center); if !preparing { Button("Reintentar") { retry += 1 } } }.padding(24).frame(maxWidth: .infinity, maxHeight: .infinity) }
+        }.task(id: retry) {
+            preparing = true
+            defer { preparing = false }
             let stamp = try? client.mediaAccessStamp()
-            while !Task.isCancelled, stamp != nil, stamp == (try? client.mediaAccessStamp()) {
+            for attempt in 0..<8 {
+                guard !Task.isCancelled, stamp != nil, stamp == (try? client.mediaAccessStamp()) else { return }
                 do {
                     let url = try await client.mediaPlayback(item)
                     try Task.checkCancellation()
@@ -1740,8 +1745,9 @@ private struct MediaAdaptivePlaybackView: View {
                     if case APIError.unauthorized = error { denied(error); return }
                     if case APIError.forbidden = error { denied(error); return }
                     if Task.isCancelled { return }; message = error.localizedDescription
+                    guard error is MediaPlaybackPending else { return }
                 }
-                do { try await Task.sleep(for: .seconds(8)) } catch { return }
+                do { try await Task.sleep(for: .seconds(min(30, 4 * (1 << min(attempt, 3))))) } catch { return }
             }
         }.onDisappear { stream?.cancel(); stream = nil }
     }

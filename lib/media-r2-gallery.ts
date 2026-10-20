@@ -57,12 +57,28 @@ async function checked(response:Response){if(response.ok)return;await response.b
 // independent empty catalogue populated only by new JAC uploads.
 export async function r2Feed(g:MediaGuard,user:AccessUser,folder=R2_ROOT,pageToken?:string){
  const c=await context(g);folder=rootID(folder);const rows=await parent(c,folder);
- if(pageToken&&!/^\d{1,8}$/.test(pageToken))throw new MediaFailure('La página solicitada no es válida.');const offset=Number(pageToken||0);
- const listed=await database().prepare(`SELECT * FROM jac_media_r2_entries WHERE parent_id=? AND NOT EXISTS(SELECT 1 FROM jac_media_operations d WHERE d.id='r2-delete:'||jac_media_r2_entries.id AND d.kind IN ('r2-delete-folder','r2-delete-file')) ORDER BY (mime_type=?) DESC,created_at DESC,name,id LIMIT 101 OFFSET ?`).bind(folder,MEDIA_FOLDER_MIME,offset).all<Entry>();
+ // New cursors use the last stable sort tuple, so inserts/deletes before it
+ // cannot shift later pages. Legacy numeric offsets remain readable by old clients.
+ let offset=0,cursor:{folder:string;version:number;kind:number;created:string;name:string;id:string}|undefined;
+ if(pageToken){
+  if(/^\d{1,8}$/.test(pageToken))offset=Number(pageToken);
+  else try{
+   if(!pageToken.startsWith('k1.')||pageToken.length>4096)throw Error();
+   const value=JSON.parse(Buffer.from(pageToken.slice(3),'base64url').toString('utf8'));
+   if(value.folder!==folder||value.version!==c.config.version||![0,1].includes(value.kind)||typeof value.created!=='string'||value.created.length>128||typeof value.name!=='string'||value.name.length>1024||typeof value.id!=='string'||value.id.length>160)throw Error();
+   cursor=value;
+  }catch{throw new MediaFailure('La página cambió. Actualiza la carpeta.',409);}
+ }
+ const folderSort="(mime_type='application/vnd.google-apps.folder')";
+ const after=cursor?` AND (${folderSort}<? OR (${folderSort}=? AND (created_at<? OR (created_at=? AND (name>? OR (name=? AND id>?))))))`:'';
+ const values=cursor?[cursor.kind,cursor.kind,cursor.created,cursor.created,cursor.name,cursor.name,cursor.id]:[];
+ const listed=await database().prepare(`SELECT * FROM jac_media_r2_entries WHERE parent_id=?${after} AND NOT EXISTS(SELECT 1 FROM jac_media_operations d WHERE d.id='r2-delete:'||jac_media_r2_entries.id AND d.kind IN ('r2-delete-folder','r2-delete-file')) ORDER BY ${folderSort} DESC,created_at DESC,name,id LIMIT 101 OFFSET ?`).bind(folder,...values,offset).all<Entry>();
+ const last=listed.results[99];
+ const next=last?'k1.'+Buffer.from(JSON.stringify({folder,version:c.config.version,kind:Number(last.mime_type===MEDIA_FOLDER_MIME),created:last.created_at,name:last.name,id:last.id})).toString('base64url'):'';
  await parent(c,folder);await live(c);const root={id:R2_ROOT,name:'Fotografía JAC'},breadcrumbs=[root,...rows.map(r=>({id:r.id,name:r.name}))];
  const removed=await database().prepare("SELECT parent_id FROM jac_media_operations WHERE kind='r2-delete-folder' AND connection_version=?").bind(c.config.version).all<{parent_id:string}>();const pending=canDeleteMedia(user)?await database().prepare("SELECT parent_id AS id,drive_id AS parentId,name,offset AS removed FROM jac_media_operations WHERE kind='r2-delete-folder' AND connection_version=? AND status='pending' ORDER BY created_at LIMIT 100").bind(c.config.version).all():null;await parent(c,folder);await live(c);
  const deletedFiles=await database().prepare("SELECT parent_id FROM jac_media_operations WHERE kind='r2-delete-file' AND connection_version=?").bind(c.config.version).all<{parent_id:string}>();const pendingFiles=canDeleteMedia(user)?await database().prepare("SELECT parent_id AS id,drive_id AS parentId,name,offset AS removed FROM jac_media_operations WHERE kind='r2-delete-file' AND connection_version=? AND status='pending' ORDER BY created_at LIMIT 100").bind(c.config.version).all():null;await live(c);
- return {deletedFiles:deletedFiles.results.map(x=>x.parent_id),pendingFileDeletions:pendingFiles?.results??[],canDelete:canDeleteMedia(user),deletedFolders:removed.results.map(x=>x.parent_id),pendingDeletions:pending?.results??[],connected:true,canRead:canReadMedia(user),canUpload:canUploadMedia(user),canConnect:canConnectMedia(user),provider:'r2',collectionID:R2_COLLECTION,root,folder:breadcrumbs.at(-1)!,breadcrumbs,items:listed.results.slice(0,100).filter(row=>!deletedFiles.results.some(d=>d.parent_id===row.id)&&!removed.results.some(d=>d.parent_id===row.id)).map(item),...(listed.results.length>100?{nextPageToken:String(offset+100)}:{})};
+ return {deletedFiles:deletedFiles.results.map(x=>x.parent_id),pendingFileDeletions:pendingFiles?.results??[],canDelete:canDeleteMedia(user),deletedFolders:removed.results.map(x=>x.parent_id),pendingDeletions:pending?.results??[],connected:true,canRead:canReadMedia(user),canUpload:canUploadMedia(user),canConnect:canConnectMedia(user),provider:'r2',collectionID:R2_COLLECTION,root,folder:breadcrumbs.at(-1)!,breadcrumbs,items:listed.results.slice(0,100).filter(row=>!deletedFiles.results.some(d=>d.parent_id===row.id)&&!removed.results.some(d=>d.parent_id===row.id)).map(item),...(listed.results.length>100?{nextPageToken:next}:{})};
 }
 export async function r2Folder(g:MediaGuard,input:Record<string,unknown>){
  if(!validMediaRequestID(input.id)||typeof input.parentId!=='string')throw new MediaFailure('La solicitud de carpeta no es válida.');

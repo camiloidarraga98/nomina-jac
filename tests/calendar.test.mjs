@@ -186,7 +186,7 @@ test('cambio concurrente de selección descarta consultas y Google API desactiva
  const stale=await api(readerToken);googleHook=null;assert.equal(stale.status,409);
  googleHook=async url=>url.pathname.endsWith('/events')?Response.json({error:{errors:[{reason:'accessNotConfigured'}]}},{status:403}):null;
  const disabled=await api(readerToken);googleHook=null;assert.equal(disabled.status,502);assert.match(disabled.body.error,/Activa Google Calendar API/);
- googleHook=async url=>url.href==='https://oauth2.googleapis.com/token'?Response.json({error:'invalid_grant'},{status:400}):null;
+ m.clearCalendarTokenCache();googleHook=async url=>url.href==='https://oauth2.googleapis.com/token'?Response.json({error:'invalid_grant'},{status:400}):null;
  const expired=await api(readerToken);googleHook=null;assert.match(expired.body.error,/vuelvas a conectar Agenda/);
  googleHook=async url=>url.pathname.endsWith('/events')?new Response(null,{status:302,headers:{location:'https://untrusted.example.invalid/events'}}):null;
  const redirected=await api(readerToken);googleHook=null;assert.equal(redirected.status,502);assert.match(redirected.body.error,/redirección inesperada/);assert.ok(calls.every(x=>x.url.origin!=='https://untrusted.example.invalid'));
@@ -348,4 +348,11 @@ test('revocación durante lectura de Google no devuelve datos para guardar en la
 test('denegación de Google descarta la copia; un fallo temporal conserva la alternativa descargada',async()=>{
  await connect();const revision=(await m.agendaConnection()).revision;await api(ownerToken,{action:'select',revision,calendarId:available.id});
  try{for(const status of [401,403,404,503]){googleHook=async url=>url.pathname.endsWith('/events')?Response.json({error:{}},{status}):null;const result=await api(ownerToken);assert.equal(result.body.discardCachedAgenda,status===503?undefined:true);}}finally{googleHook=null;}
+});
+
+test('six CRM months use one expiring bearer and six month-only reads without caching completed event results',async()=>{
+ await connect();await api(ownerToken,{action:'select',revision:(await m.agendaConnection()).revision,calendarId:available.id});m.clearCalendarTokenCache();calls=[];
+ for(const month of ['2026-10','2026-11','2026-12','2027-01','2027-02','2027-03'])await m.readAgenda(month,{monthOnly:true});
+ assert.equal(calls.filter(c=>c.url.hostname==='oauth2.googleapis.com').length,1);assert.equal(calls.filter(c=>c.url.pathname.endsWith('/events')).length,6);assert.equal(calls.length,7);
+ await m.readAgenda('2026-10',{monthOnly:true});assert.equal(calls.filter(c=>c.url.pathname.endsWith('/events')).length,7,'completed event reads are not cached');
 });

@@ -38,6 +38,13 @@ const newestFirst=(a:MediaItem,b:MediaItem)=>(a.kind==='folder'?0:1)-(b.kind==='
 // folder and are discarded on navigation, access revocation or unmount.
 function useMediaThumbnails(feed:MediaFeed|null,onRevoked:()=>void){
  const [images,setImages]=useState<Record<string,Thumbnail>>({}),[retryGeneration,setRetryGeneration]=useState(0),cache=useRef(new Map<string,{version:string;url:string}>()),failures=useRef(new Map<string,{version:string;available:boolean;state:'pending'|'error';attempt:number;retryAt:number}>()),folderID=useRef(''),generation=useRef(0);
+ const [visible,setVisible]=useState<Set<string>>(new Set());
+ useEffect(()=>{
+  if(typeof IntersectionObserver==='undefined'){setVisible(new Set(feed?.items.map(item=>item.id)));return;}
+  const observer=new IntersectionObserver(entries=>setVisible(previous=>{const next=new Set(previous);for(const entry of entries){const id=(entry.target as HTMLElement).dataset.mediaThumb;if(id){if(entry.isIntersecting)next.add(id);else next.delete(id);}}return next;}),{rootMargin:'600px'});
+  document.querySelectorAll('[data-media-thumb]').forEach(element=>observer.observe(element));
+  return()=>observer.disconnect();
+ },[feed]);
  useEffect(()=>{
   const controller=new AbortController(),revision=++generation.current,current=()=>!controller.signal.aborted&&generation.current===revision;
   const files=feed?.connected?feed.items.filter(item=>item.kind!=='folder'):[],ids=new Set(files.map(item=>item.id)),nextFolder=feed?.connected?feed.folder.id:'';
@@ -46,7 +53,8 @@ function useMediaThumbnails(feed:MediaFeed|null,onRevoked:()=>void){
   const due=(item:MediaItem)=>{const failure=failures.current.get(item.id);return !failure||failure.available!==item.thumbnailAvailable||Date.now()>=failure.retryAt;};
   folderID.current=nextFolder;setImages(Object.fromEntries(files.map(item=>[item.id,cache.current.has(item.id)?{state:'ready',url:cache.current.get(item.id)!.url}:!due(item)?{state:failures.current.get(item.id)!.state}:{state:'loading'}])));
   function failed(item:MediaItem,state:'pending'|'error'){const attempt=(failures.current.get(item.id)?.attempt||0)+1;failures.current.set(item.id,{version:item.modifiedAt,available:item.thumbnailAvailable,state,attempt,retryAt:Date.now()+Math.min(300000,30000*2**Math.min(attempt-1,4))});setImages(previous=>({...previous,[item.id]:{state}}));}
-  const waiting=files.filter(item=>!cache.current.has(item.id)&&due(item));let at=0;
+  const wanted=visible.size?new Set([...visible].slice(0,200)):new Set(files.slice(0,36).map(item=>item.id));
+  const waiting=files.filter(item=>wanted.has(item.id)&&!cache.current.has(item.id)&&due(item));let at=0;
   async function worker(){while(current()&&at<waiting.length){const item=waiting[at++];try{
    const response=await fetch(fileURL(item.id,true),{credentials:'same-origin',cache:'no-store',signal:controller.signal});
    if(!current())return;
@@ -54,11 +62,13 @@ function useMediaThumbnails(feed:MediaFeed|null,onRevoked:()=>void){
    if(!response.ok){await response.body?.cancel();if(current())failed(item,response.status===404?'pending':'error');continue;}
    if(!/^image\/(jpeg|png|gif|webp)(?:;|$)/i.test(response.headers.get('content-type')||'')||Number(response.headers.get('content-length')||0)>512*1024){await response.body?.cancel();throw new Error('Vista previa inválida.');}
    const blob=await response.blob();if(!blob.size||blob.size>512*1024)throw new Error('Vista previa inválida.');if(!current())return;
-   const url=URL.createObjectURL(blob);failures.current.delete(item.id);cache.current.set(item.id,{version:item.modifiedAt,url});setImages(previous=>({...previous,[item.id]:{state:'ready',url}}));
+   const url=URL.createObjectURL(blob);failures.current.delete(item.id);cache.current.set(item.id,{version:item.modifiedAt,url});
+   for(const [id,saved] of cache.current){if(cache.current.size<=256)break;if(wanted.has(id))continue;URL.revokeObjectURL(saved.url);cache.current.delete(id);}
+   setImages(previous=>({...Object.fromEntries(Object.entries(previous).map(([id,value])=>[id,value.state==='ready'&&!cache.current.has(id)?{state:'loading'}:value])),[item.id]:{state:'ready',url}}));
   }catch{if(current())failed(item,'error');}}}
-  for(let i=0;i<Math.min(6,waiting.length);i++)void worker();
+  for(let i=0;i<Math.min(4,waiting.length);i++)void worker();
   return()=>controller.abort();
- },[feed,onRevoked,retryGeneration]);
+ },[feed,onRevoked,retryGeneration,visible]);
  useEffect(()=>()=>{generation.current++;for(const saved of cache.current.values())URL.revokeObjectURL(saved.url);cache.current.clear();failures.current.clear();},[]);
  const failed=useCallback((id:string)=>{const saved=cache.current.get(id);if(saved)URL.revokeObjectURL(saved.url);cache.current.delete(id);setImages(previous=>({...previous,[id]:{state:'error'}}));},[]);
  const retry=useCallback(()=>{failures.current.clear();setRetryGeneration(previous=>previous+1);},[]);
@@ -72,7 +82,8 @@ export default function MediaPanel(){
  const mounted=useRef(false),authorized=useRef(false),uploadAllowed=useRef(false),currentFolder=useRef(''),loadedPages=useRef(1),readGeneration=useRef(0),readController=useRef<AbortController|null>(null),uploadControllers=useRef(new Set<AbortController>()),queue=useRef<PendingUpload[]>([]),working=useRef(false),fileInput=useRef<HTMLInputElement>(null),createAttempt=useRef<FolderAttempt|null>(null),uploadFolderAttempt=useRef<FolderAttempt|null>(null),destinationController=useRef<AbortController|null>(null),destinationGeneration=useRef(0),dragDepth=useRef(0);
  const meter=useRef(new MediaUploadMeter()),preparing=useRef<Promise<unknown>>(Promise.resolve());
  const [speed,setSpeed]=useState(0);
- useEffect(()=>{const timer=setInterval(()=>setSpeed(meter.current.rate()),500);return()=>clearInterval(timer);},[]);
+ const transferring=uploads.some(item=>item.state==='uploading');
+ useEffect(()=>{if(!transferring)return;const timer=setInterval(()=>setSpeed(meter.current.rate()),500);return()=>clearInterval(timer);},[transferring]);
  const [sharingFolder,setSharingFolder]=useState<MediaFolder|null>(null);
  const [qualityOpen,setQualityOpen]=useState(false),[imageLimit,setImageLimit]=useState<MediaImageLimit>(2_000_000);
  useEffect(()=>setImageLimit(savedMediaImageLimit()),[]);
@@ -179,6 +190,23 @@ export default function MediaPanel(){
   return()=>{mounted.current=false;readController.current?.abort();readGeneration.current++;clearInterval(timer);window.removeEventListener('focus',foreground);window.removeEventListener('online',foreground);document.removeEventListener('visibilitychange',foreground);};
  },[folder,refresh]);
  useEffect(()=>()=>{authorized.current=false;uploadAllowed.current=false;photoController.current?.abort();deleteController.current?.abort();for(const controller of uploadControllers.current)controller.abort();destinationController.current?.abort();destinationGeneration.current++;queue.current=[];},[]);
+ async function loadMore(){
+  if(!feed?.nextPageToken||loading)return;
+  readController.current?.abort();const controller=new AbortController();readController.current=controller;
+  const generation=++readGeneration.current,target=currentFolder.current,collection=feed.collectionID;
+  setLoading(true);
+  try{
+   const query=new URLSearchParams({pageToken:feed.nextPageToken});if(target)query.set('folder',target);
+   const result=await request<MediaFeed>('/api/media?'+query,{},controller.signal);
+   if(!mounted.current||generation!==readGeneration.current||target!==currentFolder.current)return;
+   if(!result.canRead){revoke();return;}
+   if(result.collectionID!==collection){void refresh(target,1);return;}
+   loadedPages.current++;
+   const removed=new Set(result.deletedFiles||[]);
+   setFeed(previous=>previous?{...result,items:[...previous.items,...result.items].filter((item,index,all)=>!removed.has(item.id)&&all.findIndex(x=>x.id===item.id)===index).sort(newestFirst)}:result);
+  }catch(e){if(!controller.signal.aborted&&mounted.current&&generation===readGeneration.current)setError(message(e));}
+  finally{if(mounted.current&&generation===readGeneration.current)setLoading(false);}
+ }
  function navigate(next:string){if(next===folder)return;currentFolder.current=next;loadedPages.current=1;setFolder(next);setFeed(null);setSearch('');setPreview(null);setError('');setLoading(true);}
  function updateUpload(id:string,update:Partial<PendingUpload>){queue.current=queue.current.map(item=>item.id===id?{...item,...update}:item);if(mounted.current)setUploads([...queue.current]);}
  async function uploadRequest<T>(path:string,init:RequestInit):Promise<T>{const controller=new AbortController();uploadControllers.current.add(controller);const timer=setTimeout(()=>controller.abort(),90000);try{return await request<T>(path,init,controller.signal);}finally{clearTimeout(timer);uploadControllers.current.delete(controller);}}
@@ -317,9 +345,9 @@ export default function MediaPanel(){
    </section>}
    {!items.length?<div className="media-empty"><ImageIcon/><h3>{search?'No hay coincidencias':'El próximo recuerdo empieza aquí'}</h3><p>{search?'Prueba otro nombre en esta carpeta.':feed.canUpload?'Pulsa Subir fotos y videos para elegir o crear la carpeta del evento.':'Esta carpeta aún no tiene fotos ni videos.'}</p></div>:<>
     {!!folders.length&&<section className="media-section"><h4>Carpetas</h4><div className="media-folder-grid">{folders.map(item=><div key={item.id} className="media-folder-row"><button className="media-folder-card" onClick={()=>navigate(item.id)}><span><Folder size={24}/></span><div><strong>{item.name}</strong><small>{fileDate(item.createdAt||'')}</small></div><ChevronRight size={17}/></button><span className="media-folder-actions">{feed.canUpload&&<button type="button" className="media-share-folder" aria-label={'Compartir carpeta '+item.name} title="Compartir carpeta" onClick={()=>setSharingFolder(item)}><Share size={18}/></button>}{feed.canDelete&&<button type="button" className="media-delete-folder" aria-label={'Eliminar carpeta '+item.name} title="Eliminar carpeta" disabled={deleteBusy||working.current} onClick={()=>askDeleteFolder(item)}><Trash2 size={17}/></button>}</span></div>)}</div></section>}
-    {!!files.length&&<section className="media-section"><h4>Fotos y videos</h4><div className="media-file-grid">{files.map(item=><div key={item.id} className="media-file-entry"><button className="media-file-card" onClick={()=>openPreview(item)} aria-label={'Abrir '+item.name}><span className="media-thumbnail">{thumbnails[item.id]?.state==='loading'?<LoaderCircle className="media-spin media-thumbnail-fallback" size={25}/>:item.kind==='video'?<Video className="media-thumbnail-fallback" size={34}/>:<ImageIcon className="media-thumbnail-fallback" size={34}/>} {thumbnails[item.id]?.url?<img src={thumbnails[item.id].url} alt="" loading="eager" decoding="async" onError={()=>thumbnailFailed(item.id)}/>:thumbnails[item.id]?.state==='pending'?<span className="media-thumbnail-message">Vista previa en proceso</span>:thumbnails[item.id]?.state==='error'?<span className="media-thumbnail-message">Vista previa no disponible</span>:null}{item.kind==='video'&&<span className="media-video-badge"><Video size={14}/></span>}</span><span className="media-file-caption"><strong>{item.name}</strong><small>{bytes(item.size)}<span>·</span>{fileDate(item.modifiedAt)}</small></span></button>{(item.kind==='image'||feed.canDelete)&&<details className="media-photo-options"><summary aria-label={'Opciones de '+item.name}><MoreHorizontal size={20}/><span>Opciones</span></summary><div className="media-photo-menu">{item.kind==='image'?photoActions(item):deleteAction(item)}</div></details>}</div>)}</div></section>}
+    {!!files.length&&<section className="media-section"><h4>Fotos y videos</h4><div className="media-file-grid">{files.map(item=><div key={item.id} data-media-thumb={item.id} className="media-file-entry"><button className="media-file-card" onClick={()=>openPreview(item)} aria-label={'Abrir '+item.name}><span className="media-thumbnail">{thumbnails[item.id]?.state==='loading'?<LoaderCircle className="media-spin media-thumbnail-fallback" size={25}/>:item.kind==='video'?<Video className="media-thumbnail-fallback" size={34}/>:<ImageIcon className="media-thumbnail-fallback" size={34}/>} {thumbnails[item.id]?.url?<img src={thumbnails[item.id].url} alt="" loading="eager" decoding="async" onError={()=>thumbnailFailed(item.id)}/>:thumbnails[item.id]?.state==='pending'?<span className="media-thumbnail-message">Vista previa en proceso</span>:thumbnails[item.id]?.state==='error'?<span className="media-thumbnail-message">Vista previa no disponible</span>:null}{item.kind==='video'&&<span className="media-video-badge"><Video size={14}/></span>}</span><span className="media-file-caption"><strong>{item.name}</strong><small>{bytes(item.size)}<span>·</span>{fileDate(item.modifiedAt)}</small></span></button>{(item.kind==='image'||feed.canDelete)&&<details className="media-photo-options"><summary aria-label={'Opciones de '+item.name}><MoreHorizontal size={20}/><span>Opciones</span></summary><div className="media-photo-menu">{item.kind==='image'?photoActions(item):deleteAction(item)}</div></details>}</div>)}</div></section>}
    </>}
-   {feed.nextPageToken&&<div className="media-load-more"><Button variant="outline" disabled={loading} onClick={()=>{loadedPages.current++;void refresh();}}>{loading?'Cargando…':'Ver más archivos'}</Button></div>}
+   {feed.nextPageToken&&<div className="media-load-more"><Button variant="outline" disabled={loading} onClick={()=>void loadMore()}>{loading?'Cargando…':'Ver más archivos'}</Button></div>}
   </>}
   <Dialog open={uploadOpen} onOpenChange={value=>{if(!value)closeUpload();}}><DialogContent className="media-upload-dialog" showCloseButton={!saving} onEscapeKeyDown={event=>{if(saving)event.preventDefault();}} onInteractOutside={event=>{if(saving)event.preventDefault();}}><DialogTitle>Subir fotos y videos</DialogTitle><DialogDescription>Elige la carpeta del evento y agrega todos sus archivos.</DialogDescription><form onSubmit={event=>{event.preventDefault();void submitUpload();}}>
    <fieldset className="media-destination-fields" disabled={saving||!!uploadFolderAttempt.current}><label>Guardar en<select aria-label="Destino de la subida" value={destinationMode} onChange={event=>{const mode=event.target.value as 'current'|'new'|'existing';setDestinationMode(mode);setDestinationError('');if(mode==='existing'&&feed)void browseDestination(feed.root.id);}}><option value="new">Nuevo evento o jornada</option><option value="current">{feed?.folder.id===feed?.root.id?'Archivo JAC (raíz)':'Esta carpeta'}</option><option value="existing">Elegir otra carpeta</option></select></label>

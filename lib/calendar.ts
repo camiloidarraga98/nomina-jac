@@ -23,6 +23,7 @@ export async function agendaConnection():Promise<AgendaConnection>{
 export async function ensureCalendarConfig(){await database().prepare('INSERT OR IGNORE INTO payroll_calendar (id,updated_at) VALUES (?,?)').bind('jac',new Date().toISOString()).run();return (await calendarConfig())!;}
 export async function storeCalendarCredentials(credentials:CalendarCredentials,version:number){
  const encrypted=await encryptMail(credentials,mailKey());
+ clearCalendarTokenCache();
  // Renewing the grant keeps the selected calendar; the verified Google account is unchanged.
  const changed=await database().prepare('UPDATE payroll_calendar SET credentials=?,connected_email=?,version=version+1,updated_at=? WHERE id=? AND version=?').bind(encrypted,CALENDAR_ACCOUNT,new Date().toISOString(),'jac',version).run();
  if(changed.meta.changes!==1)throw new CalendarFailure('La conexión de Agenda cambió. Actualiza y vuelve a autorizar.',409);
@@ -43,16 +44,29 @@ async function googleResponse(response:Response) {
 export async function calendarGoogleFetch(url:string|URL,options:RequestInit={}){
  // Workerd supports manual/follow, not redirect:error. Reject redirects without forwarding credentials.
  const response=await fetch(url,{...options,redirect:'manual',signal:AbortSignal.timeout(15000)});
+ if(response.status===401)clearCalendarTokenCache();
  if(response.status>=300&&response.status<400)throw new CalendarFailure('Google devolvió una redirección inesperada. Vuelve a intentar la conexión de Agenda.',502);
  return response;
 }
 export async function calendarGooglePost(data:Record<string,string>){return googleResponse(await calendarGoogleFetch('https://oauth2.googleapis.com/token',{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(data)}));}
-async function accessToken(c:CalendarConfig) {
+// Cache only the bearer, never event data or permission decisions. Each operation
+// still checks the current connection and its own live Google resource access.
+const calendarTokens=new Map<string,{expires:number;pending:Promise<string>}>();
+export function clearCalendarTokenCache(){calendarTokens.clear();}
+async function accessToken(c:CalendarConfig){
+ const key=JSON.stringify([c.version,c.connected_email,c.credentials]),old=calendarTokens.get(key);
+ if(old&&old.expires>Date.now())return old.pending;
+ if(calendarTokens.size>=4)calendarTokens.delete(calendarTokens.keys().next().value!);
+ const entry={expires:Date.now()+15000,pending:Promise.resolve('')};
+ entry.pending=fetchCalendarToken(c).then(result=>{entry.expires=result.expires;return result.token;},error=>{if(calendarTokens.get(key)===entry)calendarTokens.delete(key);throw error;});
+ calendarTokens.set(key,entry);return entry.pending;
+}
+async function fetchCalendarToken(c:CalendarConfig) {
  if(!c.credentials||c.connected_email!==CALENDAR_ACCOUNT)throw new CalendarFailure('Conecta la cuenta de Google para consultar Agenda.');
  const secret=await decryptMail<CalendarCredentials>(c.credentials,mailKey());
  const response=await calendarGooglePost({client_id:secret.clientId,client_secret:secret.clientSecret,refresh_token:secret.refreshToken,grant_type:'refresh_token'});
  if(typeof response.access_token!=='string')throw new CalendarFailure('Google no confirmó la autorización. Vuelve a conectar Agenda.',502);
- return response.access_token;
+ return {token:response.access_token,expires:Date.now()+Math.max(1,Math.min(Number(response.expires_in)||300,3600)-60)*1000};
 }
 async function googleGet(path:string,token:string,params:Record<string,string>={}) {
  const url=new URL('https://www.googleapis.com/calendar/v3/'+path);url.search=new URLSearchParams(params).toString();
@@ -79,11 +93,19 @@ export async function selectAgendaCalendar(id:string,revision:number){
  if(result.meta.changes!==1)throw new CalendarFailure('La conexión cambió. Actualiza Agenda antes de seleccionar.',409);
 }
 export async function disconnectAgenda(revision:number){
+ clearCalendarTokenCache();
  const result=await database().prepare('UPDATE payroll_calendar SET credentials=?,connected_email=?,calendar_id=?,calendar_name=?,version=version+1,updated_at=? WHERE id=? AND version=?').bind('','','','',new Date().toISOString(),'jac',revision).run();
  if(result.meta.changes!==1)throw new CalendarFailure('La conexión cambió. Actualiza Agenda antes de desconectar.',409);
  // Do not revoke the Google grant: doing so could also invalidate Gmail.
 }
-async function events(c:CalendarConfig,token:string,from:string,to:string):Promise<AgendaEvent[]> {
+const eventReads=new Map<string,Promise<AgendaEvent[]>>();
+async function events(c:CalendarConfig,token:string,from:string,to:string):Promise<AgendaEvent[]>{
+ const key=JSON.stringify([c.version,c.credentials,c.calendar_id,from,to]);
+ const active=eventReads.get(key);if(active)return (await active).map(event=>({...event}));
+ const pending=fetchEvents(c,token,from,to);eventReads.set(key,pending);
+ try{return (await pending).map(event=>({...event}));}finally{if(eventReads.get(key)===pending)eventReads.delete(key);}
+}
+async function fetchEvents(c:CalendarConfig,token:string,from:string,to:string):Promise<AgendaEvent[]> {
  const found=new Map<string,AgendaEvent>();let page='';
  for(let i=0;i<10;i++){
   const r=await googleGet('calendars/'+encodeURIComponent(c.calendar_id)+'/events',token,{timeMin:from,timeMax:to,timeZone:AGENDA_TIME_ZONE,singleEvents:'true',orderBy:'startTime',showDeleted:'false',maxResults:'100',fields:'nextPageToken,items(id,etag,status,eventType,recurringEventId,summary,start,end,location,description,htmlLink)',...(page?{pageToken:page}:{})});
@@ -92,15 +114,15 @@ async function events(c:CalendarConfig,token:string,from:string,to:string):Promi
  }
  throw new CalendarFailure('Este período tiene demasiados eventos. Revisa el calendario en Google.',502);
 }
-export async function readAgenda(month?:string){
+export async function readAgenda(month?:string,options:{monthOnly?:boolean}={}){
  if(month!==undefined&&!/^(19|20|21)\d\d-(0[1-9]|1[0-2])$/.test(month))throw new CalendarFailure('Selecciona un mes válido.');
  const grid=agendaMonth(month),today=agendaDate(),until=addAgendaDays(today,90),connection=await agendaConnection(),c=await calendarConfig();
  if((c?.version??0)!==connection.revision)throw new CalendarFailure('La conexión cambió. Actualiza Agenda.',409);
  let monthEvents:AgendaEvent[]=[],upcoming:AgendaEvent[]=[],canEditEvents=false;
  if(connection.connected&&connection.selected&&c){
   const token=await accessToken(c);
-  [monthEvents,upcoming]=await Promise.all([events(c,token,grid.from,grid.to),events(c,token,new Date().toISOString(),until+'T00:00:00-05:00')]);
-  if(connection.writeAuthorized)canEditEvents=(await selectedCalendarAccess(c,token));
+  [monthEvents,upcoming]=await Promise.all([events(c,token,grid.from,grid.to),options.monthOnly?Promise.resolve([]):events(c,token,new Date().toISOString(),until+'T00:00:00-05:00')]);
+  if(connection.writeAuthorized&&!options.monthOnly)canEditEvents=(await selectedCalendarAccess(c,token));
   const current=await calendarConfig();if(!current||current.version!==c.version||current.credentials!==c.credentials)throw new CalendarFailure('La selección del calendario cambió. Actualiza Agenda.',409);
  }
  return {connection,canEditEvents,month:grid.month,monthLabel:grid.monthLabel,days:grid.days,today,events:monthEvents,upcoming,upcomingUntil:until,updatedAt:new Date().toISOString(),timeZone:AGENDA_TIME_ZONE};

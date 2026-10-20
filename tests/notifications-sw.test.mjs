@@ -1,15 +1,16 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
-import {runInNewContext} from 'node:vm';
+import {createContext,runInContext} from 'node:vm';
 const source=await readFile('public/jac-push-sw.js','utf8');
+const offlineSource=await readFile('public/jac-music-offline.js','utf8');
 function fixture(){const listeners={},notices=[],opened=[];let windows=[];const self={location:{origin:'https://fixture.example.invalid'},addEventListener:(type,callback)=>listeners[type]=callback,skipWaiting:async()=>{},registration:{showNotification:async(title,options)=>notices.push({title,options})},clients:{claim:async()=>{},matchAll:async()=>windows,openWindow:async url=>opened.push(url)}};const publicRequests=[];const caches={open:async()=>({addAll:async requests=>publicRequests.push(...requests)}),match:async()=>new Response('offline shell')};const fetch=async()=>new Response('public shell');
- runInNewContext(source,{self,URL,Request:class extends Request{constructor(input,options){super(new URL(input,self.location.origin),options);}},Response,caches,fetch});return {listeners,notices,opened,publicRequests,setWindows:value=>windows=value};}
+ const context=createContext({self,URL,TextEncoder,TextDecoder,Request:class extends Request{constructor(input,options){super(new URL(input,self.location.origin),options);}},Response,caches,fetch,importScripts:path=>{assert.equal(path,'/jac-music-offline.js');runInContext(offlineSource,context);}});runInContext(source,context);return {listeners,notices,opened,publicRequests,setWindows:value=>windows=value};}
 const id='33333333-3333-4333-8333-333333333333';
 test('service worker muestra título y descripción recibidos, sin guardar ni interceptar API/PDF',async()=>{
  const f=fixture();assert.deepEqual(Object.keys(f.listeners),['install','activate','fetch','push','notificationclick']);let task;
  f.listeners.push({data:{json:()=>({id,title:'Mensaje privado',body:'Datos privados',url:'https://untrusted.example.invalid'})},waitUntil:p=>task=p});await task;
- assert.equal(f.notices.length,1);const notice=f.notices[0];assert.equal(notice.title,'Mensaje privado');assert.equal(notice.options.body,'Datos privados');assert.ok(!JSON.stringify(notice).includes('untrusted'));f.listeners.install({waitUntil:p=>task=p});await task;assert.deepEqual(f.publicRequests.map(r=>new URL(r.url).pathname),['/fotografia-offline.html','/jac-media-offline.js']);assert.ok(f.publicRequests.every(r=>r.credentials==='omit'));
+ assert.equal(f.notices.length,1);const notice=f.notices[0];assert.equal(notice.title,'Mensaje privado');assert.equal(notice.options.body,'Datos privados');assert.ok(!JSON.stringify(notice).includes('untrusted'));f.listeners.install({waitUntil:p=>task=p});await task;assert.deepEqual(f.publicRequests.map(r=>new URL(r.url).pathname),['/fotografia-offline.html','/jac-media-offline.js','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js']);assert.ok(f.publicRequests.every(r=>r.credentials==='omit'));
  for(const path of ['/api/media/file?id=private','/api/media/offline','/fotografia','/payroll/print'])f.listeners.fetch({request:new Request('https://fixture.example.invalid'+path),respondWith:()=>assert.fail('Private content must never enter the service worker cache')});assert.equal(notice.options.data.id,id);assert.equal(notice.options.renotify,false);
  for(const value of ['https://untrusted.example.invalid','-'.repeat(36),'../archivo'])f.listeners.push({data:{json:()=>({id:value})},waitUntil:()=>assert.fail('ID no válido')});assert.equal(f.notices.length,1);
 });

@@ -44,8 +44,8 @@ export async function POST(req:Request){
    p.snapshot={...calculate(current.data,p),employees:structuredClone(p.calculationBase?.employees||current.data.employees),closedAt:new Date().toISOString(),closedBy:user.email};p.status='cerrada';
    const plan=planMail(p,current.data.employees);const saved=await writePayroll(current.data,body.version,user.email,(db,nonce)=>mailWrites(db,plan,{nonce}),undefined,guard);
    let mailNotice='Consulta el estado de los desprendibles en Correos.';
-   try{const sending=drainMail(plan.id);waitUntil(sending);mailNotice=(await sending).notice;}catch{console.error('Mail processing interrupted');}
-   return reply({...saved,mailNotice});
+   try{waitUntil(drainMail(plan.id,undefined,{limit:3,retryErrors:false}).catch(()=>{console.error('Mail processing interrupted');}));}catch{console.error('Mail processing interrupted');}
+   return reply({...saved,mailNotice,mailBatchId:plan.id});
   }
   if(body.action!=='save')return reply({error:'Acción inválida.'},400);
   const parsed=stateSchema.safeParse(body.data);if(!parsed.success)return reply({error:parsed.error.issues[0].message},400);
@@ -53,6 +53,6 @@ export async function POST(req:Request){
   const permissionIssue=savePermissionIssue(current.data,parsed.data,user);if(permissionIssue)return reply({error:permissionIssue},403);
   await importCrmPeriods(current.data,parsed.data);const complete=stateSchema.safeParse(parsed.data);if(!complete.success)return reply({error:complete.error.issues[0].message},400);
   const issue=validateSave(current.data,parsed.data,user.email,can(user,'modifyClosed'));if(issue)return reply({error:issue},400);
-  return reply(await writePayroll(parsed.data,body.version,user.email,undefined,undefined,combinePayrollGuards(guard,crmPayrollGuard(current.data,parsed.data))));
+  return reply(await writePayroll(parsed.data,body.version,user.email,undefined,undefined,combinePayrollGuards(guard,crmPayrollGuard(current.data,parsed.data)),current.data));
  }catch(e){if(e instanceof Error&&e.message==='MAIL_SENDING')return reply({error:'Hay desprendibles enviándose para esta quincena. Espera un momento y vuelve a intentar eliminarla.'},409);if(e instanceof Error&&e.message==='CONFLICT')return reply({error:'La nómina cambió mientras guardabas. Recarga y revisa tus cambios.'},409);console.error('Payroll save failed',e);return reply({error:'No se pudo guardar. Tus cambios siguen en pantalla.'},500);}
 }

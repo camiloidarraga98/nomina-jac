@@ -102,7 +102,7 @@ test('older editors preserve custom sections, safe flags, revocation and CAS',as
 
 test('revoked permission while financial data is loading never returns that data',async()=>{
  for(const api of [m.payrollApi,m.mobileApi,m.mailApi]){
-  const account=await create(['payroll']);beforeQuery=q=>{if(q.text==='SELECT data,version FROM payroll_state WHERE id = ?'){beforeQuery=null;revoke(account.id);}};
+  const account=await create(['payroll']);beforeQuery=q=>{if(/^SELECT data,version FROM payroll_state WHERE id\s*=\s*\?$/.test(q.text)){beforeQuery=null;revoke(account.id);}};
   try{const result=await call(api,null,{token:account.token,get:true,path:'/api/mobile/payroll?workspace=1'});assert.equal(result.status,403);assert.equal(result.body.data,undefined);assert.equal(result.body.employees,undefined);}finally{beforeQuery=null;}
  }
 });

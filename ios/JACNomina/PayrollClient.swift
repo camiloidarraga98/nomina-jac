@@ -143,6 +143,8 @@ final class PayrollClient: ObservableObject {
     var onSessionInvalidated: (() -> Void)?
     private var syncTask: Task<Void, Never>?
     private var storageFailures = 0
+    private var lastOfflineSync: (generation: Int, version: Int, at: Date)?
+    private var rememberedWorkspace: (scope: String, generation: Int, bytes: Data)?
     private var crmGeneration = 0
     private var deletedContractIDs = Set<String>()
     private var contractDocuments: [String: [ExportedDocument]] = [:]
@@ -320,7 +322,7 @@ final class PayrollClient: ObservableObject {
         let key = resourceKey(url, revision: cacheRevision)
         let scope = try offlineScope(), generation = cacheGeneration, crmReadGeneration = crmGeneration
         let canCache = body == nil && cacheable(path, query: query)
-        let saved = canCache ? scope.flatMap { offlineCache.load($0, key: key) } : nil
+        let saved = canCache && !forceNetwork ? scope.flatMap { offlineCache.load($0, key: key) } : nil
         if let saved, let response = saved.response, !forceNetwork, usingOfflineCopy { return (try authorizedNoticeData(saved.data,path:path), response) }
         if usingOfflineCopy, body == nil, !forceNetwork, saved == nil { throw APIError.message("Este contenido todavía no está descargado. Conéctate para guardarlo en este \(JACDevice.name).") }
         if let body, usingOfflineCopy, path != "api/auth" || !["logout", "login", "activate"].contains(body["action"].text) {
@@ -403,7 +405,7 @@ final class PayrollClient: ObservableObject {
             }
         }
         if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), body == nil { usingOfflineCopy = false }
-        if canCache, let scope {
+        if canCache, !(path == "api/mobile/payroll" && query.contains(where: { $0.name == "workspace" })), let scope {
             do { try saveOffline(data, response: response, key: key, revision: cacheRevision, scope: scope) }
             catch { storageFailures += 1; offlineSyncMessage = "No se pudo guardar toda la copia local: " + error.localizedDescription }
         }
@@ -479,11 +481,19 @@ final class PayrollClient: ObservableObject {
         // replace payroll, and a full disk must never resurrect the old role.
         if userChanged {offlineCache.remove(scope){$0.key == self.resourceKey(url)}}
         offlineCache.remove(scope) { URL(string: $0.url)?.path == "/api/payroll/export" && $0.revision != workspace.version }
-        do { try offlineCache.save(OfflineResponse(key: resourceKey(url), url: url.absoluteString, headers: ["Content-Type": "application/json"], data: JSONEncoder().encode(workspace.restrictedForSections), receivedAt: Date(), revision: workspace.version), scope: scope) }
+        do {
+            let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+            let bytes = try encoder.encode(workspace.restrictedForSections)
+            if rememberedWorkspace?.scope == scope.id, rememberedWorkspace?.generation == cacheGeneration, rememberedWorkspace?.bytes == bytes { return }
+            try offlineCache.save(OfflineResponse(key: resourceKey(url), url: url.absoluteString, headers: ["Content-Type": "application/json"], data: bytes, receivedAt: Date(), revision: workspace.version), scope: scope)
+            rememberedWorkspace = (scope.id, cacheGeneration, bytes)
+        }
         catch { storageFailures += 1; offlineSyncMessage = "No se pudo guardar la copia local: " + error.localizedDescription }
     }
     func synchronizeOfflineContent(_ workspace: PayrollWorkspace) {
         guard automaticOfflineSync, !workspace.user.onlyMedia, syncTask == nil, !usingOfflineCopy else { return }
+        if let lastOfflineSync, lastOfflineSync.generation == cacheGeneration,
+           lastOfflineSync.version == workspace.version, Date().timeIntervalSince(lastOfflineSync.at) < 300 { return }
         syncTask = Task { [weak self] in
             guard let self, let token = try? self.vault.load() else { return }
             let generation = self.cacheGeneration, failures = self.storageFailures
@@ -555,9 +565,10 @@ final class PayrollClient: ObservableObject {
                 if workspace.user.hasSection(.crm) { try await optionalRead { _ = try await self.users() };try await optionalRead {try await self.synchronizeCrmOffline()} }
                 if workspace.user.hasSection(.payroll) {
                     try await optionalRead { _ = try await self.mail(periodID: nil) }
-                    for period in workspace.periods { try await optionalRead { _ = try await self.mail(periodID: period.id) } }
+                    for period in workspace.periods where period.status == "cerrada" { try await optionalRead { _ = try await self.mail(periodID: period.id) } }
                 }
                 try validate()
+                if !partial && failures == self.storageFailures { self.lastOfflineSync = (generation, workspace.version, Date()) }
                 self.offlineSyncMessage = partial || failures != self.storageFailures ? "Se conserva lo descargado. Quedan datos o adjuntos por actualizar." : "La última información y sus adjuntos están guardados en este \(JACDevice.name)."
             } catch { if generation == self.cacheGeneration { self.offlineSyncMessage = "Se conserva lo descargado. Quedan datos o adjuntos por actualizar." } }
         }
@@ -1066,10 +1077,15 @@ final class PayrollClient: ObservableObject {
         return data
     }
     func mediaPlayback(_ item: MediaItem) async throws -> URL {
-        struct Playback: Decodable { let ready: Bool; let url: String?; let message: String? }
+        struct Playback: Decodable { let ready: Bool; let url: String?; let message: String?; let status: String? }
         let (data, _) = try await request(path: "api/media/playback", query: [URLQueryItem(name: "id", value: item.id)], forceNetwork: true)
         let info = try decoder.decode(Playback.self, from: data)
-        guard info.ready, let raw = info.url, let url = URL(string: raw), url.scheme == baseURL.scheme, url.host == baseURL.host,
+        if !info.ready {
+            let message = info.message ?? "Preparando la reproducción adaptativa."
+            if !["error", "uncertain", "configuration", "unconfigured"].contains(info.status ?? "") { throw MediaPlaybackPending(message: message) }
+            throw APIError.message(message)
+        }
+        guard let raw = info.url, let url = URL(string: raw), url.scheme == baseURL.scheme, url.host == baseURL.host,
               url.port == baseURL.port, url.path == "/api/media/playback", let parts = URLComponents(url: url, resolvingAgainstBaseURL: false),
               parts.queryItems?.contains(where: { $0.name == "lease" && !($0.value ?? "").isEmpty }) == true else { throw APIError.message(info.message ?? "Preparando la reproducción adaptativa. Vuelve a abrir el video en unos momentos.") }
         return url
@@ -1392,4 +1408,9 @@ extension PayrollClient {
         if !plan.ready {_ = try await request(path:"api/music/upload",body:.object(["action":.string("complete"),"id":.string(file.id)]))}
         progress(1)
     }
+}
+
+struct MediaPlaybackPending: LocalizedError {
+    let message: String
+    var errorDescription: String? { message }
 }

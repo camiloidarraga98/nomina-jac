@@ -1,3 +1,7 @@
+## Correcciones de auditoría · 20 de octubre de 2026
+
+La revisión parte de `632b1ff` y conserva las correcciones de galería/menú posteriores al commit auditado. Ver [AUDIT_CORRECTIONS_2026_10_20.md](AUDIT_CORRECTIONS_2026_10_20.md) para las correcciones H01–H18, límites estructurales, validación y estado de publicación. El cierre persiste el correo y responde con cola preparada; cron continúa pendientes sin repetir resultados inciertos. Nómina conserva CAS global e instantáneas. No confundir las mejoras parciales con una migración completa a revisiones/deltas por periodo.
+
 ## Música · decisión de Camilo · 19 de octubre de 2026
 
 Música es un módulo propio de web/iPhone/iPad/Mac, con cuatro secciones tipo playlist (nunca carpetas): Para Calentar, Pistas, Maquetas y Música estudio. Pistas y las demás listas mantienen orden alfabético español. Búsqueda general y por sección, reproductor persistente y segundo plano, descargas individuales o de sección completa dentro de JAC para escuchar sin conexión. Importar desde Archivos y abrir archivos de audio enviados desde otras apps eligiendo destino. Camilo aprobó asignar en Gestión los permisos independientes de escuchar/descargar y subir/importar; solo administradores borran. No conceder secciones a cuentas reales basándose en esta documentación. Ver `docs/MUSIC.md` para almacenamiento privado, codecs, caché, límites y verificación. Mantener Team personal y no agregar App Groups ni Associated Domains.

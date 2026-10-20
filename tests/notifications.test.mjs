@@ -568,3 +568,9 @@ test('GET no serializa feed, detalle o pases si cambian permisos o sesión duran
   }finally{afterAll=undefined;}
  }
 });
+
+test('abandoned push claims become uncertain and fresh in-flight deliveries are never restarted',async()=>{
+ const old='audit-stale-push',fresh='audit-live-push';
+ for(const [id,stamp] of [[old,'2000-01-01T00:00:00Z'],[fresh,new Date().toISOString()]])sql.prepare("INSERT INTO jac_push_deliveries(id,notice_id,device_id,status,updated_at) VALUES(?,'fixture-only','fixture-only','sending',?)").run(id,stamp);
+ await m.dispatchPush();assert.equal(sql.prepare('SELECT status FROM jac_push_deliveries WHERE id=?').get(old).status,'uncertain');assert.equal(sql.prepare('SELECT status FROM jac_push_deliveries WHERE id=?').get(fresh).status,'sending');await m.dispatchPush();assert.equal(sql.prepare('SELECT status FROM jac_push_deliveries WHERE id=?').get(old).status,'uncertain');
+});

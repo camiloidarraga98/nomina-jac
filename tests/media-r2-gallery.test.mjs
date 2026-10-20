@@ -613,3 +613,18 @@ test('signed HLS preserves the provider host, video path and query credentials f
  const altered=new URL(fragment,origin),asset=altered.searchParams.get('asset');altered.searchParams.set('asset',asset.slice(0,3)+(asset[3]==='A'?'B':'A')+asset.slice(4));assert.equal((await leased(altered.href)).status,403);
  const other=await (await playbackInfo(id)).json(),rebound=new URL(fragment,origin);rebound.searchParams.set('lease',new URL(other.url).searchParams.get('lease'));assert.equal((await leased(rebound.href)).status,403);
 });
+
+test('stable gallery cursors do not skip or repeat older files after an earlier insertion or deletion',async()=>{
+ await activate();const parent=await folder(),ids=[];
+ for(let i=0;i<205;i++){const id='r2_'+crypto.randomUUID();ids.push(id);sql.prepare('INSERT INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,actor_id,payload_hash,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(id,parent,'Image '+String(i).padStart(3,'0'),'image/jpeg',1,'originals/'+id,'fixture','fixture','2026-10-19T00:00:00Z','2026-10-19T00:00:00Z');}
+ const first=await (await m.gallery.GET(req('/api/media?folder='+parent,undefined,photoToken,'GET'))).json();assert.equal(first.items.length,100);assert(first.nextPageToken.startsWith('k1.'));
+ sql.prepare('DELETE FROM jac_media_r2_entries WHERE id=?').run(first.items[0].id);
+ const inserted='r2_'+crypto.randomUUID();sql.prepare('INSERT INTO jac_media_r2_entries(id,parent_id,name,mime_type,size,object_key,actor_id,payload_hash,created_at,modified_at) VALUES(?,?,?,?,?,?,?,?,?,?)').run(inserted,parent,'Newest','image/jpeg',1,'originals/'+inserted,'fixture','fixture','2026-10-20T00:00:00Z','2026-10-20T00:00:00Z');
+ const second=await (await m.gallery.GET(req('/api/media?folder='+parent+'&pageToken='+encodeURIComponent(first.nextPageToken),undefined,photoToken,'GET'))).json();assert.equal(second.items.length,100);assert(!second.items.some(item=>first.items.some(old=>old.id===item.id)));assert.equal(second.items[0].name,'Image 100');
+ const third=await (await m.gallery.GET(req('/api/media?folder='+parent+'&pageToken='+encodeURIComponent(second.nextPageToken),undefined,photoToken,'GET'))).json();assert.equal(third.items.length,5);assert.equal(new Set([...first.items,...second.items,...third.items].map(item=>item.id)).size,205);
+ const other=await folder();assert.equal((await m.gallery.GET(req('/api/media?folder='+other+'&pageToken='+encodeURIComponent(first.nextPageToken),undefined,photoToken,'GET'))).status,409);
+});
+
+test('concurrent private HLS readers share one provider signing request without bypassing their live access checks',async()=>{
+ const {id}=await videoFixture(),info=await readyVideo(id);const responses=await Promise.all(Array.from({length:8},()=>leased(info.url)));for(const response of responses){assert.equal(response.status,200);await response.text();}assert.equal(streamCalls.filter(call=>call.url.pathname.endsWith('/token')).length,1);
+});

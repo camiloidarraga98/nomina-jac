@@ -1711,6 +1711,22 @@ final class PayrollClientTests: XCTestCase {
         return (PayrollClient(baseURL: UITestBackend.base, vault: vault, configuration: configuration, agendaCache: AgendaOfflineCache(root: cache.root.appendingPathComponent("agenda-test")), offlineCache: cache, automaticallyDownloadOffline: false), vault)
     }
 
+    @MainActor func testIdenticalWorkspaceDoesNotRewriteEncryptedCopyAndOfflineSyncIsThrottled() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer { try? FileManager.default.removeItem(at: cache.root) }
+        let client = try await cachedFixture(cache), workspace = try XCTUnwrap(client.cachedWorkspace())
+        let scope = OfflineResponseCache.scope(origin: UITestBackend.base.absoluteString, token: String(repeating: "f", count: 43))
+        let entry = try XCTUnwrap(cache.entries(scope).first { $0.url.contains("workspace=1") })
+        let before = try Data(contentsOf: cache.file(scope, key: entry.key))
+        client.rememberWorkspace(workspace)
+        XCTAssertEqual(try Data(contentsOf: cache.file(scope, key: entry.key)), before, "AES-GCM must not write a new nonce for identical data")
+        client.synchronizeOfflineContent(workspace)
+        XCTAssertFalse(client.syncingOffline)
+        await Task.yield()
+        XCTAssertFalse(client.syncingOffline, "A successful unchanged refresh does not restart a full offline scan")
+        XCTAssertEqual(client.cachedWorkspace()?.version, workspace.version)
+    }
+
     @MainActor func testFullCopyRestoresBeforeNetworkAndOpensPayrollAgendaItineraryAndPrivatePassOffline() async throws {
         let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         defer { try? FileManager.default.removeItem(at: cache.root) }

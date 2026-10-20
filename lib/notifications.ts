@@ -137,6 +137,7 @@ export async function registerDevice(u:AccessUser,body:Record<string,unknown>,se
 export async function unregisterDevice(u:AccessUser,id:unknown){if(!uuid.safeParse(id).success)throw new NoticeFailure('Selecciona un dispositivo válido.');await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND user_id=?').bind(id,u.id).run();}
 export async function queuePush(id:string){await database().prepare(`INSERT OR IGNORE INTO jac_push_deliveries (id,notice_id,device_id,updated_at,notice_revision) SELECT ?||'|'||d.id||CASE WHEN n.revision=1 THEN '' ELSE '|v'||n.revision END,?,d.id,?,n.revision FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? JOIN jac_notices n ON n.id=r.notice_id WHERE r.push_target=1 AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>''`).bind(id,id,now(),id).run();}
 export async function dispatchPush(){
+ await database().prepare("UPDATE jac_push_deliveries SET status='uncertain',updated_at=? WHERE status='sending' AND updated_at<?").bind(now(),new Date(Date.now()-120000).toISOString()).run();
  const keys=await pushCredentials();
  const rows=(await database().prepare(`SELECT p.id,p.notice_id,p.device_id,d.user_id,d.platform,d.data FROM jac_push_deliveries p JOIN jac_push_devices d ON d.id=p.device_id JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.notice_id=p.notice_id AND r.user_id=u.id JOIN jac_notices n ON n.id=r.notice_id WHERE p.status='pending' AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>'' ORDER BY p.updated_at LIMIT 24`).all<{id:string;notice_id:string;device_id:string;user_id:string;platform:string;data:string}>()).results;
  await Promise.all(rows.map(async row=>{
@@ -157,7 +158,7 @@ export async function dispatchPush(){
     if(state==='expired')await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND data=?').bind(row.device_id,row.data).run();
    }
   }catch{/* Delivery might have reached the provider: do not silently resend. */}
-  await database().prepare('UPDATE jac_push_deliveries SET status=?,updated_at=? WHERE id=?').bind(state,now(),row.id).run();
+  await database().prepare('UPDATE jac_push_deliveries SET status=?,updated_at=? WHERE id=? AND status=\'sending\'').bind(state,now(),row.id).run();
  }));
 }
 async function slackGet(method:string,token:string,params:Record<string,string>={}){const url=new URL('https://slack.com/api/'+method);url.search=new URLSearchParams(params).toString();const response=await fetch(url,{headers:{Authorization:'Bearer '+token},redirect:'manual',signal:AbortSignal.timeout(8000)});const result=await response.json().catch(()=>({})) as Record<string,unknown>;if(!response.ok||!result.ok)throw new NoticeFailure('Slack no permitió acceder al canal o archivo. Revisa la app y sus permisos.',502);return result;}

@@ -48,12 +48,22 @@ export async function disconnectCrmSheets(revision:number,guard:CrmGuard){const 
 export async function syncCrmSheet(guard:CrmGuard){const db=database(),c=await crmSheetsConfig();if(!c?.credentials||!c.spreadsheet_id)return {synced:0};const lock=crypto.randomUUID(),stamp=new Date().toISOString(),cutoff=new Date(Date.now()-60000).toISOString();const locked=await db.prepare(`UPDATE jac_crm_sheets SET claim=?,claim_at=? WHERE id='jac' AND version=? AND (claim='' OR claim_at<?) AND ${guard.sql}`).bind(lock,stamp,c.version,cutoff,...guard.bindings).run();if(locked.meta.changes!==1)return {synced:0};
  let synced=0;
  try{const jobs=(await db.prepare('SELECT e.sequence,e.payment_id,e.version AS export_version,p.payment_date,p.amount_cents,p.status,s.title,s.municipality,s.show_date FROM jac_crm_exports e JOIN jac_crm_payments p ON p.id=e.payment_id JOIN jac_crm_shows s ON s.id=p.show_id WHERE e.synced_version<e.version OR e.connection_version<>? ORDER BY e.sequence LIMIT 50').bind(c.version).all<{sequence:number;payment_id:string;export_version:number;payment_date:string;amount_cents:number;status:string;title:string;municipality:string;show_date:string}>()).results;if(!jobs.length)return {synced};const access=await token(c);
-  for(const job of jobs){const renewed=await db.prepare(`UPDATE jac_crm_sheets SET claim_at=? WHERE id='jac' AND claim=? AND version=? AND ${guard.sql}`).bind(new Date().toISOString(),lock,c.version,...guard.bindings).run();if(renewed.meta.changes!==1)throw new CrmFailure('La conexión o sesión cambió.',403);if(!await current(c,guard,lock))throw new CrmFailure('La conexión o sesión cambió.',403);const row=job.sequence+1;if(row>10000)throw new CrmFailure('La hoja llegó a 10.000 filas. Amplía su capacidad antes de sincronizar.',409);
-   const base='https://sheets.googleapis.com/v4/spreadsheets/'+c.spreadsheet_id+'/values/',check=await google(base+encodeURIComponent('Abonos!G'+row+':G'+row),access) as {values?:string[][]};const present=check.values?.[0]?.[0];if(present&&present!==job.payment_id)throw new CrmFailure('Se movieron filas de la hoja. No se sobrescribió otro abono; revisa la fila '+row+'.',409);
-   if(!await current(c,guard,lock))throw new CrmFailure('Tu sesión cambió.',403);
-   await google(base+encodeURIComponent('Abonos!A'+row+':G'+row)+'?valueInputOption=RAW',access,'PUT',{range:'Abonos!A'+row+':G'+row,majorDimension:'ROWS',values:[[job.title,job.show_date,job.payment_date,job.amount_cents/100,'https://jhonalexcastano.com/api/crm/file?id='+job.payment_id,job.status==='voided'?'Anulado':'Registrado',job.payment_id]]});
-   if(!await current(c,guard,lock))throw new CrmFailure('La conexión o sesión cambió.',403);await db.prepare("UPDATE jac_crm_exports SET synced_version=?,connection_version=?,error='' WHERE payment_id=? AND version=?").bind(job.export_version,c.version,job.payment_id,job.export_version).run();synced++;
+  if(jobs.some(job=>job.sequence+1>10000))throw new CrmFailure('La hoja llegó a 10.000 filas. Amplía su capacidad antes de sincronizar.',409);
+  if(!await current(c,guard,lock))throw new CrmFailure('La conexión o sesión cambió.',403);
+  const base='https://sheets.googleapis.com/v4/spreadsheets/'+c.spreadsheet_id+'/values';
+  const query=new URLSearchParams();for(const job of jobs)query.append('ranges','Abonos!G'+(job.sequence+1)+':G'+(job.sequence+1));
+  const check=await google(base+':batchGet?'+query,access) as {valueRanges?:{values?:string[][]}[]};
+  if(check.valueRanges?.length!==jobs.length)throw new CrmFailure('Google no confirmó las filas de la hoja.',502);
+  for(let i=0;i<jobs.length;i++){
+   const present=check.valueRanges[i].values?.[0]?.[0];
+   if(present&&present!==jobs[i].payment_id)throw new CrmFailure('Se movieron filas de la hoja. No se sobrescribió otro abono; revisa la fila '+(jobs[i].sequence+1)+'.',409);
   }
+  const renewed=await db.prepare(`UPDATE jac_crm_sheets SET claim_at=? WHERE id='jac' AND claim=? AND version=? AND ${guard.sql}`).bind(new Date().toISOString(),lock,c.version,...guard.bindings).run();
+  if(renewed.meta.changes!==1||!await current(c,guard,lock))throw new CrmFailure('La conexión o sesión cambió.',403);
+  await google(base+':batchUpdate',access,'POST',{valueInputOption:'RAW',data:jobs.map(job=>({range:'Abonos!A'+(job.sequence+1)+':G'+(job.sequence+1),majorDimension:'ROWS',values:[[job.title,job.show_date,job.payment_date,job.amount_cents/100,'https://jhonalexcastano.com/api/crm/file?id='+job.payment_id,job.status==='voided'?'Anulado':'Registrado',job.payment_id]]}))});
+  if(!await current(c,guard,lock))throw new CrmFailure('La conexión o sesión cambió.',403);
+  const acknowledged=await db.batch(jobs.map(job=>db.prepare(`UPDATE jac_crm_exports SET synced_version=?,connection_version=?,error='' WHERE payment_id=? AND version=? AND EXISTS(SELECT 1 FROM jac_crm_sheets WHERE id='jac' AND claim=? AND version=?) AND ${guard.sql}`).bind(job.export_version,c.version,job.payment_id,job.export_version,lock,c.version,...guard.bindings)));
+  synced=acknowledged.reduce((sum,result)=>sum+result.meta.changes,0);
   await db.prepare("UPDATE jac_crm_sheets SET error='' WHERE id='jac' AND claim=?").bind(lock).run();return {synced};
  }catch(e){await db.prepare("UPDATE jac_crm_sheets SET error=? WHERE id='jac' AND claim=?").bind(e instanceof CrmFailure?e.message:'Google no confirmó la sincronización. Los abonos siguen guardados en JAC.',lock).run();throw e;}finally{await db.prepare("UPDATE jac_crm_sheets SET claim='',claim_at='' WHERE id='jac' AND claim=?").bind(lock).run();}
 }

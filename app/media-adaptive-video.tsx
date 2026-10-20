@@ -7,14 +7,14 @@ export default function MediaAdaptiveVideo({infoURL,onRevoked,videoRef}:{infoURL
  const own=useRef<HTMLVideoElement|null>(null),[message,setMessage]=useState('Preparando reproducción…'),[retry,setRetry]=useState(0);
  const revoked=useRef(onRevoked);revoked.current=onRevoked;
  useEffect(()=>{
-  const controller=new AbortController();let active=true,timer:ReturnType<typeof setTimeout>|undefined,hls:Hls|undefined;
+  const controller=new AbortController();let active=true,timer:ReturnType<typeof setTimeout>|undefined,hls:Hls|undefined,attempt=0;
   const video=own.current;if(!video)return;
   const fail=(text:string)=>{if(active)setMessage(text);};
   const load=async()=>{try{
    const response=await fetch(infoURL,{signal:controller.signal,credentials:'same-origin',cache:'no-store',referrerPolicy:'no-referrer'});
    if([401,403,404,410].includes(response.status)){revoked.current();return;}
    const info=await response.json() as Info;if(!response.ok)throw new Error(info.error||'No pudimos abrir el video.');if(!active)return;
-   if(!info.ready||!info.url){fail(info.message||'Preparando la versión para reproducción…');timer=setTimeout(()=>void load(),8000);return;}
+   if(!info.ready||!info.url){fail(info.message||'Preparando la versión para reproducción…');if(!['error','uncertain','configuration','unconfigured'].includes(info.status||'')&&attempt<8)timer=setTimeout(()=>void load(),Math.min(30000,4000*2**Math.min(attempt++,3)));return;}
    const url=new URL(info.url,location.origin);if(url.origin!==location.origin||url.pathname!=='/api/media/playback')throw new Error('La dirección de reproducción no es válida.');
    if(video.canPlayType('application/vnd.apple.mpegurl'))video.src=url.toString();
    else{

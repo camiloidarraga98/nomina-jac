@@ -21,11 +21,12 @@ export function musicGuard(req:Request,u:AccessUser,mode:MusicGuard['mode']='rea
 }
 export async function musicLive(g:MusicGuard){if(!await database().prepare('SELECT 1 WHERE '+g.sql).bind(...g.bindings).first())throw new MusicFailure('Tu sesión o tus permisos de Música cambiaron.',403);}
 let initialized=false;
-export async function ensureMusic(g:MusicGuard){await musicLive(g);if(initialized)return;await database().prepare("CREATE TABLE IF NOT EXISTS jac_music_tracks(id TEXT PRIMARY KEY NOT NULL,actor_id TEXT NOT NULL,section TEXT NOT NULL,title TEXT NOT NULL,filename TEXT NOT NULL,mime_type TEXT NOT NULL,size INTEGER NOT NULL,revision TEXT NOT NULL,created_at TEXT NOT NULL,status TEXT NOT NULL DEFAULT 'uploading',upload_id TEXT NOT NULL DEFAULT '',offset INTEGER NOT NULL DEFAULT 0,parts TEXT NOT NULL DEFAULT '[]',claim TEXT NOT NULL DEFAULT '',claim_at TEXT NOT NULL DEFAULT '')").run();await database().prepare('CREATE INDEX IF NOT EXISTS jac_music_section ON jac_music_tracks(status,section,title)').run();initialized=true;}
-function track(r:Row):MusicTrack{return {id:r.id,section:r.section,title:r.title,filename:musicFilename(r.filename,r.mime_type),mimeType:r.mime_type,size:r.size,revision:r.revision,createdAt:r.created_at};}
+export async function ensureMusic(g:MusicGuard){await musicLive(g);if(initialized)return;await database().prepare('SELECT id FROM jac_music_tracks LIMIT 0').all();initialized=true;}
+type PublicRow=Pick<Row,'id'|'section'|'title'|'filename'|'mime_type'|'size'|'revision'|'created_at'>;
+function track(r:PublicRow):MusicTrack{return {id:r.id,section:r.section,title:r.title,filename:musicFilename(r.filename,r.mime_type),mimeType:r.mime_type,size:r.size,revision:r.revision,createdAt:r.created_at};}
 async function row(id:unknown){return database().prepare('SELECT * FROM jac_music_tracks WHERE id=?').bind(musicID(id)).first<Row>();}
-export async function musicLibrary(g:MusicGuard,u:AccessUser){await ensureMusic(g);const rows=await database().prepare(`SELECT * FROM jac_music_tracks WHERE status='ready' AND ${g.sql}`).bind(...g.bindings).all<Row>();await musicLive(g);const derive=(purpose:string)=>createHmac('sha256',authKey()).update(JSON.stringify(['jac-music-offline-v1',purpose,g.sid,g.actor])).digest('base64url');return {tracks:rows.results.map(track).sort(musicOrder),canUpload:hasSection(u,'musicUpload'),canDelete:hasSection(u,'crm'),scope:derive('scope'),key:derive('key')};}
-async function own(g:MusicGuard,id:unknown){await ensureMusic(g);const r=await row(id);if(!r||r.actor_id!==g.actor)throw new MusicFailure('La subida no está disponible.',404);if(['cancelled','deleted'].includes(r.status))throw new MusicFailure('La subida fue cancelada.',410);return r;}
+export async function musicLibrary(g:MusicGuard,u:AccessUser){await ensureMusic(g);const rows=await database().prepare(`SELECT id,section,title,filename,mime_type,size,revision,created_at FROM jac_music_tracks WHERE status='ready' AND ${g.sql}`).bind(...g.bindings).all<PublicRow>();await musicLive(g);const derive=(purpose:string)=>createHmac('sha256',authKey()).update(JSON.stringify(['jac-music-offline-v1',purpose,g.sid,g.actor])).digest('base64url');return {tracks:rows.results.map(track).sort(musicOrder),canUpload:hasSection(u,'musicUpload'),canDelete:hasSection(u,'crm'),scope:derive('scope'),key:derive('key')};}
+async function own(g:MusicGuard,id:unknown){await ensureMusic(g);const r=await row(id);if(!r||r.actor_id!==g.actor)throw new MusicFailure('La subida no está disponible.',404);if(!['uploading','ready'].includes(r.status))throw new MusicFailure('La subida fue cancelada.',410);return r;}
 function state(r:Row){return {id:r.id,offset:r.offset,size:r.size,ready:r.status==='ready',chunkSize:MUSIC_CHUNK};}
 export async function startMusic(g:MusicGuard,input:Record<string,unknown>){await ensureMusic(g);const id=musicID(input.id),section=musicSection(input.section),filename=typeof input.filename==='string'?input.filename.trim():'';if(!filename||filename.length>240||/[\x00-\x1f/\\]/.test(filename))throw new MusicFailure('Revisa el nombre del audio.');const mime=audioType(filename),size=Number(input.size);if(!Number.isSafeInteger(size)||size<12||Math.ceil(size/MUSIC_CHUNK)>10000)throw new MusicFailure('El tamaño del audio no es válido.');const title=filename.replace(/\.[^.]+$/,'').slice(0,200);await database().prepare(`INSERT OR IGNORE INTO jac_music_tracks(id,actor_id,section,title,filename,mime_type,size,revision,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE ${g.sql}`).bind(id,g.actor,section,title,filename,mime,size,crypto.randomUUID(),now(),...g.bindings).run();const r=await own(g,id);if(r.section!==section||r.filename!==filename||r.size!==size)throw new MusicFailure('Este identificador corresponde a otro audio.',409);return state(r);}
 async function claim(g:MusicGuard,r:Row){const key=crypto.randomUUID(),result=await database().prepare(`UPDATE jac_music_tracks SET claim=?,claim_at=? WHERE id=? AND status='uploading' AND (claim='' OR claim_at<?) AND ${g.sql}`).bind(key,now(),r.id,new Date(Date.now()-300000).toISOString(),...g.bindings).run();if(result.meta.changes!==1)throw new MusicFailure('La subida está ocupada. Reintenta en unos segundos.',409);return key;}
@@ -33,8 +34,51 @@ export async function appendMusic(g:MusicGuard,id:unknown,offset:number,bytes:Ui
  await musicLive(g);const upload=env.BUCKET.resumeMultipartUpload(objectKey(r.id),r.upload_id),receipt=await upload.uploadPart(parts.length+1,bytes);parts.push({...receipt,digest,size:bytes.length});const result=await database().prepare(`UPDATE jac_music_tracks SET parts=?,offset=? WHERE id=? AND claim=? AND status='uploading' AND ${g.sql}`).bind(JSON.stringify(parts),offset+bytes.length,r.id,lock,...g.bindings).run();if(result.meta.changes!==1)throw new MusicFailure('La sesión cambió.',403);r.offset=offset+bytes.length;return state(r);
  }finally{await database().prepare('UPDATE jac_music_tracks SET claim=\'\',claim_at=\'\' WHERE id=? AND claim=?').bind(r.id,lock).run();}}
 export async function completeMusic(g:MusicGuard,id:unknown){const r=await own(g,id);if(r.status==='ready')return {track:track(r)};if(r.offset!==r.size||!r.upload_id)throw new MusicFailure('Termina la subida antes de publicar el audio.',409);const lock=await claim(g,r);try{await musicLive(g);let object=await env.BUCKET.head(objectKey(r.id));if(!object){const parts=JSON.parse(r.parts) as R2UploadedPart[];await env.BUCKET.resumeMultipartUpload(objectKey(r.id),r.upload_id).complete(parts.map(p=>({partNumber:p.partNumber,etag:p.etag})));object=await env.BUCKET.head(objectKey(r.id));}if(!object||object.size!==r.size||object.customMetadata?.revision!==r.revision)throw new MusicFailure('No se confirmó el audio completo.',502);const result=await database().prepare(`UPDATE jac_music_tracks SET status='ready' WHERE id=? AND claim=? AND status='uploading' AND ${g.sql}`).bind(r.id,lock,...g.bindings).run();if(result.meta.changes!==1)throw new MusicFailure('La sesión cambió.',403);return {track:track(r)};}finally{await database().prepare('UPDATE jac_music_tracks SET claim=\'\',claim_at=\'\' WHERE id=? AND claim=?').bind(r.id,lock).run();}}
-export async function cancelMusic(g:MusicGuard,id:unknown){const r=await own(g,id);if(r.status==='ready')return {cancelled:false};const lock=await claim(g,r);try{const result=await database().prepare(`UPDATE jac_music_tracks SET status='cancelled' WHERE id=? AND claim=? AND ${g.sql}`).bind(r.id,lock,...g.bindings).run();if(result.meta.changes!==1)throw new MusicFailure('La sesión cambió.',403);if(r.upload_id)await env.BUCKET.resumeMultipartUpload(objectKey(r.id),r.upload_id).abort();await env.BUCKET.delete(objectKey(r.id));return {cancelled:true};}finally{await database().prepare('UPDATE jac_music_tracks SET claim=\'\' WHERE id=? AND claim=?').bind(r.id,lock).run();}}
-export async function deleteMusic(g:MusicGuard,id:unknown,revision:unknown){await ensureMusic(g);const r=await readyMusic(g,id,revision);const result=await database().prepare(`UPDATE jac_music_tracks SET status='deleted' WHERE id=? AND revision=? AND status='ready' AND ${g.sql}`).bind(r.id,r.revision,...g.bindings).run();if(result.meta.changes!==1)throw new MusicFailure('El audio o tus permisos cambiaron.',409);await env.BUCKET.delete(objectKey(r.id));return {deleted:true};}
+export async function cancelMusic(g:MusicGuard,id:unknown){
+ await ensureMusic(g);let r=await row(id);
+ if(!r||r.actor_id!==g.actor)throw new MusicFailure('La subida no está disponible.',404);
+ if(r.status==='ready')return {cancelled:false};
+ if(r.status==='cancelled_clean')return {cancelled:true};
+ if(r.status!=='cancelled'){
+  r=await own(g,id);const lock=await claim(g,r);
+  try{const changed=await database().prepare(`UPDATE jac_music_tracks SET status='cancelled' WHERE id=? AND claim=? AND status='uploading' AND ${g.sql}`).bind(r.id,lock,...g.bindings).run();if(changed.meta.changes!==1)throw new MusicFailure('La sesión cambió.',403);}
+  finally{await database().prepare("UPDATE jac_music_tracks SET claim='',claim_at='' WHERE id=? AND claim=?").bind(r.id,lock).run();}
+ }
+ await cleanupMusicTrack(r.id);await musicLive(g);return {cancelled:true};
+}
+export async function deleteMusic(g:MusicGuard,id:unknown,revision:unknown){
+ await ensureMusic(g);const r=await row(id);
+ if(!r||!['ready','deleted','deleted_clean'].includes(r.status))throw new MusicFailure('Este audio ya no está disponible.',404);
+ if(revision!==r.revision)throw new MusicFailure('El audio cambió. Actualiza Música.',409);
+ if(r.status==='ready'){
+  const changed=await database().prepare(`UPDATE jac_music_tracks SET status='deleted' WHERE id=? AND revision=? AND status='ready' AND ${g.sql}`).bind(r.id,r.revision,...g.bindings).run();
+  if(changed.meta.changes!==1)throw new MusicFailure('El audio o tus permisos cambiaron.',409);
+ }
+ await cleanupMusicTrack(r.id);await musicLive(g);return {deleted:true};
+}
+// The tombstone revokes reads immediately. Its independent cleanup lease is
+// durable across R2 failures, lost acknowledgements and expired user sessions.
+async function cleanupMusicTrack(id:string){
+ const db=database(),r=await row(id);if(!r||!['deleted','cancelled'].includes(r.status))return;
+ const lock=crypto.randomUUID();const changed=await db.prepare("UPDATE jac_music_tracks SET claim=?,claim_at=? WHERE id=? AND status=? AND (claim='' OR claim_at<?)").bind(lock,now(),id,r.status,new Date(Date.now()-300000).toISOString()).run();
+ if(changed.meta.changes!==1)throw new MusicFailure('La limpieza está en curso. Reintenta en unos segundos.',409);
+ try{
+  const key=objectKey(id),object=await env.BUCKET.head(key);
+  if(object&&object.customMetadata?.revision!==r.revision)throw new MusicFailure('La copia del audio cambió; se detuvo la limpieza.',409);
+  if(r.status==='cancelled'&&r.upload_id){
+   try{await env.BUCKET.resumeMultipartUpload(key,r.upload_id).abort();}
+   catch(e){const error=e as {code?:string;message?:string};if(error.code!=='NoSuchUpload'&&!/^The specified multipart upload does not exist/i.test(error.message??''))throw e;}
+   await db.prepare("UPDATE jac_music_tracks SET upload_id='' WHERE id=? AND claim=? AND status='cancelled'").bind(id,lock).run();
+  }
+  await env.BUCKET.delete(key);
+  await db.prepare("UPDATE jac_music_tracks SET status=?,upload_id='',parts='[]' WHERE id=? AND status=? AND revision=? AND claim=?").bind(r.status+'_clean',id,r.status,r.revision,lock).run();
+ }finally{await db.prepare("UPDATE jac_music_tracks SET claim='',claim_at='' WHERE id=? AND claim=?").bind(id,lock).run();}
+}
+export async function cleanupMusic(limit=5){
+ const pending=await database().prepare("SELECT id FROM jac_music_tracks WHERE status IN ('deleted','cancelled') AND (claim='' OR claim_at<?) ORDER BY created_at,id LIMIT ?").bind(new Date(Date.now()-300000).toISOString(),Math.max(1,Math.min(20,limit))).all<{id:string}>();
+ const results=await Promise.allSettled(pending.results.map(r=>cleanupMusicTrack(r.id)));
+ return {processed:results.filter(r=>r.status==='fulfilled').length,pending:results.filter(r=>r.status==='rejected').length};
+}
 export async function readyMusic(g:MusicGuard,id:unknown,revision:unknown){await ensureMusic(g);const r=await row(id);if(!r||r.status!=='ready')throw new MusicFailure('Este audio ya no está disponible.',404);if(revision!==r.revision)throw new MusicFailure('El audio cambió. Actualiza Música.',409);await musicLive(g);return r;}
 const leaseKey=()=>createHmac('sha256',authKey()).update('jac-music-playback-v1').digest('base64url');
 export async function musicLease(g:MusicGuard,id:unknown,revision:unknown){const r=await readyMusic(g,id,revision);return {url:'/api/music/file?'+new URLSearchParams({id:r.id,revision:r.revision,lease:await encryptMail({purpose:'music',sid:g.sid,actor:g.actor,id:r.id,revision:r.revision,until:Date.now()+6*3600000},leaseKey())})};}

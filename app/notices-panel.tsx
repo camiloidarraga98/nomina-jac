@@ -21,9 +21,35 @@ export default function NoticesPanel({owner,kind,openId,onNoticeKind}:{owner:boo
  const [historyOpen,setHistoryOpen]=useState(false),[history,setHistory]=useState<Notice[]>([]),[historyCursor,setHistoryCursor]=useState(''),[historyLoading,setHistoryLoading]=useState(false);
  const [updating,setUpdating]=useState<Notice>();
  const handled=useRef(''),deleted=useRef(new Set<string>());
- async function loadHistory(cursor=''){setHistoryLoading(true);try{const r=await fetch('/api/notices?boarding=history'+(cursor?'&cursor='+encodeURIComponent(cursor):'')),data=await r.json() as Feed&{error?:string};if(!r.ok)throw new Error(data.error||'No se pudo consultar el historial.');setHistory(previous=>cursor?[...previous.filter(x=>!deleted.current.has(x.id)),...data.notices.filter(x=>!deleted.current.has(x.id)&&!previous.some(y=>y.id===x.id))]:data.notices.filter(x=>!deleted.current.has(x.id)));setHistoryCursor(data.nextCursor);}catch(e){setError(e instanceof Error?e.message:'No se pudo consultar.');}finally{setHistoryLoading(false);}}
- async function refresh(cursor=''){setLoading(true);try{const response=await fetch('/api/notices'+(kind==='boarding_pass'?'?boarding=current'+(cursor?'&cursor='+encodeURIComponent(cursor):''):(cursor?'?cursor='+encodeURIComponent(cursor):''))),data=await response.json() as Feed&{error?:string};if(!response.ok)throw new Error(data.error||'No se pudo consultar.');const notices=data.notices.filter(x=>!deleted.current.has(x.id));setFeed({...data,notices});setList(previous=>cursor?[...previous.filter(x=>!deleted.current.has(x.id)),...notices.filter((x:Notice)=>!previous.some(y=>y.id===x.id))]:notices);setError('');}catch(e){setError(e instanceof Error?e.message:'No se pudo consultar.');}finally{setLoading(false);}}
- useEffect(()=>{void refresh();if(historyOpen)void loadHistory();const timer=setInterval(()=>{if(document.visibilityState==='visible'){void refresh();if(historyOpen)void loadHistory();}},30000);const foreground=()=>{if(document.visibilityState==='visible'){void refresh();if(historyOpen)void loadHistory();}};document.addEventListener('visibilitychange',foreground);return()=>{clearInterval(timer);document.removeEventListener('visibilitychange',foreground);};},[kind,historyOpen]);
+ const pages=useRef(1),historyPages=useRef(1),readSequence=useRef(0),historySequence=useRef(0);
+ async function readPages(boarding:string,cursor:string,count:number){
+  let result:Feed|undefined,items:Notice[]=[],next=cursor;const visited=new Set<string>();
+  for(let page=0;page<(cursor?1:count);page++){
+   const query=new URLSearchParams();if(boarding)query.set('boarding',boarding);if(next)query.set('cursor',next);
+   const response=await fetch('/api/notices'+(query.size?'?'+query:'')),data=await response.json() as Feed&{error?:string};
+   if(!response.ok){if(response.status===401||response.status===403){setList([]);setHistory([]);setDetail(undefined);setFeed(undefined);}throw new Error(data.error||'No se pudo consultar.');}
+   result=data;items.push(...data.notices);next=data.nextCursor;
+   if(!next)break;if(visited.has(next))throw new Error('No se pudo completar la consulta. Vuelve a actualizar.');visited.add(next);
+  }
+  return {...result!,notices:items.filter((item,index,all)=>!deleted.current.has(item.id)&&all.findIndex(x=>x.id===item.id)===index)};
+ }
+ async function loadHistory(cursor=''){
+  const sequence=++historySequence.current;setHistoryLoading(true);
+  try{const data=await readPages('history',cursor,historyPages.current);if(sequence!==historySequence.current)return;
+   setHistory(previous=>cursor?[...previous.filter(x=>!deleted.current.has(x.id)&&!data.notices.some(n=>n.id===x.id)),...data.notices]:data.notices);
+   if(cursor)historyPages.current++;setHistoryCursor(data.nextCursor);
+  }catch(e){if(sequence===historySequence.current)setError(e instanceof Error?e.message:'No se pudo consultar.');}
+  finally{if(sequence===historySequence.current)setHistoryLoading(false);}
+ }
+ async function refresh(cursor=''){
+  const sequence=++readSequence.current;setLoading(true);
+  try{const data=await readPages(kind==='boarding_pass'?'current':'',cursor,pages.current);if(sequence!==readSequence.current)return;
+   setFeed(data);setList(previous=>cursor?[...previous.filter(x=>!deleted.current.has(x.id)&&!data.notices.some(n=>n.id===x.id)),...data.notices]:data.notices);
+   if(cursor)pages.current++;setError('');
+  }catch(e){if(sequence===readSequence.current)setError(e instanceof Error?e.message:'No se pudo consultar.');}
+  finally{if(sequence===readSequence.current)setLoading(false);}
+ }
+ useEffect(()=>{void refresh();if(historyOpen)void loadHistory();const timer=setInterval(()=>{if(document.visibilityState==='visible'){void refresh();if(historyOpen)void loadHistory();}},30000);const foreground=()=>{if(document.visibilityState==='visible'){void refresh();if(historyOpen)void loadHistory();}};document.addEventListener('visibilitychange',foreground);return()=>{readSequence.current++;historySequence.current++;clearInterval(timer);document.removeEventListener('visibilitychange',foreground);};},[kind,historyOpen]);
  useEffect(()=>{if(openId&&feed&&handled.current!==openId){handled.current=openId;const found=list.find(x=>x.id===openId);void(async()=>{try{let item=found;if(!item){const r=await fetch('/api/notices?item='+encodeURIComponent(openId)),result=await r.json() as {item:Notice;error?:string};if(!r.ok)throw new Error(result.error||'El aviso no está disponible.');item=result.item;}if((item.kind==='boarding_pass')!==(kind==='boarding_pass'))return;onNoticeKind?.(item.kind);await open(item);}catch(e){setError(e instanceof Error?e.message:'El aviso no está disponible.');}})();}},[openId,list,feed]);
  async function open(item:Notice){setDetail(item);try{const response=await fetch('/api/notices?item='+item.id),data=await response.json() as {item:Notice;error?:string};if(!response.ok)throw new Error(data.error||'No se pudo consultar el aviso.');setDetail(data.item);await noticeRequest({action:'read',id:item.id});setList(rows=>rows.map(x=>x.id===item.id?{...x,read:true}:x));}catch(e){setError(e instanceof Error?e.message:'No se pudo marcar el aviso.');}}
  function askDelete(item:Notice){setDeleteError('');setDeleting(item);}

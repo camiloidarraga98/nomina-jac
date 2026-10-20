@@ -1,7 +1,7 @@
 import {importCrmPeriods,crmLinkIssue} from '@/lib/crm-payroll';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {itineraryWorkspace} from '@/lib/itineraries-access';
-import {readPayroll} from '@/lib/payroll-store';
+import {readPayroll,readPayrollPeriod} from '@/lib/payroll-store';
 import {mobileOverview,mobilePeriod} from '@/lib/payroll-mobile';
 import {POST as payrollPost} from '@/app/api/payroll/route';
 import {stateSchema} from '@/lib/payroll-schema';
@@ -22,7 +22,7 @@ export async function GET(req:Request){
  if(!hasSection(user,'payroll')){if(id!==null)return reply({error:'Tu cuenta no tiene acceso a nómina.'},403);const data=itineraryWorkspace();return reply({...mobileOverview(data,0),user,...(new URL(req.url).searchParams.get('workspace')==='1'?{data}:{})});}
  if(id!==null&&(!id||id.length>80))return reply({error:'Selecciona una quincena válida.'},400);
  try{
-  const {data,version}=await readPayroll();
+  const {data,version}=await (id===null?readPayroll():readPayrollPeriod(id));
   if(!await payrollReadAuthorized(user))return reply({error:'Tu sesión o permiso cambió. Inicia sesión de nuevo.'},403);
   if(id!==null){
    const p=data.periods.find(p=>p.id===id);

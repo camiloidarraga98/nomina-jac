@@ -71,7 +71,11 @@ export async function playbackInfo(g:MediaGuard,id:string,origin:string,authoriz
  let row:MediaPresentation|null;
  try{row=mayPrepare&&configured()?await prepareVideo(g,id):await presentation(id);}catch(error){if(error instanceof StreamFailure)return {ready:false,status:'configuration',message:error.message};throw error;}
  await active(g,id);
- if(!row||row.connection_version!==source.version||row.source_key!==source.key||row.stream_status!=='ready'||!uidValid(row.stream_uid))return {ready:false,status:!configured()?'configuration':row?.stream_status||'preparing',message:!configured()?'La reproducción adaptativa está pendiente de configurar.':'Preparando la versión para reproducción. Puedes descargar el archivo completo.'};
+ if(!row||row.connection_version!==source.version||row.source_key!==source.key||row.stream_status!=='ready'||!uidValid(row.stream_uid)){
+  const status=!configured()?'configuration':!row||row.connection_version!==source.version||row.source_key!==source.key?'preparing':row.stream_status||'preparing';
+  const message=status==='configuration'?'La reproducción adaptativa está pendiente de configurar.':status==='error'?'No se pudo preparar este video para reproducción. Puedes descargar el archivo completo.':status==='uncertain'?'La preparación del video está pendiente de confirmar. Reintenta más tarde o descarga el archivo completo.':'Preparando la versión para reproducción. Puedes descargar el archivo completo.';
+  return {ready:false,status,message};
+ }
  const lease:Lease={v:1,id,revision:source.item.modifiedAt,version:source.version,expires:Date.now()+3600000,...authorization};
  const token=await encryptMail(lease,mailKey());const url=new URL('/api/media/playback',origin);url.searchParams.set('lease',token);url.searchParams.set('asset','manifest/video.m3u8');
  return {ready:true,status:'ready',url:url.toString()};
@@ -97,7 +101,14 @@ async function leaseGuard(token:string){
  return {g,lease,uid:row.stream_uid,host:row.stream_host};
 }
 const signed=new Map<string,{token:string;expires:number}>();
+const signing=new Map<string,Promise<string>>();
 async function streamToken(uid:string){
+ const cached=signed.get(uid);if(cached&&cached.expires>Date.now())return cached.token;
+ const active=signing.get(uid);if(active)return active;
+ const pending=fetchStreamToken(uid);signing.set(uid,pending);
+ try{return await pending;}finally{if(signing.get(uid)===pending)signing.delete(uid);}
+}
+async function fetchStreamToken(uid:string){
  const old=signed.get(uid);if(old&&old.expires>Date.now())return old.token;
  // The provider token must outlive every URL in a one-hour VOD playlist,
  // including when the player fetches later segments without reloading it.

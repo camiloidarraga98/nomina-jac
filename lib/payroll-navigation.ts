@@ -31,3 +31,5 @@ export function canViewSection(user:AccessUser,view:string):boolean {
  return ['quincena','personal','reglas','archivo','correos'].includes(view)&&hasSection(user,'payroll');
 }
 export function defaultSection(user:AccessUser){if(user.sections===undefined&&user.itinerariesOnly&&!user.mediaOnly)return 'itinerarios';return ['quincena','agenda','itinerarios','fotografia','musica','alertas','cuenta'].find(v=>canViewSection(user,v))||'cuenta';}
+
+export const needsPayrollData=(view:string)=>['quincena','personal','reglas','archivo','correos'].includes(view);
