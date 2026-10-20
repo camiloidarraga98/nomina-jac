@@ -97,7 +97,8 @@ final class LaunchTests: XCTestCase {
         let thumbnailReady = NSPredicate(format: "value == %@", "Miniatura cargada")
         XCTAssertTrue(first.waitForExistence(timeout: 15))
         XCTAssertTrue(waitFor(first, predicate: thumbnailReady, timeout: 10), "Una miniatura inicialmente pendiente debe reintentarse")
-        let scroll = app.scrollViews.firstMatch, more = app.buttons["Cargar más"]
+        let scroll = app.scrollViews.containing(.button, identifier: "media.item.r2_media-day").firstMatch
+        let more = app.buttons["Cargar más"]
         for _ in 0..<10 { if more.exists && more.isHittable { break }; scroll.swipeUp() }
         XCTAssertTrue(more.isHittable); more.tap()
         let secondPage = app.buttons["media.item.r2_media-scroll-12"]
