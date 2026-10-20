@@ -17,7 +17,7 @@ Las diferencias respecto al general incluyen:
 
 Los cuatro gráficos originales del nuevoPDF se extrajeron aWebP: frontal, superior, isométrico y vista general. Se conservan la leyenda del plano superior y la advertencia del documento: esas referencias contienen otras cantidades/diseños y **no sustituyen el listado específico de privados**. La configuración final se coordina con producción, iluminación y video.
 
-Los números de contacto de esta edición abrenWhatsApp, sin mensaje predefinido ni envío automático. Correos conmailto yPDF original mediante descarga explícita; no se descarga elPDF ni se usa como visor al abrir la landing.
+Los números de contacto de esta edición abrenWhatsApp, sin mensaje predefinido ni envío automático. Correos conmailto yPDF con el contenido del original mediante descarga explícita; no se descarga elPDF ni se usa como visor al abrir la landing.
 
 ## Fuente y publicación
 
@@ -29,6 +29,12 @@ Se retiran “Mi Lista” y las casillas del rider general, conservando sus54fil
 
 TypeScript, sintaxisJS, buildCloudflare y50pruebas de contenido/rutas y regresiones obligatorias de nómina/auth/correo aprobados. Contratos específicos verifican diferencias de inventario, separación de modalidades, medidas y cuatro referencias; mantienen los controles existentes de ambas rutas rider y del resto de la aplicación.
 
-Chromium: selector de modalidad,44filas privadas/54generales, ausencia de checklist, búsqueda deGerbs, datos de pantallas, cuatro pestañas/vistas, zoom, teclado, enlacesWhatsApp, descarga delPDF original de8.270.381bytes y navegación móvil. Sin erroresJavaScript ni recursos faltantes; sin desbordamiento en320/390/768/1024/1440px. Capturas en`outputs/rider-privados/`, ignoradas porGit. ElWorker local y el despliegue se registran tras comprobarse.
+Chromium: selector de modalidad,44filas privadas/54generales, ausencia de checklist, búsqueda deGerbs, datos de pantallas, cuatro pestañas/vistas, zoom, teclado, enlacesWhatsApp, descarga delPDF completo y navegación móvil. Sin erroresJavaScript ni recursos faltantes; sin desbordamiento en320/390/768/1024/1440px. Capturas en`outputs/rider-privados/`, ignoradas porGit. ElWorker local y el despliegue se registran tras comprobarse.
 
-La comprobación conASSETS/Workerd local confirma200 en ambas modalidades,JS, imagen de vista general yPDF con bytes idénticos al build. Selector, consultas del escenario, plano general ampliable y búsqueda funcionan bajo laCSP real, sin errores de consola. ElPDF conserva exactamente los bytes del archivo entregado. Solo la prueba local usa compatibilidad2026-05-22 por el binario del ejecutor; producción conserva su fecha2026-10-17.
+La comprobación conASSETS/Workerd local confirma200 en ambas modalidades,JS, imagen de vista general yPDF con bytes idénticos al build. Selector, consultas del escenario, plano general ampliable y búsqueda funcionan bajo laCSP real, sin errores de consola. ElPDF descargable conserva las15páginas, el texto y los enlaces del archivo entregado; sus cuatro imágenes de referencia se optimizaron para publicación. Solo la prueba local usa compatibilidad2026-05-22 por el binario del ejecutor; producción conserva su fecha2026-10-17.
+
+## Optimización del PDF descargable
+
+El primer intento de publicación cargó11de17recursos pendientes y se detuvo al subir un lote que incluía elPDF de8.270.381bytes: la integración de credenciales del proxy devolvió401 en`workers/assets/upload?base64=true`. Las consultas de cuenta/despliegues y la creación de sesión seguían autorizadas. Una carga binaria sinbase64 llegó alAPI pero fue rechazada con400 porque este endpoint exigebase64. No se cambió elproxy ni se reemplazaron credenciales.
+
+Se optimizaron únicamente las cuatro imágenes de referencia embebidas delPDF (JPEG95, sin cambiar dimensiones). La copia web pesa2.113.014bytes; PyMuPDF confirmó15páginas, texto idéntico por página y el mismo número de enlaces por página. El archivo original entregado continúa en el adjunto y en el historial deGit del commitc26d48b; losWebP ampliables proceden directamente del original. El contenidoHTML y las50pruebas aprobadas no cambiaron.
