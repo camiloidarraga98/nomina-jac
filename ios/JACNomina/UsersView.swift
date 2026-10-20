@@ -11,7 +11,7 @@ struct UsersView: View {
     @State private var notice: String?
     var body: some View {
         List {
-            OperationStatusSection()
+            if store.hasOperationStatus { OperationStatusSection() }
             if let notice { Section { Text(notice).foregroundStyle(.green) } }
             if let invitation {
                 Section("Enlace de activación") {

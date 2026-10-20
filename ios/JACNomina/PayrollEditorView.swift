@@ -20,7 +20,7 @@ struct PayrollEditorView: View {
     var body: some View {
         NavigationStack {
             Form {
-                OperationStatusSection()
+                if store.hasOperationStatus { OperationStatusSection() }
                 fields
                 if store.workspace?.version != session.version && !store.hasPending {
                     Section { Text("El servidor tiene una versión nueva. Vuelve a abrir el formulario para trabajar con ella.").foregroundStyle(.orange) }

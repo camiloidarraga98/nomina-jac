@@ -36,7 +36,7 @@ struct PeriodDetailView: View {
     @State private var selectedActivity: ActivityKind?
     var body: some View {
         List {
-            OperationStatusSection()
+            if store.hasOperationStatus { OperationStatusSection() }
             if let error = period.error { Section { InlineError(message: error); Button("Volver a intentar") { Task { await load() } } } }
             if let d = period.detail {
                 Section {
@@ -148,7 +148,7 @@ struct HistoricalConditionsView: View {
     @State private var editor: PayrollEditorSession?
     var body: some View {
         List {
-            OperationStatusSection()
+            if store.hasOperationStatus { OperationStatusSection() }
             Section { Text("Estas condiciones pertenecen a la quincena reabierta. No modifican el personal vigente ni otros cierres.").font(.footnote) }
             if let d = period.detail {
                 ForEach(d.employees.sorted { $0.name < $1.name }) { employee in

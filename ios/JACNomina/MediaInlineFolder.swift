@@ -2,11 +2,12 @@
 import SwiftUI
 import UIKit
 
-/// Decoded, bounded session memory, never original files or a disk fallback.
-/// A cell leaving the viewport cancels its wait/request without blocking a pan.
+/// Bounded decoded memory. Visible cells and folder prefetch share each request;
+/// leaving a cell cancels only its subscription, never another reader's work.
 @MainActor
 final class MediaGridThumbnailLoader {
     static let shared = MediaGridThumbnailLoader()
+    enum Priority { case visible, prefetch }
     private final class Entry: NSObject {
         let image: UIImage
         init(_ image: UIImage) { self.image = image }
@@ -15,69 +16,131 @@ final class MediaGridThumbnailLoader {
     private let limit: Int
     private var running = 0
     private var generation = 0
-    private var waiting: [(UUID, CheckedContinuation<Void, Error>)] = []
+    private final class Flight {
+        var priority: Priority
+        var readers: [UUID: CheckedContinuation<UIImage?, Error>] = [:]
+        var task: Task<Void, Never>?
+        init(priority: Priority) { self.priority = priority }
+    }
+    private var flights: [String: Flight] = [:]
+    private var waiting: [(UUID, Flight, CheckedContinuation<Void, Error>)] = []
     init(limit: Int = 4) {
         self.limit = max(1, limit)
         cache.countLimit = 256
         cache.totalCostLimit = 64 * 1024 * 1024
     }
-    func clear() { generation += 1; cache.removeAllObjects() }
+    func clear() {
+        generation += 1; cache.removeAllObjects()
+        let old = Array(flights.values); flights.removeAll()
+        for flight in old {
+            flight.task?.cancel()
+            for reader in flight.readers.values { reader.resume(throwing: CancellationError()) }
+            flight.readers.removeAll()
+        }
+    }
 
-    func load(key: String, authorized: () -> Bool, allowNetwork: Bool = true, bytes: () async throws -> Data) async throws -> UIImage? {
+    func load(key: String, authorized: @escaping () -> Bool, allowNetwork: Bool = true,
+              priority: Priority = .visible, bytes: @escaping () async throws -> Data) async throws -> UIImage? {
         try Task.checkCancellation()
         guard authorized() else { clear(); throw CancellationError() }
         if let entry = cache.object(forKey: key as NSString) { return entry.image }
         guard allowNetwork else { return nil }
-        try await acquire()
-        defer { release() }
+        let reader = UUID()
+        let result: UIImage? = try await withTaskCancellationHandler {
+            try Task.checkCancellation()
+            return try await withCheckedThrowingContinuation { continuation in
+                if let flight = flights[key] {
+                    flight.readers[reader] = continuation
+                    if priority == .visible { flight.priority = .visible }
+                } else {
+                    let flight = Flight(priority: priority), expected = generation
+                    flight.readers[reader] = continuation; flights[key] = flight
+                    flight.task = Task {
+                        do {
+                            let value = try await perform(key: key, flight: flight, expected: expected, authorized: authorized, bytes: bytes)
+                            finish(key, flight: flight, result: .success(value))
+                        } catch {
+                            finish(key, flight: flight, result: .failure(error))
+                            if case APIError.unauthorized = error { clear() }
+                            if case APIError.forbidden = error { clear() }
+                        }
+                    }
+                }
+            }
+        } onCancel: {
+            Task { @MainActor in
+                guard let flight = self.flights[key], let continuation = flight.readers.removeValue(forKey: reader) else { return }
+                continuation.resume(throwing: CancellationError())
+                if flight.readers.isEmpty { self.flights.removeValue(forKey: key); flight.task?.cancel() }
+            }
+        }
         try Task.checkCancellation()
         guard authorized() else { clear(); throw CancellationError() }
+        return result
+    }
+
+    private func finish(_ key: String, flight: Flight, result: Result<UIImage?, Error>) {
+        guard flights[key] === flight else { return }
+        flights.removeValue(forKey: key)
+        for reader in flight.readers.values { reader.resume(with: result) }
+        flight.readers.removeAll(); flight.task = nil
+    }
+
+    private func perform(key: String, flight: Flight, expected: Int, authorized: () -> Bool,
+                         bytes: () async throws -> Data) async throws -> UIImage? {
+        try await acquire(flight)
+        defer { release() }
+        try Task.checkCancellation()
+        guard expected == generation else { throw CancellationError() }
+        guard authorized() else { clear(); throw CancellationError() }
         if let entry = cache.object(forKey: key as NSString) { return entry.image }
-        let expected = generation
-        do {
-            let data = try await bytes()
-            try Task.checkCancellation()
-            let decoder = Task.detached(priority: .utility) { MediaThumbnail.image(data, decodeImmediately: true) }
-            let image = await withTaskCancellationHandler { await decoder.value } onCancel: { decoder.cancel() }
-            try Task.checkCancellation()
-            guard expected == generation, authorized() else { throw CancellationError() }
-            if let image {
-                cache.setObject(Entry(image), forKey: key as NSString, cost: Int(image.size.width * image.size.height * 4))
-            }
-            return image
-        } catch {
-            if case APIError.unauthorized = error { clear() }
-            if case APIError.forbidden = error { clear() }
-            throw error
+        let data = try await bytes()
+        try Task.checkCancellation()
+        let decoder = Task.detached(priority: .utility) { MediaThumbnail.image(data, decodeImmediately: true) }
+        let image = await withTaskCancellationHandler { await decoder.value } onCancel: { decoder.cancel() }
+        try Task.checkCancellation()
+        guard expected == generation else { throw CancellationError() }
+        guard authorized() else { clear(); throw CancellationError() }
+        if let image {
+            cache.setObject(Entry(image), forKey: key as NSString, cost: Int(image.size.width * image.size.height * 4))
         }
+        return image
     }
 
-    func image(_ item: MediaItem, client: PayrollClient, networkAllowed: Bool = true) async throws -> UIImage? {
-        guard let stamp = try client.mediaAccessStamp(), let scope = try client.mediaScope(), client.accessUser?.canReadMedia != false else { throw CancellationError() }
+    private func key(_ item: MediaItem, client: PayrollClient, stamp: String) -> String {
+        "\(ObjectIdentifier(client))|\(stamp)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.mimeType)"
+    }
+    func cachedImage(_ item: MediaItem, client: PayrollClient, stamp: String) -> UIImage? {
+        cache.object(forKey: key(item, client: client, stamp: stamp) as NSString)?.image
+    }
+    func image(_ item: MediaItem, client: PayrollClient, networkAllowed: Bool = true, priority: Priority = .visible) async throws -> UIImage? {
+        guard let stamp = try client.mediaAccessStamp(), client.accessUser?.canReadMedia != false else { throw CancellationError() }
         guard item.thumbnailAvailable else { return nil }
-        let key = "\(ObjectIdentifier(client))|\(scope.id)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.mimeType)"
-        return try await load(key: key, authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false }, bytes: { try await client.mediaThumbnail(item, networkAllowed: networkAllowed && !client.usingOfflineCopy) })
+        return try await load(key: key(item, client: client, stamp: stamp), authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false }, priority: priority, bytes: { try await client.mediaThumbnail(item, networkAllowed: networkAllowed && !client.usingOfflineCopy) })
     }
 
-    private func acquire() async throws {
+    private func acquire(_ flight: Flight) async throws {
         let id = UUID()
         try await withTaskCancellationHandler {
             try Task.checkCancellation()
             try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
                 if running < limit { running += 1; continuation.resume() }
-                else { waiting.append((id, continuation)) }
+                else { waiting.append((id, flight, continuation)) }
             }
         } onCancel: {
             Task { @MainActor in
                 if let index = self.waiting.firstIndex(where: { $0.0 == id }) {
-                    self.waiting.remove(at: index).1.resume(throwing: CancellationError())
+                    self.waiting.remove(at: index).2.resume(throwing: CancellationError())
                 }
             }
         }
     }
     private func release() {
         if waiting.isEmpty { running -= 1 }
-        else { waiting.removeFirst().1.resume() }
+        else {
+            let index = waiting.firstIndex { $0.1.priority == .visible } ?? 0
+            waiting.remove(at: index).2.resume()
+        }
     }
 }
 
@@ -91,12 +154,13 @@ final class MediaTileThumbnail: ObservableObject {
     private var generation = UUID()
     private var task: Task<Void, Never>?
 
-    func show(key: String, authorized: @escaping () -> Bool,
+    func show(key: String, authorized: @escaping () -> Bool, cached: UIImage? = nil,
               load: @escaping () async throws -> UIImage?, denied: @escaping (Error) -> Void) {
         visible = true
         guard authorized() else { cancel(); return }
         if self.key == key, image != nil || task != nil { return }
         cancel(); self.key = key
+        if let cached { image = cached; return }
         let expected = generation
         task = Task {
             defer { if expected == generation { task = nil } }
@@ -123,6 +187,70 @@ final class MediaTileThumbnail: ObservableObject {
     func hide() { visible = false; cancel() }
     private func cancel() {
         generation = UUID(); task?.cancel(); task = nil; key = nil; image = nil
+    }
+}
+
+/// Starts at folder opening, independently of the lazy grid's viewport. Only
+/// two background readers run, leaving capacity for visible thumbnails. The
+/// encrypted disk cache remains bounded; no originals or unopened folders load.
+@MainActor
+final class MediaFolderThumbnailPrefetch: ObservableObject {
+    private let loader: MediaGridThumbnailLoader
+    private var identity: String?
+    private var generation = UUID()
+    private(set) var task: Task<Void, Never>?
+    init(loader: MediaGridThumbnailLoader? = nil) { self.loader = loader ?? .shared }
+
+    func stop() { generation = UUID(); task?.cancel(); task = nil; identity = nil }
+
+    func start(_ feed: MediaFeed, client: PayrollClient, networkAllowed: Bool, denied: @escaping (Error) -> Void) {
+        guard networkAllowed, !client.usingOfflineCopy, feed.connected, feed.canRead,
+              let stamp = try? client.mediaAccessStamp() else { stop(); return }
+        let signature = stamp + "|" + (feed.collectionID ?? "") + "|" + (feed.folder?.id ?? "") + "|" + (feed.nextPageToken ?? "") + "|" + feed.items.map { "\($0.id):\($0.modifiedAt):\($0.size):\($0.thumbnailAvailable)" }.joined(separator: "|")
+        guard identity != signature else { return }
+        stop(); identity = signature
+        let expected = generation
+        task = Task(priority: .utility) {
+            defer { if expected == generation { task = nil } }
+            do {
+                var page = feed, seenItems = Set<String>(), cursors = Set<String>()
+                while true {
+                    try Task.checkCancellation()
+                    guard expected == generation, stamp == (try client.mediaAccessStamp()), !client.usingOfflineCopy,
+                          page.connected, page.canRead, page.collectionID == feed.collectionID, page.folder?.id == feed.folder?.id else { throw CancellationError() }
+                    let files = page.items.filter { $0.kind != "folder" && $0.thumbnailAvailable && seenItems.insert($0.id).inserted }
+                    try await withThrowingTaskGroup(of: Void.self) { group in
+                        var iterator = files.makeIterator()
+                        for _ in 0..<2 {
+                            if let item = iterator.next() { group.addTask { try await self.warm(item, client: client) } }
+                        }
+                        while try await group.next() != nil {
+                            try Task.checkCancellation()
+                            if let item = iterator.next() { group.addTask { try await self.warm(item, client: client) } }
+                        }
+                    }
+                    guard let cursor = page.nextPageToken, !cursor.isEmpty else { break }
+                    guard cursors.insert(cursor).inserted, cursors.count <= 1000 else { throw APIError.invalid("La paginación de la carpeta cambió.") }
+                    try Task.checkCancellation()
+                    page = try await client.media(folder: feed.folder?.id ?? "", pageToken: cursor, forceNetwork: true)
+                }
+            } catch {
+                guard expected == generation, !Task.isCancelled else { return }
+                identity = nil
+                if case APIError.unauthorized = error { stop(); denied(error) }
+                if case APIError.forbidden = error { stop(); denied(error) }
+            }
+        }
+    }
+    private func warm(_ item: MediaItem, client: PayrollClient) async throws {
+        do { _ = try await loader.image(item, client: client, priority: .prefetch) }
+        catch {
+            if failureIsCancelled(error) { throw error }
+            if case APIError.unauthorized = error { throw error }
+            if case APIError.forbidden = error { throw error }
+            if AgendaOfflineCache.isUnavailable(error) { throw error }
+            // A missing cover must not stop the rest of the folder.
+        }
     }
 }
 
@@ -319,6 +447,7 @@ struct MediaInlineFolder: View {
     @State private var loadedPages = 1
     @State private var generation = UUID()
     @State private var readTask: Task<Void, Never>?
+    @StateObject private var thumbnails = MediaFolderThumbnailPrefetch()
 
     private var isExpanded: Bool { expanded.contains(folder.id) }
     private var accessStamp: String? { isExpanded ? (try? store.client.mediaAccessStamp()) : nil }
@@ -460,9 +589,10 @@ struct MediaInlineFolder: View {
             }
         }
         .onChange(of: store.isOffline) { previous, current in
+            if current { thumbnails.stop() }
             if previous && !current && offline && isExpanded { startRead() }
         }
-        .onDisappear { stopRead() }
+        .onDisappear { stopRead(); thumbnails.stop() }
     }
 
     private func previewFeed(_ source: MediaFeed) -> MediaFeed {
@@ -483,6 +613,7 @@ struct MediaInlineFolder: View {
     }
 
     private func clearContent() {
+        thumbnails.stop()
         feed = nil; items = []; offline = false; error = nil
     }
 
@@ -512,6 +643,7 @@ struct MediaInlineFolder: View {
                 guard stamp != nil else { throw APIError.unauthorized }
                 if feed == nil, let saved = store.client.cachedMedia(folder: folder.id), (try? validate(saved)) != nil {
                     feed = saved; items = uniqueSorted(saved.items)
+                    thumbnails.start(saved, client: store.client, networkAllowed: !store.isOffline, denied: reject)
                 }
                 let read = try await MediaGalleryListing.read(minimumPages: pages, minimumItems: items.count) { cursor in
                     guard expected == generation, isExpanded, stamp == (try store.client.mediaAccessStamp()) else { throw CancellationError() }
@@ -525,6 +657,7 @@ struct MediaInlineFolder: View {
                 loadedPages = read.pages; feed = result
                 if items != result.items { items = result.items }
                 offline = false; error = nil; selection.reconcile(previewFeed(result))
+                thumbnails.start(previewFeed(result), client: store.client, networkAllowed: !store.isOffline, denied: reject)
             } catch {
                 guard expected == generation, isExpanded, !Task.isCancelled else { return }
                 if failureIsCancelled(error) { return }
@@ -536,6 +669,7 @@ struct MediaInlineFolder: View {
                    (try? validate(saved)) != nil {
                     if feed == nil { feed = saved; items = uniqueSorted(saved.items) }
                     offline = true; self.error = nil
+                    thumbnails.stop()
                     return
                 }
                 self.error = error.localizedDescription

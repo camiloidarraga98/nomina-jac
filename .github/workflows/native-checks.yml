@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, media-delete, media-light, music, navigation, layout]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout]
         default: full
 
 permissions:
@@ -69,6 +69,7 @@ jobs:
           JAC_NAVIGATION_REMAINING: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-remaining]') }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
           JAC_MUSIC: ${{ inputs.scope == 'music' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-music]')) }}
+          JAC_GALLERY_PREFETCH: ${{ inputs.scope == 'gallery-prefetch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-prefetch]')) }}
           JAC_MEDIA_LIGHT: ${{ inputs.scope == 'media-light' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-light]')) }}
           JAC_MEDIA_DELETE: ${{ inputs.scope == 'media-delete' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-delete]')) }}
           JAC_GALLERY_STABILITY: ${{ inputs.scope == 'gallery-stability' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-stability]')) }}
@@ -114,6 +115,21 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testModernSectionsAreExactAndLegacyRestrictionsRemainDefensive
               -only-testing:JACNominaUITests/LaunchTests/testMusicSectionsAndGlobalSearchRespectListeningPermission
               -only-testing:JACNominaUITests/LaunchTests/testMusicSectionSearchAndUploaderControls
+            )
+          elif [ "$JAC_GALLERY_PREFETCH" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests
+              -only-testing:JACNominaTests/PayrollClientTests/testOpeningFolderPrefetchesOffscreenPhotosVideosAndLaterPagesWithoutOriginals
+              -only-testing:JACNominaTests/PayrollClientTests/testDerivedThumbnailScopeStillRequiresUnlockedCurrentSession
+              -only-testing:JACNominaTests/PayrollClientTests/testGalleryIndexMemoryTracksExternalWritesRemovalAndCorruption
+              -only-testing:JACNominaTests/PayrollClientTests/testThumbnailCacheSurvivesClosingFolderMemoryEvictionAndReopeningSession
+              -only-testing:JACNominaTests/PayrollClientTests/testThumbnailDiskCacheIsEncryptedBoundedByRevisionSessionAndExpiry
+              -only-testing:JACNominaTests/PayrollClientTests/testMissingThumbnailDoesNotInvalidateOtherImagesOrFolderSession
+              -only-testing:JACNominaTests/PayrollClientTests/testCacheNotificationsPreserveLoadedPagesAndOrderWhileApplyingExplicitDeletions
+              -only-testing:JACNominaTests/PayrollClientTests/testCachedGalleryIncludesDeletionMarkersForVisibleAndPinnedFolders
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaFolderPaginationRecursionOfflineReopenAndRevocation
+              -only-testing:JACNominaTests/PayrollClientTests/testMusicOfflineAudioIsEncryptedRevisionBoundAndCanBeDownloadedAgain
+              -only-testing:JACNominaUITests/LaunchTests/testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling
             )
           elif [ "$JAC_MEDIA_LIGHT" = true ]; then
             checks=(
@@ -286,7 +302,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

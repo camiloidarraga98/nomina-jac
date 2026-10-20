@@ -60,7 +60,7 @@ struct ManagementView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment:.leading,spacing:24) {
-                    if store.error != nil || store.notice != nil || store.pending != nil {
+                    if store.hasOperationStatus {
                         VStack(alignment:.leading,spacing:12) { OperationStatusSection() }.padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:20))
                     }
                     JACFeatureBanner(eyebrow:"JAC · Tu equipo",title:"Todo en su lugar.",subtitle:"Herramientas para lo que pasa antes y después del show.",symbol:"slider.horizontal.3",tone:.violet)
@@ -121,7 +121,7 @@ struct ConceptsRulesView: View {
     @State private var editor: PayrollEditorSession?
     var body: some View {
         List {
-            OperationStatusSection()
+            if store.hasOperationStatus { OperationStatusSection() }
             if let w = store.workspace {
                 let settings = w.data["settings"]
                 Section("Parámetros de nómina") {

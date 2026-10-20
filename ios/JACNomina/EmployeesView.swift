@@ -19,7 +19,7 @@ struct EmployeesView: View {
     }
     private var content: some View {
             List {
-                OperationStatusSection()
+                if store.hasOperationStatus { OperationStatusSection() }
                 Section { Toggle("Incluir personas inactivas", isOn: $includeInactive); Toggle("Incluir personas eliminadas", isOn: $includeDeleted) }
                 if employees.isEmpty { ContentUnavailableView("Sin resultados", systemImage: "person.2", description: Text("Prueba con otro nombre o cargo.")) }
                 ForEach(PayrollChoices.categories, id: \.0) { category in
@@ -59,7 +59,7 @@ struct EmployeeDetailView: View {
     private var record: JSONValue { store.workspace?.record("employees", id: employeeID) ?? .null }
     var body: some View {
         List {
-            OperationStatusSection()
+            if store.hasOperationStatus { OperationStatusSection() }
             EmployeeConditionsSection(record: record)
             if user.can("staff") {
                 Section("Acciones") {

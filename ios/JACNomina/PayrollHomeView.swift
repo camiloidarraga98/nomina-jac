@@ -290,7 +290,7 @@ struct PeriodsView: View {
     }
     private var content: some View {
             List {
-                OperationStatusSection()
+                if store.hasOperationStatus { OperationStatusSection() }
                 if archive {
                     Section {
                         JACFeatureBanner(eyebrow: "JAC · Archivo", title: "Cada cierre, a mano.", subtitle: "Consulta tus quincenas y documentos conservados.", symbol: "archivebox")

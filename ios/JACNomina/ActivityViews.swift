@@ -16,7 +16,7 @@ struct ActivityView: View {
     @State private var removal: String?
     var body: some View {
         List {
-            OperationStatusSection()
+            if store.hasOperationStatus { OperationStatusSection() }
             if let d = period.detail {
                 if let error = period.error { Section { InlineError(message: error) } }
                 if d.period.isClosed { Section { Label("Consulta de un cierre", systemImage: "lock.fill") } }

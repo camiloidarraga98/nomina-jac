@@ -1,5 +1,18 @@
 # Estabilidad de Fotografía en iPhone
 
+## Precarga y coste del scroll · 20 de octubre de 2026
+
+Camilo sigue observando tirones y pidió que las miniaturas se descarguen desde que abre una carpeta, sin esperar a desplazarse. La descarga anterior empezaba únicamente en `onAppear` de cada celda.
+
+- `MediaFolderThumbnailPrefetch` inicia dos lectores al abrir la carpeta, recorre también las páginas posteriores y omite subcarpetas sin abrir y miniaturas aún no indexadas. No cambia la lista visible, su orden ni el botón de paginación. Nunca descarga originales.
+- Las celdas y la precarga comparten una sola solicitud por sesión/generación/archivo/revisión. La cola da prioridad a las celdas visibles; conserva el máximo global de cuatro trabajos. Retirar una celda cancela su espera, mientras la precarga puede completar y guardar esa miniatura.
+- La memoria decodificada sigue limitada a256 entradas/64MiB. Una celda que regresa instala inmediatamente esos píxeles; el resto queda en la caché temporal cifrada existente (48h,128MiB/4096 entradas), sin descargas offline nuevas de originales.
+- Redibujar una celda ya no consulta Llavero ni deriva claves. La identidad de vista usa una generación en memoria; las lecturas siguen comprobando Llavero, sesión y permisos. Se reutiliza la derivación de clave únicamente si el token leído de Llavero sigue siendo el mismo; un Llavero bloqueado sigue impidiendo el acceso.
+- El índice cifrado de metadatos se conserva en memoria bajo el mismo bloqueo y se invalida si cambia el archivo, se corrompe, se retira la sesión o se escriben metadatos nuevos. Se evita descifrar y decodificar el índice completo por cada celda/miniatura. El guardado de páginas se ejecuta fuera del hilo de interfaz, con comprobación de sesión antes y después.
+- La precarga no publica progreso por archivo sobre la cuadrícula y se detiene al cerrar/salir de la carpeta, perder acceso o conexión.401/403 retiran la caché; una miniatura ausente no detiene las demás.
+
+Verificación prevista al finalizar: alcance `gallery-prefetch`, únicamente cargador/precarga/caché/sesión, regresión del índice compartido con audio y recorrido UI existente de scroll, orden y refresco. Una compilación Mac por las fuentes compartidas; sin repetir subidas, compresión, web ni finanzas. La fluidez física debe comprobarse en el iPhone de Camilo; no se afirma una medición de fps desde Cloud.
+
 ## Corrección vigente · 19 de octubre de 2026
 
 Camilo reportó que las miniaturas cargaban y desaparecían al desplazarse o esperar en una carpeta, que todo el contenido podía quedar vacío hasta volver arriba y que los archivos cambiaban de distribución. La intervención anterior con LazyVStack y caché de 30 segundos no resolvió esos casos. No se atribuye el problema al hardware ni se afirma haber medido fps físicos desde Cloud.

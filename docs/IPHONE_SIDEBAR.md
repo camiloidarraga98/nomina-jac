@@ -1,5 +1,7 @@
 # Menú lateral de iPhone · 19 octubre de 2026
 
+El20 de octubre, las listas dejaron de montar `OperationStatusSection` cuando no hay error, aviso ni formulario pendiente. SwiftUI podía convertir ese componente vacío en una fila blanca debajo del buscador. Se conserva el bloque completo cuando sí hay información que mostrar. Este ajuste comparte la compilación final de precarga de Fotografía; no requiere otro recorrido completo de navegación.
+
 Camilo pidió retirar la barra inferior y abrir todas las secciones desde la esquina superior izquierda. El iPhone usa un botón persistente «Abrir menú», incluso dentro de las pantallas de cada módulo. Abre un panel lateral opaco que empuja la pantalla completa hacia la derecha, con selección actual, iconos y nombre de cuenta. El panel y el contenido se desplazan juntos horizontalmente, sin aparecer por transparencia ni oscurecer el contenido. Se cierra al elegir destino, con la X, tocando fuera o deslizando el panel a la izquierda. Conserva etiquetas accesibles y Reducir movimiento. El teclado se retira al abrirlo.
 
 Las secciones autorizadas aparecen directamente: CRM, Quincena, Agenda, Itinerarios, Alertas, Pases, Fotografía, Música y Gestión. No concede permisos nuevos. Mi cuenta y la administración secundaria permanecen en Gestión. Las hojas de edición y los visores conservan sus controles de cierre antes de volver al menú principal.

@@ -20,7 +20,7 @@ struct MailView: View {
     private var canSend: Bool { !store.isOffline && user.can("send") && selected?.isClosed == true && (selected?.ownerOnly != true || user.can("modifyClosed")) && mail?.connection.connected == true }
     var body: some View {
         List {
-            OperationStatusSection()
+            if store.hasOperationStatus { OperationStatusSection() }
             if let error { Section { InlineError(message: error) } }
             if let notice { Section { Text(notice).foregroundStyle(.green) } }
             if let mail {

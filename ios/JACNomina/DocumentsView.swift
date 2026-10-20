@@ -249,7 +249,7 @@ struct MediaPhotoMenu: View {
         } label:{Image(systemName:"ellipsis.circle.fill").font(.title2).symbolRenderingMode(.palette).foregroundStyle(JACTheme.action,Color.white).frame(width:44,height:44).contentShape(Rectangle())}
             .buttonStyle(.plain).disabled(busy).accessibilityLabel("Opciones de "+item.name).accessibilityIdentifier("media.photo.options."+item.id)
             .onAppear {updatePinned()}
-            .onReceive(client.$cacheRevision) {_ in updatePinned()}
+            .onReceive(client.$cacheRevision.dropFirst()) {_ in updatePinned()}
             .overlay {if busy {ProgressView().controlSize(.small)}}
             .alert(confirmation ? (item.kind == "video" ? "Eliminar video" : "Eliminar foto") : "Fotografía",isPresented:Binding(get:{confirmation || message != nil || failure != nil},set:{if !$0 {confirmation=false;message=nil;failure=nil}})) {
                 if confirmation {
@@ -277,7 +277,7 @@ struct MediaPhotoMenu: View {
         guard let scope=try? client.mediaScope(),let stamp=try? client.mediaAccessStamp() else{pinned=false;return}
         let cache=client.mediaOffline
         pinTask=Task {
-            let worker=Task.detached(priority:.utility){cache.isPinned(item,scope:scope)}
+            let worker=Task.detached(priority:.utility){!Task.isCancelled && cache.isPinned(item,scope:scope)}
             let value=await withTaskCancellationHandler {await worker.value} onCancel:{worker.cancel()}
             guard !Task.isCancelled,stamp == (try? client.mediaAccessStamp()) else{return}
             pinned=value
@@ -530,6 +530,7 @@ struct MediaGalleryView: View {
     @State private var importTask: Task<Void, Never>?
     #if os(iOS)
     @StateObject private var selection = MediaBatchSelection()
+    @StateObject private var thumbnails = MediaFolderThumbnailPrefetch()
     @State private var selectionDownloadChoices = false
     @State private var selectionConfirmation = false
     @State private var selectionDeletionTargets: [MediaItem] = []
@@ -750,6 +751,7 @@ struct MediaGalleryView: View {
             .onDisappear {
                 #if os(iOS)
                 galleryVisible = false
+                thumbnails.stop()
                 #endif
                 if fullscreenPhotos == nil || store.overview?.user.id != user.id {
                     #if os(iOS)
@@ -1120,6 +1122,7 @@ struct MediaGalleryView: View {
             thumbnailEpoch=UUID(); error = nil;mediaIsOffline=false
             #if os(iOS)
             selection.reconcile(result)
+            thumbnails.start(result, client: store.client, networkAllowed: !store.isOffline, denied: thumbnailDenied)
             #endif
             if !result.canRead || !result.connected { items = []; expandedFolders=[];uploadComposition=nil;clearPreview(); discardStagedUploads() }
             // A live gallery does not grant unrelated financial permissions.
@@ -1289,13 +1292,14 @@ struct MediaTile: View {
     @StateObject private var thumbnail = MediaTileThumbnail()
     private var image: UIImage? { thumbnail.image }
     private var thumbnailKey: String {
-        "\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.thumbnailAvailable)|\(item.mimeType)|\((try? client.mediaAccessStamp()) ?? "")"
+        "\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.thumbnailAvailable)|\(item.mimeType)|\(client.mediaPresentationRevision)"
     }
     private func showThumbnail() {
         let stamp = try? client.mediaAccessStamp()
+        let cached = stamp.flatMap { MediaGridThumbnailLoader.shared.cachedImage(item, client: client, stamp: $0) }
         thumbnail.show(key: thumbnailKey, authorized: {
             stamp != nil && stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false
-        }, load: { try await MediaGridThumbnailLoader.shared.image(item, client: client, networkAllowed: !offline) }, denied: denied)
+        }, cached: cached, load: { try await MediaGridThumbnailLoader.shared.image(item, client: client, networkAllowed: !offline) }, denied: denied)
     }
     #else
     @State private var image: JACPlatformImage?
@@ -1775,6 +1779,13 @@ final class MediaOfflineCache: @unchecked Sendable {
     let root: URL
     private let lock = NSRecursiveLock()
     private var revoked: Set<String> = []
+    private struct CachedIndex {
+        let scopeID: String
+        let modified: Date
+        let size: Int
+        let index: Index
+    }
+    private var cachedIndex: CachedIndex?
     private static let chunkSize = 1024 * 1024
     init(root: URL? = nil) {
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACMediaOffline", isDirectory: true)
@@ -1793,19 +1804,27 @@ final class MediaOfflineCache: @unchecked Sendable {
         var excluded = root, values = URLResourceValues(); values.isExcludedFromBackup = true; try excluded.setResourceValues(values)
     }
     private func readIndex(_ scope: AgendaCacheScope) -> Index {
-        guard permitted(scope), let size = try? indexFile(scope).resourceValues(forKeys: [.fileSizeKey]).fileSize, size < 64 * 1024 * 1024,
+        guard permitted(scope), let attributes = try? indexFile(scope).resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]),
+              let size = attributes.fileSize, size < 64 * 1024 * 1024, let modified = attributes.contentModificationDate else { cachedIndex = nil; return Index() }
+        if let saved = cachedIndex, saved.scopeID == scope.id, saved.size == size, saved.modified == modified { return saved.index }
+        guard
               let bytes = try? Data(contentsOf: indexFile(scope)), let box = try? AES.GCM.SealedBox(combined: bytes),
               let data = try? AES.GCM.open(box, using: scope.key, authenticating: Data("jac-media-index-v1".utf8)),
-              let index = try? JSONDecoder().decode(Index.self, from: data) else { return Index() }
+              let index = try? JSONDecoder().decode(Index.self, from: data) else { cachedIndex = nil; return Index() }
+        cachedIndex = CachedIndex(scopeID: scope.id, modified: modified, size: size, index: index)
         return index
     }
     private func writeIndex(_ index: Index, scope: AgendaCacheScope) throws {
+        cachedIndex = nil
         try prepare(scope)
         let data = try JSONEncoder().encode(index)
         guard data.count < 64 * 1024 * 1024 else { throw APIError.message("La lista de archivos supera el tamaño de la copia local.") }
         let sealed = try AES.GCM.seal(data, using: scope.key, authenticating: Data("jac-media-index-v1".utf8)).combined!
         try sealed.write(to: indexFile(scope), options: JACFileSecurity.writeOptions)
         try FileManager.default.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: indexFile(scope).path)
+        if let modified = try indexFile(scope).resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate {
+            cachedIndex = CachedIndex(scopeID: scope.id, modified: modified, size: sealed.count, index: index)
+        }
     }
     @discardableResult func saveFeed(_ feed: MediaFeed, key: String, append: Bool, scope: AgendaCacheScope) throws -> MediaFeed {
         lock.lock(); defer { lock.unlock() }
@@ -2089,10 +2108,12 @@ final class MediaOfflineCache: @unchecked Sendable {
     }
     func clear(_ scope: AgendaCacheScope) {
         lock.lock(); defer { lock.unlock() }; revoked.insert(scope.id)
+        if cachedIndex?.scopeID == scope.id { cachedIndex = nil }
         try? FileManager.default.removeItem(at: folder(scope))
     }
     func removeOtherSessions(_ scope: AgendaCacheScope) {
         lock.lock(); defer { lock.unlock() }
+        if cachedIndex?.scopeID != scope.id { cachedIndex = nil }
         for url in (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where url.lastPathComponent != scope.id {
             revoked.insert(url.lastPathComponent); try? FileManager.default.removeItem(at: url)
         }

@@ -147,6 +147,10 @@ final class PayrollClient: ObservableObject {
     private var deletedContractIDs = Set<String>()
     private var contractDocuments: [String: [ExportedDocument]] = [:]
     private var cacheGeneration = 0
+    private var derivedMediaScope: (token: String, scope: AgendaCacheScope)?
+    // A cheap view identity, not authorization. Network/cache reads continue to
+    // check Keychain and permissions before and after their asynchronous work.
+    var mediaPresentationRevision: Int { cacheGeneration }
     private var noticeInvalidations: [String: Int] = [:]
     private var musicPlaybackToken: String?
     private var permissionUser: PayrollUser?
@@ -220,7 +224,7 @@ final class PayrollClient: ObservableObject {
         permissionUser = nil
         if let scope = try offlineScope() { offlineCache.clear(scope) }
         if let scope = try mediaScope() { mediaOffline.clear(scope) }
-        clearCachedAgenda(); try vault.clear(); TemporaryDocuments.clear()
+        clearCachedAgenda(); try vault.clear(); derivedMediaScope = nil; TemporaryDocuments.clear()
         usingOfflineCopy = false; syncingOffline = false; offlineSyncMessage = nil; cacheRevision += 1; onSessionInvalidated?()
     }
     func offlineScope() throws -> AgendaCacheScope? {
@@ -228,8 +232,12 @@ final class PayrollClient: ObservableObject {
         return OfflineResponseCache.scope(origin: origin, token: token)
     }
     func mediaScope() throws -> AgendaCacheScope? {
-        guard let token = try vault.load(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { return nil }
-        return AgendaCacheScope(origin: origin + "/media-offline-v1", token: token)
+        guard let token = try vault.load() else { derivedMediaScope = nil; return nil }
+        if let saved = derivedMediaScope, saved.token == token { return saved.scope }
+        guard token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { derivedMediaScope = nil; return nil }
+        let scope = AgendaCacheScope(origin: origin + "/media-offline-v1", token: token)
+        derivedMediaScope = (token, scope)
+        return scope
     }
     func mediaAccessStamp() throws -> String? { try mediaScope().map { $0.id + ":" + String(cacheGeneration) } }
     func beginOfflineRestore() { usingOfflineCopy = true }
@@ -844,7 +852,16 @@ final class PayrollClient: ObservableObject {
             var feed = try decoder.decode(MediaFeed.self, from: data)
             try Task.checkCancellation()
             guard generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
-            if feed.connected && feed.canRead { mediaOffline.allow(scope); feed = try mediaOffline.saveFeed(feed, key: folder, append: !pageToken.isEmpty, scope: scope) }
+            if feed.connected && feed.canRead {
+                mediaOffline.allow(scope)
+                let cache = mediaOffline, incoming = feed
+                feed = try await Task.detached(priority: .utility) {
+                    try Task.checkCancellation()
+                    return try cache.saveFeed(incoming, key: folder, append: !pageToken.isEmpty, scope: scope)
+                }.value
+                try Task.checkCancellation()
+                guard generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
+            }
             else { mediaOffline.clear(scope); TemporaryDocuments.clear() }
             if let deleted=feed.deletedFiles,!deleted.isEmpty {cacheRevision += 1}
             return feed

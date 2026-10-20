@@ -10,6 +10,7 @@ final class PayrollStore: ObservableObject {
     @Published var error: String?
     @Published private(set) var notice: String?
     @Published private(set) var pending: PendingPayrollChange?
+    var hasOperationStatus: Bool { error != nil || notice != nil || pending != nil }
     @Published private(set) var savedAgenda: AgendaOfflineRecord?
     @Published private(set) var agendaStorageWarning: String?
     private var savedAgendaScope: String?

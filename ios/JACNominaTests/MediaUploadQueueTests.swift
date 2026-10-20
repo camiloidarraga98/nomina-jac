@@ -344,6 +344,56 @@ final class MediaVideoPreparationTests: XCTestCase {
 
 @MainActor
 final class MediaGridThumbnailLoaderTests: XCTestCase {
+    func testVisibleCellAndPrefetchShareOneDownloadWhenTheCellLeaves() async throws {
+        let loader = MediaGridThumbnailLoader(limit: 1)
+        var reply: CheckedContinuation<Data, Error>?, downloads = 0
+        let background = Task {
+            try await loader.load(key: "same", authorized: { true }, priority: .prefetch, bytes: {
+                downloads += 1
+                return try await withCheckedThrowingContinuation { reply = $0 }
+            })
+        }
+        try await waitFor { reply != nil }
+        let visible = Task {
+            try await loader.load(key: "same", authorized: { true }, bytes: { XCTFail("No debe duplicar una descarga en curso"); return MediaFixture.photo })
+        }
+        for _ in 0..<10 { await Task.yield() }
+        visible.cancel()
+        do { _ = try await visible.value; XCTFail("La celda retirada debe cancelar su espera") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        reply?.resume(returning: MediaFixture.photo)
+        let image = try await background.value
+        let saved = try await loader.load(key: "same", authorized: { true }, bytes: { XCTFail(); return MediaFixture.photo })
+        XCTAssertTrue(image === saved); XCTAssertEqual(downloads, 1)
+    }
+    func testVisibleWorkOvertakesQueuedBackgroundThumbnails() async throws {
+        let loader = MediaGridThumbnailLoader(limit: 1)
+        var reply: CheckedContinuation<Data, Error>?, order: [String] = []
+        let first = Task {
+            try await loader.load(key: "running", authorized: { true }, priority: .prefetch, bytes: {
+                try await withCheckedThrowingContinuation { reply = $0 }
+            })
+        }
+        try await waitFor { reply != nil }
+        let background = Task {
+            try await loader.load(key: "later", authorized: { true }, priority: .prefetch, bytes: { order.append("background"); return MediaFixture.photo })
+        }
+        for _ in 0..<10 { await Task.yield() }
+        let visible = Task {
+            try await loader.load(key: "visible", authorized: { true }, bytes: { order.append("visible"); return MediaFixture.photo })
+        }
+        for _ in 0..<10 { await Task.yield() }
+        reply?.resume(returning: MediaFixture.photo)
+        _ = try await first.value; _ = try await visible.value; _ = try await background.value
+        XCTAssertEqual(order, ["visible", "background"])
+    }
+    func testCachedPixelsAreInstalledBeforeStartingAnotherCellTask() {
+        let cell = MediaTileThumbnail(), image = UIImage()
+        cell.show(key: "saved", authorized: { true }, cached: image,
+                  load: { XCTFail("La imagen ya está decodificada"); return nil }, denied: { _ in XCTFail() })
+        XCTAssertTrue(cell.image === image)
+        cell.hide(); XCTAssertNil(cell.image)
+    }
     func testReturningCellRestartsAfterCancellationAndUsesTheSameCachedPixels() async throws {
         let loader = MediaGridThumbnailLoader(), cell = MediaTileThumbnail()
         var downloads = 0

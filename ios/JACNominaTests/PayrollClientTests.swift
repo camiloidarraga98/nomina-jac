@@ -455,6 +455,100 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(complete.files.map(\.id), ["photo", "video", "page-photo", "page-video", "child-photo", "child-video"])
     }
 
+    #if os(iOS)
+    @MainActor func testOpeningFolderPrefetchesOffscreenPhotosVideosAndLaterPagesWithoutOriginals() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { MockProtocol.handler = nil; try? FileManager.default.removeItem(at: root) }
+        let vault = MemorySession(); vault.token = String(repeating: "p", count: 43)
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        let cache = MediaOfflineCache(root: root)
+        let client = PayrollClient(baseURL: URL(string: "https://prefetch.example.invalid")!, vault: vault, configuration: configuration, mediaOffline: cache, automaticallyDownloadOffline: false)
+        let folder = MediaFolder(id: "opened", name: "Carpeta sintética")
+        func item(_ id: String, kind: String = "image", available: Bool = true) -> MediaItem {
+            MediaItem(id: id, name: id, mimeType: kind == "video" ? "video/mp4" : "image/png", kind: kind, size: 100, modifiedAt: "revision-1", thumbnailAvailable: available)
+        }
+        let photo = item("visible"), video = item("offscreen-video", kind: "video"), later = item("next-page")
+        let first = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: folder, folder: folder, breadcrumbs: [folder],
+                              items: [photo, video, item("unopened", kind: "folder"), item("pending", available: false)], nextPageToken: "next", provider: "r2", collectionID: "jac-r2-synthetic")
+        let second = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: folder, folder: folder, breadcrumbs: [folder],
+                               items: [later], nextPageToken: nil, provider: "r2", collectionID: first.collectionID)
+        let page = try JSONEncoder().encode(second), lock = NSLock()
+        var requests: [String: Int] = [:], pages = 0
+        MockProtocol.handler = { request in
+            lock.lock(); defer { lock.unlock() }
+            let url = try XCTUnwrap(request.url), query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            if url.path == "/api/media" {
+                XCTAssertEqual(query.first { $0.name == "pageToken" }?.value, "next")
+                XCTAssertEqual(query.first { $0.name == "folder" }?.value, folder.id)
+                pages += 1
+                return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, page)
+            }
+            XCTAssertEqual(url.path, "/api/media/file")
+            XCTAssertEqual(query.first { $0.name == "thumbnail" }?.value, "1", "La precarga jamás debe descargar originales")
+            let id = try XCTUnwrap(query.first { $0.name == "id" }?.value); requests[id, default: 0] += 1
+            return (HTTPURLResponse(url: url, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!, MediaFixture.photo)
+        }
+        let loader = MediaGridThumbnailLoader(), prefetch = MediaFolderThumbnailPrefetch(loader: loader)
+        let scope = try XCTUnwrap(client.mediaScope())
+        try cache.saveFeed(first, key: folder.id, append: false, scope: scope)
+        prefetch.start(first, client: client, networkAllowed: true, denied: { _ in XCTFail("No se revocó este fixture") })
+        await prefetch.task?.value
+        XCTAssertEqual(requests, [photo.id: 1, video.id: 1, later.id: 1]); XCTAssertEqual(pages, 1)
+        for file in [photo, video, later] { XCTAssertEqual(cache.loadThumbnail(file, scope: scope), MediaFixture.photo) }
+        // Reopening after memory eviction restores the encrypted thumbnails;
+        // only pagination metadata is revalidated, never the original files.
+        prefetch.stop(); loader.clear()
+        prefetch.start(first, client: client, networkAllowed: true, denied: { _ in XCTFail() })
+        await prefetch.task?.value
+        XCTAssertEqual(requests, [photo.id: 1, video.id: 1, later.id: 1]); XCTAssertEqual(pages, 2)
+        prefetch.start(first, client: client, networkAllowed: false, denied: { _ in XCTFail() })
+        XCTAssertNil(prefetch.task)
+        // A denial during prefetch stops pagination and withdraws earlier cache.
+        let changed = MediaItem(id: photo.id, name: photo.name, mimeType: photo.mimeType, kind: photo.kind, size: photo.size, modifiedAt: "denied-revision", thumbnailAvailable: true)
+        var denied = false
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/media/file")
+            return (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{}".utf8))
+        }
+        prefetch.start(first.replacingItems([changed]), client: client, networkAllowed: true, denied: { _ in denied = true })
+        await prefetch.task?.value
+        XCTAssertTrue(denied); XCTAssertEqual(pages, 2)
+        XCTAssertNil(cache.loadThumbnail(photo, scope: scope))
+    }
+    #endif
+
+    @MainActor func testDerivedThumbnailScopeStillRequiresUnlockedCurrentSession() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = MemorySession(); vault.token = String(repeating: "p", count: 43)
+        let client = PayrollClient(baseURL: URL(string: "https://scope.example.invalid")!, vault: vault, mediaOffline: MediaOfflineCache(root: root), automaticallyDownloadOffline: false)
+        let first = try XCTUnwrap(client.mediaScope())
+        XCTAssertEqual(try client.mediaScope()?.id, first.id)
+        vault.locked = true; XCTAssertThrowsError(try client.mediaScope())
+        vault.locked = false; vault.token = String(repeating: "q", count: 43)
+        XCTAssertNotEqual(try client.mediaScope()?.id, first.id)
+        try client.clearSession(); XCTAssertNil(try client.mediaScope())
+    }
+
+    func testGalleryIndexMemoryTracksExternalWritesRemovalAndCorruption() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scope = AgendaCacheScope(origin: "https://index.example.invalid", token: String(repeating: "i", count: 43))
+        let first = MediaOfflineCache(root: root), second = MediaOfflineCache(root: root)
+        let folder = MediaFolder(id: "folder", name: "Prueba")
+        let item = MediaItem(id: "photo", name: "Foto.png", mimeType: "image/png", kind: "image", size: 100, modifiedAt: "one", thumbnailAvailable: true)
+        let feed = MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: folder, folder: folder, breadcrumbs: [folder], items: [item], nextPageToken: nil)
+        try first.saveFeed(feed, key: folder.id, append: false, scope: scope)
+        XCTAssertEqual(first.loadFeed(folder.id, scope: scope)?.items.map(\.id), [item.id])
+        try second.removeFile(item, scope: scope)
+        XCTAssertEqual(first.loadFeed(folder.id, scope: scope)?.items.count, 0)
+        XCTAssertTrue(first.isDeleted(item.id, scope: scope))
+        let index = root.appendingPathComponent(scope.id).appendingPathComponent("index.sealed")
+        try Data("corrupto".utf8).write(to: index)
+        XCTAssertNil(first.loadFeed(folder.id, scope: scope), "No debe rescatar una copia en memoria si el índice fue alterado")
+        first.clear(scope); XCTAssertNil(first.loadFeed(folder.id, scope: scope))
+    }
+
     @MainActor func testThumbnailCacheSurvivesClosingFolderMemoryEvictionAndReopeningSession() async throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
