@@ -38,3 +38,9 @@ La comprobación conASSETS/Workerd local confirma200 en ambas modalidades,JS, im
 El primer intento de publicación cargó11de17recursos pendientes y se detuvo al subir un lote que incluía elPDF de8.270.381bytes: la integración de credenciales del proxy devolvió401 en`workers/assets/upload?base64=true`. Las consultas de cuenta/despliegues y la creación de sesión seguían autorizadas. Una carga binaria sinbase64 llegó alAPI pero fue rechazada con400 porque este endpoint exigebase64. No se cambió elproxy ni se reemplazaron credenciales.
 
 Se optimizaron únicamente las cuatro imágenes de referencia embebidas delPDF (JPEG95, sin cambiar dimensiones). La copia web pesa2.113.014bytes; PyMuPDF confirmó15páginas, texto idéntico por página y el mismo número de enlaces por página. El archivo original entregado continúa en el adjunto y en el historial deGit del commitc26d48b; losWebP ampliables proceden directamente del original. El contenidoHTML y las50pruebas aprobadas no cambiaron.
+
+## Publicación confirmada · 20 de octubre de 2026
+
+Cloudflare confirmó el despliegue`95068978-b736-490a-ae41-6c92c9122531`, versión`e4eb19d0-1d61-49e5-be57-025351cfbb6e`, activa al100%, a las16:57deColombia. Fuente funcional`95da433`, guardada enmain. Tras optimizar elPDF, se cargaron los seis recursos pendientes y elWorker. Los11recursos ya cargados en el primer intento se reutilizaron.
+
+Wrangler terminó después con los errores auxiliares conocidos de`workers/subdomain` y`memberships`; laAPI confirmó que la nueva versión ya estaba activa. Se conservaronASSETS/DB/BUCKET/IMAGES y los cuatro nombres de secretos, con`--keep-vars`. No se repitió el despliegue confirmado. Las pruebasHTTP/navegador corresponden alWorker local; la red del ejecutor no permite consultar directamente el dominio público. Se solicitó abrir laURL publicada enCodex.
