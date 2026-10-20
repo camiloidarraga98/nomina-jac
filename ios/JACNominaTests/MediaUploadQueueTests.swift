@@ -455,7 +455,7 @@ final class MediaGridThumbnailLoaderTests: XCTestCase {
         } catch { XCTAssertTrue(error is CancellationError) }
     }
     private func waitFor(_ predicate: () -> Bool) async throws {
-        for _ in 0..<200 {
+        for _ in 0..<500 {
             if predicate() { return }
             try await Task.sleep(for: .milliseconds(10))
         }

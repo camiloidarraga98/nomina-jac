@@ -299,6 +299,8 @@ También pidió quitar el indicador de Wi-Fi que ocupa espacio y mueve el conten
 
 El20 de octubre reportó una barra blanca vacía debajo de búsquedas en varias secciones. Las listas montan el bloque de estado únicamente si hay error, aviso o cambios pendientes; así no crean una fila vacía. Se conservan los mensajes y las opciones de recuperar formularios.
 
+La aclaración posterior incluye el borde inferior: los buscadores iOS quedan siempre arriba, dentro de navegación, y el fondo del contenedor iPhone continúa con el color de la pantalla hasta el indicador de inicio. Los controles respetan el área segura y el minirreproductor sigue disponible al abrir un audio. Mac conserva su búsqueda automática.
+
 Fotografía debe empezar a precargar miniaturas al abrir una carpeta, incluidas sus páginas posteriores, sin esperar al scroll. Solo miniaturas y subcarpetas abiertas: las celdas visibles tienen prioridad, las peticiones se comparten y la caché temporal cifrada mantiene sus límites. La precarga no reordena ni agrega páginas a la cuadrícula visible; reduce consultas de Llavero/derivaciones y lecturas repetidas del índice durante el desplazamiento. Ver [fluidez y precarga](../docs/IPHONE_GALLERY_SCROLL.md).
 
 Camilo pidió acercar los títulos al primer botón/contenido, empezando por Quincenas y de forma consistente en los demás módulos. iPhone/iPad eliminan el margen superior automático de las listas; Agenda, Gestión y Fotografía usan8puntos de separación superior en sus contenedores, conservando márgenes laterales y área segura. Música usa título compacto como los otros módulos. No usar desplazamientos negativos ni ocultar el buscador para corregir la separación.

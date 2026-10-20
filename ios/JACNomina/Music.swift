@@ -273,7 +273,7 @@ struct MusicLibraryView: View {
             if loading && library == nil {Section {ProgressView("Cargando Música…")}}
             Section {Label("Las descargas están disponibles en este dispositivo sin conexión.",systemImage:"arrow.down.circle").font(.caption).foregroundStyle(.secondary)}
         }.jacSurface().navigationTitle(section?.title ?? "Música").jacInlineTitle()
-            .searchable(text:$search,prompt:section == nil ? "Buscar en toda Música":"Buscar en esta sección")
+            .jacSearchable(text:$search,prompt:section == nil ? "Buscar en toda Música":"Buscar en esta sección")
             .toolbar {
                 if section != nil {ToolbarItem(placement:.cancellationAction){Button {section=nil;search=""} label:{Label("Música",systemImage:"chevron.left")}}}
                 if user.canUploadMusic {ToolbarItem(placement:.primaryAction){Button {picker=true} label:{Label("Subir audios",systemImage:"plus")}.disabled(store.isOffline).accessibilityIdentifier("music.import")}}

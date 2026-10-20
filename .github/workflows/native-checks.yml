@@ -70,6 +70,7 @@ jobs:
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
           JAC_MUSIC: ${{ inputs.scope == 'music' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-music]')) }}
           JAC_GALLERY_PREFETCH: ${{ inputs.scope == 'gallery-prefetch' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-prefetch]')) }}
+          JAC_GALLERY_PREFETCH_REMAINING: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[prefetch-remaining]') }}
           JAC_MEDIA_LIGHT: ${{ inputs.scope == 'media-light' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-light]')) }}
           JAC_MEDIA_DELETE: ${{ inputs.scope == 'media-delete' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-delete]')) }}
           JAC_GALLERY_STABILITY: ${{ inputs.scope == 'gallery-stability' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-stability]')) }}
@@ -117,6 +118,12 @@ jobs:
               -only-testing:JACNominaUITests/LaunchTests/testMusicSectionSearchAndUploaderControls
             )
           elif [ "$JAC_GALLERY_PREFETCH" = true ]; then
+            if [ "$JAC_GALLERY_PREFETCH_REMAINING" = true ]; then
+              checks=(
+                -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests/testReturningCellRestartsAfterCancellationAndUsesTheSameCachedPixels
+                -only-testing:JACNominaUITests/LaunchTests/testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling
+              )
+            else
             checks=(
               -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests
               -only-testing:JACNominaTests/PayrollClientTests/testOpeningFolderPrefetchesOffscreenPhotosVideosAndLaterPagesWithoutOriginals
@@ -131,6 +138,7 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testMusicOfflineAudioIsEncryptedRevisionBoundAndCanBeDownloadedAgain
               -only-testing:JACNominaUITests/LaunchTests/testPhotographyKeepsThumbnailsOrderAndPagesAcrossRefreshAndScrolling
             )
+            fi
           elif [ "$JAC_MEDIA_LIGHT" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaGridThumbnailLoaderTests

@@ -1379,7 +1379,7 @@ private struct MediaUploadDestinationPicker: View {
                     if !cursor.isEmpty {Button("Cargar más carpetas") {Task {await load(cursor)}}.disabled(loading).accessibilityIdentifier("media.destination.more")}
                     if loading {ProgressView("Consultando carpetas…")}
                 }
-            }.jacSurface().navigationTitle("¿Dónde quieres subir?").jacInlineTitle().searchable(text:$search,prompt:"Buscar show o fecha")
+            }.jacSurface().navigationTitle("¿Dónde quieres subir?").jacInlineTitle().jacSearchable(text:$search,prompt:"Buscar show o fecha")
                 .toolbar {ToolbarItem(placement:.cancellationAction) {Button("Cancelar") {dismiss()}}}
                 .task {await load()}
                 .sheet(isPresented:$creating) {MediaFolderEditor(parentID:root.id,parentName:root.name) {folder in selected(folder);dismiss()}}

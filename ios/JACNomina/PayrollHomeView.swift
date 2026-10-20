@@ -84,7 +84,7 @@ struct PayrollHomeView: View {
                 phoneWorkspace
                     .safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
                     .frame(width: geometry.size.width, height: geometry.size.height)
-                    .background(JACTheme.card)
+                    .background(JACTheme.canvas)
                     .allowsHitTesting(!phoneMenuOpen).accessibilityHidden(phoneMenuOpen)
                     .overlay {
                         Color.clear.contentShape(Rectangle())
@@ -97,7 +97,7 @@ struct PayrollHomeView: View {
             .offset(x: phoneMenuOpen ? 0 : -width)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
             .clipped()
-        }.background(JACTheme.card.ignoresSafeArea())
+        }.background(JACTheme.canvas.ignoresSafeArea())
     }
     private func closePhoneMenuOnSwipe(_ value: DragGesture.Value) {
         if value.translation.width < -60 && abs(value.translation.width) > abs(value.translation.height) { setPhoneMenu(false) }
@@ -320,7 +320,7 @@ struct PeriodsView: View {
                     }
                 }
             }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").jacInlineTitle()
-                .searchable(text: $search, prompt: "Buscar mes o estado")
+                .jacSearchable(text: $search, prompt: "Buscar mes o estado")
                 .refreshable { try? await store.refresh() }
                 .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }
     }

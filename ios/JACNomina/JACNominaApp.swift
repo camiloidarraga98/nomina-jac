@@ -398,6 +398,14 @@ func JACAdaptiveColor(light:(Double,Double,Double),dark:(Double,Double,Double)) 
     #endif
 }
 extension View {
+    @ViewBuilder func jacSearchable(text: Binding<String>, prompt: String) -> some View {
+        #if os(iOS)
+        searchable(text: text, placement: .navigationBarDrawer(displayMode: .always), prompt: prompt)
+        #else
+        searchable(text: text, prompt: prompt)
+        #endif
+    }
+
     @ViewBuilder func jacInlineTitle() -> some View {
         #if os(iOS)
         navigationBarTitleDisplayMode(.inline)
