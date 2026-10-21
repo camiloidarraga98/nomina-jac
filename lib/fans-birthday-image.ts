@@ -1,5 +1,5 @@
 import {env} from 'cloudflare:workers';
-import render from '../design/fans/cumpleanos/render-v1.json';
+import render from '../design/fans/cumpleanos/render-v2.json';
 import {decodePng,encodePng,type PngImage} from './fans-png';
 
 type Images={input(stream:ReadableStream):{transform(options:Record<string,unknown>):{output(options:{format:string;quality:number}):Promise<{response():Response}>}}};
@@ -9,8 +9,13 @@ export class BirthdayImageFailure extends Error{
  constructor(message:string,readonly paidAttempt=false,readonly status=502){super(message);}
 }
 const PROVIDER='https://api.openai.com/v1/images/edits';
-export const BIRTHDAY_MODEL='gpt-image-1.5';
-export const BIRTHDAY_PROMPT=`Image 1 is the approved birthday photograph. Image 2 is the uploaded fan and is the ONLY identity reference for the accompanying person. Edit ONLY the person on the RIGHT inside the transparent mask. Replace that placeholder with the adult fan from image 2, faithfully preserving their recognizable face, skin tone, hair and body appearance when shown. Do not inherit the placeholder's face. If image 2 is a selfie, naturally complete the seated upper body. Keep a natural front-facing pose, warm happy expression, red birthday cone hat and toast with golden-yellow aguardiente. Integrate the fan's whole head, neck, shoulders, arms and body with the scene's eye-level camera perspective and warm photographic lighting; no pasted face. Preserve the left artist Jhon Alex exactly, including face, smile, hair, beard, suit, hands and hat. Keep his glass separate. Preserve ALL text, burgundy curtains, furniture, gold decorations, cake, candles, foreground table and Aguardiente Amarillo de Manzanares bottle. Do not add people, logos or text. Maintain the EXACT canvas layout and scene position, including top and bottom padding. The template is image 1; image 2 supplies identity only. This is a personal fictional birthday fan souvenir. Photorealistic natural skin, accurate hands and celebratory expression.`;
+// Pin the quality-oriented editor so an alias update cannot silently change the pilot.
+// GPT Image 2.5 uses high-fidelity references without the legacy input_fidelity field.
+export const BIRTHDAY_MODEL='gpt-image-2.5-sunburst-2026-09-08';
+export const BIRTHDAY_PROMPT=`Create one coherent, realistic birthday photograph by filling the transparent region on the RIGHT of image 1. Image 1 supplies the fixed composition and the artist on the LEFT. Its right companion has deliberately been erased completely. Image 2 is the ONLY identity and wardrobe reference for the new adult companion. Reconstruct that entire person naturally in the right-hand seat: head, hair, neck, shoulders, torso, arms, hands, clothing and visible legs. This is a complete-person reconstruction, not a face swap or a cutout pasted onto an existing body.
+Preserve the fan's recognizable facial features and proportions, complexion, hairstyle, visible body proportions, glasses and other visible accessories. Respect their appearance, whether a woman or a man. Preserve the actual visible outfit from image 2: garment type, neckline, sleeves, colors, patterns and fit. Re-create its fabric and folds for the new seated pose; do not copy the source pose, source background or source lighting. Do not force a black shirt, trousers, short hair or a masculine body onto the fan. Long hair, dresses and different body shapes may occupy the surrounding editable background and chair. If only a face or upper body is visible in image 2, complete the unseen parts plausibly and consistently with what IS visible.
+Seat the fan beside Jhon Alex at the same distance from the camera and the same eye-level perspective. Use realistic head-to-body scale, a coherent neck and shoulders, a relaxed camera-facing pose and a warm, happy expression that retains the fan's identity. Put a red cone-shaped birthday hat naturally on their head. Pose one anatomically correct hand holding its own small shot glass of golden-YELLOW aguardiente in a toast toward Jhon Alex; keep the two people's hands, arms and glasses distinct. Match the scene's warm light direction, exposure, white balance, skin texture, sharpness and grain. Include believable contact shadows, hair edges, fabric shading and seat contact. Rebuild the right chair and curtain wherever needed around the person's new silhouette, with no remnants of an old person, duplicate limbs, straight cutout seams or pasted photographic patches.
+Keep the entire unmasked composition registered exactly to image 1: no zoom, crop, camera change, border or layout shift. Preserve Jhon Alex on the LEFT exactly, including his face, smile, hair, beard, green velvet suit, jewelry, hands, glass and red hat. Preserve the approved upper caption and the protected foreground cake, candles, table and Aguardiente Amarillo de Manzanares bottle. Add no other people, text or logos. Return an opaque photograph covering the full canvas. This is a fictional personal birthday fan souvenir.`;
 
 async function boundedBytes(response:Response,limit:number){
  const length=Number(response.headers.get('content-length')||0);if(length>limit)throw new Error('Image response too large');
@@ -72,13 +77,16 @@ async function template(){
 // Resampling is restricted to the generated patch inside the source-space mask.
 export function compositeBirthdayPhoto(master:PngImage,generated:PngImage,blend:PngImage){
  if(master.width!==render.master.width||master.height!==render.master.height||blend.width!==master.width||blend.height!==master.height||generated.width!==render.canvas.width||generated.height!==render.canvas.height)throw new Error('Unexpected image dimensions');
+ // An opaque photo was requested. Reject transparent output rather than letting
+ // fragments of the old companion show through the reconstructed person.
+ for(let at=3;at<generated.rgba.length;at+=4)if(generated.rgba[at]!==255)throw new Error('Unexpected transparent photo');
  const {x:sceneX,y:sceneY,width:sceneWidth,height:sceneHeight}=render.sceneRect,output=new Uint8Array(master.rgba),gw=generated.width;
  for(let y=0;y<master.height;y++)for(let x=0;x<master.width;x++){
   const at=(y*master.width+x)*4,weight=blend.rgba[at+3];if(!weight)continue;
   const sx=Math.max(sceneX,Math.min(sceneX+sceneWidth-1,sceneX+(x+.5)*sceneWidth/master.width-.5)),sy=Math.max(sceneY,Math.min(sceneY+sceneHeight-1,sceneY+(y+.5)*sceneHeight/master.height-.5));
   const x0=Math.floor(sx),y0=Math.floor(sy),x1=Math.min(sceneX+sceneWidth-1,x0+1),y1=Math.min(sceneY+sceneHeight-1,y0+1),fx=sx-x0,fy=sy-y0;
   const a=(y0*gw+x0)*4,b=(y0*gw+x1)*4,c=(y1*gw+x0)*4,d=(y1*gw+x1)*4;
-  const alpha=((generated.rgba[a+3]*(1-fx)+generated.rgba[b+3]*fx)*(1-fy)+(generated.rgba[c+3]*(1-fx)+generated.rgba[d+3]*fx)*fy)/255,w=weight*alpha/255;
+  const w=weight/255;
   for(let channel=0;channel<3;channel++){
    const value=(generated.rgba[a+channel]*(1-fx)+generated.rgba[b+channel]*fx)*(1-fy)+(generated.rgba[c+channel]*(1-fx)+generated.rgba[d+channel]*fx)*fy;
    output[at+channel]=Math.round(master.rgba[at+channel]*(1-w)+value*w);
@@ -91,7 +99,7 @@ export async function generateBirthdayPhoto(photo:Uint8Array,mimeType:string):Pr
  const key=bindings().OPENAI_API_KEY;if(!key)throw new BirthdayImageFailure('La experiencia todavía no está disponible.',false,503);
  if(!dimensions(photo,mimeType)||photo.length>3*1024*1024)throw new BirthdayImageFailure('La foto de referencia no está disponible.',false,400);
  let approved:Template;try{approved=await template();}catch{throw new BirthdayImageFailure('No pudimos preparar la imagen. Intenta más tarde.',false,503);}
- const body=new FormData();body.append('model',BIRTHDAY_MODEL);body.append('prompt',BIRTHDAY_PROMPT);body.append('n','1');body.append('size','1024x1536');body.append('quality','medium');body.append('input_fidelity','high');body.append('output_format','png');body.append('background','opaque');
+ const body=new FormData();body.append('model',BIRTHDAY_MODEL);body.append('prompt',BIRTHDAY_PROMPT);body.append('n','1');body.append('size',`${render.canvas.width}x${render.canvas.height}`);body.append('quality','high');body.append('output_format','png');body.append('background','opaque');
  body.append('image[]',new Blob([new Uint8Array(approved.canvas)],{type:'image/png'}),'birthday-master.png');body.append('image[]',new Blob([new Uint8Array(photo)],{type:mimeType}),'fan-reference.jpg');body.append('mask',new Blob([new Uint8Array(approved.mask)],{type:'image/png'}),'birthday-mask.png');
  let response:Response;
  try{response=await fetch(PROVIDER,{method:'POST',headers:{Authorization:'Bearer '+key},body,redirect:'manual',signal:AbortSignal.timeout(5*60*1000)});}catch{throw new BirthdayImageFailure('No pudimos confirmar la generación. No la repetiremos automáticamente.',true);}

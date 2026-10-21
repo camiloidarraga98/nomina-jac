@@ -15,9 +15,9 @@ Texto definitivo de esta versión:
 
 La imagen muestra a Jhon Alex a la izquierda, con traje de terciopelo verde y una sonrisa natural; el acompañante provisional está a la derecha. Ambos miran a cámara, llevan gorritos rojos y brindan con aguardiente amarillo. Se conservan las cortinas vino tinto, el trono dorado, la mesa, el pastel y la botella de Aguardiente Amarillo de Manzanares. Es una fotografía de celebración; no volver al afiche inicial ni a versiones de rostro rechazadas. Las dos últimas fotos reales aportadas por Camilo, sentado en el trono con este traje y barba/cabello recientes, fueron la referencia de parecido que mejor funcionó. No se incluyen en Git las fotos originales aportadas por el usuario.
 
-## Regla para la futura generación
+## Regla de generación vigente
 
-La única persona reemplazable es el acompañante de la derecha, incluido el espacio necesario para adaptar su rostro, cabello y cuerpo. Jhon Alex, su traje, rostro, postura y gorro; el texto; el escenario y los objetos de la mesa son elementos protegidos. El nuevo acompañante mantiene el gorrito rojo y el brindis con líquido amarillo. No usar el acompañante provisional como referencia de identidad del fan.
+La única persona reemplazable es el acompañante de la derecha, incluido el espacio necesario para adaptar su rostro, cabello, cuerpo y vestuario a la foto aportada. Jhon Alex, su traje, rostro, postura y gorro; el texto y los objetos protegidos de la mesa permanecen fijos. La revisión posterior de Camilo permite reconstruir también el fondo y el sillón derechos alrededor de la nueva persona: no imponerle la silueta masculina o la ropa del acompañante provisional. El nuevo acompañante mantiene el gorrito rojo y el brindis con líquido amarillo. No usar el acompañante provisional como referencia de identidad del fan.
 
 Preparar una máscara específica para esta versión. La salida de la API debe componerse sobre el maestro: fuera de la máscara se conservan exactamente los píxeles aprobados. Una instrucción en el prompt por sí sola no garantiza esa conservación. Mantener el maestro como original inmutable; cualquier revisión futura tendrá otro archivo y otra huella.
 
@@ -42,13 +42,16 @@ Cuota inicial de prueba: 25 solicitudes por día global, 3 por IP anonimizada y 
 
 ## Máscara, composición y proveedor
 
-Ver `design/fans/cumpleanos/render-v1.json` para geometría y huellas, y `prepare-master-v1.py` para reproducir derivados técnicos. El maestro aprobado permanece intacto. La máscara traza al acompañante y deja protegidos artista, texto y objetos; su contorno permite cierto margen para el cabello. Un alfa independiente de composición limita el resultado final y difumina dos píxeles hacia el interior del área editable.
+La primera revisión real de Camilo mostró recortes visibles en gorro, brazo y ropa. La máscara v1 seguía seis contornos del hombre provisional y protegía huecos del sillón entre sus extremidades; la composición recortaba así las nuevas prendas y anatomía. Esa máscara queda sustituida por v2. Los archivos v1 se conservan como historial, no se seleccionan para nuevas generaciones.
 
-El maestro se adapta a un lienzo de API de 1024 × 1536, con la escena de 1024 × 1280 situada en `(0,128)`. Se envía primero el lienzo, luego la foto del fan; la máscara se aplica al primero. Se usa `gpt-image-1.5`, fidelidad alta, una salida PNG y calidad media. El prompt de servidor es fijo. No hay un campo público de instrucciones libres, redirecciones ni descargas desde URLs que devuelva el proveedor.
+Ver `design/fans/cumpleanos/render-v2.json` para geometría y huellas, y `prepare-master-v2.py` para reproducir los derivados técnicos. Una región derecha continua permite reconstruir la persona completa, cabello largo, prendas diferentes y el sillón/fondo necesarios. El acompañante anterior se elimina de la entrada de la API, incluidos los canales RGB de los píxeles transparentes, para evitar heredar su rostro, ropa o postura. La transición se sitúa fuera de la silueta anterior; los bordes derecho e inferior son totalmente editables. El maestro aprobado permanece intacto.
 
-La salida vuelve al tamaño aprobado de 1122 × 1402. La composición copia del original cada píxel fuera del alfa editable, incluso si el proveedor alteró todo el lienzo. Se comprueban las huellas de los recursos, dimensiones, formato PNG y tamaños antes de utilizarlos. Esto garantiza la conservación técnica de las zonas protegidas; el parecido del fan y las transiciones del contorno requieren además revisión visual de resultados reales.
+El lienzo es ahora 1024 × 1280, sin bandas ni desplazamiento vertical, con la misma proporción de escena. Se envía primero el lienzo limpio, luego la foto del fan; la máscara se aplica al primero. Se usa el modelo de edición orientado a calidad `gpt-image-2.5-sunburst-2026-09-08`, calidad **alta**, una salida PNG opaca y dimensiones explícitas. Se omite el parámetro heredado `input_fidelity`. El prompt fijo exige conservar identidad, cabello, proporciones y vestuario visibles, reconstruir lo no visible de forma coherente y adaptar postura, perspectiva, iluminación y sombras. No hay un campo público de instrucciones libres, redirecciones, reintentos de generación ni cambios automáticos de modelo después de un fallo.
+
+La salida vuelve al tamaño aprobado de 1122 × 1402. La composición copia del original cada píxel fuera del alfa editable, incluso si el proveedor alteró todo el lienzo. Se comprueban las huellas de los recursos, dimensiones, formato PNG y tamaños antes de utilizarlos. Una salida inesperadamente transparente se rechaza para no dejar reaparecer al acompañante antiguo. Esto garantiza la conservación técnica de las zonas protegidas; el parecido del fan y la integración del cuerpo y el vestuario requieren además revisión visual de resultados reales. Se recomienda una foto frontal de medio cuerpo o cuerpo completo con la ropa deseada; una selfie no contiene información sobre las prendas que no muestra.
 
 Referencia de los parámetros y convención de máscara: [API oficial de edición de imágenes de OpenAI](https://developers.openai.com/api/reference/python/resources/images/methods/edit).
+Selección del editor y pautas de referencias: [guía oficial de imágenes](https://developers.openai.com/api/docs/guides/image-prompting), consultada el 21 de octubre de 2026. El proyecto de la clave debe disponer de acceso al modelo seleccionado; no se degrada silenciosamente al modelo anterior.
 
 ## Configuración de producción
 
@@ -61,7 +64,7 @@ En el Worker existente `jac-nomina`:
 
 Camilo confirmó haber guardado las tres claves; se verificó únicamente la presencia de sus nombres en el Worker. No se leen, copian o publican valores. Publicar con `--keep-vars`, aplicar únicamente la migración aditiva necesaria y conservar todos los bindings, secretos, cron y conexiones previos. Para pausar nuevas generaciones se retira la activación; la limpieza de fotos continúa.
 
-## Verificación de esta entrega
+## Verificación de la primera implementación (v1)
 
 La primera entrega comprobó que el archivo guardado coincide byte por byte con la imagen aprobada, y que las dimensiones, tamaño y huella coinciden con el manifiesto.
 
@@ -71,7 +74,7 @@ Chromium local en 390 × 844 y escritorio: 11 recorridos funcionales aprobados d
 
 Las pruebas utilizan fotos ficticias, almacenamiento desechable y OpenAI/Turnstile interceptados; no hacen generaciones pagadas ni envíos de fotos reales como pruebas. El parecido final del fan se revisa con la primera generación real desde la página.
 
-## Publicación observada · 21 de octubre de 2026
+## Primera publicación observada · 21 de octubre de 2026
 
 Fuente funcional `0251d00` guardada en `main`. Página: **https://jhonalexcastano.com/cumpleanos/**. Migración `0031_fan_birthday.sql` aplicada y confirmada por el registro de D1; tabla previa y datos de otros módulos conservados.
 
@@ -80,3 +83,13 @@ El deploy convencional se detuvo antes de subir código: después de añadir las
 La activación `JAC_FANS_ENABLED=1` creó la versión derivada **`d364ded3-29a4-4277-ab1a-3b7b2443ce54`**, despliegue **`2d2473ee-0fb1-479e-b854-76010b8dd446`**, confirmado al 100% a las **16:10 de Colombia**. Se comprobó por la API de versiones la presencia de DB, BUCKET, Images, Assets, activación, secretos anteriores, OpenAI y Turnstile, sin leer sus valores. Los archivos estáticos construidos coinciden byte por byte con sus fuentes finales.
 
 La herramienta web del entorno no pudo abrir el dominio público, por lo que no se declara una comprobación HTTP de producción ni una generación pagada exitosa. La API de Cloudflare confirma el despliegue activo y la configuración; los recorridos de navegador fueron locales con servicios simulados. El primer resultado real se comprueba desde la página con una foto del participante.
+
+## Revisión v2 · corrección tras la primera foto real
+
+La foto real aportada por Camilo confirmó que las comprobaciones funcionales de v1 no garantizaban una integración visual aceptable. Se sustituyen máscara, entrada de referencia, encuadre, instrucciones y modelo según el apartado vigente anterior; no se vuelve a generar ni se sobrescribe automáticamente un resultado anterior.
+
+Validación final de v2: **11 casos de imagen aprobados**, cero fallos u omisiones, TypeScript y build Cloudflare correctos. Incluye comparación de todos los píxeles protegidos, alineación mediante un patrón de coordenadas, transición suave, cobertura completa del acompañante anterior sin huecos del sillón, limpieza de RGB/alfa de entrada, coincidencia de huellas/copias públicas y rechazo de salidas transparentes o inválidas sin repetir cobros. Se revisaron visualmente las tres previsualizaciones técnicas de máscara, mezcla y entrada limpia; junto al brindis se conserva el terciopelo verde visible del artista. Solo se ejecutó la suite afectada, sin repetir las de CRM/nómina ni los recorridos de navegador ya comprobados.
+
+OpenAI sigue interceptado en estas pruebas: no acreditan el acceso de la clave de producción al nuevo snapshot ni el parecido o naturalidad de una foto real de v2. Esa evaluación se hace con una nueva foto desde la experiencia pública; los resultados anteriores conservan su versión hasta que se retiren o venzan. No se envían de nuevo fotos de participantes desde pruebas técnicas.
+
+Publicación v2 confirmada por la API de Cloudflare el 21 de octubre a las **16:33 de Colombia**: versión **`83db0962-f02f-4bb3-a30f-9a0eb8b8cee0`**, deployment **`af27e93f-c810-48c5-ba9b-ca159c26f0c6`**, tráfico **100%**. Se reutilizó el build final verificado con `wrangler versions upload --keep-vars` y se conservaron los trece bindings/secretos requeridos, sin leer valores. No se requirieron migraciones, cambios de rutas, cron, límites ni datos de otros módulos. Los cuatro PNG y el HTML publicados coinciden con el artefacto construido. El dominio público continúa fuera de los destinos permitidos del entorno, por lo que no se presenta la activación como una prueba visual de producción.
