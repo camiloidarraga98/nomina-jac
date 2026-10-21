@@ -4,6 +4,7 @@ import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
 const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js','/file.svg','/globe.svg','/window.svg']);
+const fanAssetRevision='internal-access-2';
 
 export default {
   async scheduled(controller:{cron?:string},env:DeploymentEnv){
@@ -40,7 +41,16 @@ export default {
       fanPage.headers.set('X-Content-Type-Options','nosniff');
       fanPage.headers.set('Referrer-Policy','no-referrer');
       fanPage.headers.set('Content-Security-Policy',"default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' blob: data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'");
-      fanPage.headers.set('Cache-Control',url.pathname.endsWith('.png')?'public, max-age=31536000, immutable':'public, max-age=300');
+      if(url.pathname==='/cumpleanos/'){
+        fanPage.headers.set('Cache-Control','private, no-store');
+        // Once per UI revision, ask supporting browsers to discard HTTP cache.
+        // Cookies/storage remain intact; versioned JS/CSS cover other browsers.
+        const seen=(request.headers.get('cookie')??'').split(';').map(value=>value.trim()).includes(`jac_fan_cache=${fanAssetRevision}`);
+        if(!seen){
+          fanPage.headers.set('Clear-Site-Data','"cache"');
+          fanPage.headers.append('Set-Cookie',`jac_fan_cache=${fanAssetRevision}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=31536000`);
+        }
+      }else fanPage.headers.set('Cache-Control',url.pathname.endsWith('.png')?'public, max-age=31536000, immutable':'public, max-age=300');
       return fanPage;
     }
     // The artist's rider is explicitly public. Keep its static namespace apart

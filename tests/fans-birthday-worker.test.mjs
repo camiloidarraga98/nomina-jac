@@ -46,6 +46,11 @@ test('Workerd validates real File/cookie/D1/R2 flow, idempotent generation and p
   response=await mf.dispatchFetch(endpoint,{headers:{cookie:otherCookie+'; '+internalCookie}});assert.equal((await response.json()).internalMode,false,'Internal access stays bound to the original anonymous owner.');
   const internalID=crypto.randomUUID();response=await submit(sessionCookie,internalID);body=await response.json();assert.equal(response.status,202,body.error);assert.equal(body.job.status,'queued');assert.equal(verifications,2,'Internal jobs still require Turnstile.');
   assert.equal((await db.prepare('SELECT internal_mode FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first()).internal_mode,1);assert.equal(stored.internal_mode,0);
+  const resetID=crypto.randomUUID(),reset=()=>mf.dispatchFetch(endpoint+'?internal-reset=1',{method:'POST',headers:{cookie:sessionCookie,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({id:resetID})});
+  response=await reset();body=await response.json();assert.equal(response.status,200,body.error);assert.equal(body.reset,true);assert.equal(body.quotaGeneration,1);const resetAt=body.resetAt;
+  response=await reset();body=await response.json();assert.equal(body.quotaGeneration,1,'The same reset UUID never resets the quota twice.');assert.equal(body.resetAt,resetAt);
+  response=await mf.dispatchFetch(endpoint,{headers:{cookie:otherCookie}});assert.equal((await response.json()).quotaGeneration,1,'The new quota generation is shared with every device.');
+  assert.equal((await db.prepare('SELECT count(*) AS n FROM jac_fan_birthday_jobs').first()).n,2);assert.equal((await db.prepare('SELECT status FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first()).status,'queued');assert.equal(verifications,2,'Resetting quotas never sends photos or starts a generation.');
   response=await mf.dispatchFetch(endpoint+'?internal=1',{method:'DELETE',headers:{cookie:sessionCookie,Origin:base}});assert.equal((await response.json()).internalMode,false);assert.match(response.headers.get('set-cookie'),/Max-Age=0/);
   assert.equal((await db.prepare('SELECT status FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first()).status,'queued','Leaving internal mode never cancels or removes a photo.');
  }finally{await mf.dispose();}

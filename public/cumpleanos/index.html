@@ -12,14 +12,14 @@
   <meta property="og:locale" content="es_CO">
   <link rel="canonical" href="https://jhonalexcastano.com/cumple">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/cumpleanos/style.css">
+  <link rel="stylesheet" href="/cumpleanos/style.css?v=internal-access-2">
   <title>Tu foto con el Rey · Cumpleaños de Jhon Alex Castaño</title>
-  <script type="module" src="/cumpleanos/app.js"></script>
+  <script type="module" src="/cumpleanos/app.js?v=internal-access-2"></script>
 </head>
 <body>
   <header class="site-header">
     <a class="artist-mark" href="/cumple" aria-label="Jhon Alex Castaño, foto de cumpleaños"><span>JHON ALEX</span><small>CASTAÑO</small></a>
-    <p class="event-date"><span class="date-dot" aria-hidden="true"></span>10 ABR 2027 <span class="date-divider" aria-hidden="true">/</span> BOGOTÁ</p>
+    <div class="header-actions"><p class="event-date"><span class="date-dot" aria-hidden="true"></span>10 ABR 2027 <span class="date-divider" aria-hidden="true">/</span> BOGOTÁ</p><button id="open-internal" class="header-internal-button" type="button" aria-controls="internal-panel" aria-expanded="false">Uso interno</button></div>
   </header>
   <main class="experience">
     <section class="photo-column" aria-label="La foto del cumpleaños">
@@ -83,7 +83,7 @@
       </section>
       <div id="error-message" class="notice error" role="alert" hidden></div>
       <p class="experience-note">La IA adapta tu postura al brindis; el parecido y los detalles del vestuario pueden variar.</p>
-      <section id="internal-panel" class="internal-panel" aria-label="Uso interno de JAC" hidden>
+      <section id="internal-panel" class="internal-panel" aria-label="Uso interno de JAC">
         <details id="internal-details">
           <summary>Uso interno</summary>
           <form id="internal-form" class="internal-form" autocomplete="off" novalidate>
@@ -95,6 +95,7 @@
         <div id="internal-active" class="internal-active" hidden>
           <p>Modo interno activo · Sin límite diario</p>
           <span>Se mantienen la verificación de cada foto y el turno de la cola.</span>
+          <button id="internal-reset" class="secondary-button internal-reset-button" type="button">Restablecer creaciones para todos</button>
           <button id="internal-exit" class="text-button" type="button">Salir del modo interno</button>
         </div>
         <p id="internal-feedback" class="internal-feedback" role="status" aria-live="polite" hidden></p>

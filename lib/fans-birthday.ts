@@ -5,7 +5,8 @@ import {generateBirthdayPhoto,normalizeBirthdayUpload} from './fans-birthday-ima
 import {isBirthdayHEIC} from './fans-image-format';
 
 type FanEnv={OPENAI_API_KEY?:string;JAC_FANS_ENABLED?:string;JAC_FANS_TURNSTILE_SITE_KEY?:string;JAC_FANS_TURNSTILE_SECRET?:string;JAC_FANS_INTERNAL_CODE?:string;PAYROLL_AUTH_KEY?:string;BUCKET:R2Bucket};
-type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;internal_mode:number;status:string;source_key:string;source_mime:string;result_key:string;claim:string;started_at:string;message:string;created_at:string;expires_at:string;updated_at:string};
+type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;internal_mode:number;quota_generation:number;status:string;source_key:string;source_mime:string;result_key:string;claim:string;started_at:string;message:string;created_at:string;expires_at:string;updated_at:string};
+type QuotaReset={sequence:number;request_id:string;actor_hash:string;created_at:string};
 const settings=()=>env as unknown as FanEnv;
 const HOUR=3600_000,DAY=24*HOUR;
 export const BIRTHDAY_LIMITS={photoBytes:8*1024*1024,retentionHours:24,metadataDays:7,dailyGlobal:25,dailyIP:5,dailyBrowser:5,waiting:10,concurrent:10,processingBatch:5} as const;
@@ -20,6 +21,10 @@ const digest=(purpose:string,value:string)=>createHmac('sha256',settings().PAYRO
 const internalAvailable=()=>enabled()&&!!settings().JAC_FANS_INTERNAL_CODE&&settings().JAC_FANS_INTERNAL_CODE!.length<=128;
 const reply=(value:unknown,status=200,extra:Record<string,string>={})=>Response.json(value,{status,headers:{...privateHeaders,...extra}});
 const row=(id:string)=>database().prepare('SELECT * FROM jac_fan_birthday_jobs WHERE id=?').bind(id).first<Job>();
+async function quotaGeneration(){
+ const current=await database().prepare('SELECT COALESCE(MAX(sequence),0) AS generation FROM jac_fan_birthday_quota_resets').first<{generation:number}>();
+ if(!current||!Number.isSafeInteger(current.generation)||current.generation<0)throw new BirthdayFailure('No pudimos consultar la disponibilidad. Inténtalo más tarde.',503,'availability_unavailable');return current.generation;
+}
 
 function browser(req:Request,create=false){
  const local=/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname),name=local?'jac_fan':'__Host-jac_fan';
@@ -40,16 +45,20 @@ function internalMode(req:Request,owner:string){
  const [,expires,nonce,signature]=match,until=Number(expires);if(until<=Date.now()||until>Date.now()+8*HOUR)return false;
  return timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(internalSignature(owner,expires,nonce),'hex'));
 }
+async function boundedInternalJSON(req:Request,message:string,code:string){
+ if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')??''))throw new BirthdayFailure(message,400,code);
+ const limit=1024;if(Number(req.headers.get('content-length')??0)>limit)throw new BirthdayFailure('La solicitud es demasiado grande.',413,code);
+ if(!req.body)throw new BirthdayFailure(message,400,code);
+ const reader=req.body.getReader(),parts:Uint8Array[]=[];let length=0;
+ for(;;){const next=await reader.read();if(next.done)break;length+=next.value.length;if(length>limit){await reader.cancel();throw new BirthdayFailure('La solicitud es demasiado grande.',413,code);}parts.push(next.value);}
+ const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
+ try{const data=JSON.parse(new TextDecoder().decode(bytes));if(data&&typeof data==='object'&&!Array.isArray(data))return data as Record<string,unknown>;}catch{/* The response never repeats submitted values. */}
+ throw new BirthdayFailure(message,400,code);
+}
 async function enableInternalMode(req:Request,owner:string){
  if(!owner)throw new BirthdayFailure('Abre primero la experiencia en este navegador.',403);
  if(!internalAvailable())throw new BirthdayFailure('El acceso interno no está disponible en este momento.',503,'internal_unavailable');
- if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')??''))throw new BirthdayFailure('Introduce el código de acceso interno.',400,'internal_code_required');
- const limit=1024;if(Number(req.headers.get('content-length')??0)>limit)throw new BirthdayFailure('La solicitud de acceso es demasiado grande.',413,'internal_code_required');
- if(!req.body)throw new BirthdayFailure('Introduce el código de acceso interno.',400,'internal_code_required');
- const reader=req.body.getReader(),parts:Uint8Array[]=[];let length=0;
- for(;;){const next=await reader.read();if(next.done)break;length+=next.value.length;if(length>limit){await reader.cancel();throw new BirthdayFailure('La solicitud de acceso es demasiado grande.',413,'internal_code_required');}parts.push(next.value);}
- const bytes=new Uint8Array(length);let offset=0;for(const part of parts){bytes.set(part,offset);offset+=part.length;}
- let code:unknown;try{const data=JSON.parse(new TextDecoder().decode(bytes));code=data&&typeof data==='object'&&!Array.isArray(data)?data.code:undefined;}catch{/* The response never repeats submitted values. */}
+ const {code}=await boundedInternalJSON(req,'Introduce el código de acceso interno.','internal_code_required');
  if(typeof code!=='string'||code.length<1||code.length>128)throw new BirthdayFailure('Introduce el código de acceso interno.',400,'internal_code_required');
  const address=req.headers.get('cf-connecting-ip');if(!address||address.length>100)throw new BirthdayFailure('No pudimos verificar la conexión. Inténtalo desde la página original.',403);
  const stamp=now(),expires=new Date(Date.now()+15*60_000).toISOString();
@@ -62,6 +71,16 @@ async function enableInternalMode(req:Request,owner:string){
  if(!timingSafeEqual(Buffer.from(digest('internal-code',code),'hex'),Buffer.from(digest('internal-code',settings().JAC_FANS_INTERNAL_CODE!),'hex')))throw new BirthdayFailure('El código de acceso no es válido.',403,'internal_code_invalid');
  const until=String(Date.now()+8*HOUR),nonce=randomBytes(24).toString('base64url');
  return internalCookie(req,`v1.${until}.${nonce}.${internalSignature(owner,until,nonce)}`);
+}
+async function resetPublicQuota(req:Request,owner:string){
+ if(!internalMode(req,owner))throw new BirthdayFailure('Activa el uso interno para restablecer las creaciones.',403,'internal_required');
+ const {id}=await boundedInternalJSON(req,'No pudimos identificar este restablecimiento. Inténtalo de nuevo.','internal_reset_invalid');
+ if(typeof id!=='string'||!UUID.test(id))throw new BirthdayFailure('No pudimos identificar este restablecimiento. Inténtalo de nuevo.',400,'internal_reset_invalid');
+ await database().prepare('INSERT INTO jac_fan_birthday_quota_resets(request_id,actor_hash,created_at) VALUES(?,?,?) ON CONFLICT(request_id) DO NOTHING').bind(id,owner,now()).run();
+ const reset=await database().prepare('SELECT * FROM jac_fan_birthday_quota_resets WHERE request_id=?').bind(id).first<QuotaReset>();
+ if(!reset)throw new BirthdayFailure('No pudimos confirmar el restablecimiento. Reintenta la misma solicitud.',503,'availability_unavailable');
+ if(reset.actor_hash!==owner)throw new BirthdayFailure('Este restablecimiento pertenece a otra solicitud.',409,'internal_reset_conflict');
+ return {reset:true,quotaGeneration:await quotaGeneration(),resetAt:reset.created_at};
 }
 function writeOrigin(req:Request){
  if(req.headers.get('origin')!==new URL(req.url).origin||req.headers.get('sec-fetch-site')==='cross-site')throw new BirthdayFailure('Abre esta experiencia desde su página original.',403);
@@ -128,9 +147,9 @@ async function createJob(req:Request,owner:string,internal=false){
  // Reject exhausted budgets before verification and image transformations.
  // The INSERT below still performs the authoritative atomic reservation.
  const budget=await database().prepare(`SELECT
- (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND created_at>=?) AS total,
- (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND ip_hash=? AND created_at>=?) AS network,
- (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND owner_hash=? AND created_at>=?) AS browser,
+ (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND quota_generation=(SELECT COALESCE(MAX(sequence),0) FROM jac_fan_birthday_quota_resets) AND created_at>=?) AS total,
+ (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND quota_generation=(SELECT COALESCE(MAX(sequence),0) FROM jac_fan_birthday_quota_resets) AND ip_hash=? AND created_at>=?) AS network,
+ (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND quota_generation=(SELECT COALESCE(MAX(sequence),0) FROM jac_fan_birthday_quota_resets) AND owner_hash=? AND created_at>=?) AS browser,
  (SELECT count(*) FROM jac_fan_birthday_jobs WHERE status IN ('uploading','queued','processing') AND expires_at>?) AS waiting`).bind(day,ip,day,owner,day,stamp).first<{total:number;network:number;browser:number;waiting:number}>();
  if(!budget)throw new BirthdayFailure('No pudimos consultar la disponibilidad. Inténtalo más tarde.',503,'availability_unavailable');
  if(!internal&&budget.total>=BIRTHDAY_LIMITS.dailyGlobal)throw new BirthdayFailure(`La experiencia alcanzó las ${BIRTHDAY_LIMITS.dailyGlobal} creaciones de hoy. El límite se renueva a medianoche de Colombia.`,429,'daily_global_limit');
@@ -141,11 +160,11 @@ async function createJob(req:Request,owner:string,internal=false){
  let normalized:{bytes:Uint8Array;mimeType:string};
  try{normalized=await normalizeBirthdayUpload(raw,mime);}catch(e){if(e&&typeof e==='object'&&'status' in e&&e.status===503)throw new BirthdayFailure('No pudimos preparar tu foto en este momento. Inténtalo más tarde.',503);throw new BirthdayFailure('No pudimos preparar esa foto. Prueba con una foto válida en JPG, PNG, WebP o HEIC.',415);}
  if(!normalized.bytes.length||normalized.bytes.length>3*1024*1024||!['image/jpeg','image/png','image/webp'].includes(normalized.mimeType))throw new BirthdayFailure('No pudimos preparar esa foto. Prueba con otra.',415);
- const reserved=await database().prepare(`INSERT INTO jac_fan_birthday_jobs(id,owner_hash,ip_hash,payload_hash,internal_mode,status,source_key,source_mime,claim,started_at,created_at,expires_at,updated_at)
- SELECT ?,?,?,?,?,'uploading',?,?,?,?,?,?,? WHERE
- (?=1 OR ((SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND created_at>=?)<? AND
- (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND ip_hash=? AND created_at>=?)<? AND
- (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND owner_hash=? AND created_at>=?)<?)) AND
+ const reserved=await database().prepare(`INSERT INTO jac_fan_birthday_jobs(id,owner_hash,ip_hash,payload_hash,internal_mode,quota_generation,status,source_key,source_mime,claim,started_at,created_at,expires_at,updated_at)
+ SELECT ?,?,?,?,?,(SELECT COALESCE(MAX(sequence),0) FROM jac_fan_birthday_quota_resets),'uploading',?,?,?,?,?,?,? WHERE
+ (?=1 OR ((SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND quota_generation=(SELECT COALESCE(MAX(sequence),0) FROM jac_fan_birthday_quota_resets) AND created_at>=?)<? AND
+ (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND quota_generation=(SELECT COALESCE(MAX(sequence),0) FROM jac_fan_birthday_quota_resets) AND ip_hash=? AND created_at>=?)<? AND
+ (SELECT count(*) FROM jac_fan_birthday_jobs WHERE internal_mode=0 AND quota_generation=(SELECT COALESCE(MAX(sequence),0) FROM jac_fan_birthday_quota_resets) AND owner_hash=? AND created_at>=?)<?)) AND
  (SELECT count(*) FROM jac_fan_birthday_jobs WHERE status IN ('uploading','queued','processing') AND expires_at>?)<?
  ON CONFLICT(id) DO NOTHING`).bind(id,owner,ip,hash,internal?1:0,key,normalized.mimeType,uploadClaim,stamp,stamp,expires,stamp,internal?1:0,day,BIRTHDAY_LIMITS.dailyGlobal,ip,day,BIRTHDAY_LIMITS.dailyIP,owner,day,BIRTHDAY_LIMITS.dailyBrowser,stamp,BIRTHDAY_LIMITS.waiting).run();
  if(reserved.meta.changes!==1){const existing=await row(id);if(existing&&existing.owner_hash===owner&&existing.payload_hash===hash)return publicJob(await ownJob(id,owner));throw new BirthdayFailure('Otras solicitudes ocuparon la capacidad disponible. Vuelve a intentarlo más tarde; esta foto todavía no entró en la cola.',429,'capacity_limit');}
@@ -168,6 +187,10 @@ async function createJob(req:Request,owner:string,internal=false){
 export async function handleBirthdayApi(req:Request):Promise<Response>{
  try{
   const url=new URL(req.url),identity=browser(req,req.method==='GET'&&!url.searchParams.has('id'));
+  if(url.searchParams.get('internal-reset')==='1'){
+   if(req.method!=='POST')return reply({error:'Método no disponible.'},405,{Allow:'POST'});
+   writeOrigin(req);return reply(await resetPublicQuota(req,identity.owner));
+  }
   if(url.searchParams.get('internal')==='1'&&(req.method==='POST'||req.method==='DELETE')){
    writeOrigin(req);if(!identity.owner)throw new BirthdayFailure('Abre primero la experiencia en este navegador.',403);
    if(req.method==='DELETE')return reply({internalMode:false},200,{'Set-Cookie':internalCookie(req,'',0)});
@@ -175,7 +198,7 @@ export async function handleBirthdayApi(req:Request):Promise<Response>{
   }
   if(req.method==='GET'&&!url.searchParams.has('id')){
    const active=await database().prepare("SELECT id FROM jac_fan_birthday_jobs WHERE owner_hash=? AND expires_at>? AND status<>'cancelled' ORDER BY created_at DESC,id DESC LIMIT 1").bind(identity.owner,now()).first<{id:string}>();
-   return reply({enabled:enabled(),turnstileSiteKey:enabled()?settings().JAC_FANS_TURNSTILE_SITE_KEY!:'',retentionHours:BIRTHDAY_LIMITS.retentionHours,activeJobId:active?.id??'',internalAvailable:internalAvailable(),internalMode:internalMode(req,identity.owner)},200,identity.cookie?{'Set-Cookie':identity.cookie}:{});
+   return reply({enabled:enabled(),turnstileSiteKey:enabled()?settings().JAC_FANS_TURNSTILE_SITE_KEY!:'',retentionHours:BIRTHDAY_LIMITS.retentionHours,activeJobId:active?.id??'',internalAvailable:internalAvailable(),internalMode:internalMode(req,identity.owner),quotaGeneration:await quotaGeneration()},200,identity.cookie?{'Set-Cookie':identity.cookie}:{});
   }
   if(req.method==='POST'){writeOrigin(req);return reply({job:await createJob(req,identity.owner,internalMode(req,identity.owner))},202,identity.cookie?{'Set-Cookie':identity.cookie}:{});}
   if(req.method!=='GET'&&req.method!=='DELETE')return reply({error:'Método no disponible.'},405,{Allow:'GET, POST, DELETE'});
@@ -198,6 +221,7 @@ export async function handleBirthdayApi(req:Request):Promise<Response>{
 async function cleanupBirthdayJobs(){
  const stamp=now(),stale=new Date(Date.now()-10*60_000).toISOString(),old=new Date(Date.now()-BIRTHDAY_LIMITS.metadataDays*DAY).toISOString(),db=database();
  await db.prepare('DELETE FROM jac_fan_birthday_internal_limits WHERE expires_at<=?').bind(stamp).run();
+ await db.prepare('DELETE FROM jac_fan_birthday_quota_resets WHERE created_at<? AND sequence<>(SELECT MAX(sequence) FROM jac_fan_birthday_quota_resets)').bind(old).run();
  await db.prepare("UPDATE jac_fan_birthday_jobs SET status='uncertain',claim='',message=?,updated_at=? WHERE status='processing' AND started_at<?").bind('La generación no pudo confirmarse. No la repetiremos automáticamente.',stamp,stale).run();
  await db.prepare("UPDATE jac_fan_birthday_jobs SET claim='' WHERE claim<>'' AND started_at<?").bind(stale).run();
  await db.prepare("UPDATE jac_fan_birthday_jobs SET status='failed',claim='',message=?,updated_at=? WHERE status='uploading' AND created_at<?").bind('La subida no se completó. Puedes iniciar una creación nueva.',stamp,stale).run();

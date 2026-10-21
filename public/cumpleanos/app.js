@@ -1,5 +1,6 @@
 const API = '/api/fans/cumpleanos';
 const STORAGE_KEY = 'jac-birthday-job-v1';
+const RESET_STORAGE_KEY = 'jac-birthday-reset-v1';
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const STILL_PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 const PHOTO_EXTENSION = /\.(?:jpe?g|png|webp|heic|heif)$/i;
@@ -19,8 +20,10 @@ const el = {
   download: $('download-photo'), share: $('share-photo'), delete: $('delete-photo'), error: $('error-message'),
   internalPanel: $('internal-panel'), internalDetails: $('internal-details'), internalForm: $('internal-form'),
   internalCode: $('internal-code'), internalSubmit: $('internal-submit'), internalActive: $('internal-active'),
-  internalExit: $('internal-exit'), internalFeedback: $('internal-feedback'),
+  internalExit: $('internal-exit'), internalFeedback: $('internal-feedback'), internalOpen: $('open-internal'), internalHelp: $('internal-help'),
+  internalReset: $('internal-reset'),
 };
+const internalHelpText = el.internalHelp.textContent;
 let config = null;
 let selectedFile = null;
 let selectedURL = '';
@@ -50,6 +53,10 @@ let internalMode = false;
 let internalBusy = false;
 let internalController = null;
 let internalRevision = 0;
+let resetBusy = false;
+let resetID = '';
+let resetController = null;
+let resetRevision = 0;
 let activeStatus = '';
 let resultLoading = false;
 let serverConfigured = false;
@@ -57,6 +64,8 @@ let requestController = null;
 
 function storedJob() { try { return sessionStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; } }
 function rememberJob(id) { try { if (id) sessionStorage.setItem(STORAGE_KEY, id); else sessionStorage.removeItem(STORAGE_KEY); } catch { /* Photos remain usable when storage is disabled. */ } }
+function storedReset() { try { return sessionStorage.getItem(RESET_STORAGE_KEY) || ''; } catch { return ''; } }
+function rememberReset(id) { try { if (id) sessionStorage.setItem(RESET_STORAGE_KEY, id); else sessionStorage.removeItem(RESET_STORAGE_KEY); } catch { /* The in-memory operation ID still protects retries in this tab. */ } }
 function validID(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
 function showError(message = '') {
   el.error.textContent = message; el.error.hidden = !message;
@@ -83,7 +92,7 @@ function controls() {
   el.cameraInput.disabled = locked; el.cameraButton.disabled = locked;
   el.adult.disabled = locked; el.consent.disabled = locked;
   const needsProof = Boolean(config?.turnstileSiteKey) && !turnstileToken;
-  el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || internalBusy || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
+  el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || internalBusy || resetBusy || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
   el.generate.querySelector('span').textContent = creationBlocked || (needsProof && verificationNeedsRefresh ? 'Volver a verificar' : verificationPending ? 'Completa la verificación' : 'Crear mi foto con el Rey');
   el.cancel.disabled = uploading || deleting;
   el.delete.disabled = deleting;
@@ -218,15 +227,26 @@ async function responseData(response) {
   return data;
 }
 function internalControls() {
-  el.internalPanel.hidden = !internalAvailable && !internalMode;
-  el.internalPanel.setAttribute('aria-busy', String(internalBusy));
+  el.internalPanel.hidden = false;
+  el.internalPanel.setAttribute('aria-busy', String(internalBusy || resetBusy));
+  el.internalOpen.setAttribute('aria-expanded', String(internalMode || el.internalDetails.open));
   el.internalDetails.hidden = internalMode;
   el.internalActive.hidden = !internalMode;
-  el.internalCode.disabled = internalBusy || uploading || internalMode;
-  el.internalSubmit.disabled = internalBusy || uploading || !internalAvailable || internalMode;
+  el.internalCode.disabled = internalBusy || resetBusy || uploading || internalMode || !internalAvailable;
+  el.internalSubmit.disabled = internalBusy || resetBusy || uploading || !internalAvailable || internalMode;
   el.internalSubmit.textContent = internalBusy && !internalMode ? 'Activando…' : 'Activar modo interno';
-  el.internalExit.disabled = internalBusy || uploading;
+  el.internalExit.disabled = internalBusy || resetBusy || uploading;
   el.internalExit.textContent = internalBusy && internalMode ? 'Cerrando…' : 'Salir del modo interno';
+  el.internalReset.disabled = internalBusy || resetBusy || uploading || !internalMode;
+  el.internalReset.textContent = resetBusy ? 'Restableciendo…' : resetID ? 'Reintentar restablecimiento' : 'Restablecer creaciones para todos';
+  el.internalHelp.textContent = config && !internalAvailable ? 'El acceso interno no está disponible en este momento. Recarga la página para volver a comprobarlo.' : internalHelpText;
+}
+function openInternalPanel() {
+  el.internalPanel.hidden = false;
+  el.internalDetails.open = true;
+  internalControls();
+  const target = internalMode ? el.internalExit : el.internalCode.disabled ? el.internalDetails.querySelector('summary') : el.internalCode;
+  target.focus({ preventScroll: true }); el.internalPanel.scrollIntoView({ block: 'nearest' });
 }
 function internalFeedback(message = '', failed = false) {
   el.internalFeedback.textContent = message; el.internalFeedback.hidden = !message;
@@ -237,8 +257,14 @@ function internalFeedback(message = '', failed = false) {
     el.internalFeedback.scrollIntoView({ block: 'nearest' });
   }
 }
+function clearDailyBlock() {
+  if (!DAILY_LIMIT_CODES.has(creationBlockedCode)) return;
+  const quotaNotice = el.error.textContent === creationBlockedMessage;
+  creationBlocked = ''; creationBlockedCode = ''; creationBlockedMessage = '';
+  if (quotaNotice) showError();
+}
 async function changeInternalMode(activate) {
-  if (internalBusy || uploading || (activate && !internalAvailable)) return;
+  if (internalBusy || resetBusy || uploading || (activate && !internalAvailable)) return;
   let code = activate ? el.internalCode.value : '';
   el.internalCode.value = '';
   if (activate && !code) { internalFeedback('Escribe el código de uso interno para continuar.', true); return; }
@@ -260,11 +286,7 @@ async function changeInternalMode(activate) {
     if (activate) {
       // Unlocking changes only the daily budget. Selection, UUID, consent,
       // captcha and an existing job retain their independent lifecycle.
-      if (DAILY_LIMIT_CODES.has(creationBlockedCode)) {
-        const quotaNotice = el.error.textContent === creationBlockedMessage;
-        creationBlocked = ''; creationBlockedCode = ''; creationBlockedMessage = '';
-        if (quotaNotice) showError();
-      }
+      clearDailyBlock();
       el.internalDetails.open = false;
     }
     internalControls();
@@ -277,6 +299,44 @@ async function changeInternalMode(activate) {
     if (ticket === internalRevision) {
       internalBusy = false; if (internalController === controller) internalController = null;
       internalControls(); controls();
+    }
+  }
+}
+async function resetCreations() {
+  if (!internalMode || internalBusy || resetBusy || uploading) return;
+  const question = resetID
+    ? '¿Reintentar el mismo restablecimiento pendiente? Las fotos existentes se conservan.'
+    : '¿Restablecer las creaciones para todos los dispositivos? Las fotos existentes se conservan.';
+  if (!window.confirm(question)) return;
+  resetID ||= crypto.randomUUID(); rememberReset(resetID);
+  const ticket = ++resetRevision;
+  const controller = new AbortController(); resetController = controller;
+  resetBusy = true; internalFeedback(); controls();
+  try {
+    const response = await fetch(`${API}?internal-reset=1`, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: resetID }),
+    });
+    const data = await responseData(response);
+    if (ticket !== resetRevision) return;
+    if (data.reset !== true || !Number.isSafeInteger(data.quotaGeneration) || data.quotaGeneration < 0) throw new Error('No pudimos confirmar el restablecimiento. Reintenta para consultar el mismo intento.');
+    if (config) config.quotaGeneration = data.quotaGeneration;
+    resetID = ''; rememberReset(''); clearDailyBlock();
+    internalFeedback('Creaciones restablecidas para todos. Los demás dispositivos pueden actualizar la página para volver a crear.');
+  } catch (error) {
+    if (error.name === 'AbortError' || ticket !== resetRevision) return;
+    if (error.code === 'internal_required') {
+      internalMode = false; if (config) config.internalMode = false; el.internalDetails.open = true;
+      internalFeedback('La sesión de uso interno venció. Vuelve a introducir el código para continuar.', true);
+    } else {
+      internalFeedback(error.blocked || !error.status
+        ? 'No pudimos confirmar el restablecimiento. Puedes reintentar el mismo intento sin repetir la operación.'
+        : error.message || 'No pudimos restablecer las creaciones. Puedes reintentar el mismo intento.', true);
+    }
+  } finally {
+    if (ticket === resetRevision) {
+      resetBusy = false; if (resetController === controller) resetController = null;
+      controls();
     }
   }
 }
@@ -430,7 +490,7 @@ function upload(data, ticket) {
 }
 async function submitPhoto(event) {
   event.preventDefault();
-  if (uploading || deleting || jobID || creationBlocked || internalBusy) return;
+  if (uploading || deleting || jobID || creationBlocked || internalBusy || resetBusy) return;
   showError();
   if (!serverConfigured) { showError('Estamos preparando la experiencia. Vuelve a visitarnos pronto.'); return; }
   if (!selectedFile) { showError('Primero elige una foto tuya.'); el.input.focus(); return; }
@@ -511,9 +571,11 @@ async function sharePhoto() {
 }
 
 el.input.addEventListener('change', () => choosePhoto(el.input.files?.[0]));
+el.internalOpen.addEventListener('click', openInternalPanel);
+el.internalReset.addEventListener('click', () => { void resetCreations(); });
 el.internalForm.addEventListener('submit', event => { event.preventDefault(); void changeInternalMode(true); });
 el.internalExit.addEventListener('click', () => { void changeInternalMode(false); });
-el.internalDetails.addEventListener('toggle', () => { if (!el.internalDetails.open) el.internalCode.value = ''; });
+el.internalDetails.addEventListener('toggle', () => { if (!el.internalDetails.open) el.internalCode.value = ''; internalControls(); });
 el.camera.hidden = !(navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches);
 el.cameraButton.addEventListener('click', () => { if (!uploading && !deleting && !jobID) el.cameraInput.click(); });
 el.cameraInput.addEventListener('change', () => {
@@ -538,6 +600,7 @@ el.upload.addEventListener('drop', event => {
   choosePhoto(files?.[0]);
 });
 window.addEventListener('pagehide', event => {
+  resetRevision++; resetController?.abort(); resetController = null; resetBusy = false;
   internalRevision++; internalController?.abort(); internalController = null; internalBusy = false;
   el.internalCode.value = ''; internalControls(); controls();
   stopPolling(); clearRequest();
@@ -547,7 +610,11 @@ window.addEventListener('pageshow', event => {
   if (event.persisted && jobID && !uploading && !deleting && !resultURL) { pollStarted = Date.now(); void readJob(); }
 });
 
+const internalRequested = new URLSearchParams(location.search).get('interno') === '1' || location.hash === '#internal-panel';
+resetID = storedReset(); if (!validID(resetID)) { resetID = ''; rememberReset(''); }
+if (internalRequested) openInternalPanel();
 await loadConfig();
+if (internalRequested) openInternalPanel();
 const resumed = storedJob() || config?.activeJobId || '';
 if (validID(resumed)) {
   discardChallenge(); verificationNeedsRefresh = Boolean(config?.turnstileSiteKey);
