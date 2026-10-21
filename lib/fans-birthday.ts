@@ -8,12 +8,12 @@ type FanEnv={OPENAI_API_KEY?:string;JAC_FANS_ENABLED?:string;JAC_FANS_TURNSTILE_
 type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;status:string;source_key:string;source_mime:string;result_key:string;claim:string;started_at:string;message:string;created_at:string;expires_at:string;updated_at:string};
 const settings=()=>env as unknown as FanEnv;
 const HOUR=3600_000,DAY=24*HOUR;
-export const BIRTHDAY_LIMITS={photoBytes:8*1024*1024,retentionHours:24,metadataDays:7,dailyGlobal:25,dailyIP:3,dailyBrowser:2,waiting:10} as const;
+export const BIRTHDAY_LIMITS={photoBytes:8*1024*1024,retentionHours:24,metadataDays:7,dailyGlobal:25,dailyIP:5,dailyBrowser:5,waiting:10} as const;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COOKIE=/^[A-Za-z0-9_-]{43}$/;
 const terminal=new Set(['ready','failed','uncertain','cancelled']);
 const privateHeaders={'Cache-Control':'private, no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','Cross-Origin-Resource-Policy':'same-origin','X-Robots-Tag':'noindex, nofollow, noarchive'};
-class BirthdayFailure extends Error {constructor(message:string,readonly status=400){super(message);}}
+class BirthdayFailure extends Error {constructor(message:string,readonly status=400,readonly code='request_rejected'){super(message);}}
 const now=()=>new Date().toISOString();
 const enabled=()=>{const e=settings();return e.JAC_FANS_ENABLED==='1'&&!!e.OPENAI_API_KEY&&!!e.JAC_FANS_TURNSTILE_SITE_KEY&&!!e.JAC_FANS_TURNSTILE_SECRET&&!!e.PAYROLL_AUTH_KEY&&e.PAYROLL_AUTH_KEY.length>=32;};
 const digest=(purpose:string,value:string)=>createHmac('sha256',settings().PAYROLL_AUTH_KEY??'').update('jac-birthday-v1:'+purpose+'\0'+value).digest('hex');
@@ -56,12 +56,20 @@ function imageMime(bytes:Uint8Array){
  throw new BirthdayFailure('Usa una foto válida en JPG, PNG, WebP o HEIC.',415);
 }
 async function verifyHuman(req:Request,token:FormDataEntryValue|null){
- if(typeof token!=='string'||token.length<1||token.length>2048)throw new BirthdayFailure('Completa la verificación y vuelve a intentarlo.',403);
+ if(typeof token!=='string'||token.length<1||token.length>2048)throw new BirthdayFailure('Completa la verificación y vuelve a intentarlo.',403,'verification_required');
  let response:Response;
- try{response=await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify',{method:'POST',redirect:'manual',signal:AbortSignal.timeout(12_000),body:new URLSearchParams({secret:settings().JAC_FANS_TURNSTILE_SECRET!,response:token})});}catch{throw new BirthdayFailure('No pudimos completar la verificación. Inténtalo de nuevo.',503);}
- if(!response.ok)throw new BirthdayFailure('La verificación no está disponible. Inténtalo de nuevo.',503);
- let data:{success?:boolean;hostname?:string;action?:string};try{data=await response.json();}catch{throw new BirthdayFailure('La verificación no está disponible. Inténtalo de nuevo.',503);}
- if(data.success!==true||data.hostname!==new URL(req.url).hostname||data.action!=='birthday-photo')throw new BirthdayFailure('La verificación venció. Complétala otra vez.',403);
+ try{response=await fetch('https://challenges.cloudflare.com/turnstile/v0/siteverify',{method:'POST',redirect:'manual',signal:AbortSignal.timeout(12_000),body:new URLSearchParams({secret:settings().JAC_FANS_TURNSTILE_SECRET!,response:token})});}catch{throw new BirthdayFailure('La verificación no está disponible en este momento. Puedes volver a intentarlo más tarde.',503,'verification_unavailable');}
+ if(!response.ok)throw new BirthdayFailure('La verificación no está disponible en este momento. Puedes volver a intentarlo más tarde.',503,'verification_unavailable');
+ let data:{success?:boolean;hostname?:string;action?:string;'error-codes'?:unknown};try{data=await response.json();}catch{throw new BirthdayFailure('La verificación no está disponible en este momento. Puedes volver a intentarlo más tarde.',503,'verification_unavailable');}
+ if(!data||typeof data!=='object')throw new BirthdayFailure('La verificación no está disponible en este momento. Puedes volver a intentarlo más tarde.',503,'verification_unavailable');
+ if(data.success!==true){
+  const errors=Array.isArray(data['error-codes'])?data['error-codes']:[];
+  if(errors.some(code=>['invalid-input-secret','missing-input-secret','bad-request'].includes(code)))throw new BirthdayFailure('La creación de fotos necesita que el equipo de JAC revise la configuración de verificación.',503,'verification_configuration');
+  if(errors.includes('internal-error'))throw new BirthdayFailure('La verificación no está disponible en este momento. Puedes volver a intentarlo más tarde.',503,'verification_unavailable');
+  if(errors.some(code=>['timeout-or-duplicate','missing-input-response'].includes(code)))throw new BirthdayFailure('La verificación venció o ya se usó. Vuelve a verificar antes de subir la foto.',403,'verification_expired');
+  throw new BirthdayFailure('No pudimos validar la verificación. Puedes completarla de nuevo sin cambiar tu foto.',403,'verification_rejected');
+ }
+ if(data.hostname!==new URL(req.url).hostname||data.action!=='birthday-photo')throw new BirthdayFailure('No pudimos validar la verificación para esta página. Abre la experiencia desde su enlace original.',403,'verification_rejected');
 }
 async function removeAsset(key:string){if(key)await settings().BUCKET.delete(key);}
 async function purgeAssets(job:Job,includeResult=true){
@@ -87,7 +95,11 @@ async function createJob(req:Request,owner:string){
  (SELECT count(*) FROM jac_fan_birthday_jobs WHERE ip_hash=? AND created_at>=?) AS network,
  (SELECT count(*) FROM jac_fan_birthday_jobs WHERE owner_hash=? AND created_at>=?) AS browser,
  (SELECT count(*) FROM jac_fan_birthday_jobs WHERE status IN ('uploading','queued','processing') AND expires_at>?) AS waiting`).bind(day,ip,day,owner,day,stamp).first<{total:number;network:number;browser:number;waiting:number}>();
- if(!budget||budget.total>=BIRTHDAY_LIMITS.dailyGlobal||budget.network>=BIRTHDAY_LIMITS.dailyIP||budget.browser>=BIRTHDAY_LIMITS.dailyBrowser||budget.waiting>=BIRTHDAY_LIMITS.waiting)throw new BirthdayFailure('Por hoy alcanzamos el límite de creaciones o hay varias fotos en espera. Inténtalo más tarde.',429);
+ if(!budget)throw new BirthdayFailure('No pudimos consultar la disponibilidad. Inténtalo más tarde.',503,'availability_unavailable');
+ if(budget.total>=BIRTHDAY_LIMITS.dailyGlobal)throw new BirthdayFailure(`La experiencia alcanzó las ${BIRTHDAY_LIMITS.dailyGlobal} creaciones de hoy. El límite se renueva a medianoche de Colombia.`,429,'daily_global_limit');
+ if(budget.browser>=BIRTHDAY_LIMITS.dailyBrowser)throw new BirthdayFailure(`Este navegador alcanzó sus ${BIRTHDAY_LIMITS.dailyBrowser} intentos de hoy, incluidos los que se borraron. Podrás crear otra foto a medianoche de Colombia.`,429,'daily_browser_limit');
+ if(budget.network>=BIRTHDAY_LIMITS.dailyIP)throw new BirthdayFailure(`Esta conexión alcanzó sus ${BIRTHDAY_LIMITS.dailyIP} intentos de hoy. El límite se renueva a medianoche de Colombia.`,429,'daily_ip_limit');
+ if(budget.waiting>=BIRTHDAY_LIMITS.waiting)throw new BirthdayFailure('Hay varias fotos en espera. Vuelve a intentarlo en unos minutos; todavía no iniciamos esta solicitud.',429,'queue_full');
  await verifyHuman(req,form.get('turnstileToken'));
  let normalized:{bytes:Uint8Array;mimeType:string};
  try{normalized=await normalizeBirthdayUpload(raw,mime);}catch(e){if(e&&typeof e==='object'&&'status' in e&&e.status===503)throw new BirthdayFailure('No pudimos preparar tu foto en este momento. Inténtalo más tarde.',503);throw new BirthdayFailure('No pudimos preparar esa foto. Prueba con una foto válida en JPG, PNG, WebP o HEIC.',415);}
@@ -99,7 +111,7 @@ async function createJob(req:Request,owner:string){
  (SELECT count(*) FROM jac_fan_birthday_jobs WHERE owner_hash=? AND created_at>=?)<? AND
  (SELECT count(*) FROM jac_fan_birthday_jobs WHERE status IN ('uploading','queued','processing') AND expires_at>?)<?
  ON CONFLICT(id) DO NOTHING`).bind(id,owner,ip,hash,key,normalized.mimeType,uploadClaim,stamp,stamp,expires,stamp,day,BIRTHDAY_LIMITS.dailyGlobal,ip,day,BIRTHDAY_LIMITS.dailyIP,owner,day,BIRTHDAY_LIMITS.dailyBrowser,stamp,BIRTHDAY_LIMITS.waiting).run();
- if(reserved.meta.changes!==1){const existing=await row(id);if(existing&&existing.owner_hash===owner&&existing.payload_hash===hash)return publicJob(await ownJob(id,owner));throw new BirthdayFailure('Por hoy alcanzamos el límite de creaciones o hay varias fotos en espera. Inténtalo más tarde.',429);}
+ if(reserved.meta.changes!==1){const existing=await row(id);if(existing&&existing.owner_hash===owner&&existing.payload_hash===hash)return publicJob(await ownJob(id,owner));throw new BirthdayFailure('Otras solicitudes ocuparon la capacidad disponible. Vuelve a intentarlo más tarde; esta foto todavía no entró en la cola.',429,'capacity_limit');}
  try{
   await settings().BUCKET.put(key,normalized.bytes,{httpMetadata:{contentType:normalized.mimeType}});
   const saved=await database().prepare("UPDATE jac_fan_birthday_jobs SET status='queued',claim='',updated_at=? WHERE id=? AND owner_hash=? AND status='uploading' AND claim=? AND expires_at>?").bind(now(),id,owner,uploadClaim,now()).run();
@@ -138,7 +150,7 @@ export async function handleBirthdayApi(req:Request):Promise<Response>{
   const image=await settings().BUCKET.get(job.result_key);if(!image)throw new BirthdayFailure('Esta foto ya no está disponible.',410);
   const live=await ownJob(id,identity.owner);if(live.status!=='ready'||live.result_key!==job.result_key){await image.body.cancel().catch(()=>{});throw new BirthdayFailure('Esta foto ya no está disponible.',410);}
   return new Response(image.body,{headers:{...privateHeaders,'Content-Type':'image/png','Content-Disposition':`${url.searchParams.has('download')?'attachment':'inline'}; filename="Mi-cumpleanos-con-el-Rey.png"`}});
- }catch(e){return reply({error:e instanceof BirthdayFailure?e.message:'No pudimos completar la operación. Inténtalo de nuevo.'},e instanceof BirthdayFailure?e.status:502);}
+ }catch(e){return reply({error:e instanceof BirthdayFailure?e.message:'No pudimos completar la operación. Inténtalo de nuevo.',code:e instanceof BirthdayFailure?e.code:'operation_failed'},e instanceof BirthdayFailure?e.status:502);}
 }
 
 async function cleanupBirthdayJobs(){

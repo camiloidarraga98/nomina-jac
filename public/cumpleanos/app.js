@@ -4,10 +4,13 @@ const MAX_FILE_BYTES = 8 * 1024 * 1024;
 const STILL_PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
 const PHOTO_EXTENSION = /\.(?:jpe?g|png|webp|heic|heif)$/i;
 const POLL_DEADLINE = 12 * 60 * 1000;
+const VERIFICATION_MAX_AGE = 120000;
+const VERIFICATION_CODES = new Set(['verification_required', 'verification_expired', 'verification_rejected', 'verification_unavailable', 'verification_configuration']);
 const $ = id => document.getElementById(id);
 const el = {
   form: $('photo-form'), input: $('photo-input'), upload: $('upload-zone'), selected: $('selected-photo'),
   preview: $('photo-preview'), previewNote: $('preview-note'), name: $('selected-name'), size: $('selected-size'), generate: $('generate-button'),
+  camera: $('camera-action'), cameraInput: $('camera-input'), cameraButton: $('take-photo'),
   adult: $('adult-consent'), consent: $('photo-consent'), availability: $('availability'), human: $('human-check'),
   job: $('job-panel'), jobTitle: $('job-title'), progressTrack: $('progress-track'), progress: $('job-progress'),
   message: $('job-message'), detail: $('job-detail'), refresh: $('refresh-job'), cancel: $('cancel-job'),
@@ -31,6 +34,11 @@ let deleting = false;
 let xhr = null;
 let widgetID = null;
 let turnstileToken = '';
+let tokenIssuedAt = 0;
+let challengeRevision = 0;
+let verificationPending = false;
+let verificationNeedsRefresh = false;
+let creationBlocked = '';
 let activeStatus = '';
 let resultLoading = false;
 let serverConfigured = false;
@@ -39,7 +47,13 @@ let requestController = null;
 function storedJob() { try { return sessionStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; } }
 function rememberJob(id) { try { if (id) sessionStorage.setItem(STORAGE_KEY, id); else sessionStorage.removeItem(STORAGE_KEY); } catch { /* Photos remain usable when storage is disabled. */ } }
 function validID(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
-function showError(message = '') { el.error.textContent = message; el.error.hidden = !message; }
+function showError(message = '') {
+  el.error.textContent = message; el.error.hidden = !message;
+  if (message) {
+    el.error.tabIndex = -1; el.error.focus({ preventScroll: true });
+    el.error.scrollIntoView({ block: 'nearest' });
+  }
+}
 function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
 function clearRequest() { requestController?.abort(); requestController = null; }
 function cleanupResult() {
@@ -55,8 +69,11 @@ function resetPhotoDisplay() {
 function controls() {
   const locked = uploading || deleting || Boolean(jobID);
   el.input.disabled = locked; $('change-photo').disabled = locked; $('remove-photo').disabled = locked;
+  el.cameraInput.disabled = locked; el.cameraButton.disabled = locked;
   el.adult.disabled = locked; el.consent.disabled = locked;
-  el.generate.disabled = !serverConfigured || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (Boolean(config?.turnstileSiteKey) && !turnstileToken);
+  const needsProof = Boolean(config?.turnstileSiteKey) && !turnstileToken;
+  el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
+  el.generate.querySelector('span').textContent = creationBlocked || (needsProof && verificationNeedsRefresh ? 'Volver a verificar' : verificationPending ? 'Completa la verificación' : 'Crear mi foto con el Rey');
   el.cancel.disabled = uploading || deleting;
   el.delete.disabled = deleting;
   el.refresh.disabled = uploading || deleting;
@@ -68,10 +85,46 @@ function setBusyPanel(title, message, detail) {
   el.progress.setAttribute('aria-label', 'Preparación de tu imagen');
   el.refresh.hidden = true;
 }
-function resetChallenge() {
-  turnstileToken = '';
-  if (widgetID !== null && window.turnstile) window.turnstile.reset(widgetID);
+function challengeVisible() {
+  return serverConfigured && !creationBlocked && Boolean(config?.turnstileSiteKey) && !uploading && !deleting && !jobID && !el.form.hidden;
+}
+function discardChallenge() {
+  challengeRevision++; turnstileToken = ''; tokenIssuedAt = 0; verificationPending = false;
+  if (widgetID !== null) window.turnstile?.remove?.(widgetID);
+  widgetID = null; el.human.replaceChildren(); el.human.hidden = true;
+}
+function renderChallenge() {
+  if (!challengeVisible() || widgetID !== null || !window.turnstile) return;
+  const revision = ++challengeRevision;
+  const current = () => revision === challengeRevision && challengeVisible();
+  verificationPending = true; el.human.hidden = false;
+  const failed = message => {
+    if (!current()) return;
+    turnstileToken = ''; tokenIssuedAt = 0; verificationPending = false; verificationNeedsRefresh = true;
+    controls(); showError(message);
+  };
+  widgetID = window.turnstile.render(el.human, {
+    sitekey: config.turnstileSiteKey, theme: 'dark', action: 'birthday-photo',
+    retry: 'never', 'refresh-expired': 'manual', 'refresh-timeout': 'manual',
+    callback(token) {
+      if (!current()) return;
+      turnstileToken = token; tokenIssuedAt = Date.now(); verificationPending = false; verificationNeedsRefresh = false; controls();
+    },
+    'expired-callback'() { failed('La verificación venció. Pulsa «Volver a verificar» para continuar.'); },
+    'timeout-callback'() { failed('La verificación se interrumpió. Pulsa «Volver a verificar» para continuar.'); },
+    'error-callback'() { failed('No pudimos completar la verificación. Puedes volver a verificar o recargar la página.'); },
+  });
   controls();
+}
+function verifyAgain() {
+  if (!challengeVisible() || verificationPending) return;
+  discardChallenge(); verificationNeedsRefresh = false;
+  if (!window.turnstile) {
+    verificationNeedsRefresh = true; controls();
+    showError('No pudimos cargar la verificación. Revisa tu conexión y recarga la página.'); return;
+  }
+  renderChallenge();
+  el.human.scrollIntoView({ block: 'nearest' });
 }
 function supportsPhoto(file) {
   const type = (file.type || '').trim().toLowerCase();
@@ -111,7 +164,7 @@ function prepareSelectedPreview(file, url) {
 }
 function choosePhoto(file) {
   if (uploading || jobID || deleting) return;
-  showError();
+  if (!creationBlocked) showError();
   if (!file) return;
   if (!supportsPhoto(file)) {
     showError('Elige una foto JPG, PNG, WebP o HEIC/HEIF. Este apartado admite fotos, no videos ni secuencias.');
@@ -133,36 +186,37 @@ function removePhoto() {
   if (uploading || jobID || deleting) return;
   clearSelectedPreview();
   if (selectedURL) URL.revokeObjectURL(selectedURL);
-  selectedURL = ''; selectedFile = null; requestID = ''; el.input.value = '';
+  selectedURL = ''; selectedFile = null; requestID = ''; el.input.value = ''; el.cameraInput.value = '';
   el.selected.hidden = true; el.upload.hidden = false; controls();
+}
+function responseError(status, body, blocked = false) {
+  const error = new Error(blocked
+    ? 'La protección de conexión interrumpió la solicitud. Consulta el estado de tu foto antes de volver a enviarla; si continúa, recarga la página.'
+    : typeof body?.error === 'string' ? body.error : 'No pudimos completar la operación. Inténtalo de nuevo.');
+  error.status = status; error.code = typeof body?.code === 'string' ? body.code : ''; error.blocked = blocked;
+  return error;
 }
 async function responseData(response) {
   const type = response.headers.get('content-type') || '';
+  const blocked = response.headers.get('cf-mitigated') === 'challenge' || (!type.includes('application/json') && [403, 503].includes(response.status));
+  if (blocked) throw responseError(response.status, null, true);
   const parsed = type.includes('application/json') ? await response.json() : {};
   const data = parsed && typeof parsed === 'object' ? parsed : {};
-  if (!response.ok) {
-    const error = new Error(typeof data.error === 'string' ? data.error : 'No pudimos completar la operación. Inténtalo de nuevo.');
-    error.status = response.status; throw error;
-  }
+  if (!response.ok) throw responseError(response.status, data);
   return data;
 }
-function loadTurnstile(siteKey) {
-  el.human.hidden = false;
-  const render = () => {
-    if (widgetID !== null || !window.turnstile) return;
-    widgetID = window.turnstile.render(el.human, {
-      sitekey: siteKey, theme: 'dark', action: 'birthday-photo',
-      callback(token) { turnstileToken = token; controls(); },
-      'expired-callback'() { turnstileToken = ''; controls(); },
-      'error-callback'() { turnstileToken = ''; controls(); showError('No pudimos completar la verificación. Recarga la página e inténtalo otra vez.'); },
-    });
-  };
-  if (window.turnstile) { render(); return; }
-  window.jacBirthdayTurnstileReady = render;
+function loadTurnstile() {
+  verificationPending = true;
+  if (window.turnstile) { renderChallenge(); return; }
+  window.jacBirthdayTurnstileReady = renderChallenge;
   const script = document.createElement('script');
   script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=jacBirthdayTurnstileReady&render=explicit';
   script.async = true; script.defer = true;
-  script.onerror = () => showError('No pudimos cargar la verificación. Revisa tu conexión y recarga la página.');
+  script.onerror = () => {
+    if (!challengeVisible()) return;
+    verificationPending = false; verificationNeedsRefresh = true; controls();
+    showError('No pudimos cargar la verificación. Revisa tu conexión y recarga la página.');
+  };
   document.head.append(script);
 }
 async function loadConfig() {
@@ -173,7 +227,7 @@ async function loadConfig() {
     if (Number.isFinite(hours) && hours > 0 && hours <= 168) document.querySelectorAll('[data-retention]').forEach(node => { node.textContent = String(hours); });
     el.availability.hidden = serverConfigured;
     if (!serverConfigured) el.availability.textContent = 'Estamos preparando la experiencia. Pronto podrás crear tu foto; mientras tanto, este es el brindis que te espera.';
-    if (serverConfigured && config.turnstileSiteKey) loadTurnstile(config.turnstileSiteKey);
+    if (serverConfigured && config.turnstileSiteKey) loadTurnstile();
   } catch {
     serverConfigured = false; el.availability.hidden = false;
     el.availability.textContent = 'No pudimos conectar con la experiencia. Revisa tu conexión y recarga la página para volver a intentarlo.';
@@ -260,6 +314,9 @@ async function readJob() {
     await acceptJob(data.job, ticket);
   } catch (error) {
     if (error.name === 'AbortError' || ticket !== generation || id !== jobID) return;
+    if (error.blocked) {
+      pausePolling('La conexión necesita una comprobación antes de consultar tu foto.'); showError(error.message); return;
+    }
     if ([401, 403, 404, 410].includes(error.status)) {
       rememberJob(''); jobID = ''; if (error.status === 410) requestID = ''; activeStatus = ''; el.job.hidden = true; el.result.hidden = true; el.form.hidden = false;
       resetPhotoDisplay(); showError(error.status === 410 ? 'Esta foto ya venció. Puedes crear una nueva cuando quieras.' : 'Esta solicitud ya no está disponible en este navegador. Puedes elegir otra foto.'); controls(); return;
@@ -283,8 +340,10 @@ function upload(data, ticket) {
     request.addEventListener('load', () => {
       if (xhr === request) xhr = null;
       const body = request.response;
-      if (request.status >= 200 && request.status < 300 && body?.job) resolve(body.job);
-      else { const error = new Error(body?.error || 'No pudimos confirmar la subida. Consultaremos tu solicitud antes de volver a enviarla.'); error.status = request.status; reject(error); }
+      const type = request.getResponseHeader('content-type') || '';
+      const blocked = request.getResponseHeader('cf-mitigated') === 'challenge' || (!type.includes('application/json') && [403, 503].includes(request.status));
+      if (!blocked && request.status >= 200 && request.status < 300 && body?.job) resolve(body.job);
+      else reject(responseError(request.status, body, blocked));
     });
     request.addEventListener('error', () => { if (xhr === request) xhr = null; reject(new Error('Se interrumpió la conexión durante la subida.')); });
     request.addEventListener('timeout', () => { if (xhr === request) xhr = null; reject(new Error('La subida tardó más de lo esperado.')); });
@@ -293,30 +352,44 @@ function upload(data, ticket) {
   });
 }
 async function submitPhoto(event) {
-  event.preventDefault(); showError();
-  if (uploading || deleting || jobID) return;
+  event.preventDefault();
+  if (uploading || deleting || jobID || creationBlocked) return;
+  showError();
   if (!serverConfigured) { showError('Estamos preparando la experiencia. Vuelve a visitarnos pronto.'); return; }
   if (!selectedFile) { showError('Primero elige una foto tuya.'); el.input.focus(); return; }
   if (!el.adult.checked || !el.consent.checked) { showError('Confirma que tienes 18 años o más y que autorizas el uso de tu foto para crear la imagen.'); return; }
-  if (config?.turnstileSiteKey && !turnstileToken) { showError('Completa la verificación antes de crear tu foto.'); return; }
+  if (config?.turnstileSiteKey && (!turnstileToken || Date.now() - tokenIssuedAt > VERIFICATION_MAX_AGE)) {
+    if (!verificationPending) verifyAgain();
+    return;
+  }
+  const proof = turnstileToken;
+  requestID ||= crypto.randomUUID();
+  const data = new FormData(); data.append('photo', selectedFile); data.append('id', requestID);
+  data.append('consent', 'true'); data.append('adult', 'true');
+  if (proof) data.append('turnstileToken', proof);
+  // A proof is single-use. Stop the widget before hiding its parent; only an
+  // explicit later action may request another proof, never an upload callback.
+  discardChallenge(); verificationNeedsRefresh = Boolean(config?.turnstileSiteKey);
   generation++; const ticket = generation;
-  requestID ||= crypto.randomUUID(); jobID = requestID; activeStatus = 'queued'; rememberJob(jobID);
+  jobID = requestID; activeStatus = 'queued'; rememberJob(jobID);
   pollStarted = Date.now(); uploading = true;
   setBusyPanel('Tu foto va camino al brindis', 'Subiendo tu foto…', 'Estamos enviando la foto que elegiste de forma privada.');
   el.progress.value = 0; el.progress.setAttribute('aria-label', 'Progreso de la subida de tu foto');
   controls();
-  const data = new FormData(); data.append('photo', selectedFile); data.append('id', requestID);
-  data.append('consent', 'true'); data.append('adult', 'true');
-  if (turnstileToken) data.append('turnstileToken', turnstileToken);
   try {
     const job = await upload(data, ticket);
     if (ticket !== generation) return;
-    uploading = false; resetChallenge(); await acceptJob(job, ticket);
+    uploading = false; await acceptJob(job, ticket);
   } catch (error) {
     if (ticket !== generation || error.name === 'AbortError') return;
-    uploading = false; resetChallenge();
-    if (error.status >= 400 && error.status < 500 && ![408, 409].includes(error.status)) {
+    uploading = false;
+    if (error.blocked) {
+      pausePolling('La conexión interrumpió la confirmación de tu foto.'); showError(error.message); return;
+    }
+    if ((error.status >= 400 && error.status < 500 && ![408, 409].includes(error.status)) || VERIFICATION_CODES.has(error.code)) {
       rememberJob(''); jobID = ''; activeStatus = ''; el.job.hidden = true; el.form.hidden = false;
+      if (['daily_browser_limit', 'daily_ip_limit', 'daily_global_limit'].includes(error.code)) creationBlocked = 'Límite diario alcanzado';
+      if (error.code === 'verification_configuration') creationBlocked = 'Creación no disponible';
       showError(error.message); controls(); return;
     }
     pausePolling('Vamos a comprobar si tu foto llegó.');
@@ -336,8 +409,9 @@ async function deleteJob() {
     rememberJob(''); jobID = ''; requestID = ''; activeStatus = ''; pollStarted = 0;
     el.job.hidden = true; el.result.hidden = true; el.form.hidden = false; resetPhotoDisplay();
     clearSelectedPreview(); selectedFile = null; if (selectedURL) URL.revokeObjectURL(selectedURL); selectedURL = '';
-    el.input.value = ''; el.selected.hidden = true; el.upload.hidden = false;
-    el.adult.checked = false; el.consent.checked = false; resetChallenge();
+    el.input.value = ''; el.cameraInput.value = ''; el.selected.hidden = true; el.upload.hidden = false;
+    el.adult.checked = false; el.consent.checked = false;
+    discardChallenge(); verificationNeedsRefresh = Boolean(config?.turnstileSiteKey);
     el.availability.hidden = false; el.availability.textContent = 'Tu solicitud se canceló y tus fotos dejaron de estar disponibles.';
     if (!serverConfigured) el.availability.textContent += ' Estamos preparando la experiencia para nuevas fotos.';
   } catch (error) {
@@ -353,6 +427,14 @@ async function sharePhoto() {
 }
 
 el.input.addEventListener('change', () => choosePhoto(el.input.files?.[0]));
+el.camera.hidden = !(navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches);
+el.cameraButton.addEventListener('click', () => { if (!uploading && !deleting && !jobID) el.cameraInput.click(); });
+el.cameraInput.addEventListener('change', () => {
+  const file = el.cameraInput.files?.[0];
+  // Clear the native picker so a retake with the same filename still changes.
+  el.cameraInput.value = '';
+  if (file) choosePhoto(file);
+});
 $('change-photo').addEventListener('click', () => { if (!uploading && !jobID) el.input.click(); });
 $('remove-photo').addEventListener('click', removePhoto);
 el.adult.addEventListener('change', controls); el.consent.addEventListener('change', controls);
@@ -379,6 +461,7 @@ window.addEventListener('pageshow', event => {
 await loadConfig();
 const resumed = storedJob() || config?.activeJobId || '';
 if (validID(resumed)) {
+  discardChallenge(); verificationNeedsRefresh = Boolean(config?.turnstileSiteKey);
   jobID = resumed; requestID = resumed; pollStarted = Date.now();
   setBusyPanel('Recuperando tu brindis', 'Consultando tu foto…', 'Buscamos la solicitud que dejaste en este navegador.');
   controls(); await readJob();

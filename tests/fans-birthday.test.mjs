@@ -86,30 +86,55 @@ test('invalid origins, absent browser, wrong consent and malformed images never 
  assert.equal((await upload(b.cookie,{photo:new TextEncoder().encode('<html>not an image</html>')})).status,415);
  normalizeHook=()=>{throw Error('Untrusted malformed decoder details');};assert.equal((await upload(b.cookie)).status,415);assert.equal(objects.size,0);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,0);
 });
-test('Turnstile validates success, action, hostname and rejects redirects without following them',async()=>{
- const b=await browser();for(const data of [{success:false},{success:true,hostname:'other.example.invalid',action:'birthday-photo'},{success:true,hostname:'birthday.example.invalid',action:'other-action'}]){verifyHook=()=>Response.json(data);assert.equal((await upload(b.cookie)).status,403);}
- verifyHook=()=>new Response(null,{status:307,headers:{location:'https://evil.example.invalid'}});assert.equal((await upload(b.cookie)).status,503);assert.equal(counts.normalize,0);assert.equal(objects.size,0);
+test('Turnstile failures distinguish expired tokens, rejection, outages and configuration without consuming an attempt',async()=>{
+ const b=await browser(),id=crypto.randomUUID(),required=await upload(b.cookie,{id,fields:{token:''}});
+ assert.equal(required.status,403);assert.equal(required.body.code,'verification_required');assert.equal(counts.verify,0);
+ const valid={success:true,hostname:'birthday.example.invalid',action:'birthday-photo'},diagnostic='fixture-provider-diagnostic-never-public';
+ const cases=[
+  ...['timeout-or-duplicate','missing-input-response'].map(code=>({name:code,status:403,code:'verification_expired',data:{success:false,'error-codes':[code]}})),
+  ...['invalid-input-secret','missing-input-secret','bad-request'].map(code=>({name:code,status:503,code:'verification_configuration',data:{success:false,'error-codes':[code],detail:diagnostic}})),
+  ...[{success:false},{success:false,'error-codes':['invalid-input-response']},{...valid,success:'true'},{...valid,success:1},{...valid,hostname:'other.example.invalid'},{...valid,action:'other-action'}].map((data,i)=>({name:'rejected-'+i,status:403,code:'verification_rejected',data})),
+  {name:'network',status:503,code:'verification_unavailable',response:()=>{throw Error(diagnostic+' fixture-turnstile-private');}},
+  {name:'redirect',status:503,code:'verification_unavailable',response:()=>new Response(null,{status:307,headers:{location:'https://evil.example.invalid'}})},
+  {name:'http-error',status:503,code:'verification_unavailable',response:()=>new Response(diagnostic,{status:503})},
+  {name:'malformed-json',status:503,code:'verification_unavailable',response:()=>new Response(diagnostic)},
+  {name:'null-json',status:503,code:'verification_unavailable',data:null},
+  {name:'internal-error',status:503,code:'verification_unavailable',data:{success:false,'error-codes':['internal-error'],detail:diagnostic}}
+ ];
+ for(const fixture of cases){
+  verifyHook=fixture.response??(()=>Response.json(fixture.data));const r=await upload(b.cookie,{id});
+  assert.equal(r.status,fixture.status,fixture.name);assert.equal(r.body.code,fixture.code,fixture.name);
+  assert.equal(typeof r.body.error,'string');assert(!JSON.stringify(r.body).includes(diagnostic),fixture.name);assert(!JSON.stringify(r.body).includes('fixture-turnstile-private'),fixture.name);assert(!('error-codes' in r.body),fixture.name);
+ }
+ assert.equal(counts.normalize,0);assert.equal(counts.put,0);assert.equal(counts.generate,0);assert.equal(objects.size,0);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,0);
+ verifyHook=()=>Response.json(valid);const accepted=await upload(b.cookie,{id});assert.equal(accepted.status,202,accepted.body.error);assert.equal(counts.normalize,1);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,1,'The same photo and request ID remain usable after correcting verification.');
 });
 test('oversized multipart bodies are rejected before reading or storing them',async()=>{
  const b=await browser(),r=await upload(b.cookie,{extra:{'content-length':String(m.BIRTHDAY_LIMITS.photoBytes+65537)}});assert.equal(r.status,413);assert.equal(counts.verify,0);assert.equal(counts.normalize,0);assert.equal(objects.size,0);
 });
-test('browser and network daily quotas include cancelled attempts and reserve atomically',async()=>{
- const a=await browser();const first=await upload(a.cookie);assert.equal(first.status,202);assert.equal((await upload(a.cookie)).status,202);assert.equal((await upload(a.cookie)).status,429);assert.equal((await inspect(a.cookie,first.id,'DELETE')).status,200);assert.equal((await upload(a.cookie)).status,429);
- const b=await browser();assert.equal((await upload(b.cookie)).status,202);assert.equal((await upload(b.cookie)).status,429);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,3);
- mock.timers.setTime(Date.parse('2026-10-22T00:00:01Z'));assert.equal((await upload(a.cookie)).status,429,'Midnight UTC is still 19:00 in Colombia, so the budget must not reset.');
- mock.timers.setTime(Date.parse('2026-10-22T05:00:01Z'));assert.equal((await upload(a.cookie)).status,202,'The budget resets at midnight in Colombia.');
+test('five browser attempts include cancelled jobs despite changing networks and reset only at midnight in Colombia',async()=>{
+ const a=await browser(),first=await upload(a.cookie,{extra:{'cf-connecting-ip':'192.0.2.1'}});assert.equal(first.status,202);assert.equal((await inspect(a.cookie,first.id,'DELETE')).status,200);
+ for(let i=2;i<=5;i++)assert.equal((await upload(a.cookie,{extra:{'cf-connecting-ip':'192.0.2.'+i}})).status,202);
+ const before={...counts},blocked=await upload(a.cookie,{extra:{'cf-connecting-ip':'192.0.2.99'}});assert.equal(blocked.status,429);assert.equal(blocked.body.code,'daily_browser_limit');assert.deepEqual(counts,before,'An exhausted budget is detected before Turnstile or image decoding.');assert.equal(dbJob(first.id).status,'cancelled');assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,5);
+ mock.timers.setTime(Date.parse('2026-10-22T00:00:01Z'));const sameDay=await upload(a.cookie,{extra:{'cf-connecting-ip':'192.0.2.99'}});assert.equal(sameDay.status,429,'Midnight UTC is still 19:00 in Colombia, so the budget must not reset.');assert.equal(sameDay.body.code,'daily_browser_limit');
+ mock.timers.setTime(Date.parse('2026-10-22T05:00:01Z'));assert.equal((await upload(a.cookie,{extra:{'cf-connecting-ip':'192.0.2.99'}})).status,202,'The budget resets at midnight in Colombia.');
+});
+test('five connection attempts include cancelled jobs even when each request uses a different browser',async()=>{
+ let first;for(let i=0;i<5;i++){const b=await browser(),r=await upload(b.cookie);assert.equal(r.status,202);if(i===0)first={...r,cookie:b.cookie};}
+ assert.equal((await inspect(first.cookie,first.id,'DELETE')).status,200);const other=await browser(),before={...counts},blocked=await upload(other.cookie);
+ assert.equal(blocked.status,429);assert.equal(blocked.body.code,'daily_ip_limit');assert.deepEqual(counts,before);assert.equal(dbJob(first.id).status,'cancelled');assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,5);assert.equal(sql.prepare('SELECT count(DISTINCT owner_hash) n FROM jac_fan_birthday_jobs').get().n,5);
 });
 test('simultaneous submissions cannot exceed the browser cap',async()=>{
- const b=await browser(),gate=deferred();let arrivals=0;normalizeHook=async bytes=>{if(++arrivals===3)gate.resolve();await gate.promise;return {bytes,mimeType:'image/png'};};
- const result=await Promise.all([0,1,2].map(()=>upload(b.cookie)));assert.deepEqual(result.map(r=>r.status).sort(),[202,202,429]);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,2);assert.equal(objects.size,2);
+ const b=await browser(),gate=deferred();let arrivals=0;normalizeHook=async bytes=>{if(++arrivals===6)gate.resolve();await gate.promise;return {bytes,mimeType:'image/png'};};
+ const result=await Promise.all(Array.from({length:6},(_,i)=>upload(b.cookie,{extra:{'cf-connecting-ip':'192.0.2.'+(i+1)}})));assert.deepEqual(result.map(r=>r.status).sort(),[202,202,202,202,202,429]);assert.equal(result.find(r=>r.status===429).body.code,'capacity_limit');assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,5);assert.equal(objects.size,5);
 });
 test('global daily and waiting limits cannot be bypassed by changing browser or network',async()=>{
  const a=await browser(),first=await upload(a.cookie),seed=dbJob(first.id),columns=Object.keys(seed),insert=sql.prepare('INSERT INTO jac_fan_birthday_jobs('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')');
  for(let i=1;i<25;i++){const fixture={...seed,id:crypto.randomUUID(),owner_hash:'synthetic-owner-'+i,ip_hash:'synthetic-ip-'+i,status:'failed',source_key:''};insert.run(...columns.map(k=>fixture[k]));}
- const other=await browser();assert.equal((await upload(other.cookie,{extra:{'cf-connecting-ip':'198.51.100.1'}})).status,429);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,25);
+ const other=await browser(),before={...counts},globalLimit=await upload(other.cookie,{extra:{'cf-connecting-ip':'198.51.100.1'}});assert.equal(globalLimit.status,429);assert.equal(globalLimit.body.code,'daily_global_limit');assert.deepEqual(counts,before);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,25);
  sql.prepare("DELETE FROM jac_fan_birthday_jobs WHERE status='failed'").run();
  for(let i=1;i<10;i++){const fixture={...seed,id:crypto.randomUUID(),owner_hash:'queued-owner-'+i,ip_hash:'queued-ip-'+i,source_key:''};insert.run(...columns.map(k=>fixture[k]));}
- assert.equal((await upload(other.cookie,{extra:{'cf-connecting-ip':'198.51.100.1'}})).status,429);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,10);assert.equal(counts.generate,0);
+ const queueLimit=await upload(other.cookie,{extra:{'cf-connecting-ip':'198.51.100.1'}});assert.equal(queueLimit.status,429);assert.equal(queueLimit.body.code,'queue_full');assert.deepEqual(counts,before);assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,10);assert.equal(counts.generate,0);
 });
 test('generation processes a durable request once, discards input, and requires ownership to view or download',async()=>{
  const b=await browser(),r=await upload(b.cookie);generateHook=async(bytes,mime)=>{assert.deepEqual(bytes,png);assert.equal(mime,'image/png');return png.slice();};await m.processBirthdayJobs();assert.equal(counts.generate,1);const job=dbJob(r.id);assert.equal(job.status,'ready');assert.equal(job.source_key,'');assert(objects.has(job.result_key));assert.equal(objects.size,1);
@@ -125,7 +150,7 @@ test('safe pre-provider failure is terminal without incurring a provider attempt
  const b=await browser(),r=await upload(b.cookie);objects.delete(dbJob(r.id).source_key);await m.processBirthdayJobs();assert.equal(counts.generate,0);assert.equal(dbJob(r.id).status,'failed');await m.processBirthdayJobs();assert.equal(counts.generate,0);
 });
 test('cancel during generation removes the source and prevents publishing the late result',async()=>{
- const b=await browser(),r=await upload(b.cookie),second=await upload(b.cookie),entered=deferred(),finish=deferred();generateHook=async()=>{entered.resolve();await finish.promise;return png;};const process=m.processBirthdayJobs();await entered.promise;assert.equal((await inspect(b.cookie,r.id,'DELETE')).status,200);assert(dbJob(r.id).claim,'Cancellation keeps the running global lease.');await m.processBirthdayJobs();assert.equal(counts.generate,1);assert.equal(dbJob(second.id).status,'queued');finish.resolve();await process;assert.equal(dbJob(r.id).status,'cancelled');assert.equal(dbJob(r.id).claim,'');assert.equal(objects.size,1,'Only the second queued source remains.');assert.equal(counts.generate,1);assert.equal((await inspect(b.cookie,r.id)).body.job.status,'cancelled');generateHook=null;await m.processBirthdayJobs();assert.equal(counts.generate,2);assert.equal(dbJob(second.id).status,'ready');
+ const b=await browser(),r=await upload(b.cookie);mock.timers.setTime(clock+1000);const second=await upload(b.cookie),entered=deferred(),finish=deferred();generateHook=async()=>{entered.resolve();await finish.promise;return png;};const process=m.processBirthdayJobs();await entered.promise;assert.equal((await inspect(b.cookie,r.id,'DELETE')).status,200);assert(dbJob(r.id).claim,'Cancellation keeps the running global lease.');await m.processBirthdayJobs();assert.equal(counts.generate,1);assert.equal(dbJob(second.id).status,'queued');finish.resolve();await process;assert.equal(dbJob(r.id).status,'cancelled');assert.equal(dbJob(r.id).claim,'');assert.equal(objects.size,1,'Only the second queued source remains.');assert.equal(counts.generate,1);assert.equal((await inspect(b.cookie,r.id)).body.job.status,'cancelled');generateHook=null;await m.processBirthdayJobs();assert.equal(counts.generate,2);assert.equal(dbJob(second.id).status,'ready');
 });
 test('lost final database acknowledgement preserves the ready image and never repeats the provider call',async()=>{
  const b=await browser(),r=await upload(b.cookie);let injected=false;onRun=async q=>{if(!injected&&q.text.includes("SET status='ready'")){injected=true;throw Error('Lost D1 response after commit');}};
