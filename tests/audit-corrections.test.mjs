@@ -40,7 +40,8 @@ test('fresh and incremental migrations preserve existing data and agree with the
  for(const file of migrations.filter(f=>f>='0026'))upgraded.exec(await readFile('drizzle/'+file,'utf8'));
  assert.equal(upgraded.prepare("SELECT data FROM payroll_periods WHERE id='retained'").get().data,'{"snapshot":"unchanged"}');
  const journal=JSON.parse(await readFile('drizzle/meta/_journal.json','utf8'));assert.deepEqual(journal.entries.map(entry=>entry.tag+'.sql'),migrations);
- const snapshot=JSON.parse(await readFile('drizzle/meta/0030_snapshot.json','utf8'));
+ const snapshotIndex=String(journal.entries.at(-1).idx).padStart(4,'0');
+ const snapshot=JSON.parse(await readFile('drizzle/meta/'+snapshotIndex+'_snapshot.json','utf8'));
  const tables=sql.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all().map(row=>row.name).sort();assert.deepEqual(Object.keys(snapshot.tables).sort(),tables);
  for(const table of tables){assert.deepEqual(upgraded.prepare('PRAGMA table_info('+table+')').all(),sql.prepare('PRAGMA table_info('+table+')').all());assert.deepEqual(Object.keys(snapshot.tables[table].columns).sort(),sql.prepare('PRAGMA table_info('+table+')').all().map(c=>c.name).sort());}
  assert(sql.prepare("EXPLAIN QUERY PLAN SELECT id FROM jac_media_r2_entries WHERE parent_id='root' ORDER BY (mime_type='application/vnd.google-apps.folder') DESC,created_at DESC,name,id LIMIT 101").all().every(row=>!row.detail.includes('TEMP B-TREE')));

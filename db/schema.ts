@@ -59,3 +59,11 @@ export const mediaFolderShares=sqliteTable('jac_media_folder_shares',{id:text('i
 export const mediaPresentations=sqliteTable('jac_media_presentations',{fileId:text('file_id').primaryKey().notNull(),sourceKey:text('source_key').notNull(),connectionVersion:integer('connection_version').notNull(),previewKey:text('preview_key').notNull().default(''),streamUid:text('stream_uid').notNull().default(''),streamHost:text('stream_host').notNull().default('videodelivery.net'),streamStatus:text('stream_status').notNull().default(''),claim:text('claim').notNull().default(''),claimAt:text('claim_at').notNull().default(''),updatedAt:text('updated_at').notNull()});
 
 export const musicTracks=sqliteTable('jac_music_tracks',{id:text('id').primaryKey().notNull(),actorId:text('actor_id').notNull(),section:text('section').notNull(),title:text('title').notNull(),filename:text('filename').notNull(),mimeType:text('mime_type').notNull(),size:integer('size').notNull(),revision:text('revision').notNull(),createdAt:text('created_at').notNull(),status:text('status').notNull().default('uploading'),uploadId:text('upload_id').notNull().default(''),offset:integer('offset').notNull().default(0),parts:text('parts').notNull().default('[]'),claim:text('claim').notNull().default(''),claimAt:text('claim_at').notNull().default('')},t=>[index('jac_music_section').on(t.status,t.section,t.title),index('jac_music_cleanup').on(t.status,t.claimAt,t.createdAt)]);
+
+export const fanBirthdayJobs=sqliteTable('jac_fan_birthday_jobs',{
+ id:text('id').primaryKey().notNull(),
+ ownerHash:text('owner_hash').notNull(),ipHash:text('ip_hash').notNull(),payloadHash:text('payload_hash').notNull(),
+ status:text('status').notNull(),sourceKey:text('source_key').notNull().default(''),sourceMime:text('source_mime').notNull().default(''),resultKey:text('result_key').notNull().default(''),
+ claim:text('claim').notNull().default(''),startedAt:text('started_at').notNull().default(''),message:text('message').notNull().default(''),
+ createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[index('jac_fan_birthday_queue').on(t.status,t.createdAt),index('jac_fan_birthday_owner').on(t.ownerHash,t.createdAt),index('jac_fan_birthday_ip').on(t.ipHash,t.createdAt),index('jac_fan_birthday_created').on(t.createdAt)]);

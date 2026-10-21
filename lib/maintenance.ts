@@ -3,6 +3,7 @@ import {processMediaPresentations} from './media-stream';
 import {cleanupMusic} from './music-store';
 import {processMailQueue} from './payroll-mail';
 import {importSlackFiles,purgeNoticeAttachments} from './notifications';
+import {processBirthdayJobs} from './fans-birthday';
 
 // Only work already durably requested by users is eligible. Provider results
 // marked uncertain are never reset or resent by this runner.
@@ -14,6 +15,7 @@ export async function runMaintenance(){
   ['payroll-mail',()=>processMailQueue()],
   ['notices',()=>importSlackFiles()],
   ['attachments',()=>purgeNoticeAttachments()],
+  ['fan-birthday',()=>processBirthdayJobs()],
  ] as const;
  const outcomes=await Promise.allSettled(tasks.map(async([queue,run])=>{await run();return queue;}));
  const queues=outcomes.map((result,index)=>({queue:tasks[index][0],status:result.status==='fulfilled'?'completed':'failed'}));

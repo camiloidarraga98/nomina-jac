@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="es-CO">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#260d13">
+  <meta name="description" content="Crea tu foto brindando con Jhon Alex Castaño y prepárate para celebrar el cumpleaños del Rey del Chupe en el Movistar Arena. 10 de abril de 2027, Bogotá.">
+  <meta property="og:title" content="Tu foto con el Rey del Chupe · Jhon Alex Castaño">
+  <meta property="og:description" content="Un brindis, tu foto y el cumpleaños del Rey. Nos vemos en el Movistar Arena el 10 de abril de 2027.">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://jhonalexcastano.com/cumpleanos/master-v1.png">
+  <meta property="og:locale" content="es_CO">
+  <link rel="canonical" href="https://jhonalexcastano.com/cumpleanos/">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="/cumpleanos/style.css">
+  <title>Tu foto con el Rey · Cumpleaños de Jhon Alex Castaño</title>
+  <script type="module" src="/cumpleanos/app.js"></script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="artist-mark" href="/cumpleanos/" aria-label="Jhon Alex Castaño, foto de cumpleaños"><span>JHON ALEX</span><small>CASTAÑO</small></a>
+    <p class="event-date"><span class="date-dot" aria-hidden="true"></span>10 ABR 2027 <span class="date-divider" aria-hidden="true">/</span> BOGOTÁ</p>
+  </header>
+  <main class="experience">
+    <section class="photo-column" aria-label="La foto del cumpleaños">
+      <div class="photo-frame">
+        <img id="campaign-photo" src="/cumpleanos/master-v1.png" width="1122" height="1402" alt="Ejemplo de la foto: Jhon Alex y un acompañante brindan con gorritos rojos en su celebración de cumpleaños." fetchpriority="high">
+        <span id="photo-label" class="photo-label">ASÍ SE CELEBRA CON EL REY</span>
+      </div>
+      <p id="photo-caption" class="photo-caption">Tu lugar en este brindis está a la derecha.</p>
+    </section>
+    <section class="create-column" aria-labelledby="page-title">
+      <div class="intro">
+        <p class="eyebrow">EL CUMPLEAÑOS DEL REY DEL CHUPE</p>
+        <h1 id="page-title">El próximo brindis<br>es <em>contigo.</em></h1>
+        <p class="intro-copy">Ponle tu cara a la celebración. Crea tu foto con Jhon Alex y empieza a vivir lo que nos espera en el <strong>Movistar Arena.</strong></p>
+        <div class="venue-line"><span aria-hidden="true">✦</span><p>10 de abril de 2027 <span>Movistar Arena · Bogotá</span></p></div>
+      </div>
+      <div id="availability" class="notice availability" role="status">Preparando la experiencia…</div>
+      <form id="photo-form" class="photo-form" novalidate>
+        <div class="section-heading"><span class="step-number">01</span><h2>Primero, una foto tuya</h2></div>
+        <label id="upload-zone" class="upload-zone" for="photo-input">
+          <input id="photo-input" name="photo" type="file" accept="image/jpeg,image/png,image/webp" aria-describedby="photo-help">
+          <svg class="upload-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M12 16V4m-4 4 4-4 4 4M4 15v4a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-4"/></svg>
+          <span id="upload-title" class="upload-title">Elige tu foto</span>
+          <span class="upload-subtitle">O arrástrala hasta aquí</span>
+          <span class="file-formats">JPG, PNG o WebP · Hasta 8 MB</span>
+        </label>
+        <div id="selected-photo" class="selected-photo" hidden>
+          <img id="photo-preview" alt="Vista previa de la foto que elegiste." width="76" height="90">
+          <div class="selected-info"><strong id="selected-name"></strong><span id="selected-size"></span><button id="change-photo" class="text-button" type="button">Cambiar foto</button></div>
+          <button id="remove-photo" type="button" class="icon-button" aria-label="Quitar la foto seleccionada">×</button>
+        </div>
+        <p id="photo-help" class="photo-help">De frente, con buena luz y una sola persona. Una foto de medio cuerpo ayuda a conservar más de tu apariencia.</p>
+        <fieldset class="consents"><legend class="visually-hidden">Antes de crear tu foto</legend>
+          <label><input id="adult-consent" type="checkbox" name="adult"><span>Tengo 18 años o más.</span></label>
+          <label><input id="photo-consent" type="checkbox" name="consent"><span>La foto es mía y autorizo su procesamiento con OpenAI para crear esta imagen.</span></label>
+        </fieldset>
+        <div id="human-check" class="human-check" hidden></div>
+        <button id="generate-button" class="primary-button" type="submit" disabled><span>Crear mi foto con el Rey</span><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button>
+        <p class="generation-note">Crear tu foto puede tomar varios minutos, según el turno de la cola.</p>
+        <p class="privacy-note">En JAC, tu foto y el resultado son privados. Dejan de estar disponibles en <span data-retention>24</span> horas y se eliminan automáticamente después. También puedes retirarlos aquí. <a href="https://openai.com/policies/privacy-policy/" target="_blank" rel="noopener noreferrer">Privacidad de OpenAI</a>.</p>
+      </form>
+      <section id="job-panel" class="job-panel" aria-labelledby="job-title" hidden>
+        <div class="section-heading"><span class="step-number">02</span><h2 id="job-title">Estamos preparando el brindis</h2></div>
+        <div id="progress-track" class="progress-track"><progress id="job-progress" max="100" aria-label="Progreso de la subida de tu foto"></progress></div>
+        <p id="job-message" class="job-message" role="status" aria-live="polite"></p>
+        <p id="job-detail" class="job-detail">Puedes dejar esta página abierta. Tu foto aparecerá aquí cuando esté lista.</p>
+        <div class="job-actions"><button id="refresh-job" class="secondary-button" type="button" hidden>Consultar mi foto</button><button id="cancel-job" class="text-button" type="button">Cancelar y borrar mi foto</button></div>
+      </section>
+      <section id="result-panel" class="result-panel" aria-labelledby="result-title" hidden>
+        <p class="eyebrow">ESTE BRINDIS YA TIENE TU CARA</p>
+        <h2 id="result-title">Ya estás listo pa celebrar.</h2>
+        <p>Guarda tu foto y compártela con quienes van a celebrar contigo.</p>
+        <a id="download-photo" class="primary-button" download="Mi-cumpleanos-con-el-Rey.png"><span>Descargar mi foto</span><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg></a>
+        <button id="share-photo" class="secondary-button share-button" type="button" hidden>Compartir mi foto</button>
+        <p class="result-meta">Imagen creada con IA · Disponible durante <span data-retention>24</span> horas</p>
+        <button id="delete-photo" class="text-button" type="button">Borrar mi foto y el resultado</button>
+      </section>
+      <div id="error-message" class="notice error" role="alert" hidden></div>
+      <p class="experience-note">La IA puede completar el vestuario y la postura. El resultado es una imagen de celebración creada para ti.</p>
+    </section>
+  </main>
+  <footer class="site-footer"><span>JHON ALEX CASTAÑO</span><p>El cumpleaños del Rey del Chupe · Movistar Arena, Bogotá</p></footer>
+  <noscript><p class="noscript-message">Activa JavaScript en tu navegador para elegir tu foto y crear el brindis con el Rey.</p></noscript>
+</body>
+</html>

@@ -1,0 +1,343 @@
+const API = '/api/fans/cumpleanos';
+const STORAGE_KEY = 'jac-birthday-job-v1';
+const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const POLL_DEADLINE = 12 * 60 * 1000;
+const $ = id => document.getElementById(id);
+const el = {
+  form: $('photo-form'), input: $('photo-input'), upload: $('upload-zone'), selected: $('selected-photo'),
+  preview: $('photo-preview'), name: $('selected-name'), size: $('selected-size'), generate: $('generate-button'),
+  adult: $('adult-consent'), consent: $('photo-consent'), availability: $('availability'), human: $('human-check'),
+  job: $('job-panel'), jobTitle: $('job-title'), progressTrack: $('progress-track'), progress: $('job-progress'),
+  message: $('job-message'), detail: $('job-detail'), refresh: $('refresh-job'), cancel: $('cancel-job'),
+  result: $('result-panel'), campaign: $('campaign-photo'), photoLabel: $('photo-label'), photoCaption: $('photo-caption'),
+  download: $('download-photo'), share: $('share-photo'), delete: $('delete-photo'), error: $('error-message'),
+};
+let config = null;
+let selectedFile = null;
+let selectedURL = '';
+let resultURL = '';
+let resultFile = null;
+let jobID = '';
+let requestID = '';
+let pollTimer = null;
+let pollStarted = 0;
+let generation = 0;
+let uploading = false;
+let deleting = false;
+let xhr = null;
+let widgetID = null;
+let turnstileToken = '';
+let activeStatus = '';
+let resultLoading = false;
+let serverConfigured = false;
+let requestController = null;
+
+function storedJob() { try { return sessionStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; } }
+function rememberJob(id) { try { if (id) sessionStorage.setItem(STORAGE_KEY, id); else sessionStorage.removeItem(STORAGE_KEY); } catch { /* Photos remain usable when storage is disabled. */ } }
+function validID(value) { return /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value); }
+function showError(message = '') { el.error.textContent = message; el.error.hidden = !message; }
+function stopPolling() { clearTimeout(pollTimer); pollTimer = null; }
+function clearRequest() { requestController?.abort(); requestController = null; }
+function cleanupResult() {
+  if (resultURL) URL.revokeObjectURL(resultURL);
+  resultURL = ''; resultFile = null; el.download.removeAttribute('href');
+}
+function resetPhotoDisplay() {
+  cleanupResult(); el.campaign.src = '/cumpleanos/master-v1.png';
+  el.campaign.alt = 'Ejemplo de la foto: Jhon Alex y un acompañante brindan con gorritos rojos en su celebración de cumpleaños.';
+  el.photoLabel.textContent = 'ASÍ SE CELEBRA CON EL REY';
+  el.photoCaption.textContent = 'Tu lugar en este brindis está a la derecha.';
+}
+function controls() {
+  const locked = uploading || deleting || Boolean(jobID);
+  el.input.disabled = locked; $('change-photo').disabled = locked; $('remove-photo').disabled = locked;
+  el.adult.disabled = locked; el.consent.disabled = locked;
+  el.generate.disabled = !serverConfigured || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (Boolean(config?.turnstileSiteKey) && !turnstileToken);
+  el.cancel.disabled = uploading || deleting;
+  el.delete.disabled = deleting;
+  el.refresh.disabled = uploading || deleting;
+}
+function setBusyPanel(title, message, detail) {
+  el.form.hidden = true; el.result.hidden = true; el.job.hidden = false;
+  el.jobTitle.textContent = title; el.message.textContent = message; el.detail.textContent = detail;
+  el.progressTrack.hidden = false; el.progress.removeAttribute('value');
+  el.progress.setAttribute('aria-label', 'Preparación de tu imagen');
+  el.refresh.hidden = true;
+}
+function resetChallenge() {
+  turnstileToken = '';
+  if (widgetID !== null && window.turnstile) window.turnstile.reset(widgetID);
+  controls();
+}
+function choosePhoto(file) {
+  if (uploading || jobID || deleting) return;
+  showError();
+  if (!file) return;
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+    showError('Elige una foto JPG, PNG o WebP. Si viene en otro formato, puedes guardarla como JPG antes de subirla.');
+    el.input.value = ''; return;
+  }
+  if (!file.size || file.size > MAX_FILE_BYTES) {
+    showError('Tu foto debe pesar hasta 8 MB. Elige una versión más liviana e inténtalo de nuevo.');
+    el.input.value = ''; return;
+  }
+  if (selectedURL) URL.revokeObjectURL(selectedURL);
+  selectedFile = file; selectedURL = URL.createObjectURL(file); requestID = crypto.randomUUID();
+  el.preview.src = selectedURL; el.name.textContent = file.name || 'Mi foto';
+  el.size.textContent = file.size < 1024 * 1024 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`;
+  el.selected.hidden = false; el.upload.hidden = true;
+  controls();
+}
+function removePhoto() {
+  if (uploading || jobID || deleting) return;
+  if (selectedURL) URL.revokeObjectURL(selectedURL);
+  selectedURL = ''; selectedFile = null; requestID = ''; el.preview.removeAttribute('src'); el.input.value = '';
+  el.selected.hidden = true; el.upload.hidden = false; controls();
+}
+async function responseData(response) {
+  const type = response.headers.get('content-type') || '';
+  const parsed = type.includes('application/json') ? await response.json() : {};
+  const data = parsed && typeof parsed === 'object' ? parsed : {};
+  if (!response.ok) {
+    const error = new Error(typeof data.error === 'string' ? data.error : 'No pudimos completar la operación. Inténtalo de nuevo.');
+    error.status = response.status; throw error;
+  }
+  return data;
+}
+function loadTurnstile(siteKey) {
+  el.human.hidden = false;
+  const render = () => {
+    if (widgetID !== null || !window.turnstile) return;
+    widgetID = window.turnstile.render(el.human, {
+      sitekey: siteKey, theme: 'dark', action: 'birthday-photo',
+      callback(token) { turnstileToken = token; controls(); },
+      'expired-callback'() { turnstileToken = ''; controls(); },
+      'error-callback'() { turnstileToken = ''; controls(); showError('No pudimos completar la verificación. Recarga la página e inténtalo otra vez.'); },
+    });
+  };
+  if (window.turnstile) { render(); return; }
+  window.jacBirthdayTurnstileReady = render;
+  const script = document.createElement('script');
+  script.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=jacBirthdayTurnstileReady&render=explicit';
+  script.async = true; script.defer = true;
+  script.onerror = () => showError('No pudimos cargar la verificación. Revisa tu conexión y recarga la página.');
+  document.head.append(script);
+}
+async function loadConfig() {
+  try {
+    const response = await fetch(API, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
+    config = await responseData(response); serverConfigured = config.enabled === true;
+    const hours = Number(config.retentionHours);
+    if (Number.isFinite(hours) && hours > 0 && hours <= 168) document.querySelectorAll('[data-retention]').forEach(node => { node.textContent = String(hours); });
+    el.availability.hidden = serverConfigured;
+    if (!serverConfigured) el.availability.textContent = 'Estamos preparando la experiencia. Pronto podrás crear tu foto; mientras tanto, este es el brindis que te espera.';
+    if (serverConfigured && config.turnstileSiteKey) loadTurnstile(config.turnstileSiteKey);
+  } catch {
+    serverConfigured = false; el.availability.hidden = false;
+    el.availability.textContent = 'No pudimos conectar con la experiencia. Revisa tu conexión y recarga la página para volver a intentarlo.';
+  }
+  controls();
+}
+function pausePolling(message) {
+  stopPolling(); el.progressTrack.hidden = true; el.message.textContent = message;
+  el.detail.textContent = 'Puedes consultar de nuevo con el botón de abajo. Conservamos tu solicitud y no enviaremos otra generación.';
+  el.refresh.hidden = false; controls();
+}
+function schedulePoll() {
+  if (!jobID || !['queued', 'processing'].includes(activeStatus)) return;
+  const elapsed = Date.now() - pollStarted;
+  if (elapsed >= POLL_DEADLINE) { pausePolling('La imagen está tardando más de lo habitual.'); return; }
+  stopPolling(); pollTimer = setTimeout(() => { void readJob(); }, elapsed < 120000 ? 5000 : 10000);
+}
+async function loadResult(id, ticket) {
+  if (resultLoading || resultURL) return;
+  resultLoading = true;
+  const controller = new AbortController(); requestController = controller;
+  try {
+    const response = await fetch(`${API}?id=${encodeURIComponent(id)}&image=1`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal });
+    if (!response.ok) { await responseData(response); return; }
+    if (!(response.headers.get('content-type') || '').startsWith('image/png')) throw new Error('La foto no está disponible todavía. Vuelve a consultar tu resultado.');
+    const blob = await response.blob();
+    if (ticket !== generation || id !== jobID) return;
+    if (!blob.size || blob.size > 24 * 1024 * 1024) throw new Error('No pudimos cargar tu imagen. Vuelve a consultar tu resultado.');
+    cleanupResult(); resultURL = URL.createObjectURL(blob);
+    resultFile = new File([blob], 'Mi-cumpleanos-con-el-Rey.png', { type: 'image/png' });
+    el.campaign.src = resultURL; el.campaign.alt = 'Tu foto creada con IA brindando con Jhon Alex en su cumpleaños.';
+    el.photoLabel.textContent = 'ESTE BRINDIS ES TUYO'; el.photoCaption.textContent = 'Imagen creada con IA para celebrar con el Rey.';
+    el.download.href = resultURL;
+    let canShare = false;
+    try { canShare = Boolean(navigator.share && navigator.canShare?.({ files: [resultFile] })); } catch { /* Download is always available. */ }
+    el.share.hidden = !canShare;
+    el.job.hidden = true; el.form.hidden = true; el.result.hidden = false;
+    showError(); controls();
+  } catch (error) {
+    if (error.name === 'AbortError' || ticket !== generation) return;
+    pausePolling('Tu foto está lista, pero falta cargarla.'); showError(error.message || 'No pudimos cargar tu foto. Inténtalo otra vez.');
+  } finally {
+    resultLoading = false; if (requestController === controller) requestController = null;
+  }
+}
+function terminalJob(job) {
+  stopPolling(); el.progressTrack.hidden = true;
+  const messages = {
+    failed: 'No pudimos crear esta foto.',
+    uncertain: 'Todavía no pudimos confirmar tu resultado.',
+    cancelled: 'Tu solicitud fue cancelada.',
+  };
+  el.jobTitle.textContent = 'Sobre tu foto';
+  el.message.textContent = job.message || messages[job.status] || 'No pudimos continuar con esta solicitud.';
+  el.detail.textContent = job.status === 'uncertain'
+    ? 'Para evitar repetir la generación, esta solicitud no se enviará de nuevo automáticamente. Puedes borrar tu foto aquí.'
+    : 'Puedes borrar esta solicitud y volver a la foto de ejemplo.';
+  el.refresh.hidden = true; el.cancel.textContent = 'Borrar mi foto y volver'; controls();
+}
+async function acceptJob(job, ticket) {
+  if (ticket !== generation) return;
+  if (!job || !validID(job.id) || job.id !== jobID) throw new Error('No pudimos confirmar tu solicitud. Consulta el estado antes de volver a enviarla.');
+  activeStatus = job.status;
+  if (job.status === 'ready') {
+    stopPolling(); setBusyPanel('Tu brindis está listo', 'Cargando tu foto…', 'En un momento podrás guardarla o compartirla.');
+    await loadResult(job.id, ticket); return;
+  }
+  if (['queued', 'processing'].includes(job.status)) {
+    setBusyPanel('Estamos preparando el brindis', job.status === 'queued' ? 'Tu foto está esperando su turno.' : 'Estamos creando tu foto con el Rey.', job.message || 'Puede tardar unos minutos. No necesitas volver a subir tu foto.');
+    el.cancel.textContent = 'Cancelar y borrar mi foto'; schedulePoll(); controls(); return;
+  }
+  terminalJob(job);
+}
+async function readJob() {
+  if (!jobID || uploading || deleting) return;
+  stopPolling(); const id = jobID, ticket = generation;
+  const controller = new AbortController(); clearRequest(); requestController = controller;
+  try {
+    const response = await fetch(`${API}?id=${encodeURIComponent(id)}`, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal });
+    const data = await responseData(response);
+    if (ticket !== generation || id !== jobID) return;
+    if (!data.job) throw new Error('No pudimos consultar tu solicitud. Inténtalo de nuevo.');
+    if (requestController === controller) requestController = null;
+    await acceptJob(data.job, ticket);
+  } catch (error) {
+    if (error.name === 'AbortError' || ticket !== generation || id !== jobID) return;
+    if ([401, 403, 404, 410].includes(error.status)) {
+      rememberJob(''); jobID = ''; if (error.status === 410) requestID = ''; activeStatus = ''; el.job.hidden = true; el.result.hidden = true; el.form.hidden = false;
+      resetPhotoDisplay(); showError(error.status === 410 ? 'Esta foto ya venció. Puedes crear una nueva cuando quieras.' : 'Esta solicitud ya no está disponible en este navegador. Puedes elegir otra foto.'); controls(); return;
+    }
+    pausePolling('No pudimos consultar el estado de tu foto.'); showError(error.message || 'Revisa tu conexión e inténtalo otra vez.');
+  } finally {
+    if (requestController === controller) requestController = null;
+  }
+}
+function upload(data, ticket) {
+  return new Promise((resolve, reject) => {
+    const request = new XMLHttpRequest(); xhr = request;
+    request.open('POST', API); request.responseType = 'json'; request.withCredentials = true; request.timeout = 120000;
+    request.upload.addEventListener('progress', event => {
+      if (ticket !== generation) return;
+      if (event.lengthComputable) {
+        const percent = Math.min(100, Math.round(event.loaded * 100 / event.total));
+        el.progress.value = percent; el.message.textContent = percent === 100 ? 'Confirmando la subida…' : `Subiendo tu foto · ${percent}%`;
+      }
+    });
+    request.addEventListener('load', () => {
+      if (xhr === request) xhr = null;
+      const body = request.response;
+      if (request.status >= 200 && request.status < 300 && body?.job) resolve(body.job);
+      else { const error = new Error(body?.error || 'No pudimos confirmar la subida. Consultaremos tu solicitud antes de volver a enviarla.'); error.status = request.status; reject(error); }
+    });
+    request.addEventListener('error', () => { if (xhr === request) xhr = null; reject(new Error('Se interrumpió la conexión durante la subida.')); });
+    request.addEventListener('timeout', () => { if (xhr === request) xhr = null; reject(new Error('La subida tardó más de lo esperado.')); });
+    request.addEventListener('abort', () => { if (xhr === request) xhr = null; const error = new Error('Subida cancelada.'); error.name = 'AbortError'; reject(error); });
+    request.send(data);
+  });
+}
+async function submitPhoto(event) {
+  event.preventDefault(); showError();
+  if (uploading || deleting || jobID) return;
+  if (!serverConfigured) { showError('Estamos preparando la experiencia. Vuelve a visitarnos pronto.'); return; }
+  if (!selectedFile) { showError('Primero elige una foto tuya.'); el.input.focus(); return; }
+  if (!el.adult.checked || !el.consent.checked) { showError('Confirma que tienes 18 años o más y que autorizas el uso de tu foto para crear la imagen.'); return; }
+  if (config?.turnstileSiteKey && !turnstileToken) { showError('Completa la verificación antes de crear tu foto.'); return; }
+  generation++; const ticket = generation;
+  requestID ||= crypto.randomUUID(); jobID = requestID; activeStatus = 'queued'; rememberJob(jobID);
+  pollStarted = Date.now(); uploading = true;
+  setBusyPanel('Tu foto va camino al brindis', 'Subiendo tu foto…', 'Estamos enviando la foto que elegiste de forma privada.');
+  el.progress.value = 0; el.progress.setAttribute('aria-label', 'Progreso de la subida de tu foto');
+  controls();
+  const data = new FormData(); data.append('photo', selectedFile); data.append('id', requestID);
+  data.append('consent', 'true'); data.append('adult', 'true');
+  if (turnstileToken) data.append('turnstileToken', turnstileToken);
+  try {
+    const job = await upload(data, ticket);
+    if (ticket !== generation) return;
+    uploading = false; resetChallenge(); await acceptJob(job, ticket);
+  } catch (error) {
+    if (ticket !== generation || error.name === 'AbortError') return;
+    uploading = false; resetChallenge();
+    if (error.status >= 400 && error.status < 500 && ![408, 409].includes(error.status)) {
+      rememberJob(''); jobID = ''; activeStatus = ''; el.job.hidden = true; el.form.hidden = false;
+      showError(error.message); controls(); return;
+    }
+    pausePolling('Vamos a comprobar si tu foto llegó.');
+    el.detail.textContent = 'Consulta el estado antes de volver a enviarla. Así conservamos el mismo intento.';
+    showError(error.message); void readJob();
+  } finally {
+    if (ticket === generation) { uploading = false; controls(); }
+  }
+}
+async function deleteJob() {
+  if (!jobID || uploading || deleting) return;
+  const id = jobID; deleting = true; generation++; stopPolling(); clearRequest(); showError(); controls();
+  const controller = new AbortController(); requestController = controller;
+  try {
+    const response = await fetch(`${API}?id=${encodeURIComponent(id)}`, { method: 'DELETE', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal });
+    if (![404, 410].includes(response.status)) await responseData(response);
+    rememberJob(''); jobID = ''; requestID = ''; activeStatus = ''; pollStarted = 0;
+    el.job.hidden = true; el.result.hidden = true; el.form.hidden = false; resetPhotoDisplay();
+    selectedFile = null; if (selectedURL) URL.revokeObjectURL(selectedURL); selectedURL = '';
+    el.preview.removeAttribute('src'); el.input.value = ''; el.selected.hidden = true; el.upload.hidden = false;
+    el.adult.checked = false; el.consent.checked = false; resetChallenge();
+    el.availability.hidden = false; el.availability.textContent = 'Tu solicitud se canceló y tus fotos dejaron de estar disponibles.';
+    if (!serverConfigured) el.availability.textContent += ' Estamos preparando la experiencia para nuevas fotos.';
+  } catch (error) {
+    if (error.name !== 'AbortError') { showError('No pudimos confirmar el borrado. Revisa tu conexión y vuelve a pulsar el botón.'); el.refresh.hidden = false; }
+  } finally {
+    deleting = false; if (requestController === controller) requestController = null; controls();
+  }
+}
+async function sharePhoto() {
+  if (!resultFile || !navigator.share) return;
+  try { await navigator.share({ files: [resultFile], title: 'Mi foto con el Rey del Chupe', text: 'Ya estoy listo pa celebrar el cumpleaños del Rey del Chupe en el Movistar Arena.' }); }
+  catch (error) { if (error.name !== 'AbortError') showError('No pudimos abrir el menú para compartir. Puedes descargar tu foto y enviarla desde tu galería.'); }
+}
+
+el.input.addEventListener('change', () => choosePhoto(el.input.files?.[0]));
+$('change-photo').addEventListener('click', () => { if (!uploading && !jobID) el.input.click(); });
+$('remove-photo').addEventListener('click', removePhoto);
+el.adult.addEventListener('change', controls); el.consent.addEventListener('change', controls);
+el.form.addEventListener('submit', event => { void submitPhoto(event); });
+el.cancel.addEventListener('click', () => { void deleteJob(); }); el.delete.addEventListener('click', () => { void deleteJob(); });
+el.refresh.addEventListener('click', () => { showError(); pollStarted = Date.now(); void readJob(); });
+el.share.addEventListener('click', () => { void sharePhoto(); });
+for (const name of ['dragenter', 'dragover']) el.upload.addEventListener(name, event => { event.preventDefault(); if (!el.input.disabled) el.upload.classList.add('dragging'); });
+for (const name of ['dragleave', 'drop']) el.upload.addEventListener(name, event => { event.preventDefault(); el.upload.classList.remove('dragging'); });
+el.upload.addEventListener('drop', event => {
+  if (el.input.disabled) return;
+  const files = event.dataTransfer?.files;
+  if (files?.length > 1) { showError('Elige una sola foto donde aparezcas tú.'); return; }
+  choosePhoto(files?.[0]);
+});
+window.addEventListener('pagehide', event => {
+  stopPolling(); clearRequest();
+  if (!event.persisted) { xhr?.abort(); if (selectedURL) URL.revokeObjectURL(selectedURL); cleanupResult(); }
+});
+window.addEventListener('pageshow', event => {
+  if (event.persisted && jobID && !uploading && !deleting && !resultURL) { pollStarted = Date.now(); void readJob(); }
+});
+
+await loadConfig();
+const resumed = storedJob() || config?.activeJobId || '';
+if (validID(resumed)) {
+  jobID = resumed; requestID = resumed; pollStarted = Date.now();
+  setBusyPanel('Recuperando tu brindis', 'Consultando tu foto…', 'Buscamos la solicitud que dejaste en este navegador.');
+  controls(); await readJob();
+} else rememberJob('');

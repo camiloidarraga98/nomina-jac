@@ -9,10 +9,11 @@ import {join,resolve} from 'node:path';
 const dir=await mkdtemp(join(tmpdir(),'jac-cloudflare-test-'));
 const out=join(dir,'test.mjs');
 await build({stdin:{contents:"export {default as worker} from './worker/cloudflare';export {getChatGPTUser} from './app/chatgpt-auth';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',outfile:out,plugins:[{name:'isolated-cloudflare',setup(b){
+ b.onResolve({filter:/fans-birthday$/},()=>({path:'fan-api',namespace:'fake'}));
  b.onResolve({filter:/^cloudflare:workers$/},()=>({path:'env',namespace:'fake'}));
  b.onResolve({filter:/^next\/(headers|navigation)$/},a=>({path:a.path,namespace:'fake'}));
  b.onResolve({filter:/^\.\/index$/},a=>a.importer===resolve('worker/cloudflare.ts')?{path:'application',namespace:'fake'}:undefined);
- b.onLoad({filter:/.*/,namespace:'fake'},a=>({contents:a.path==='env'?'export const env=globalThis.__cfTestEnv;':a.path==='application'?'export default {fetch(){globalThis.__cfCalls++;return new Response("application");}};':a.path==='next/headers'?'export const headers=async()=>globalThis.__cfHeaders;':'export function redirect(){throw Error("redirect");}'}));
+ b.onLoad({filter:/.*/,namespace:'fake'},a=>({contents:a.path==='fan-api'?"export const handleBirthdayApi=async()=>Response.json({fan:true});export const processBirthdayJobs=async()=>{};":a.path==='env'?'export const env=globalThis.__cfTestEnv;':a.path==='application'?'export default {fetch(){globalThis.__cfCalls++;return new Response("application");}};':a.path==='next/headers'?'export const headers=async()=>globalThis.__cfHeaders;':'export function redirect(){throw Error("redirect");}'}));
 }}]});
 globalThis.__cfTestEnv={};globalThis.__cfHeaders=new Headers();globalThis.__cfCalls=0;
 const m=await import(pathToFileURL(out));
@@ -106,4 +107,17 @@ test('rider2 independiente conserva lectura pública, CSP, READY y límites de r
  assert.equal(seen.length,10);
  for(const path of ['/rider2-private','/rider2.json','/api/crm/file?id=private']){const r=await m.worker.fetch(new Request('https://example.invalid'+path),env,{});assert.equal(await r.text(),'application');}
  const blocked=await m.worker.fetch(new Request('https://example.invalid/rider2'),{ASSETS:env.ASSETS},{});assert.equal(blocked.status,503);
+});
+
+
+test('cumpleaños público entrega solo sus recursos y su API sin entrar a CRM o sesiones administrativas',async()=>{
+ const before=globalThis.__cfCalls,calls=[];const env={JAC_READY:'1',ASSETS:{async fetch(req){calls.push(new URL(req.url).pathname);return new Response(req.method==='HEAD'?null:'fan-public',{headers:{'Content-Type':new URL(req.url).pathname.endsWith('.png')?'image/png':'text/html'}});}}};
+ for(const path of ['/cumpleanos','/cumpleanos/','/cumpleanos/master-v1.png','/cumpleanos/app.js']){
+  const r=await m.worker.fetch(new Request('https://fans.example.invalid'+path),env,{});assert.equal(r.status,200);assert.match(r.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);assert.match(r.headers.get('Content-Security-Policy'),/challenges.cloudflare.com/);assert.equal(r.headers.get('Referrer-Policy'),'no-referrer');assert.equal(r.headers.get('X-Content-Type-Options'),'nosniff');
+ }
+ assert.deepEqual(calls,['/cumpleanos/','/cumpleanos/','/cumpleanos/master-v1.png','/cumpleanos/app.js']);
+ const blocked=await m.worker.fetch(new Request('https://fans.example.invalid/cumpleanos/app.js',{method:'POST'}),env,{});assert.equal(blocked.status,405);assert.equal(calls.length,4);
+ const api=await m.worker.fetch(new Request('https://fans.example.invalid/api/fans/cumpleanos'),env,{});assert.deepEqual(await api.json(),{fan:true});assert.equal(globalThis.__cfCalls,before);
+ const privateAPI=await m.worker.fetch(new Request('https://fans.example.invalid/api/crm'),env,{});assert.equal(await privateAPI.text(),'application');assert.equal(globalThis.__cfCalls,before+1);
+ const unready=await m.worker.fetch(new Request('https://fans.example.invalid/api/fans/cumpleanos'),{},{});assert.equal(unready.status,503);
 });

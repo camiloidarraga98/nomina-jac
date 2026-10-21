@@ -1,4 +1,5 @@
 import {runMaintenance} from '../lib/maintenance';
+import {handleBirthdayApi} from '../lib/fans-birthday';
 import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
@@ -17,6 +18,20 @@ export default {
     // or expose the CRM. Readiness is a runtime secret set after migration QA;
     // it is deliberately absent from the build configuration and GitHub.
     if(env.JAC_READY!=='1')return new Response('JAC está preparando este entorno. El sitio habitual sigue disponible.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','Retry-After':'3600','X-Robots-Tag':'noindex, nofollow'}});
+    // Public fan experience has its own anonymous cookie, bot checks and bounded
+    // queue. It never enters the administrative application's authentication.
+    if(url.pathname==='/api/fans/cumpleanos')return handleBirthdayApi(request);
+    if(url.pathname==='/cumpleanos'||url.pathname.startsWith('/cumpleanos/')){
+      if(!['GET','HEAD'].includes(request.method))return new Response(null,{status:405,headers:{Allow:'GET, HEAD'}});
+      if(url.pathname==='/cumpleanos')url.pathname+='/';
+      const response=await env.ASSETS.fetch(new Request(url,request));
+      const fanPage=new Response(response.body,response);
+      fanPage.headers.set('X-Content-Type-Options','nosniff');
+      fanPage.headers.set('Referrer-Policy','no-referrer');
+      fanPage.headers.set('Content-Security-Policy',"default-src 'none'; script-src 'self' https://challenges.cloudflare.com; style-src 'self'; img-src 'self' blob: data:; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'self'");
+      fanPage.headers.set('Cache-Control',url.pathname.endsWith('.png')?'public, max-age=31536000, immutable':'public, max-age=300');
+      return fanPage;
+    }
     // The artist's rider is explicitly public. Keep its static namespace apart
     // from the application router and all authenticated API/document routes.
     if(url.pathname==='/rider'||url.pathname.startsWith('/rider/')||url.pathname==='/rider2'||url.pathname.startsWith('/rider2/')){
