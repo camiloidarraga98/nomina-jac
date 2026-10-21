@@ -1,8 +1,9 @@
 import {env} from 'cloudflare:workers';
 import render from '../design/fans/cumpleanos/render-v3.json';
 import {decodePng,encodePng,type PngImage} from './fans-png';
+import {isBirthdayHEIC} from './fans-image-format';
 
-type Images={input(stream:ReadableStream):{transform(options:Record<string,unknown>):{output(options:{format:string;quality:number}):Promise<{response():Response}>}}};
+type Images={info(stream:ReadableStream):Promise<{width?:number;height?:number}>;input(stream:ReadableStream):{transform(options:Record<string,unknown>):{output(options:{format:string;quality:number}):Promise<{response():Response}>}}};
 type ImageEnv={OPENAI_API_KEY?:string;ASSETS?:{fetch(request:Request):Promise<Response>};IMAGES?:Images};
 const bindings=()=>env as unknown as ImageEnv;
 export class BirthdayImageFailure extends Error{
@@ -45,15 +46,22 @@ function dimensions(bytes:Uint8Array,mime:string):{width:number;height:number}|n
 // Decode in Images rather than trusting file extensions or preserving EXIF.
 // Only this normalized JPEG is stored in the private fan upload queue.
 export async function normalizeBirthdayUpload(bytes:Uint8Array,mimeType:string){
- const mime=mimeType.toLowerCase(),size=dimensions(bytes,mime);
- if(!['image/jpeg','image/png','image/webp'].includes(mime)||bytes.length>8*1024*1024||!size||!size.width||!size.height||size.width>12000||size.height>12000||size.width*size.height>64_000_000)throw new BirthdayImageFailure('Sube una foto JPG, PNG o WebP válida de hasta 8 MB.',false,400);
+ const mime=mimeType.toLowerCase(),heic=['image/heic','image/heif'].includes(mime),size=heic?null:dimensions(bytes,mime);
+ const validSize=(value:{width?:number;height?:number}|null):boolean=>{
+  if(!value)return false;const {width,height}=value;
+  return typeof width==='number'&&typeof height==='number'&&Number.isSafeInteger(width)&&Number.isSafeInteger(height)&&width>0&&height>0&&width<=12000&&height<=12000&&width*height<=64_000_000;
+ };
+ if(bytes.length>8*1024*1024||(heic?!isBirthdayHEIC(bytes):!['image/jpeg','image/png','image/webp'].includes(mime)||!validSize(size)))throw new BirthdayImageFailure('Sube una foto JPG, PNG, WebP o HEIC válida de hasta 8 MB.',false,400);
  const images=bindings().IMAGES;if(!images)throw new BirthdayImageFailure('Estamos preparando la experiencia. Intenta más tarde.',false,503);
  try{
+  // HEIC dimensions belong to the decoded primary image, not an arbitrary ispe
+  // thumbnail/tile in its container. Keep the same bounds before transforming.
+  if(heic&&!validSize(await deadline(images.info(new Response(new Uint8Array(bytes)).body!),25000)))throw new Error('Invalid HEIC dimensions');
   const bytesCopy=new Uint8Array(bytes),output=await deadline(images.input(new Response(bytesCopy).body!).transform({width:1536,height:1536,fit:'scale-down'}).output({format:'image/jpeg',quality:90}),25000),response=output.response();
   if(!response.ok)throw new Error('Image decode failed');const normalized=await boundedBytes(response,3*1024*1024),normalizedSize=dimensions(normalized,'image/jpeg');
   if(!normalizedSize||!normalizedSize.width||!normalizedSize.height||normalizedSize.width>1536||normalizedSize.height>1536)throw new Error('Invalid normalized image');
   return {bytes:normalized,mimeType:'image/jpeg'};
- }catch{throw new BirthdayImageFailure('No pudimos leer esa foto. Prueba otra imagen JPG, PNG o WebP.',false,400);}
+ }catch{throw new BirthdayImageFailure('No pudimos leer esa foto. Prueba otra imagen JPG, PNG, WebP o HEIC.',false,400);}
 }
 
 type Template={master:PngImage;blend:PngImage;canvas:Uint8Array;mask:Uint8Array};

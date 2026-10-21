@@ -2,6 +2,7 @@ import {env} from 'cloudflare:workers';
 import {createHmac,randomBytes} from 'node:crypto';
 import {database} from '@/db/raw';
 import {generateBirthdayPhoto,normalizeBirthdayUpload} from './fans-birthday-image';
+import {isBirthdayHEIC} from './fans-image-format';
 
 type FanEnv={OPENAI_API_KEY?:string;JAC_FANS_ENABLED?:string;JAC_FANS_TURNSTILE_SITE_KEY?:string;JAC_FANS_TURNSTILE_SECRET?:string;PAYROLL_AUTH_KEY?:string;BUCKET:R2Bucket};
 type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;status:string;source_key:string;source_mime:string;result_key:string;claim:string;started_at:string;message:string;created_at:string;expires_at:string;updated_at:string};
@@ -51,7 +52,8 @@ function imageMime(bytes:Uint8Array){
  if(bytes.length>8&&[137,80,78,71,13,10,26,10].every((v,i)=>bytes[i]===v))return 'image/png';
  if(bytes.length>3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255)return 'image/jpeg';
  if(bytes.length>12&&new TextDecoder().decode(bytes.subarray(0,4))==='RIFF'&&new TextDecoder().decode(bytes.subarray(8,12))==='WEBP')return 'image/webp';
- throw new BirthdayFailure('Usa una foto válida en JPG, PNG o WebP.',415);
+ if(isBirthdayHEIC(bytes))return 'image/heic';
+ throw new BirthdayFailure('Usa una foto válida en JPG, PNG, WebP o HEIC.',415);
 }
 async function verifyHuman(req:Request,token:FormDataEntryValue|null){
  if(typeof token!=='string'||token.length<1||token.length>2048)throw new BirthdayFailure('Completa la verificación y vuelve a intentarlo.',403);
@@ -88,7 +90,7 @@ async function createJob(req:Request,owner:string){
  if(!budget||budget.total>=BIRTHDAY_LIMITS.dailyGlobal||budget.network>=BIRTHDAY_LIMITS.dailyIP||budget.browser>=BIRTHDAY_LIMITS.dailyBrowser||budget.waiting>=BIRTHDAY_LIMITS.waiting)throw new BirthdayFailure('Por hoy alcanzamos el límite de creaciones o hay varias fotos en espera. Inténtalo más tarde.',429);
  await verifyHuman(req,form.get('turnstileToken'));
  let normalized:{bytes:Uint8Array;mimeType:string};
- try{normalized=await normalizeBirthdayUpload(raw,mime);}catch(e){if(e&&typeof e==='object'&&'status' in e&&e.status===503)throw new BirthdayFailure('No pudimos preparar tu foto en este momento. Inténtalo más tarde.',503);throw new BirthdayFailure('No pudimos preparar esa foto. Prueba con una foto válida en JPG, PNG o WebP.',415);}
+ try{normalized=await normalizeBirthdayUpload(raw,mime);}catch(e){if(e&&typeof e==='object'&&'status' in e&&e.status===503)throw new BirthdayFailure('No pudimos preparar tu foto en este momento. Inténtalo más tarde.',503);throw new BirthdayFailure('No pudimos preparar esa foto. Prueba con una foto válida en JPG, PNG, WebP o HEIC.',415);}
  if(!normalized.bytes.length||normalized.bytes.length>3*1024*1024||!['image/jpeg','image/png','image/webp'].includes(normalized.mimeType))throw new BirthdayFailure('No pudimos preparar esa foto. Prueba con otra.',415);
  const reserved=await database().prepare(`INSERT INTO jac_fan_birthday_jobs(id,owner_hash,ip_hash,payload_hash,status,source_key,source_mime,claim,started_at,created_at,expires_at,updated_at)
  SELECT ?,?,?,?,'uploading',?,?,?,?,?,?,? WHERE

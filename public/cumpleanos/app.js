@@ -1,11 +1,13 @@
 const API = '/api/fans/cumpleanos';
 const STORAGE_KEY = 'jac-birthday-job-v1';
 const MAX_FILE_BYTES = 8 * 1024 * 1024;
+const STILL_PHOTO_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif']);
+const PHOTO_EXTENSION = /\.(?:jpe?g|png|webp|heic|heif)$/i;
 const POLL_DEADLINE = 12 * 60 * 1000;
 const $ = id => document.getElementById(id);
 const el = {
   form: $('photo-form'), input: $('photo-input'), upload: $('upload-zone'), selected: $('selected-photo'),
-  preview: $('photo-preview'), name: $('selected-name'), size: $('selected-size'), generate: $('generate-button'),
+  preview: $('photo-preview'), previewNote: $('preview-note'), name: $('selected-name'), size: $('selected-size'), generate: $('generate-button'),
   adult: $('adult-consent'), consent: $('photo-consent'), availability: $('availability'), human: $('human-check'),
   job: $('job-panel'), jobTitle: $('job-title'), progressTrack: $('progress-track'), progress: $('job-progress'),
   message: $('job-message'), detail: $('job-detail'), refresh: $('refresh-job'), cancel: $('cancel-job'),
@@ -15,6 +17,8 @@ const el = {
 let config = null;
 let selectedFile = null;
 let selectedURL = '';
+let previewRevision = 0;
+let previewProbe = null;
 let resultURL = '';
 let resultFile = null;
 let jobID = '';
@@ -69,29 +73,67 @@ function resetChallenge() {
   if (widgetID !== null && window.turnstile) window.turnstile.reset(widgetID);
   controls();
 }
+function supportsPhoto(file) {
+  const type = (file.type || '').trim().toLowerCase();
+  // Some file pickers omit HEIC's MIME type. The server validates the bytes;
+  // explicit sequence/video MIME types never use the extension fallback.
+  return STILL_PHOTO_TYPES.has(type) || ((!type || type === 'application/octet-stream' || type === 'binary/octet-stream') && PHOTO_EXTENSION.test(file.name || ''));
+}
+function clearSelectedPreview() {
+  previewRevision++;
+  if (previewProbe) {
+    previewProbe.onload = null; previewProbe.onerror = null;
+    previewProbe.removeAttribute('src'); previewProbe = null;
+  }
+  el.preview.hidden = true; el.preview.removeAttribute('src');
+  el.previewNote.hidden = true; el.previewNote.textContent = '';
+}
+function prepareSelectedPreview(file, url) {
+  const revision = previewRevision;
+  // A separate Image gives each selection its own load/error callbacks.
+  // A late event from an older file must never replace the current preview.
+  const probe = new Image(); previewProbe = probe;
+  const current = () => revision === previewRevision && selectedFile === file && selectedURL === url;
+  el.previewNote.textContent = 'Cargando vista previa…'; el.previewNote.hidden = false;
+  probe.onload = () => {
+    if (!current()) return;
+    el.preview.src = url; el.preview.hidden = false; el.previewNote.hidden = true;
+    probe.onload = null; probe.onerror = null; previewProbe = null;
+  };
+  probe.onerror = () => {
+    if (!current()) return;
+    el.preview.hidden = true; el.preview.removeAttribute('src');
+    el.previewNote.textContent = 'Vista previa no disponible; prepararemos tu foto al subirla.';
+    el.previewNote.hidden = false;
+    probe.onload = null; probe.onerror = null; previewProbe = null;
+  };
+  probe.src = url;
+}
 function choosePhoto(file) {
   if (uploading || jobID || deleting) return;
   showError();
   if (!file) return;
-  if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
-    showError('Elige una foto JPG, PNG o WebP. Si viene en otro formato, puedes guardarla como JPG antes de subirla.');
+  if (!supportsPhoto(file)) {
+    showError('Elige una foto JPG, PNG, WebP o HEIC/HEIF. Este apartado admite fotos, no videos ni secuencias.');
     el.input.value = ''; return;
   }
   if (!file.size || file.size > MAX_FILE_BYTES) {
     showError('Tu foto debe pesar hasta 8 MB. Elige una versión más liviana e inténtalo de nuevo.');
     el.input.value = ''; return;
   }
+  clearSelectedPreview();
   if (selectedURL) URL.revokeObjectURL(selectedURL);
   selectedFile = file; selectedURL = URL.createObjectURL(file); requestID = crypto.randomUUID();
-  el.preview.src = selectedURL; el.name.textContent = file.name || 'Mi foto';
+  prepareSelectedPreview(file, selectedURL); el.name.textContent = file.name || 'Mi foto';
   el.size.textContent = file.size < 1024 * 1024 ? `${Math.ceil(file.size / 1024)} KB` : `${(file.size / 1024 / 1024).toFixed(1)} MB`;
   el.selected.hidden = false; el.upload.hidden = true;
   controls();
 }
 function removePhoto() {
   if (uploading || jobID || deleting) return;
+  clearSelectedPreview();
   if (selectedURL) URL.revokeObjectURL(selectedURL);
-  selectedURL = ''; selectedFile = null; requestID = ''; el.preview.removeAttribute('src'); el.input.value = '';
+  selectedURL = ''; selectedFile = null; requestID = ''; el.input.value = '';
   el.selected.hidden = true; el.upload.hidden = false; controls();
 }
 async function responseData(response) {
@@ -293,8 +335,8 @@ async function deleteJob() {
     if (![404, 410].includes(response.status)) await responseData(response);
     rememberJob(''); jobID = ''; requestID = ''; activeStatus = ''; pollStarted = 0;
     el.job.hidden = true; el.result.hidden = true; el.form.hidden = false; resetPhotoDisplay();
-    selectedFile = null; if (selectedURL) URL.revokeObjectURL(selectedURL); selectedURL = '';
-    el.preview.removeAttribute('src'); el.input.value = ''; el.selected.hidden = true; el.upload.hidden = false;
+    clearSelectedPreview(); selectedFile = null; if (selectedURL) URL.revokeObjectURL(selectedURL); selectedURL = '';
+    el.input.value = ''; el.selected.hidden = true; el.upload.hidden = false;
     el.adult.checked = false; el.consent.checked = false; resetChallenge();
     el.availability.hidden = false; el.availability.textContent = 'Tu solicitud se canceló y tus fotos dejaron de estar disponibles.';
     if (!serverConfigured) el.availability.textContent += ' Estamos preparando la experiencia para nuevas fotos.';
@@ -328,7 +370,7 @@ el.upload.addEventListener('drop', event => {
 });
 window.addEventListener('pagehide', event => {
   stopPolling(); clearRequest();
-  if (!event.persisted) { xhr?.abort(); if (selectedURL) URL.revokeObjectURL(selectedURL); cleanupResult(); }
+  if (!event.persisted) { xhr?.abort(); clearSelectedPreview(); if (selectedURL) URL.revokeObjectURL(selectedURL); cleanupResult(); }
 });
 window.addEventListener('pageshow', event => {
   if (event.persisted && jobID && !uploading && !deleting && !resultURL) { pollStarted = Date.now(); void readJob(); }

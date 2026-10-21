@@ -40,7 +40,7 @@ beforeEach(()=>{
 test.after(()=>sql?.close());
 function request(method='GET',cookie='',query='',body,extra={}){return new Request(base+'/api/fans/cumpleanos'+query,{method,headers:{cookie,origin:base,'cf-connecting-ip':'192.0.2.1',...extra},...(body?{body}:{})});}
 async function browser(){const response=await m.handleBirthdayApi(request());assert.equal(response.status,200);const cookie=response.headers.get('set-cookie').split(';')[0];return {cookie,config:await response.json(),headers:response.headers};}
-function form(id=crypto.randomUUID(),photo=png,{adult='true',consent='true',token='fixture-human'}={}){const data=new FormData();data.set('id',id);data.set('photo',new File([photo],'portrait.png',{type:'image/png'}));data.set('adult',adult);data.set('consent',consent);data.set('turnstileToken',token);return data;}
+function form(id=crypto.randomUUID(),photo=png,{adult='true',consent='true',token='fixture-human',filename='portrait.png',fileType='image/png'}={}){const data=new FormData();data.set('id',id);data.set('photo',new File([photo],filename,{type:fileType}));data.set('adult',adult);data.set('consent',consent);data.set('turnstileToken',token);return data;}
 async function upload(cookie,{id=crypto.randomUUID(),photo=png,extra={},fields={}}={}){const response=await m.handleBirthdayApi(request('POST',cookie,'',form(id,photo,fields),extra));return {status:response.status,body:await response.json(),headers:response.headers,id};}
 async function inspect(cookie,id,method='GET',tail=''){const response=await m.handleBirthdayApi(request(method,cookie,'?id='+id+tail));return {status:response.status,body:await response.json(),headers:response.headers};}
 const dbJob=id=>sql.prepare('SELECT * FROM jac_fan_birthday_jobs WHERE id=?').get(id);
@@ -54,6 +54,17 @@ test('public configuration creates an isolated private browser cookie and never 
 });
 test('upload validates consent, normalizes the photo, stores only a private source and reserves the queue',async()=>{
  const b=await browser(),r=await upload(b.cookie);assert.equal(r.status,202,r.body.error);assert.equal(r.body.job.status,'queued');assert.equal(counts.generate,0);assert.equal(counts.normalize,1);assert.equal(counts.verify,1);const job=dbJob(r.id);assert.equal(job.status,'queued');assert.match(job.owner_hash,/^[a-f0-9]{64}$/);assert.match(job.ip_hash,/^[a-f0-9]{64}$/);assert(!JSON.stringify(job).includes('192.0.2.1'));assert(!JSON.stringify(job).includes(b.cookie));assert.deepEqual(objects.get(job.source_key),png);assert.equal(job.result_key,'');assert.equal(Date.parse(job.expires_at)-Date.parse(job.created_at),24*3600_000);
+});
+test('API identifies HEIC from bytes despite missing or generic MIME, stores only JPEG and keeps retries idempotent',async()=>{
+ const fixture=major=>{const bytes=new Uint8Array(36),view=new DataView(bytes.buffer),text=new TextEncoder();view.setUint32(0,24);bytes.set(text.encode('ftyp'),4);bytes.set(text.encode(major),8);bytes.set(text.encode('mif1'),16);bytes.set(text.encode(major==='mif1'?'heic':major),20);view.setUint32(24,12);bytes.set(text.encode('mdat'),28);return bytes;};
+ const heic=fixture('heic'),jpeg=new Uint8Array([255,216,255,192,0,17,8,0,2,0,3,3,1,17,0,2,17,0,3,17,0,255,217]),b=await browser(),id=crypto.randomUUID();
+ normalizeHook=async(bytes,mime)=>{assert.deepEqual(bytes,heic);assert.equal(mime,'image/heic');return {bytes:jpeg.slice(),mimeType:'image/jpeg'};};
+ const first=await upload(b.cookie,{id,photo:heic,fields:{filename:'sin-extension',fileType:''}});assert.equal(first.status,202,first.body.error);let stored=dbJob(id);assert.equal(stored.source_mime,'image/jpeg');assert.deepEqual(objects.get(stored.source_key),jpeg);assert.notDeepEqual(objects.get(stored.source_key),heic);
+ const before={...counts},retry=await upload(b.cookie,{id,photo:heic,fields:{filename:'extension-equivocada.mp4',fileType:'application/octet-stream'}});assert.equal(retry.status,202,retry.body.error);assert.equal(retry.body.job.id,id);assert.deepEqual(counts,before,'Changed filename/MIME does not duplicate a byte-identical HEIC attempt.');
+ const second=await upload(b.cookie,{photo:heic,fields:{filename:'foto-no-es-png.png',fileType:'application/octet-stream'}});assert.equal(second.status,202,second.body.error);stored=dbJob(second.id);assert.equal(stored.source_mime,'image/jpeg');assert.deepEqual(objects.get(stored.source_key),jpeg);
+ const normalized=counts.normalize;for(const bytes of [fixture('avif'),fixture('isom'),heic.subarray(0,12)])assert.equal((await upload(b.cookie,{photo:bytes,fields:{filename:'aparenta.HEIC',fileType:'image/heic'}})).status,415);
+ assert.equal(counts.normalize,normalized,'Invalid BMFF containers stop before normalization or queue reservation.');assert.equal(sql.prepare('SELECT count(*) n FROM jac_fan_birthday_jobs').get().n,2);assert.equal(counts.generate,0);
+ generateHook=async(bytes,mime)=>{assert.deepEqual(bytes,jpeg,'The image pipeline receives normalized JPEG, never the original HEIC.');assert.equal(mime,'image/jpeg');return png.slice();};await m.processBirthdayJobs();assert.equal(counts.generate,1);
 });
 test('reopening a closed tab recovers only its own unexpired attempt without another generation',async()=>{
  const owner=await browser(),other=await browser(),uploaded=await upload(owner.cookie);

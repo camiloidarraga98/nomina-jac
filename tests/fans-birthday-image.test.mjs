@@ -17,6 +17,12 @@ const master=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/m
 const RGB=Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DA8J+BgYHhv4aRDQAbDAOUjA/9bAAAAABJRU5ErkJggg==','base64'));
 // This header-only JPEG stands in for an image service's decoded fixture.
 const photo=new Uint8Array([255,216,255,192,0,17,8,0,2,0,3,3,1,17,0,2,17,0,3,17,0,255,217]);
+// Synthetic BMFF headers, not encoded personal photos. Images.info and its
+// transform are mocked below so no HEIC decoding or provider inference occurs.
+function heicFixture(major='heic',compatible=['mif1','heic']){
+ const size=16+compatible.length*4,bytes=new Uint8Array(size+12),view=new DataView(bytes.buffer),text=new TextEncoder();
+ view.setUint32(0,size);bytes.set(text.encode('ftyp'),4);bytes.set(text.encode(major),8);for(let i=0;i<compatible.length;i++)bytes.set(text.encode(compatible[i]),16+i*4);view.setUint32(size,12);bytes.set(text.encode('mdat'),size+4);return bytes;
+}
 let assetBad=false,assetReads=0,calls=0,mode='ready',lastForm=null;
 globalThis.__fansImageEnv.ASSETS={async fetch(req){assetReads++;const name=new URL(req.url).pathname.split('/').at(-1);assert.ok(['master-v1.png','canvas-v3.png','mask-v3.png','blend-v3.png'].includes(name));return new Response(assetBad&&name==='master-v1.png'?new Uint8Array([0]):await readFile('design/fans/cumpleanos/'+name));}};
 // Coordinate-coded colors detect crop/padding/scale errors that a uniform
@@ -64,6 +70,36 @@ test('upload normalization uses actual image decoding and stores only a bounded 
  const result=await m.normalizeBirthdayUpload(RGB,'image/png');assert.ok(source);assert.deepEqual(options,{width:1536,height:1536,fit:'scale-down'});assert.deepEqual(format,{format:'image/jpeg',quality:90});assert.equal(result.mimeType,'image/jpeg');assert.deepEqual(result.bytes,photo);assert.notDeepEqual(result.bytes,RGB);
  globalThis.__fansImageEnv.IMAGES={input(){return {transform(){return {async output(){throw new Error('private decode error');}};}};}};
  await assert.rejects(m.normalizeBirthdayUpload(RGB,'image/png'),e=>e.status===400&&!e.message.includes('private'));
+});
+test('HEIC still-image variants are decoded for dimensions then transformed into a fresh bounded JPEG',async()=>{
+ const before=calls,previous=globalThis.__fansImageEnv.IMAGES;let expected,events=[];
+ globalThis.__fansImageEnv.IMAGES={async info(stream){events.push('info');assert.deepEqual(new Uint8Array(await new Response(stream).arrayBuffer()),expected);return {width:4032,height:3024};},input(stream){events.push('input');return {transform(options){assert.deepEqual(options,{width:1536,height:1536,fit:'scale-down'});return {async output(options){events.push('output');assert.deepEqual(options,{format:'image/jpeg',quality:90});assert.deepEqual(new Uint8Array(await new Response(stream).arrayBuffer()),expected,'The transform receives a fresh complete stream after inspecting dimensions.');return {response:()=>new Response(photo,{headers:{'content-type':'image/jpeg'}})};}};}};}};
+ try{
+  for(const [major,compatible,mime] of [['heic',['mif1','heic'],'image/heic'],['heix',['mif1','heix'],'image/heic'],['heim',['mif1','heim'],'image/heic'],['heis',['mif1','heis'],'image/heic'],['mif1',['mif1','heic'],'image/heif']]){
+   expected=heicFixture(major,compatible);events=[];const normalized=await m.normalizeBirthdayUpload(expected,mime);assert.deepEqual(events,['info','input','output']);assert.equal(normalized.mimeType,'image/jpeg');assert.deepEqual(normalized.bytes,photo);assert.notDeepEqual(normalized.bytes,expected,'Raw HEIC is not kept or forwarded as the normalized source.');
+  }
+ }finally{globalThis.__fansImageEnv.IMAGES=previous;}
+ assert.equal(calls,before,'Normalization never sends an OpenAI request.');
+});
+test('HEIC rejects movie/AVIF brands, malformed containers and unsafe decoded dimensions before transformation',async()=>{
+ const before=calls,previous=globalThis.__fansImageEnv.IMAGES;let inspected=0,transforms=0,info={width:4032,height:3024},infoError=false;
+ globalThis.__fansImageEnv.IMAGES={async info(){inspected++;if(infoError)throw Error('private HEIC decoder failure');return info;},input(){transforms++;throw Error('Unsafe HEIC must never reach the image transform.');}};
+ try{
+  const truncated=heicFixture().subarray(0,12),unaligned=heicFixture();new DataView(unaligned.buffer).setUint32(0,18);
+  const incomplete=heicFixture();new DataView(incomplete.buffer).setUint32(0,incomplete.length+4);
+  const misplaced=heicFixture();misplaced.set(new TextEncoder().encode('free'),4);
+  const oversizedBox=new Uint8Array(4112);oversizedBox.set(heicFixture());new DataView(oversizedBox.buffer).setUint32(0,4100);
+  const oversizedFile=new Uint8Array(8*1024*1024+1);oversizedFile.set(heicFixture());
+  const invalid=[truncated,unaligned,incomplete,misplaced,oversizedBox,oversizedFile,heicFixture('avif',['mif1','avif','heic']),heicFixture('isom',['heic']),heicFixture('mif1',['mif1'])];
+  for(const brand of ['avif','avis','msf1','hevc','hevx','hevm','hevs'])invalid.push(heicFixture('heic',['heic',brand]));
+  for(const bytes of [...invalid,photo,RGB])await assert.rejects(m.normalizeBirthdayUpload(bytes,'image/heic'),e=>e.status===400&&e.paidAttempt===false);
+  await assert.rejects(m.normalizeBirthdayUpload(heicFixture(),'image/jpeg'),e=>e.status===400&&e.paidAttempt===false);assert.equal(inspected,0,'Only genuine bounded still-image ftyp headers reach the decoder.');assert.equal(transforms,0);
+  // A tiny forged ispe box must not override the decoded primary dimensions.
+  const header=heicFixture(),forged=new Uint8Array(header.length+20),view=new DataView(forged.buffer);forged.set(header);view.setUint32(header.length,20);forged.set(new TextEncoder().encode('ispe'),header.length+4);view.setUint32(header.length+12,1);view.setUint32(header.length+16,1);
+  for(const dimensions of [{width:12001,height:1},{width:8000,height:8001},{width:0,height:2},{width:NaN,height:2},{width:1.5,height:2}]){info=dimensions;await assert.rejects(m.normalizeBirthdayUpload(forged,'image/heif'),e=>e.status===400&&e.paidAttempt===false);}
+  infoError=true;await assert.rejects(m.normalizeBirthdayUpload(header,'image/heic'),e=>e.status===400&&e.paidAttempt===false&&!e.message.includes('private'));assert.equal(transforms,0,'Unsafe or undecodable primary images stop before output generation.');
+ }finally{globalThis.__fansImageEnv.IMAGES=previous;}
+ assert.equal(calls,before,'Rejected HEIC inputs never incur an OpenAI request.');
 });
 test('missing key and modified master stop before any billable request',async()=>{
  const before=calls;await assert.rejects(m.generateBirthdayPhoto(photo,'image/jpeg'),e=>e.paidAttempt===false&&e.status===503);globalThis.__fansImageEnv.OPENAI_API_KEY='independent-fictitious-openai-key';assetBad=true;
