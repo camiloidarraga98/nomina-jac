@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#260d13">
+  <meta name="theme-color" content="#fbf8f2">
   <meta name="description" content="Crea tu foto brindando con Jhon Alex Castaño y prepárate para celebrar el cumpleaños del Rey del Chupe en el Movistar Arena. 10 de abril de 2027, Bogotá.">
   <meta property="og:title" content="Tu foto con el Rey del Chupe · Jhon Alex Castaño">
   <meta property="og:description" content="Un brindis, tu foto y el cumpleaños del Rey. Nos vemos en el Movistar Arena el 10 de abril de 2027.">
@@ -12,9 +12,9 @@
   <meta property="og:locale" content="es_CO">
   <link rel="canonical" href="https://jhonalexcastano.com/cumple">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/cumpleanos/style.css?v=internal-access-2">
+  <link rel="stylesheet" href="/cumpleanos/style.css?v=light-upload-1">
   <title>Tu foto con el Rey · Cumpleaños de Jhon Alex Castaño</title>
-  <script type="module" src="/cumpleanos/app.js?v=internal-access-2"></script>
+  <script type="module" src="/cumpleanos/app.js?v=light-upload-1"></script>
 </head>
 <body>
   <header class="site-header">
@@ -34,7 +34,6 @@
         <p class="eyebrow">EL CUMPLEAÑOS DEL REY DEL CHUPE</p>
         <h1 id="page-title">El próximo brindis<br>es <em>contigo.</em></h1>
         <p class="intro-copy">Tú, con tu rostro y tu estilo, brindando con Jhon Alex. Crea tu foto y empieza a vivir lo que nos espera en el <strong>Movistar Arena.</strong></p>
-        <div class="venue-line"><span aria-hidden="true">✦</span><p>10 de abril de 2027 <span>Movistar Arena · Bogotá</span></p></div>
       </div>
       <div id="availability" class="notice availability" role="status">Preparando la experiencia…</div>
       <form id="photo-form" class="photo-form" novalidate>
@@ -56,14 +55,10 @@
           <button id="take-photo" class="secondary-button" type="button"><svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="M8 5l1.5-2h5L16 5h4a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h4Z"/><circle cx="12" cy="12" r="4"/></svg><span>Tomar foto ahora</span></button>
         </div>
         <p id="photo-help" class="photo-help">Elige una foto de frente, con buena luz y una sola persona. Mejor de medio cuerpo o cuerpo completo, con la ropa que quieres llevar en el brindis. También puedes usar una selfie: la IA completará el cuerpo y la ropa que no se vean.</p>
-        <fieldset class="consents"><legend class="visually-hidden">Antes de crear tu foto</legend>
-          <label><input id="adult-consent" type="checkbox" name="adult"><span>Tengo 18 años o más.</span></label>
-          <label><input id="photo-consent" type="checkbox" name="consent"><span>La foto es mía y autorizo su procesamiento con OpenAI para crear esta imagen.</span></label>
-        </fieldset>
         <div id="human-check" class="human-check" hidden></div>
         <button id="generate-button" class="primary-button" type="submit" disabled><span>Crear mi foto con el Rey</span><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button>
         <p class="generation-note">Crear tu foto puede tomar varios minutos, según el turno de la cola.</p>
-        <p class="privacy-note">En JAC, tu foto y el resultado son privados. Dejan de estar disponibles en <span data-retention>24</span> horas y se eliminan automáticamente después. También puedes retirarlos aquí. <a href="https://openai.com/policies/privacy-policy/" target="_blank" rel="noopener noreferrer">Privacidad de OpenAI</a>.</p>
+        <p class="privacy-note">Tu foto se procesa con OpenAI para crear la imagen. La foto y el resultado son privados en JAC y están disponibles durante <span data-retention>24</span> horas. Puedes borrarlos aquí. <a href="https://openai.com/policies/privacy-policy/" target="_blank" rel="noopener noreferrer">Privacidad de OpenAI</a>.</p>
       </form>
       <section id="job-panel" class="job-panel" aria-labelledby="job-title" hidden>
         <div class="section-heading"><span class="step-number">02</span><h2 id="job-title">Estamos preparando el brindis</h2></div>

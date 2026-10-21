@@ -13,7 +13,7 @@ const el = {
   form: $('photo-form'), input: $('photo-input'), upload: $('upload-zone'), selected: $('selected-photo'),
   preview: $('photo-preview'), previewNote: $('preview-note'), name: $('selected-name'), size: $('selected-size'), generate: $('generate-button'),
   camera: $('camera-action'), cameraInput: $('camera-input'), cameraButton: $('take-photo'),
-  adult: $('adult-consent'), consent: $('photo-consent'), availability: $('availability'), human: $('human-check'),
+  availability: $('availability'), human: $('human-check'),
   job: $('job-panel'), jobTitle: $('job-title'), progressTrack: $('progress-track'), progress: $('job-progress'),
   message: $('job-message'), detail: $('job-detail'), refresh: $('refresh-job'), cancel: $('cancel-job'),
   result: $('result-panel'), campaign: $('campaign-photo'), photoLabel: $('photo-label'), photoCaption: $('photo-caption'),
@@ -90,9 +90,8 @@ function controls() {
   const locked = uploading || deleting || Boolean(jobID);
   el.input.disabled = locked; $('change-photo').disabled = locked; $('remove-photo').disabled = locked;
   el.cameraInput.disabled = locked; el.cameraButton.disabled = locked;
-  el.adult.disabled = locked; el.consent.disabled = locked;
   const needsProof = Boolean(config?.turnstileSiteKey) && !turnstileToken;
-  el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || internalBusy || resetBusy || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
+  el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || internalBusy || resetBusy || !selectedFile || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
   el.generate.querySelector('span').textContent = creationBlocked || (needsProof && verificationNeedsRefresh ? 'Volver a verificar' : verificationPending ? 'Completa la verificación' : 'Crear mi foto con el Rey');
   el.cancel.disabled = uploading || deleting;
   el.delete.disabled = deleting;
@@ -125,7 +124,7 @@ function renderChallenge() {
     controls(); showError(message);
   };
   widgetID = window.turnstile.render(el.human, {
-    sitekey: config.turnstileSiteKey, theme: 'dark', action: 'birthday-photo',
+    sitekey: config.turnstileSiteKey, theme: 'light', action: 'birthday-photo',
     retry: 'never', 'refresh-expired': 'manual', 'refresh-timeout': 'manual',
     callback(token) {
       if (!current()) return;
@@ -284,7 +283,7 @@ async function changeInternalMode(activate) {
     internalMode = data.internalMode;
     if (config) config.internalMode = internalMode;
     if (activate) {
-      // Unlocking changes only the daily budget. Selection, UUID, consent,
+      // Unlocking changes only the daily budget. Selection, UUID,
       // captcha and an existing job retain their independent lifecycle.
       clearDailyBlock();
       el.internalDetails.open = false;
@@ -494,7 +493,6 @@ async function submitPhoto(event) {
   showError();
   if (!serverConfigured) { showError('Estamos preparando la experiencia. Vuelve a visitarnos pronto.'); return; }
   if (!selectedFile) { showError('Primero elige una foto tuya.'); el.input.focus(); return; }
-  if (!el.adult.checked || !el.consent.checked) { showError('Confirma que tienes 18 años o más y que autorizas el uso de tu foto para crear la imagen.'); return; }
   if (config?.turnstileSiteKey && (!turnstileToken || Date.now() - tokenIssuedAt > VERIFICATION_MAX_AGE)) {
     if (!verificationPending) verifyAgain();
     return;
@@ -502,7 +500,6 @@ async function submitPhoto(event) {
   const proof = turnstileToken;
   requestID ||= crypto.randomUUID();
   const data = new FormData(); data.append('photo', selectedFile); data.append('id', requestID);
-  data.append('consent', 'true'); data.append('adult', 'true');
   if (proof) data.append('turnstileToken', proof);
   // A proof is single-use. Stop the widget before hiding its parent; only an
   // explicit later action may request another proof, never an upload callback.
@@ -554,7 +551,6 @@ async function deleteJob() {
     el.job.hidden = true; el.result.hidden = true; el.form.hidden = false; resetPhotoDisplay();
     clearSelectedPreview(); selectedFile = null; if (selectedURL) URL.revokeObjectURL(selectedURL); selectedURL = '';
     el.input.value = ''; el.cameraInput.value = ''; el.selected.hidden = true; el.upload.hidden = false;
-    el.adult.checked = false; el.consent.checked = false;
     discardChallenge(); verificationNeedsRefresh = Boolean(config?.turnstileSiteKey);
     el.availability.hidden = false; el.availability.textContent = 'Tu solicitud se canceló y tus fotos dejaron de estar disponibles.';
     if (!serverConfigured) el.availability.textContent += ' Estamos preparando la experiencia para nuevas fotos.';
@@ -586,7 +582,6 @@ el.cameraInput.addEventListener('change', () => {
 });
 $('change-photo').addEventListener('click', () => { if (!uploading && !jobID) el.input.click(); });
 $('remove-photo').addEventListener('click', removePhoto);
-el.adult.addEventListener('change', controls); el.consent.addEventListener('change', controls);
 el.form.addEventListener('submit', event => { void submitPhoto(event); });
 el.cancel.addEventListener('click', () => { void deleteJob(); }); el.delete.addEventListener('click', () => { void deleteJob(); });
 el.refresh.addEventListener('click', () => { showError(); pollStarted = Date.now(); void readJob(); });

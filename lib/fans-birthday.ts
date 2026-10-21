@@ -139,7 +139,6 @@ async function createJob(req:Request,owner:string,internal=false){
  const form=await boundedForm(req),id=requireID(typeof form.get('id')==='string'?String(form.get('id')):null),photo=form.get('photo');
  if(form.getAll('id').length!==1||form.getAll('photo').length!==1||!(photo instanceof File)||photo.size===0)throw new BirthdayFailure('Selecciona una foto para continuar.');
  if(photo.size>BIRTHDAY_LIMITS.photoBytes)throw new BirthdayFailure('La foto debe pesar como máximo 8 MB.',413);
- if(form.get('consent')!=='true'||form.get('adult')!=='true')throw new BirthdayFailure('Confirma que eres mayor de edad y que tienes permiso para usar la foto.');
  const raw=new Uint8Array(await photo.arrayBuffer()),mime=imageMime(raw),hash=createHmac('sha256',settings().PAYROLL_AUTH_KEY!).update('jac-birthday-v1:photo\0').update(raw).update(mime).digest('hex'),prior=await row(id);
  if(prior){if(prior.owner_hash!==owner)throw new BirthdayFailure('Este intento no está disponible.',404);if(prior.payload_hash!==hash)throw new BirthdayFailure('Este intento corresponde a otra foto. Inicia una creación nueva.',409);return publicJob(await ownJob(id,owner));}
  const address=req.headers.get('cf-connecting-ip');if(!address||address.length>100)throw new BirthdayFailure('No pudimos verificar la conexión. Inténtalo desde la página original.',403);

@@ -4,7 +4,7 @@ import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
 const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js','/file.svg','/globe.svg','/window.svg']);
-const fanAssetRevision='internal-access-2';
+const fanAssetRevision='light-upload-1';
 
 export default {
   async scheduled(controller:{cron?:string},env:DeploymentEnv){

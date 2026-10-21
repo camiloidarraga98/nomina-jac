@@ -25,7 +25,7 @@ test('Workerd validates real File/cookie/D1/R2 flow, idempotent generation and p
   const configuration=await mf.dispatchFetch(endpoint),config=await configuration.json(),cookie=configuration.headers.get('set-cookie').split(';')[0];
   assert.equal(config.enabled,true);assert.match(cookie,/^__Host-jac_fan=[\w-]{43}$/);assert.match(configuration.headers.get('set-cookie'),/HttpOnly; Secure; SameSite=Strict/);
   assert.equal(config.internalAvailable,true);assert.equal(config.internalMode,false);
-  const id=crypto.randomUUID(),form=(submissionID=id)=>{const body=new FormData();body.set('id',submissionID);body.set('photo',new File([png],'fixture.png',{type:'image/png'}));body.set('consent','true');body.set('adult','true');body.set('turnstileToken','fixture-human');return body;};
+  const id=crypto.randomUUID(),form=(submissionID=id)=>{const body=new FormData();body.set('id',submissionID);body.set('photo',new File([png],'fixture.png',{type:'image/png'}));body.set('turnstileToken','fixture-human');return body;};
   // Serialize through Node's native Request first: Miniflare's bundled Undici
   // does not recognize Node 24 FormData objects passed directly as its body.
   const submit=async(sessionCookie=cookie,submissionID=id)=>{const multipart=new Request(endpoint,{method:'POST',body:form(submissionID)});return mf.dispatchFetch(endpoint,{method:'POST',headers:{cookie:sessionCookie,Origin:base,'CF-Connecting-IP':'192.0.2.1','Content-Type':multipart.headers.get('content-type')},body:await multipart.arrayBuffer()});};
