@@ -1,0 +1,42 @@
+{
+  "version": 1,
+  "status": "approved_reference",
+  "approvedOn": "2026-10-21",
+  "timezone": "America/Bogota",
+  "image": {
+    "file": "master-v1.png",
+    "mimeType": "image/png",
+    "width": 1122,
+    "height": 1402,
+    "bytes": 2189601,
+    "sha256": "155f37db37855cc4af04ca5a88260211526ed21c56477b4d9e5c0d4e4dcdbbc4"
+  },
+  "caption": "Ya estoy listo pa celebrar el cumpleaños del Rey del Chupe en el Movistar Arena",
+  "campaign": {
+    "artist": "Jhon Alex Castaño",
+    "eventDate": "2027-04-10",
+    "venue": "Movistar Arena",
+    "city": "Bogotá"
+  },
+  "composition": {
+    "artistSide": "left",
+    "guestSide": "right",
+    "partyHatColor": "red",
+    "drinkColor": "golden_yellow",
+    "protectedElements": [
+      "artist_face_and_body",
+      "artist_clothing_and_hat",
+      "caption",
+      "background",
+      "furniture",
+      "table",
+      "cake",
+      "bottle"
+    ],
+    "editableSubject": "right_guest",
+    "maskStatus": "pending",
+    "preservationMethod": "composite_approved_master_outside_edit_mask"
+  },
+  "plannedGenerationProvider": "OpenAI image editing API",
+  "implementationStatus": "reference_only"
+}
