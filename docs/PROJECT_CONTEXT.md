@@ -1,3 +1,7 @@
+## Empresarios automáticos al guardar shows · 21 de octubre de 2026
+
+Camilo pidió crear la ficha automáticamente al escribir un empresario nuevo en CRM. Creación y edición de shows reutilizan el nombre completo sin distinguir mayúsculas, tildes o espacios repetidos; si falta la ficha, la crean con solo el nombre en la misma transacción que guarda el show. Selección explícita y nombre vacío conservan sus reglas. Reintentos/concurrencia no duplican fichas; no se alteran textos históricos al editar una ficha. Implementación, verificación y publicación en [CRM_SHOWS_ABONOS.md](CRM_SHOWS_ABONOS.md). Sin cambios de binario, esquema o permisos.
+
 ## Correcciones de auditoría · 20 de octubre de 2026
 
 La revisión parte de `632b1ff` y conserva las correcciones de galería/menú posteriores al commit auditado. Ver [AUDIT_CORRECTIONS_2026_10_20.md](AUDIT_CORRECTIONS_2026_10_20.md) para las correcciones H01–H18, límites estructurales, validación y estado de publicación. El cierre persiste el correo y responde con cola preparada; cron continúa pendientes sin repetir resultados inciertos. Nómina conserva CAS global e instantáneas. No confundir las mejoras parciales con una migración completa a revisiones/deltas por periodo.

@@ -1,5 +1,15 @@
 # CRM: shows, abonos y comprobantes
 
+## Empresario automático · entrega del 21 de octubre de 2026
+
+Fuente `c45b04a`: creación y edición del show resuelven la ficha en el servidor compartido por web y apps. Ver **Ficha del empresario** para las reglas de coincidencia y concurrencia. No cambian esquema, recursos, permisos ni contratos de API.
+
+Verificación final: TypeScript y build Cloudflare correctos; 75 comprobaciones pasadas, sin fallos ni omisiones, en `crm`, `crm-workspace`, ambos Workerd y compatibilidad móvil/OAuth. Incluyen ocho casos nuevos de creación, reutilización normalizada, selección explícita, nombre vacío, guardados simultáneos, cambio concurrente de nombre, edición con CAS, revocación y reversión transaccional. Bases en memoria, R2 desechable y Google interceptado; no se ejecutan eventos, pagos ni envíos reales de prueba. Las fuentes nativas no cambian y se conserva el formato de respuesta actual.
+
+Publicado en `jac-nomina`: versión `a7e87b0c-7c0b-4035-939a-d3a4b7df6108`, despliegue `2aa48a5c-b5b0-4695-b35f-2e7fcc859c11`, activo al 100% el 21 de octubre a las 13:33 de Colombia. API de despliegues y nombres de bindings verificados; DB/BUCKET, Images, Stream y secretos conservados con `--keep-vars`. Wrangler terminó con error en las consultas auxiliares de subdominio/membresías después de publicar; no se repitió el despliegue. Sin migraciones.
+
+También se completó la corrección puntual de ficha/vínculos solicitada por Camilo, con revisiones vigentes y auditoría de mantenimiento; no se hizo conversión masiva del histórico ni se modificaron importes, abonos, Calendar o accesos de usuarios. Los registros reales no se guardaron en la fuente.
+
 ## Uso
 
 Camilo y la cuenta `jac`, como administradores, encuentran **CRM** en la barra lateral, en `/crm`. Las demás cuentas conservan su acceso previo, sin consulta de abonos o comprobantes.
