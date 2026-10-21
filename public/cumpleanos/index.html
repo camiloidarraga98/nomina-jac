@@ -12,7 +12,7 @@
   <meta property="og:locale" content="es_CO">
   <link rel="canonical" href="https://jhonalexcastano.com/cumple">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/cumpleanos/style.css?v=light-upload-1">
+  <link rel="stylesheet" href="/cumpleanos/style.css?v=share-photo-1">
   <title>Tu foto con el Rey · Cumpleaños de Jhon Alex Castaño</title>
   <script type="module" src="/cumpleanos/app.js?v=light-upload-1"></script>
 </head>
@@ -57,8 +57,7 @@
         <p id="photo-help" class="photo-help">Elige una foto de frente, con buena luz y una sola persona. Mejor de medio cuerpo o cuerpo completo, con la ropa que quieres llevar en el brindis. También puedes usar una selfie: la IA completará el cuerpo y la ropa que no se vean.</p>
         <div id="human-check" class="human-check" hidden></div>
         <button id="generate-button" class="primary-button" type="submit" disabled><span>Crear mi foto con el Rey</span><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M6 18 18 6M6 6h12v12"/></svg></button>
-        <p class="generation-note">Crear tu foto puede tomar varios minutos, según el turno de la cola.</p>
-        <p class="privacy-note">Tu foto se procesa con OpenAI para crear la imagen. La foto y el resultado son privados en JAC y están disponibles durante <span data-retention>24</span> horas. Puedes borrarlos aquí. <a href="https://openai.com/policies/privacy-policy/" target="_blank" rel="noopener noreferrer">Privacidad de OpenAI</a>.</p>
+        <p class="privacy-note">IA de OpenAI · Disponible <span data-retention>24</span> h · <a href="https://openai.com/policies/privacy-policy/" target="_blank" rel="noopener noreferrer" aria-label="Política de privacidad de OpenAI">Privacidad</a></p>
       </form>
       <section id="job-panel" class="job-panel" aria-labelledby="job-title" hidden>
         <div class="section-heading"><span class="step-number">02</span><h2 id="job-title">Estamos preparando el brindis</h2></div>
@@ -71,13 +70,12 @@
         <p class="eyebrow">ESTE BRINDIS YA TIENE TU CARA</p>
         <h2 id="result-title">Ya estás listo pa celebrar.</h2>
         <p>Guarda tu foto y compártela con quienes van a celebrar contigo.</p>
-        <a id="download-photo" class="primary-button" download="Mi-cumpleanos-con-el-Rey.png"><span>Descargar mi foto</span><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg></a>
-        <button id="share-photo" class="secondary-button share-button" type="button" hidden>Compartir mi foto</button>
+        <button id="share-photo" class="primary-button share-button" type="button" hidden><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 15V3m-4 4 4-4 4 4M5 11v9a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1v-9"/></svg><span class="share-button-label">Compartir mi foto</span></button>
+        <a id="download-photo" class="secondary-button download-button" download="Mi-cumpleanos-con-el-Rey.png"><span>Descargar mi foto</span><svg width="21" height="21" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M12 3v12m-4-4 4 4 4-4M4 16v4h16v-4"/></svg></a>
         <p class="result-meta">Imagen creada con IA · Disponible durante <span data-retention>24</span> horas</p>
         <button id="delete-photo" class="text-button" type="button">Borrar mi foto y el resultado</button>
       </section>
       <div id="error-message" class="notice error" role="alert" hidden></div>
-      <p class="experience-note">La IA adapta tu postura al brindis; el parecido y los detalles del vestuario pueden variar.</p>
       <section id="internal-panel" class="internal-panel" aria-label="Uso interno de JAC">
         <details id="internal-details">
           <summary>Uso interno</summary>
