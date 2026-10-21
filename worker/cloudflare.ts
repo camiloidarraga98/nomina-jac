@@ -1,12 +1,19 @@
 import {runMaintenance} from '../lib/maintenance';
-import {handleBirthdayApi} from '../lib/fans-birthday';
+import {handleBirthdayApi,processBirthdayJobs} from '../lib/fans-birthday';
 import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
 const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js','/file.svg','/globe.svg','/window.svg']);
 
 export default {
-  async scheduled(_controller:unknown,env:DeploymentEnv){if(env.JAC_READY==='1')await runMaintenance();},
+  async scheduled(controller:{cron?:string},env:DeploymentEnv){
+    if(env.JAC_READY!=='1')return;
+    // Two independent invocations each start at most five generations. This
+    // stays below Workers' six pending outgoing connections per invocation;
+    // the database enforces ten active leases across both cron triggers.
+    if(controller.cron==='0-59 * * * *')await processBirthdayJobs();
+    else await runMaintenance();
+  },
   async fetch(request:Request,env:DeploymentEnv,ctx:Parameters<typeof application.fetch>[2]){
     const url=new URL(request.url);
     if(url.pathname==='/.well-known/apple-app-site-association'&&['GET','HEAD'].includes(request.method))return Response.json({applinks:{details:[{appIDs:['AYHVYN8BJF.co.jacmusic.nomina'],components:[{'/':'/compartir/*'}]}]}},{headers:{'Cache-Control':'public, max-age=3600','X-Content-Type-Options':'nosniff'}});
@@ -21,9 +28,13 @@ export default {
     // Public fan experience has its own anonymous cookie, bot checks and bounded
     // queue. It never enters the administrative application's authentication.
     if(url.pathname==='/api/fans/cumpleanos')return handleBirthdayApi(request);
-    if(url.pathname==='/cumpleanos'||url.pathname.startsWith('/cumpleanos/')){
+    if(url.pathname==='/cumple'||url.pathname==='/cumple/'||url.pathname==='/cumple/index.html'||url.pathname==='/cumpleanos'||url.pathname.startsWith('/cumpleanos/')){
       if(!['GET','HEAD'].includes(request.method))return new Response(null,{status:405,headers:{Allow:'GET, HEAD'}});
-      if(url.pathname==='/cumpleanos')url.pathname+='/';
+      if(['/cumple/','/cumple/index.html','/cumpleanos','/cumpleanos/','/cumpleanos/index.html'].includes(url.pathname)){
+        url.pathname='/cumple';
+        return new Response(null,{status:308,headers:{Location:url.href,'Cache-Control':'public, max-age=300','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'}});
+      }
+      if(url.pathname==='/cumple')url.pathname='/cumpleanos/';
       const response=await env.ASSETS.fetch(new Request(url,request));
       const fanPage=new Response(response.body,response);
       fanPage.headers.set('X-Content-Type-Options','nosniff');

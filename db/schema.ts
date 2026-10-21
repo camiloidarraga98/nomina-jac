@@ -62,8 +62,12 @@ export const musicTracks=sqliteTable('jac_music_tracks',{id:text('id').primaryKe
 
 export const fanBirthdayJobs=sqliteTable('jac_fan_birthday_jobs',{
  id:text('id').primaryKey().notNull(),
- ownerHash:text('owner_hash').notNull(),ipHash:text('ip_hash').notNull(),payloadHash:text('payload_hash').notNull(),
+ ownerHash:text('owner_hash').notNull(),ipHash:text('ip_hash').notNull(),payloadHash:text('payload_hash').notNull(),internalMode:integer('internal_mode').notNull().default(0),
  status:text('status').notNull(),sourceKey:text('source_key').notNull().default(''),sourceMime:text('source_mime').notNull().default(''),resultKey:text('result_key').notNull().default(''),
  claim:text('claim').notNull().default(''),startedAt:text('started_at').notNull().default(''),message:text('message').notNull().default(''),
  createdAt:text('created_at').notNull(),expiresAt:text('expires_at').notNull(),updatedAt:text('updated_at').notNull(),
 },t=>[index('jac_fan_birthday_queue').on(t.status,t.createdAt),index('jac_fan_birthday_owner').on(t.ownerHash,t.createdAt),index('jac_fan_birthday_ip').on(t.ipHash,t.createdAt),index('jac_fan_birthday_created').on(t.createdAt)]);
+
+export const fanBirthdayInternalLimits=sqliteTable('jac_fan_birthday_internal_limits',{
+ ipHash:text('ip_hash').primaryKey().notNull(),attempts:integer('attempts').notNull(),expiresAt:text('expires_at').notNull(),
+},t=>[index('jac_fan_birthday_internal_expiry').on(t.expiresAt)]);

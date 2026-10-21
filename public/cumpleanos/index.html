@@ -10,7 +10,7 @@
   <meta property="og:type" content="website">
   <meta property="og:image" content="https://jhonalexcastano.com/cumpleanos/master-v1.png">
   <meta property="og:locale" content="es_CO">
-  <link rel="canonical" href="https://jhonalexcastano.com/cumpleanos/">
+  <link rel="canonical" href="https://jhonalexcastano.com/cumple">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
   <link rel="stylesheet" href="/cumpleanos/style.css">
   <title>Tu foto con el Rey · Cumpleaños de Jhon Alex Castaño</title>
@@ -18,7 +18,7 @@
 </head>
 <body>
   <header class="site-header">
-    <a class="artist-mark" href="/cumpleanos/" aria-label="Jhon Alex Castaño, foto de cumpleaños"><span>JHON ALEX</span><small>CASTAÑO</small></a>
+    <a class="artist-mark" href="/cumple" aria-label="Jhon Alex Castaño, foto de cumpleaños"><span>JHON ALEX</span><small>CASTAÑO</small></a>
     <p class="event-date"><span class="date-dot" aria-hidden="true"></span>10 ABR 2027 <span class="date-divider" aria-hidden="true">/</span> BOGOTÁ</p>
   </header>
   <main class="experience">
@@ -83,6 +83,22 @@
       </section>
       <div id="error-message" class="notice error" role="alert" hidden></div>
       <p class="experience-note">La IA adapta tu postura al brindis; el parecido y los detalles del vestuario pueden variar.</p>
+      <section id="internal-panel" class="internal-panel" aria-label="Uso interno de JAC" hidden>
+        <details id="internal-details">
+          <summary>Uso interno</summary>
+          <form id="internal-form" class="internal-form" autocomplete="off" novalidate>
+            <label for="internal-code">Código de uso interno</label>
+            <div class="internal-fields"><input id="internal-code" type="password" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="128" aria-describedby="internal-help"><button id="internal-submit" class="secondary-button" type="submit">Activar modo interno</button></div>
+            <p id="internal-help">Acceso exclusivo del equipo JAC. Sesión temporal de hasta 8 horas en este navegador.</p>
+          </form>
+        </details>
+        <div id="internal-active" class="internal-active" hidden>
+          <p>Modo interno activo · Sin límite diario</p>
+          <span>Se mantienen la verificación de cada foto y el turno de la cola.</span>
+          <button id="internal-exit" class="text-button" type="button">Salir del modo interno</button>
+        </div>
+        <p id="internal-feedback" class="internal-feedback" role="status" aria-live="polite" hidden></p>
+      </section>
     </section>
   </main>
   <footer class="site-footer"><span>JHON ALEX CASTAÑO</span><p>El cumpleaños del Rey del Chupe · Movistar Arena, Bogotá</p></footer>

@@ -6,6 +6,7 @@ const PHOTO_EXTENSION = /\.(?:jpe?g|png|webp|heic|heif)$/i;
 const POLL_DEADLINE = 12 * 60 * 1000;
 const VERIFICATION_MAX_AGE = 120000;
 const VERIFICATION_CODES = new Set(['verification_required', 'verification_expired', 'verification_rejected', 'verification_unavailable', 'verification_configuration']);
+const DAILY_LIMIT_CODES = new Set(['daily_browser_limit', 'daily_ip_limit', 'daily_global_limit']);
 const $ = id => document.getElementById(id);
 const el = {
   form: $('photo-form'), input: $('photo-input'), upload: $('upload-zone'), selected: $('selected-photo'),
@@ -16,6 +17,9 @@ const el = {
   message: $('job-message'), detail: $('job-detail'), refresh: $('refresh-job'), cancel: $('cancel-job'),
   result: $('result-panel'), campaign: $('campaign-photo'), photoLabel: $('photo-label'), photoCaption: $('photo-caption'),
   download: $('download-photo'), share: $('share-photo'), delete: $('delete-photo'), error: $('error-message'),
+  internalPanel: $('internal-panel'), internalDetails: $('internal-details'), internalForm: $('internal-form'),
+  internalCode: $('internal-code'), internalSubmit: $('internal-submit'), internalActive: $('internal-active'),
+  internalExit: $('internal-exit'), internalFeedback: $('internal-feedback'),
 };
 let config = null;
 let selectedFile = null;
@@ -39,6 +43,13 @@ let challengeRevision = 0;
 let verificationPending = false;
 let verificationNeedsRefresh = false;
 let creationBlocked = '';
+let creationBlockedCode = '';
+let creationBlockedMessage = '';
+let internalAvailable = false;
+let internalMode = false;
+let internalBusy = false;
+let internalController = null;
+let internalRevision = 0;
 let activeStatus = '';
 let resultLoading = false;
 let serverConfigured = false;
@@ -72,11 +83,12 @@ function controls() {
   el.cameraInput.disabled = locked; el.cameraButton.disabled = locked;
   el.adult.disabled = locked; el.consent.disabled = locked;
   const needsProof = Boolean(config?.turnstileSiteKey) && !turnstileToken;
-  el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
+  el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || internalBusy || !selectedFile || !el.adult.checked || !el.consent.checked || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
   el.generate.querySelector('span').textContent = creationBlocked || (needsProof && verificationNeedsRefresh ? 'Volver a verificar' : verificationPending ? 'Completa la verificación' : 'Crear mi foto con el Rey');
   el.cancel.disabled = uploading || deleting;
   el.delete.disabled = deleting;
   el.refresh.disabled = uploading || deleting;
+  internalControls();
 }
 function setBusyPanel(title, message, detail) {
   el.form.hidden = true; el.result.hidden = true; el.job.hidden = false;
@@ -205,6 +217,69 @@ async function responseData(response) {
   if (!response.ok) throw responseError(response.status, data);
   return data;
 }
+function internalControls() {
+  el.internalPanel.hidden = !internalAvailable && !internalMode;
+  el.internalPanel.setAttribute('aria-busy', String(internalBusy));
+  el.internalDetails.hidden = internalMode;
+  el.internalActive.hidden = !internalMode;
+  el.internalCode.disabled = internalBusy || uploading || internalMode;
+  el.internalSubmit.disabled = internalBusy || uploading || !internalAvailable || internalMode;
+  el.internalSubmit.textContent = internalBusy && !internalMode ? 'Activando…' : 'Activar modo interno';
+  el.internalExit.disabled = internalBusy || uploading;
+  el.internalExit.textContent = internalBusy && internalMode ? 'Cerrando…' : 'Salir del modo interno';
+}
+function internalFeedback(message = '', failed = false) {
+  el.internalFeedback.textContent = message; el.internalFeedback.hidden = !message;
+  el.internalFeedback.setAttribute('role', failed ? 'alert' : 'status');
+  el.internalFeedback.classList.toggle('internal-error', failed);
+  if (message) {
+    el.internalFeedback.tabIndex = -1; el.internalFeedback.focus({ preventScroll: true });
+    el.internalFeedback.scrollIntoView({ block: 'nearest' });
+  }
+}
+async function changeInternalMode(activate) {
+  if (internalBusy || uploading || (activate && !internalAvailable)) return;
+  let code = activate ? el.internalCode.value : '';
+  el.internalCode.value = '';
+  if (activate && !code) { internalFeedback('Escribe el código de uso interno para continuar.', true); return; }
+  const body = activate ? JSON.stringify({ code }) : undefined;
+  code = '';
+  const ticket = ++internalRevision;
+  const controller = new AbortController(); internalController = controller;
+  internalBusy = true; internalFeedback(); internalControls(); controls();
+  try {
+    const response = await fetch(`${API}?internal=1`, {
+      method: activate ? 'POST' : 'DELETE', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
+      ...(activate ? { headers: { 'Content-Type': 'application/json' }, body } : {}),
+    });
+    const data = await responseData(response);
+    if (ticket !== internalRevision) return;
+    if (data.internalMode !== activate) throw new Error('No pudimos confirmar el cambio de modo. Revisa tu conexión e inténtalo de nuevo.');
+    internalMode = data.internalMode;
+    if (config) config.internalMode = internalMode;
+    if (activate) {
+      // Unlocking changes only the daily budget. Selection, UUID, consent,
+      // captcha and an existing job retain their independent lifecycle.
+      if (DAILY_LIMIT_CODES.has(creationBlockedCode)) {
+        const quotaNotice = el.error.textContent === creationBlockedMessage;
+        creationBlocked = ''; creationBlockedCode = ''; creationBlockedMessage = '';
+        if (quotaNotice) showError();
+      }
+      el.internalDetails.open = false;
+    }
+    internalControls();
+    internalFeedback(activate ? 'Modo interno activado. Puedes continuar con tu foto.' : 'Modo interno cerrado. Se aplican los límites públicos.');
+  } catch (error) {
+    if (error.name === 'AbortError' || ticket !== internalRevision) return;
+    internalFeedback(error.blocked ? 'No pudimos confirmar el acceso interno. Revisa tu conexión y vuelve a intentarlo.' : error.message || 'No pudimos cambiar el modo interno. Inténtalo otra vez.', true);
+  } finally {
+    el.internalCode.value = '';
+    if (ticket === internalRevision) {
+      internalBusy = false; if (internalController === controller) internalController = null;
+      internalControls(); controls();
+    }
+  }
+}
 function loadTurnstile() {
   verificationPending = true;
   if (window.turnstile) { renderChallenge(); return; }
@@ -223,6 +298,8 @@ async function loadConfig() {
   try {
     const response = await fetch(API, { credentials: 'same-origin', cache: 'no-store', redirect: 'error' });
     config = await responseData(response); serverConfigured = config.enabled === true;
+    internalAvailable = config.internalAvailable === true; internalMode = config.internalMode === true;
+    internalControls();
     const hours = Number(config.retentionHours);
     if (Number.isFinite(hours) && hours > 0 && hours <= 168) document.querySelectorAll('[data-retention]').forEach(node => { node.textContent = String(hours); });
     el.availability.hidden = serverConfigured;
@@ -353,7 +430,7 @@ function upload(data, ticket) {
 }
 async function submitPhoto(event) {
   event.preventDefault();
-  if (uploading || deleting || jobID || creationBlocked) return;
+  if (uploading || deleting || jobID || creationBlocked || internalBusy) return;
   showError();
   if (!serverConfigured) { showError('Estamos preparando la experiencia. Vuelve a visitarnos pronto.'); return; }
   if (!selectedFile) { showError('Primero elige una foto tuya.'); el.input.focus(); return; }
@@ -388,9 +465,16 @@ async function submitPhoto(event) {
     }
     if ((error.status >= 400 && error.status < 500 && ![408, 409].includes(error.status)) || VERIFICATION_CODES.has(error.code)) {
       rememberJob(''); jobID = ''; activeStatus = ''; el.job.hidden = true; el.form.hidden = false;
-      if (['daily_browser_limit', 'daily_ip_limit', 'daily_global_limit'].includes(error.code)) creationBlocked = 'Límite diario alcanzado';
+      const internalExpired = DAILY_LIMIT_CODES.has(error.code) && internalMode;
+      if (internalExpired) { internalMode = false; if (config) config.internalMode = false; }
+      if (DAILY_LIMIT_CODES.has(error.code)) creationBlocked = 'Límite diario alcanzado';
       if (error.code === 'verification_configuration') creationBlocked = 'Creación no disponible';
-      showError(error.message); controls(); return;
+      if (DAILY_LIMIT_CODES.has(error.code) || error.code === 'verification_configuration') {
+        creationBlockedCode = error.code; creationBlockedMessage = error.message;
+      }
+      showError(error.message); controls();
+      if (internalExpired) internalFeedback('La sesión de uso interno venció. Vuelve a introducir el código para continuar.');
+      return;
     }
     pausePolling('Vamos a comprobar si tu foto llegó.');
     el.detail.textContent = 'Consulta el estado antes de volver a enviarla. Así conservamos el mismo intento.';
@@ -427,6 +511,9 @@ async function sharePhoto() {
 }
 
 el.input.addEventListener('change', () => choosePhoto(el.input.files?.[0]));
+el.internalForm.addEventListener('submit', event => { event.preventDefault(); void changeInternalMode(true); });
+el.internalExit.addEventListener('click', () => { void changeInternalMode(false); });
+el.internalDetails.addEventListener('toggle', () => { if (!el.internalDetails.open) el.internalCode.value = ''; });
 el.camera.hidden = !(navigator.maxTouchPoints > 0 || window.matchMedia('(pointer: coarse)').matches);
 el.cameraButton.addEventListener('click', () => { if (!uploading && !deleting && !jobID) el.cameraInput.click(); });
 el.cameraInput.addEventListener('change', () => {
@@ -451,6 +538,8 @@ el.upload.addEventListener('drop', event => {
   choosePhoto(files?.[0]);
 });
 window.addEventListener('pagehide', event => {
+  internalRevision++; internalController?.abort(); internalController = null; internalBusy = false;
+  el.internalCode.value = ''; internalControls(); controls();
   stopPolling(); clearRequest();
   if (!event.persisted) { xhr?.abort(); clearSelectedPreview(); if (selectedURL) URL.revokeObjectURL(selectedURL); cleanupResult(); }
 });
