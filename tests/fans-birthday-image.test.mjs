@@ -12,13 +12,13 @@ const dir=await mkdtemp(resolve('work/fans-image-test-'));
 globalThis.__fansImageEnv={};
 const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * from './lib/fans-birthday-image';export * from './lib/fans-png';"},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'fixture-env',setup(b){b.onResolve({filter:/^cloudflare:workers$/},()=>({path:'env',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const env=globalThis.__fansImageEnv;',loader:'js'}));}}]});
 await writeFile(dir+'/bundle.mjs',bundle.outputFiles[0].contents);const m=await import(pathToFileURL(dir+'/bundle.mjs'));test.after(async()=>{await rm(dir,{recursive:true,force:true});});
-const render=JSON.parse(await readFile('design/fans/cumpleanos/render-v2.json','utf8'));
-const master=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/master-v1.png'))),blend=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/blend-v2.png')));
+const render=JSON.parse(await readFile('design/fans/cumpleanos/render-v3.json','utf8'));
+const master=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/master-v1.png'))),blend=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/blend-v3.png')));
 const RGB=Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAIAAAD91JpzAAAAFklEQVR4nGP4z8DA8J+BgYHhv4aRDQAbDAOUjA/9bAAAAABJRU5ErkJggg==','base64'));
 // This header-only JPEG stands in for an image service's decoded fixture.
 const photo=new Uint8Array([255,216,255,192,0,17,8,0,2,0,3,3,1,17,0,2,17,0,3,17,0,255,217]);
 let assetBad=false,assetReads=0,calls=0,mode='ready',lastForm=null;
-globalThis.__fansImageEnv.ASSETS={async fetch(req){assetReads++;const name=new URL(req.url).pathname.split('/').at(-1);assert.ok(['master-v1.png','canvas-v2.png','mask-v2.png','blend-v2.png'].includes(name));return new Response(assetBad&&name==='master-v1.png'?new Uint8Array([0]):await readFile('design/fans/cumpleanos/'+name));}};
+globalThis.__fansImageEnv.ASSETS={async fetch(req){assetReads++;const name=new URL(req.url).pathname.split('/').at(-1);assert.ok(['master-v1.png','canvas-v3.png','mask-v3.png','blend-v3.png'].includes(name));return new Response(assetBad&&name==='master-v1.png'?new Uint8Array([0]):await readFile('design/fans/cumpleanos/'+name));}};
 // Coordinate-coded colors detect crop/padding/scale errors that a uniform
 // generated image would hide. Within each tile R varies by x and G by y.
 const generated={width:1024,height:1280,rgba:new Uint8Array(1024*1280*4)};
@@ -80,8 +80,8 @@ test('masked provider output preserves every protected master pixel and all fixe
  }
  for(const [x,y] of [[840,500],[1110,930],[870,1360],[1121,1401]])assert.deepEqual(pixel(result,x,y),expectedGradient(x,y),'Generated coordinates map across the complete native scene.');
  assert.equal(lastForm.get('model'),'gpt-image-2.5-sunburst-2026-09-08');assert.equal(lastForm.has('input_fidelity'),false);assert.equal(lastForm.get('quality'),'high');assert.equal(lastForm.get('size'),'1024x1280');assert.equal(lastForm.get('n'),'1');assert.equal(lastForm.get('output_format'),'png');assert.equal(lastForm.getAll('image[]').length,2);
- assert.deepEqual(new Uint8Array(await lastForm.getAll('image[]')[0].arrayBuffer()),new Uint8Array(await readFile('design/fans/cumpleanos/canvas-v2.png')));assert.deepEqual(new Uint8Array(await lastForm.getAll('image[]')[1].arrayBuffer()),photo);
- assert.deepEqual(new Uint8Array(await lastForm.get('mask').arrayBuffer()),new Uint8Array(await readFile('design/fans/cumpleanos/mask-v2.png')));
+ assert.deepEqual(new Uint8Array(await lastForm.getAll('image[]')[0].arrayBuffer()),new Uint8Array(await readFile('design/fans/cumpleanos/canvas-v3.png')));assert.deepEqual(new Uint8Array(await lastForm.getAll('image[]')[1].arrayBuffer()),photo);
+ assert.deepEqual(new Uint8Array(await lastForm.get('mask').arrayBuffer()),new Uint8Array(await readFile('design/fans/cumpleanos/mask-v3.png')));
  const instruction=lastForm.get('prompt');assert.match(instruction,/ONLY identity and wardrobe reference/);assert.match(instruction,/Preserve the actual visible outfit from image 2/);assert.ok(!instruction.includes('independent-fictitious-openai-key'));
 });
 test('composition uses the native full-frame scene and rejects geometry or transparent provider output',()=>{
@@ -107,11 +107,26 @@ test('expanded mask replaces the whole old companion and no longer freezes chair
  for(const x of [850,950,1050,1121])assert.equal(pixel(blend,x,1401)[3],255,'Bottom of the guest area must not retain old legs or chair.');
 });
 test('provider template contains no visible or hidden RGB identity in the erased guest area',async()=>{
- const canvas=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/canvas-v2.png'))),mask=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/mask-v2.png')));
+ const canvas=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/canvas-v3.png'))),mask=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/mask-v3.png')));
  assert.equal(canvas.width,1024);assert.equal(canvas.height,1280);assert.equal(mask.width,canvas.width);assert.equal(mask.height,canvas.height);let erased=0,preserved=0;
  for(let at=0;at<canvas.rgba.length;at+=4){const opacity=mask.rgba[at+3];assert.ok(opacity===0||opacity===255,'The edit mask has an unambiguous binary convention.');if(opacity===0){erased++;assert.equal(canvas.rgba[at]|canvas.rgba[at+1]|canvas.rgba[at+2]|canvas.rgba[at+3],0,'Erased placeholder pixels cannot bias the fan identity.');}else{preserved++;assert.equal(canvas.rgba[at+3],255,'Protected parts of the reference remain opaque.');}}
  assert.ok(erased>250000);assert.ok(preserved>450000);
  for(const [x,y] of [[810,280],[650,865],[970,1200],[1121,1401]]){const cx=Math.min(1023,Math.floor((x+.5)*1024/master.width)),cy=Math.min(1279,Math.floor((y+.5)*1280/master.height));assert.equal(pixel(mask,cx,cy)[3],0);assert.deepEqual(pixel(canvas,cx,cy),[0,0,0,0]);}
+});
+test('upper-left hair and head stay completely opaque without leaking the old curtain or changing the toast',async()=>{
+ const canvas=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/canvas-v3.png'))),mask=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/mask-v3.png'))),previous=m.decodePng(new Uint8Array(await readFile('design/fans/cumpleanos/blend-v2.png')));
+ // This was the visible 20-pixel fade through the fan's hair/head in v2.
+ // Verify the whole region rather than just one fortunate hairstyle sample.
+ for(let y=300;y<=580;y++)for(let x=670;x<=700;x++){
+  assert.equal(pixel(blend,x,y)[3],255,'Every hair/head pixel in the former fading band must come entirely from the generated person.');
+  const cx=Math.floor((x+.5)*1024/master.width),cy=Math.floor((y+.5)*1280/master.height);
+  assert.equal(pixel(mask,cx,cy)[3],0,'The model receives the entire former fading band as editable.');assert.deepEqual(pixel(canvas,cx,cy),[0,0,0,0],'No old curtain or companion can remain as an input image patch behind the new hair.');
+ }
+ const result=m.compositeBirthdayPhoto(master,generated,blend);
+ for(const [x,y] of [[675,400],[680,500],[690,570],[700,300]])assert.deepEqual(pixel(result,x,y),expectedGradient(x,y),'The opaque hair/head interior gets the exact generated colors, with no curtain blending or extra color filter.');
+ const lowerStart=650*master.width*4;
+ assert.ok(Buffer.from(blend.rgba).subarray(lowerStart).equals(Buffer.from(previous.rgba).subarray(lowerStart)),'The lower blend and all toast/artist boundaries remain identical to the accepted v2 region.');
+ for(const [x,y] of [[450,480],[500,280],[515,700],[450,1100],[200,1250],[500,1340]])assert.deepEqual(pixel(result,x,y),pixel(master,x,y),'The artist and protected foreground remain exact.');
 });
 test('versioned master, erased canvas and masks match their manifests and public copies',async()=>{
  for(const spec of [render.master,render.canvas,render.mask,render.blend]){const design=new Uint8Array(await readFile('design/fans/cumpleanos/'+spec.file)),published=new Uint8Array(await readFile('public/cumpleanos/'+spec.file));assert.equal(design.length,spec.bytes);assert.equal(createHash('sha256').update(design).digest('hex'),spec.sha256);assert.deepEqual(published,design);const decoded=m.decodePng(design);assert.equal(decoded.width,spec.width);assert.equal(decoded.height,spec.height);}
