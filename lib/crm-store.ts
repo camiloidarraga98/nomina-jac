@@ -1,4 +1,5 @@
 import {database} from '@/db/raw';
+import {resolveShowContact,createShowContact} from './crm-contacts';
 import {crmDirectory} from './crm-workspace';
 import {crmReceiptBase,crmReceiptExtension} from './crm-receipts';
 import {env} from 'cloudflare:workers';
@@ -49,12 +50,17 @@ export async function syncCrmMonth(u:AccessUser,month:string,guard:CrmGuard){req
  for(let i=0;i<writes.length;i+=80)await db.batch(writes.slice(i,i+80));return {detected};
 }
 export async function updateCrmShow(u:AccessUser,input:unknown,guard:CrmGuard){requireCrm(u);const parsed=crmShowInput.safeParse(input);if(!parsed.success)throw new CrmFailure('Revisa el precio y los datos del show.');const p=parsed.data,old=await showRow(u,p.id),db=database(),nonce=crypto.randomUUID(),sale=cents(p.sale),stamp=new Date().toISOString();
- const contactId=p.contactId===undefined?old.contact_id:p.contactId??'',contact=contactId?await db.prepare('SELECT name FROM jac_crm_contacts WHERE id=?').bind(contactId).first<{name:string}>():null;if(contactId&&!contact)throw new CrmFailure('Ese empresario no está disponible.');
+ for(let attempt=0;attempt<3;attempt++){
+ const contact=await resolveShowContact(p.entrepreneur,p.contactId===undefined?old.contact_id:p.contactId??'');
  const result=await db.batch([
-  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,contact_id=?,note=?,status=?,promotional=?,version=version+1,write_nonce=?,updated_at=? WHERE id=? AND version=? AND source_state NOT IN ('deleted','deleting') AND ${guard.sql}`).bind(sale,contact?.name??p.entrepreneur,contactId,p.note,p.status,Number(p.promotional),nonce,stamp,p.id,p.version,...guard.bindings),
+  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,contact_id=?,note=?,status=?,promotional=?,version=version+1,write_nonce=?,updated_at=? WHERE id=? AND version=? AND source_state NOT IN ('deleted','deleting') AND ${guard.sql} AND ${contact.sql}`).bind(sale,contact.name,contact.id,p.note,p.status,Number(p.promotional),nonce,stamp,p.id,p.version,...guard.bindings,...contact.bindings),
+  ...createShowContact(contact,p.id,nonce,stamp,u.id),
   db.prepare("INSERT INTO jac_crm_audit(id,show_id,actor_id,action,data,created_at) SELECT ?,?,?,?,?,? WHERE EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)").bind(crypto.randomUUID(),p.id,u.id,'show-updated',JSON.stringify({previousSale:old.sale_cents,newSale:sale,status:p.status,promotional:p.promotional}),stamp,p.id,nonce),
   db.prepare("UPDATE jac_crm_exports SET version=version+1,error='' WHERE payment_id IN (SELECT id FROM jac_crm_payments WHERE show_id=?) AND EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)").bind(p.id,p.id,nonce)
- ]);if(result[0].meta.changes!==1)throw new CrmFailure('El show o tu sesión cambió. Actualiza antes de guardar.',409);
+ ]);if(result[0].meta.changes===1)return;
+ if(!await guardActive(guard)||(await showRow(u,p.id)).version!==p.version)break;
+ }
+ throw new CrmFailure('El show, el empresario o tu sesión cambió. Actualiza antes de guardar.',409);
 }
 export async function addCrmPayment(u:AccessUser,input:unknown,guard:CrmGuard){requireCrm(u);const parsed=crmPaymentInput.safeParse(input);if(!parsed.success)throw new CrmFailure('Revisa valor, fecha y comprobantes del abono.');const p=parsed.data,files=decodeNoticeFiles(p.files),hash=await contentHash({showId:p.showId,amount:cents(p.amount),date:p.paymentDate,proof:p.files.map(f=>f.data).sort()}),db=database(),prior=await db.prepare('SELECT hash,actor_id,note FROM jac_crm_payments WHERE id=?').bind(p.id).first<{hash:string;actor_id:string;note:string}>();
  if(!await guardActive(guard))throw new CrmFailure('Tu sesión cambió.',403);if(prior){if(prior.hash!==hash||prior.actor_id!==u.id||prior.note!==p.note)throw new CrmFailure('Ese intento ya guardó otro abono. Abre un formulario nuevo.',409);return {id:p.id};}

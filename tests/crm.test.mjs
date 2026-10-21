@@ -129,3 +129,55 @@ test('migración conserva nombres anteriores y continúa consecutivo incluyendo 
 test('enlace directo conserva 401 para API y redirige navegación sin sesión a login con retorno al archivo privado',async()=>{
  globalThis.__crmHeaders=new Headers({host:'crm.example.invalid'});const id=crypto.randomUUID();let response=await m.receipt.GET(new Request(base+'/api/crm/file?id='+id));assert.equal(response.status,401);response=await m.receipt.GET(new Request(base+'/api/crm/file?id='+id,{headers:{'sec-fetch-mode':'navigate'}}));assert.equal(response.status,303);const url=new URL(response.headers.get('location'),base);assert.equal(url.pathname,'/acceso');assert.equal(url.searchParams.get('returnTo'),'/api/crm/file?id='+id);assert.match(response.headers.get('cache-control'),/no-store/);
 });
+
+// Creation and edits share the same automatic contact resolution on the server.
+const contactRecord=(name,label=name)=>creationRecord({revision:sql.prepare("SELECT version FROM payroll_calendar WHERE id='jac'").get().version,entrepreneur:name,event:{title:'PEREIRA · Contacto ficticio '+label,allDay:true,start:'2026-10-28',end:'2026-10-29',location:'',description:''}});
+test('nombre nuevo crea ficha reutilizable, aparece en Empresarios y conserva el mismo vínculo al reintentar',async()=>{
+ const token=await m.makeSession(owner),record=contactRecord('  Organizador   nuevo ficticio  '),before=calendarWrites;
+ const first=await api(token,'createShow',{record});assert.equal(first.status,200,first.body.error);const id=first.body.show.contactId;assert.ok(id);
+ const directory=await api(token,undefined,{},'/api/crm?view=contacts');assert.ok(directory.body.contacts.some(c=>c.id===id&&c.name==='Organizador nuevo ficticio'));
+ const detail=await api(token,undefined,{},'/api/crm?view=contact&id='+id);assert.equal(detail.body.shows[0].id,first.body.show.id);assert.equal(detail.body.contact.email,'');assert.equal(detail.body.contact.phone,'');
+ for(const retry of [record,{...record,id:crypto.randomUUID()}]){const r=await api(token,'createShow',{record:retry});assert.equal(r.status,200,r.body.error);assert.equal(r.body.show.contactId,id);}
+ assert.equal(calendarWrites,before+1);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_contacts WHERE id=?').get(id).n,1);
+ assert.equal(sql.prepare("SELECT count(*) n FROM jac_crm_audit WHERE show_id=? AND action='contact-created-from-show'").get('contact:'+id).n,1);
+});
+test('reutiliza nombres completos sin distinguir tildes, mayúsculas o espacios y conserva los datos existentes',async()=>{
+ const token=await m.makeSession(owner),id=crypto.randomUUID(),contact={id,version:0,name:'Óscar Álvarez Ficticio',company:'Empresa original',phone:'3000000000',email:'original@example.invalid',city:'Bogotá',note:'Conservar'};
+ assert.equal((await api(token,'saveContact',{record:contact})).status,200);
+ const before=sql.prepare('SELECT * FROM jac_crm_contacts WHERE id=?').get(id),record=contactRecord('  OSCAR   ALVAREZ FICTICIO  '),r=await api(token,'createShow',{record});assert.equal(r.status,200,r.body.error);assert.equal(r.body.show.contactId,id);
+ assert.deepEqual(sql.prepare('SELECT * FROM jac_crm_contacts WHERE id=?').get(id),before);
+ const selected=await api(token,'createShow',{record:{...contactRecord('Nombre escrito diferente','selección explícita'),contactId:id}});assert.equal(selected.status,200,selected.body.error);assert.equal(selected.body.show.contactId,id);assert.equal(selected.body.show.entrepreneur,contact.name);
+});
+test('nombre vacío deja el empresario opcional y no crea fichas',async()=>{
+ const token=await m.makeSession(owner),before=sql.prepare('SELECT count(*) n FROM jac_crm_contacts').get().n,r=await api(token,'createShow',{record:contactRecord('   ','sin empresario')});
+ assert.equal(r.status,200,r.body.error);assert.equal(r.body.show.contactId,null);assert.equal(r.body.show.entrepreneur,'');assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_contacts').get().n,before);
+});
+test('dos shows simultáneos con el mismo empresario crean una sola ficha aun con lecturas anteriores al guardado',async()=>{
+ const token=await m.makeSession(owner),name='Organizador simultáneo ficticio';let arrivals=0,release;const barrier=new Promise(r=>{release=r;});
+ batchHook=async rows=>{if(rows.some(q=>q.text.startsWith('UPDATE jac_crm_shows SET sale_cents='))){arrivals++;if(arrivals===1)await barrier;else release();}};
+ let results;try{results=await Promise.all(['A','B'].map(label=>api(token,'createShow',{record:contactRecord(name,'simultáneo '+label)})));}finally{batchHook=null;release();}
+ for(const r of results)assert.equal(r.status,200,r.body.error);assert.equal(results[0].body.show.contactId,results[1].body.show.contactId);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_contacts WHERE name=?').get(name).n,1);assert.ok(arrivals>=3,'La segunda escritura vuelve a resolver el directorio actualizado.');
+});
+test('cambio de nombre de una ficha durante el guardado no asocia un empresario equivocado',async()=>{
+ const token=await m.makeSession(owner),id=crypto.randomUUID(),name='Organizador antes de renombrar ficticio';assert.equal((await api(token,'saveContact',{record:{id,version:0,name,company:'',phone:'',email:'',city:'',note:''}})).status,200);
+ let changed=false;batchHook=async rows=>{if(!changed&&rows.some(q=>q.text.startsWith('UPDATE jac_crm_shows SET sale_cents='))){changed=true;sql.prepare('UPDATE jac_crm_contacts SET name=?,version=version+1 WHERE id=?').run('Otro organizador renombrado ficticio',id);}};
+ let r;try{r=await api(token,'createShow',{record:contactRecord(name)});}finally{batchHook=null;}
+ assert.equal(r.status,200,r.body.error);assert.notEqual(r.body.show.contactId,id);assert.equal(r.body.show.entrepreneur,name);assert.equal(sql.prepare('SELECT name FROM jac_crm_contacts WHERE id=?').get(id).name,'Otro organizador renombrado ficticio');
+});
+test('editar un show registra el empresario nuevo; versión obsoleta no deja fichas huérfanas',async()=>{
+ const token=await m.makeSession(owner),r=await api(token,'createShow',{record:contactRecord('','para editar')});assert.equal(r.status,200,r.body.error);const show=r.body.show,record={id:show.id,version:show.version,sale:show.sale,entrepreneur:'Organizador desde edición ficticio',contactId:null,note:'',status:'active',promotional:false};
+ assert.equal((await api(token,'updateShow',{record})).status,200);const updated=sql.prepare('SELECT * FROM jac_crm_shows WHERE id=?').get(show.id);assert.ok(updated.contact_id);assert.equal(sql.prepare('SELECT name FROM jac_crm_contacts WHERE id=?').get(updated.contact_id).name,record.entrepreneur);
+ const failed={...record,entrepreneur:'No debe existir por conflicto ficticio'};assert.equal((await api(token,'updateShow',{record:failed})).status,409);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_contacts WHERE name=?').get(failed.entrepreneur).n,0);
+});
+test('revocación antes de confirmar el show impide crear su ficha de empresario',async()=>{
+ const token=await m.makeSession(delegate),name='No debe existir por revocación ficticio';batchHook=async rows=>{if(rows.some(q=>q.text.startsWith('UPDATE jac_crm_shows SET sale_cents=')))await m.revokeSession(token);};
+ let r;try{r=await api(token,'createShow',{record:contactRecord(name)});}finally{batchHook=null;}
+ assert.equal(r.status,403);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_contacts WHERE name=?').get(name).n,0);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_shows WHERE entrepreneur=?').get(name).n,0);
+});
+test('fallo dentro de la transacción revierte ficha y show; reintento recupera el evento sin duplicarlo',async()=>{
+ const token=await m.makeSession(owner),name='Organizador con reversión ficticio',record=contactRecord(name),before=calendarWrites;let injected=false;
+ batchHook=async rows=>{if(!injected&&rows.some(q=>q.text.startsWith('UPDATE jac_crm_shows SET sale_cents='))){injected=true;rows.push(new Query('SELECT missing_column FROM jac_crm_contacts'));}};
+ let r;try{r=await api(token,'createShow',{record});}finally{batchHook=null;}
+ assert.equal(r.status,502);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_contacts WHERE name=?').get(name).n,0);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_shows WHERE entrepreneur=?').get(name).n,0);
+ r=await api(token,'createShow',{record});assert.equal(r.status,200,r.body.error);assert.ok(r.body.show.contactId);assert.equal(calendarWrites,before+1);assert.equal(sql.prepare('SELECT count(*) n FROM jac_crm_contacts WHERE name=?').get(name).n,1);
+});

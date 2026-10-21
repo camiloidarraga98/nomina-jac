@@ -5,6 +5,7 @@ import {canEditAgenda} from './calendar-permissions';
 import {agendaDate,addAgendaDays,type AgendaEvent} from './calendar-core';
 import {canCrm,CrmFailure,crmShowInput,crmPaymentInput,cents,calendarShowDate,showMunicipalities} from './crm-core';
 import {guardActive,crmSourceID,crmShowDetail,addCrmPayment} from './crm-store';
+import {resolveShowContact,createShowContact} from './crm-contacts';
 import {decodeNoticeFiles} from './notice-files';
 import {NoticeFailure} from './notifications-core';
 import {contentHash} from './travel-files';
@@ -55,16 +56,21 @@ export async function createCrmShow(user:AccessUser,input:unknown,actor:CrmGuard
  }
 }
 async function initializeAccount(creation:Creation,event:AgendaEvent,p:z.infer<typeof inputSchema>,user:AccessUser,guard:CrmGuard){
- const contact=p.contactId?await database().prepare('SELECT name FROM jac_crm_contacts WHERE id=?').bind(p.contactId).first<{name:string}>():null;if(p.contactId&&!contact)throw new CrmFailure('Ese empresario no está disponible.');
+ for(let attempt=0;attempt<3;attempt++){
+ const contact=await resolveShowContact(p.entrepreneur,p.contactId??'');
  const db=database(),stamp=new Date().toISOString(),nonce=crypto.randomUUID(),pending="EXISTS(SELECT 1 FROM jac_crm_creations WHERE id=? AND status='pending')",saved="EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND write_nonce=?)";
  await db.batch([
   db.prepare(`INSERT OR IGNORE INTO jac_crm_shows(id,calendar_id,event_id,title,municipality,show_date,created_at,updated_at) SELECT ?,?,?,?,?,?,?,? WHERE ${pending} AND ${guard.sql}`).bind(creation.show_id,creation.calendar_id,event.id,event.title,showMunicipalities(event.title).join(' / ')||event.title,calendarShowDate(event),stamp,stamp,creation.id,...guard.bindings),
-  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,contact_id=?,note=?,promotional=?,status='active',source_state='present',version=version+1,write_nonce=?,updated_at=? WHERE id=? AND sale_cents IS NULL AND source_state NOT IN ('deleted','deleting') AND ${pending} AND ${guard.sql}`).bind(cents(p.sale),contact?.name??p.entrepreneur,p.contactId??'',p.note,Number(p.promotional),nonce,stamp,creation.show_id,creation.id,...guard.bindings),
+  db.prepare(`UPDATE jac_crm_shows SET sale_cents=?,entrepreneur=?,contact_id=?,note=?,promotional=?,status='active',source_state='present',version=version+1,write_nonce=?,updated_at=? WHERE id=? AND sale_cents IS NULL AND source_state NOT IN ('deleted','deleting') AND ${pending} AND ${guard.sql} AND ${contact.sql}`).bind(cents(p.sale),contact.name,contact.id,p.note,Number(p.promotional),nonce,stamp,creation.show_id,creation.id,...guard.bindings,...contact.bindings),
+  ...createShowContact(contact,creation.show_id,nonce,stamp,user.id),
   db.prepare(`INSERT INTO jac_crm_audit(id,show_id,actor_id,action,data,created_at) SELECT ?,?,?,?,?,? WHERE ${saved}`).bind(crypto.randomUUID(),creation.show_id,user.id,'show-created',JSON.stringify({saleCents:cents(p.sale),promotional:p.promotional,creationId:creation.id}),stamp,creation.show_id,nonce),
   db.prepare(`UPDATE jac_crm_creations SET status='account_ready',updated_at=? WHERE id=? AND status='pending' AND ${saved}`).bind(stamp,creation.id,creation.show_id,nonce)
  ]);
  const row=await db.prepare('SELECT status FROM jac_crm_creations WHERE id=?').bind(creation.id).first<{status:string}>();
- if(!row||!['account_ready','completed'].includes(row.status))throw new CrmFailure('El show o la sesión cambió antes de guardar su cuenta. Revisa CRM.',409);
+ if(row&&['account_ready','completed'].includes(row.status))return;
+ if(!await guardActive(guard))throw new CrmFailure('Tu sesión o el calendario cambió.',409);
+ }
+ throw new CrmFailure('El show o el empresario cambió antes de guardar su cuenta. Reintenta el mismo formulario.',409);
 }
 
 async function creationResult(user:AccessUser,creation:Creation,guard:CrmGuard){const detail=await crmShowDetail(user,creation.show_id);if(!await guardActive(guard))throw new CrmFailure('Tu sesión cambió.',403);if(['deleted','deleting'].includes(detail.show.sourceState))throw new CrmFailure('Este evento fue eliminado o tiene una eliminación pendiente. No se puede recrear con el mismo intento.',409);return {show:detail.show};}
