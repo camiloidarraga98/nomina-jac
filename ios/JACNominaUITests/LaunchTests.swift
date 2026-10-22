@@ -1016,12 +1016,7 @@ final class LaunchTests: XCTestCase {
         XCUIDevice.shared.press(.home); app.activate()
         XCTAssertTrue(app.staticTexts["notifications.suspended"].waitForExistence(timeout: 10))
         XCTAssertFalse(springboard.alerts.firstMatch.exists)
-        let backToManagement = app.navigationBars["Notificaciones"].buttons["Gestión"]
-        XCTAssertTrue(backToManagement.waitForExistence(timeout: 10)); XCTAssertTrue(backToManagement.isHittable)
-        backToManagement.tap()
-        XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout: 10))
         openSection(app, "Itinerarios")
-        XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].waitForExistence(timeout: 15))
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
     }

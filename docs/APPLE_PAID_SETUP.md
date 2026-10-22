@@ -30,6 +30,8 @@ TestFlight permite distribuir la beta sin publicar una ficha disponible en la ti
 5. Para el propio administrador, usar el grupo de testers internos cuando su cuenta tenga el rol requerido en App Store Connect. Para integrantes del equipo que solo necesitan usar JAC, crear un grupo de **testers externos** e invitarlos por correo o enlace. La primera beta externa debe pasar la revisión de Apple; no dar roles de administración/desarrollo solo para instalar.
 6. Cada persona instala **TestFlight** desde App Store y abre la invitación en el iPhone/iPad. Después puede instalar y actualizar JAC por internet. No necesita conectar su dispositivo al Mac para cada actualización.
 
+Si en Bundle ID solo aparece `co.jacmusic.nomina.uitests`, ese identificador corresponde a las pruebas y no se debe seleccionar para distribuir JAC. Registrar primero **Identifiers → + → App IDs → App**, descripción JAC y Bundle ID **Explicit → `co.jacmusic.nomina`**, con Push Notifications. Después recargar App Store Connect y seleccionar el identificador principal. No cambiar el bundle del proyecto para hacerlo coincidir con el de las pruebas.
+
 Alternativas: la distribución Ad Hoc conserva el uso privado con dispositivos registrados y exige UDID/perfiles y renovaciones. La instalación desde Xcode por Wi‑Fi requiere emparejar primero el dispositivo; no sustituye una distribución de actualizaciones al equipo. No hay una IPA firmada de distribución creada por estas comprobaciones de CI: los certificados y la firma permanecen en el Mac/cuenta de Camilo.
 
 ## 3. Preparar Apple Wallet
@@ -45,3 +47,14 @@ La integración debe mantener acceso exclusivo al destinatario, archivo/revisió
 Presentar `PKAddPassesViewController` para agregar un pase válido no requiere por sí solo habilitar el entitlement Wallet de gestión de pases. No añadir capacidades de consulta de `PKPassLibrary` ni Associated Domains solo para resolver la instalación o las notificaciones.
 
 Referencias de Apple: [TestFlight](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/), [crear una clave privada](https://developer.apple.com/help/account/keys/create-a-private-key/), [Pass Type ID](https://developer.apple.com/help/account/capabilities/create-wallet-identifiers-and-certificates), [certificados de Wallet](https://developer.apple.com/help/account/capabilities/create-wallet-identifiers-and-certificates).
+
+
+## Verificación de la preparación · 22 de octubre de 2026
+
+Fuente funcional `f4f1990`: verificados configuración Debug/Release, herencia del Team ID, selección de entitlements y sintaxis del workflow. GitHub [39870756871](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39870756871), Xcode16.4/iOS18.5: **Release iPhone sin firma aprobado**, con la configuración real de push y sin override a NO; **cuatro unitarias push aprobadas** y **una UI de solicitud/rechazo del permiso tras iniciar sesión aprobada**. No se ejecutó Mac ni pruebas web/servidor ajenas al cambio. Datos `.invalid`, hooks APNs interceptados y ninguna notificación real.
+
+La otra UI, de indisponibilidad de push, pasó sus comprobaciones de estado, ausencia de permiso/activación y regreso desde segundo plano, pero falló después al tocar el PDF del itinerario. Se investigó el árbol de accesibilidad: vistas de navegación retenidas de Gestión e Itinerarios y una única fila existente pero no tocable. Se intentó volver explícitamente a Gestión y se repitió **solo ese caso** en [39872382232](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39872382232), omitiendo Release y los cinco casos ya aprobados; el tramo de navegación volvió a fallar. El ajuste experimental del recorrido se retiró, conservando todas las aserciones originales. Esa UI queda pendiente: **no se declaran seis casos aprobados ni resuelto un problema de navegación físico**. No se rehizo la navegación como parte de la activación de Apple. Evidencia privada/local en `work/local/apple-paid-ci/`.
+
+La fuente de producto no cambió durante ese diagnóstico; se conservan los resultados aprobados. Firma de distribución, carga en TestFlight y recepción real APNs siguen pendientes de los pasos privados de Camilo. Wallet permanece pendiente de implementación y certificado. No hubo cambios web/API, migraciones, datos, claves de producción o conexiones.
+
+Camilo creó el registro «JAC App» en App Store Connect; la captura muestra Distribution y la pestaña TestFlight. Antes de subir debe confirmar en App Information el bundle principal `co.jacmusic.nomina`. La ficha de tienda creada por Apple en versión1.0 no implica una compilación ya subida ni obliga a enviar la app públicamente desde Distribution.
