@@ -152,7 +152,7 @@ Los itinerarios nuevos también llegan desde **Slack JAC Music → #itinerarios-
 
 La web ofrece el permiso tras iniciar sesión y registra el navegador si ya lo tiene. Algunos navegadores requieren un gesto explícito; no se puede forzar el permiso del sistema. Las preferencias son propias de cada navegador/dispositivo y una desactivación voluntaria se conserva. Safari/Chrome pueden presentar avisos distintos según versión del service worker y ajustes de macOS; no prometer prioridad ni recepción por abrir sesión en otro navegador.
 
-**El22 de octubre Camilo confirmó la membresía pagada y pidió reactivar APNs.** El proyecto habilita `JAC_PUSH_ENABLED=YES` y los entitlements push; siguen pendientes confirmar Team ID, configurar la clave APNs en el formulario privado y firmar/instalar el binario. TestFlight es la vía preparada para instalación y actualización inalámbrica. El permiso web no habilita APNs. Ver [cuenta Apple de pago](../docs/APPLE_PAID_SETUP.md).
+**El22 de octubre Camilo confirmó la membresía pagada y pidió reactivar APNs.** El proyecto habilita `JAC_PUSH_ENABLED=YES` y los entitlements push; Camilo confirmó el mismo Team ID `AYHVYN8BJF`; siguen pendientes configurar la clave APNs en el formulario privado y firmar/instalar el binario. TestFlight es la vía preparada para instalación y actualización inalámbrica. El permiso web no habilita APNs. Ver [cuenta Apple de pago](../docs/APPLE_PAID_SETUP.md).
 
 Referencias: [ITINERARIES_PUSH_SETUP.md](../docs/ITINERARIES_PUSH_SETUP.md), [TRAVEL_WORKFLOWS.md](../docs/TRAVEL_WORKFLOWS.md). Sus primeras instrucciones de configuración/push contienen historia: prevalecen las decisiones posteriores resumidas aquí y el código actual.
 

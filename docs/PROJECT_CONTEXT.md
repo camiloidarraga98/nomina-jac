@@ -1,3 +1,7 @@
+## Apple Developer de pago ·22 de octubre de2026
+
+Camilo confirmó membresía pagada y Team ID `AYHVYN8BJF`; pidió instalación inalámbrica, reactivar push y retomar Wallet. Proyecto iPhone/iPad habilita Push Notifications, entitlements APNs y `JAC_PUSH_ENABLED=YES`, manteniendo bundle y sandbox/producción. La clave APNs se configura por el formulario privado existente de JAC; faltan firma/instalación y recepción física. TestFlight permite distribuir el binario firmado desde su Mac. Wallet todavía no genera/importa `.pkpass`: preparación de Pass Type ID/certificado y alcance nuevo en [APPLE_PAID_SETUP.md](APPLE_PAID_SETUP.md). Esta petición sustituye la suspensión y el aplazamiento históricos; no modifica datos/permisos ni activa conexiones por sí sola.
+
 ## CRM · prospectos de ferias y fiestas2027 · 22 de octubre de 2026
 
 Camilo pidió el panel `/crm?seccion=prospectos` con666 oportunidades del Excel adjunto, propuestas personalizadas y brochure privado, selección de hasta20, estado del envío y seguimiento comercial. Confirmó el remitente `jacmusicestudios@gmail.com`, WhatsApp `+573125064091` y saludo institucional cuando falte alcalde. La importación conserva periodos estimados y no envía ni crea shows/Calendar. Cola D1 con UUID idempotente, vista previa aprobada y deduplicación de destinatarios; lectura opcional de cabeceras de respuesta mediante OAuth CRM separado. Ver [CRM_PROSPECTS_2027.md](CRM_PROSPECTS_2027.md). No subir contactos/PDF al repositorio público ni enviar propuestas reales como pruebas.
