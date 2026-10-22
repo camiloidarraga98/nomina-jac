@@ -1,3 +1,7 @@
+## CRM · prospectos de ferias y fiestas2027 · 22 de octubre de 2026
+
+Camilo pidió el panel `/crm?seccion=prospectos` con666 oportunidades del Excel adjunto, propuestas personalizadas y brochure privado, selección de hasta20, estado del envío y seguimiento comercial. Confirmó el remitente `jacmusicestudios@gmail.com`, WhatsApp `+573125064091` y saludo institucional cuando falte alcalde. La importación conserva periodos estimados y no envía ni crea shows/Calendar. Cola D1 con UUID idempotente, vista previa aprobada y deduplicación de destinatarios; lectura opcional de cabeceras de respuesta mediante OAuth CRM separado. Ver [CRM_PROSPECTS_2027.md](CRM_PROSPECTS_2027.md). No subir contactos/PDF al repositorio público ni enviar propuestas reales como pruebas.
+
 ## Fans · nuevas creaciones y archivo privado · 22 de octubre de 2026
 
 En `/cumple`, el resultado permite descargar/compartir y después «Crear otra foto». La creación anterior deja de ser accesible al participante y se conserva en R2 privado sin borrado automático; la fuente subida sigue siendo temporal. El acceso a la creación actual vence a las 24 horas. Nueva creación usa otro UUID, sin rotar la identidad de cuotas ni el acceso interno, sin borrar el resultado anterior y sin iniciar otra generación automáticamente. Camilo retiró por completo el aviso «IA de OpenAI · Disponible 24 h · Privacidad» bajo crear. Esta decisión sustituye las referencias históricas a resultados temporales de 24 horas. Ver [FANS_BIRTHDAY_PHOTO.md](FANS_BIRTHDAY_PHOTO.md).

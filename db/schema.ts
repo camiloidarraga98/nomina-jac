@@ -75,3 +75,22 @@ export const fanBirthdayInternalLimits=sqliteTable('jac_fan_birthday_internal_li
 export const fanBirthdayQuotaResets=sqliteTable('jac_fan_birthday_quota_resets',{
  sequence:integer('sequence').primaryKey({autoIncrement:true}),requestId:text('request_id').notNull().unique(),actorHash:text('actor_hash').notNull(),createdAt:text('created_at').notNull(),
 });
+
+export const crmProspects=sqliteTable('jac_crm_prospects',{
+ id:text('id').primaryKey().notNull(),sourceId:text('source_id').notNull().unique(),year:integer('year').notNull().default(2027),department:text('department').notNull(),municipality:text('municipality').notNull(),festival:text('festival').notNull(),period:text('period').notNull().default(''),month:integer('month').notNull().default(0),projectedDate:text('projected_date').notNull().default(''),mayorName:text('mayor_name').notNull().default(''),email:text('email').notNull().default(''),emailsJson:text('emails_json').notNull().default('[]'),dateStatus:text('date_status').notNull().default('projected'),stage:text('stage').notNull().default('new'),notes:text('notes').notNull().default(''),nextFollowUp:text('next_follow_up').notNull().default(''),sourceJson:text('source_json').notNull().default('{}'),version:integer('version').notNull().default(1),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[index('jac_crm_prospects_list').on(t.year,t.month,t.department,t.municipality),index('jac_crm_prospects_stage').on(t.stage,t.nextFollowUp)]);
+export const crmProspectBrochures=sqliteTable('jac_crm_prospect_brochures',{
+ id:text('id').primaryKey().notNull(),fileKey:text('file_key').notNull(),filename:text('filename').notNull(),size:integer('size').notNull(),sha256:text('sha256').notNull().unique(),state:text('state').notNull().default('ready'),createdAt:text('created_at').notNull(),
+});
+export const crmProspectBatches=sqliteTable('jac_crm_prospect_batches',{
+ id:text('id').primaryKey().notNull(),actorId:text('actor_id').notNull(),sessionId:text('session_id').notNull(),requestHash:text('request_hash').notNull(),writeNonce:text('write_nonce').notNull(),brochureId:text('brochure_id').notNull(),state:text('state').notNull().default('pending'),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+});
+export const crmProspectDeliveries=sqliteTable('jac_crm_prospect_deliveries',{
+ id:text('id').primaryKey().notNull(),batchId:text('batch_id').notNull(),prospectId:text('prospect_id').notNull(),prospectVersion:integer('prospect_version').notNull(),year:integer('year').notNull(),email:text('email').notNull(),emailKey:text('email_key').notNull(),subject:text('subject').notNull(),body:text('body').notNull(),brochureId:text('brochure_id').notNull(),status:text('status').notNull().default('pending'),replyStatus:text('reply_status').notNull().default('none'),claim:text('claim').notNull().default(''),startedAt:text('started_at').notNull().default(''),attempts:integer('attempts').notNull().default(0),sentAt:text('sent_at').notNull().default(''),messageId:text('message_id').notNull().default(''),threadId:text('thread_id').notNull().default(''),rfcMessageId:text('rfc_message_id').notNull(),error:text('error').notNull().default(''),repliedAt:text('replied_at').notNull().default(''),checkedAt:text('checked_at').notNull().default(''),checkClaim:text('check_claim').notNull().default(''),createdAt:text('created_at').notNull(),updatedAt:text('updated_at').notNull(),
+},t=>[index('jac_crm_prospect_delivery_queue').on(t.status,t.createdAt),index('jac_crm_prospect_delivery_batch').on(t.batchId,t.createdAt),index('jac_crm_prospect_delivery_prospect').on(t.prospectId,t.createdAt),index('jac_crm_prospect_reply_queue').on(t.status,t.checkedAt),uniqueIndex('jac_crm_prospect_delivery_reservation').on(t.year,t.emailKey).where(sql`${t.status} IN ('pending','sending','sent','uncertain')`)]);
+export const crmProspectRunner=sqliteTable('jac_crm_prospect_runner',{
+ id:text('id').primaryKey().notNull(),claim:text('claim').notNull().default(''),startedAt:text('started_at').notNull().default(''),
+});
+export const crmProspectMail=sqliteTable('jac_crm_prospect_mail',{
+ id:text('id').primaryKey().notNull(),credentials:text('credentials').notNull().default(''),connectedEmail:text('connected_email').notNull().default(''),enabled:integer('enabled').notNull().default(0),version:integer('version').notNull().default(1),error:text('error').notNull().default(''),updatedAt:text('updated_at').notNull(),
+});

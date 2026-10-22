@@ -1,3 +1,7 @@
+## CRM · prospectos comerciales2027 · 22 de octubre de 2026
+
+Camilo pidió la pestaña «Prospectos2027» en `/crm?seccion=prospectos` para trabajar el calendario adjunto de ferias y fiestas, enviar propuestas personalizadas individuales o en lotes de hasta20 y seguir las respuestas. Confirmó `jacmusicestudios@gmail.com`, WhatsApp `+573125064091` y saludo institucional cuando falte el nombre del alcalde. Fechas del Excel son proyectadas; no inventar alcaldes o días confirmados ni crear shows/Calendar desde la importación. Contactos/PDF originales privados en D1/R2, nunca en el repositorio público. Vista previa obligatoria, UUID de lote idempotente, deduplicación por destinatario y resultado incierto sin reenvío automático. La lectura opcional de cabeceras de respuesta usa OAuth CRM separado; mantener tokens/scopes de nómina intactos. Las pruebas interceptan Gmail y no envían propuestas reales. Ver `docs/CRM_PROSPECTS_2027.md` para flujo y estado de publicación.
+
 ## Menú lateral iPhone · decisión vigente · 19 octubre de 2026
 
 Camilo pidió sustituir la barra inferior del iPhone por un menú lateral desde la esquina superior izquierda, con todos los módulos permitidos, incluida Música. Conservar rutas/selecciones de las secciones visitadas y el reproductor persistente. Mi cuenta permanece en Gestión. iPad y Mac conservan su distribución. Ver `docs/IPHONE_SIDEBAR.md`. Esta decisión sustituye las referencias históricas a pestañas de iPhone.

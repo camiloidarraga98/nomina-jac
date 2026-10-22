@@ -16,6 +16,7 @@ import {clearMusicOffline} from '@/lib/music-offline';
 const MediaStorageSettings=lazy(()=>import('./media-storage-settings'));
 import {canConnectMedia} from '@/lib/media-core';
 import './crm.css';
+import './crm-prospects.css';
 import {bindAgendaCache,clearBrowserAgendaCache,type AgendaCacheContext} from '@/lib/agenda-cache';
 const TravelExpensesPanel=lazy(()=>import('./travel-expenses-panel'));
 const NoticesPanel=lazy(()=>import('./notices-panel'));
