@@ -137,11 +137,11 @@ test('caché de cumple se renueva una vez sin retirar cookies ni almacenamiento 
  const calls=[],env={JAC_READY:'1',ASSETS:{async fetch(req){calls.push(req.url);return new Response('fan-public',{headers:{'Content-Type':'text/html'}});}}};
  const first=await m.worker.fetch(new Request('https://fans.example.invalid/cumple?interno=1'),env,{});
  assert.equal(first.headers.get('Cache-Control'),'private, no-store');assert.equal(first.headers.get('Clear-Site-Data'),'"cache"');
- const marker=first.headers.get('Set-Cookie');assert.match(marker,/^jac_fan_cache=light-upload-1;/);assert.match(marker,/HttpOnly; Secure; SameSite=Strict/);
+ const marker=first.headers.get('Set-Cookie');assert.match(marker,/^jac_fan_cache=new-photo-1;/);assert.match(marker,/HttpOnly; Secure; SameSite=Strict/);
  assert(!first.headers.get('Clear-Site-Data').includes('cookies'));assert(!first.headers.get('Clear-Site-Data').includes('storage'));
  const next=await m.worker.fetch(new Request('https://fans.example.invalid/cumple',{headers:{cookie:marker.split(';')[0]+'; __Host-jac_fan=synthetic-owner-cookie'}}),env,{});
  assert.equal(next.headers.get('Cache-Control'),'private, no-store');assert.equal(next.headers.get('Clear-Site-Data'),null);assert.equal(next.headers.get('Set-Cookie'),null,'A repeat visit preserves cookies and avoids evicting fresh assets again.');
- const previous=await m.worker.fetch(new Request('https://fans.example.invalid/cumple',{headers:{cookie:'jac_fan_cache=internal-access-2'}}),env,{});assert.equal(previous.headers.get('Clear-Site-Data'),'"cache"');assert.match(previous.headers.get('Set-Cookie'),/^jac_fan_cache=light-upload-1;/,'Visitors with the preceding interface must also receive fresh assets.');
+ const previous=await m.worker.fetch(new Request('https://fans.example.invalid/cumple',{headers:{cookie:'jac_fan_cache=light-upload-1'}}),env,{});assert.equal(previous.headers.get('Clear-Site-Data'),'"cache"');assert.match(previous.headers.get('Set-Cookie'),/^jac_fan_cache=new-photo-1;/,'Visitors with the preceding interface must also receive fresh assets.');
  const image=await m.worker.fetch(new Request('https://fans.example.invalid/cumpleanos/master-v1.png'),env,{});assert.match(image.headers.get('Cache-Control'),/immutable/);assert.equal(image.headers.get('Clear-Site-Data'),null);
  assert.equal(new URL(calls[0]).pathname,'/cumpleanos/');
 });

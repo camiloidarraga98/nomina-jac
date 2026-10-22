@@ -53,5 +53,24 @@ test('Workerd validates real File/cookie/D1/R2 flow, idempotent generation and p
   assert.equal((await db.prepare('SELECT count(*) AS n FROM jac_fan_birthday_jobs').first()).n,2);assert.equal((await db.prepare('SELECT status FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first()).status,'queued');assert.equal(verifications,2,'Resetting quotas never sends photos or starts a generation.');
   response=await mf.dispatchFetch(endpoint+'?internal=1',{method:'DELETE',headers:{cookie:sessionCookie,Origin:base}});assert.equal((await response.json()).internalMode,false);assert.match(response.headers.get('set-cookie'),/Max-Age=0/);
   assert.equal((await db.prepare('SELECT status FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first()).status,'queued','Leaving internal mode never cancels or removes a photo.');
+  response=await mf.dispatchFetch(base+'/__fixture/process');assert.equal((await response.json()).generated,2);
+  const archivedResult=await db.prepare('SELECT result_key FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first();
+  const newSession=(sessionCookie=cookie,previousID=internalID)=>mf.dispatchFetch(endpoint+'?new-session=1',{method:'POST',headers:{cookie:sessionCookie,Origin:base,'Content-Type':'application/json'},body:JSON.stringify({id:previousID})});
+  response=await newSession(otherCookie);assert.equal(response.status,404,'Another browser cannot end this creation session.');
+  response=await newSession();body=await response.json();assert.equal(response.status,200,body.error);assert.equal(body.newSession,true);if(response.headers.has('set-cookie'))assert.equal(response.headers.get('set-cookie').split(';')[0],cookie,'A renewed cookie preserves the same browser and its quotas.');
+  assert.deepEqual(new Uint8Array(await (await bucket.get(archivedResult.result_key)).arrayBuffer()),png,'Starting another photo keeps the completed PNG in private R2.');
+  for(const query of ['?id='+internalID,'?id='+internalID+'&image=1&download=1']){response=await mf.dispatchFetch(endpoint+query,{headers:{cookie}});assert.equal(response.status,410,'Old creation IDs are no longer readable.');}
+  response=await mf.dispatchFetch(endpoint+'?id='+internalID,{method:'DELETE',headers:{cookie,Origin:base}});assert.equal(response.status,410,'The old session cannot delete its archived result.');
+  response=await submit(cookie,internalID);assert.equal(response.status,410,'Replaying a creation UUID cannot recover its archived output.');
+  response=await mf.dispatchFetch(endpoint,{headers:{cookie}});assert.equal((await response.json()).activeJobId,'');
+  const nextID=crypto.randomUUID();response=await submit(cookie,nextID);body=await response.json();assert.equal(response.status,202,body.error);assert.equal(body.job.id,nextID);assert.equal(verifications,3);
+  response=await newSession();assert.equal((await response.json()).newSession,true,'Repeating a lost acknowledgement succeeds without touching the new creation.');
+  response=await mf.dispatchFetch(endpoint,{headers:{cookie}});assert.equal((await response.json()).activeJobId,nextID);
+  response=await mf.dispatchFetch(base+'/__fixture/process');assert.equal((await response.json()).generated,3);
+  response=await mf.dispatchFetch(endpoint+'?id='+nextID,{method:'DELETE',headers:{cookie,Origin:base}});assert.equal(response.status,200,'Explicit deletion remains available for the current result.');
+  const old=new Date(Date.now()-8*86400000).toISOString();await db.prepare('UPDATE jac_fan_birthday_jobs SET created_at=?,expires_at=? WHERE id=?').bind(old,old,internalID).run();
+  response=await mf.dispatchFetch(base+'/__fixture/process');assert.equal((await response.json()).generated,3,'Cleanup never regenerates an archive.');
+  assert.equal((await db.prepare('SELECT result_key FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first()).result_key,archivedResult.result_key,'Archive metadata survives the old seven-day cleanup.');
+  assert.deepEqual(new Uint8Array(await (await bucket.get(archivedResult.result_key)).arrayBuffer()),png,'Private archives survive the old 24-hour expiry.');
  }finally{await mf.dispose();}
 });

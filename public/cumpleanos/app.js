@@ -17,7 +17,7 @@ const el = {
   job: $('job-panel'), jobTitle: $('job-title'), progressTrack: $('progress-track'), progress: $('job-progress'),
   message: $('job-message'), detail: $('job-detail'), refresh: $('refresh-job'), cancel: $('cancel-job'),
   result: $('result-panel'), campaign: $('campaign-photo'), photoLabel: $('photo-label'), photoCaption: $('photo-caption'),
-  download: $('download-photo'), share: $('share-photo'), delete: $('delete-photo'), error: $('error-message'),
+  download: $('download-photo'), share: $('share-photo'), delete: $('delete-photo'), newPhoto: $('new-photo'), error: $('error-message'),
   internalPanel: $('internal-panel'), internalDetails: $('internal-details'), internalForm: $('internal-form'),
   internalCode: $('internal-code'), internalSubmit: $('internal-submit'), internalActive: $('internal-active'),
   internalExit: $('internal-exit'), internalFeedback: $('internal-feedback'), internalOpen: $('open-internal'), internalHelp: $('internal-help'),
@@ -38,6 +38,10 @@ let pollStarted = 0;
 let generation = 0;
 let uploading = false;
 let deleting = false;
+let newSessionBusy = false;
+let newSessionController = null;
+let revalidating = false;
+let lastRevalidation = 0;
 let xhr = null;
 let widgetID = null;
 let turnstileToken = '';
@@ -80,22 +84,38 @@ function cleanupResult() {
   if (resultURL) URL.revokeObjectURL(resultURL);
   resultURL = ''; resultFile = null; el.download.removeAttribute('href');
 }
-function resetPhotoDisplay() {
-  cleanupResult(); el.campaign.src = '/cumpleanos/master-v1.png';
+function showMasterPhoto() {
+  el.campaign.src = '/cumpleanos/master-v1.png';
   el.campaign.alt = 'Ejemplo de la foto: Jhon Alex y un acompañante brindan con gorritos rojos en su celebración de cumpleaños.';
   el.photoLabel.textContent = 'ASÍ SE CELEBRA CON EL REY';
   el.photoCaption.textContent = 'Tu lugar en este brindis está a la derecha.';
 }
+function resetPhotoDisplay() { cleanupResult(); showMasterPhoto(); }
+function clearCurrentPhoto() {
+  stopPolling(); clearRequest(); rememberJob('');
+  jobID = ''; requestID = ''; activeStatus = ''; pollStarted = 0;
+  resetPhotoDisplay(); clearSelectedPreview();
+  if (selectedURL) URL.revokeObjectURL(selectedURL);
+  selectedURL = ''; selectedFile = null; el.name.textContent = ''; el.size.textContent = '';
+  el.input.value = ''; el.cameraInput.value = ''; el.selected.hidden = true; el.upload.hidden = false;
+  discardChallenge(); verificationNeedsRefresh = Boolean(config?.turnstileSiteKey);
+  el.share.hidden = true; el.job.hidden = true; el.result.hidden = true; el.form.hidden = false;
+}
 function controls() {
-  const locked = uploading || deleting || Boolean(jobID);
+  const locked = uploading || deleting || newSessionBusy || revalidating || Boolean(jobID);
   el.input.disabled = locked; $('change-photo').disabled = locked; $('remove-photo').disabled = locked;
   el.cameraInput.disabled = locked; el.cameraButton.disabled = locked;
   const needsProof = Boolean(config?.turnstileSiteKey) && !turnstileToken;
   el.generate.disabled = !serverConfigured || Boolean(creationBlocked) || internalBusy || resetBusy || !selectedFile || locked || (needsProof && (verificationPending || !verificationNeedsRefresh));
   el.generate.querySelector('span').textContent = creationBlocked || (needsProof && verificationNeedsRefresh ? 'Volver a verificar' : verificationPending ? 'Completa la verificación' : 'Crear mi foto con el Rey');
-  el.cancel.disabled = uploading || deleting;
-  el.delete.disabled = deleting;
-  el.refresh.disabled = uploading || deleting;
+  const resultLocked = deleting || newSessionBusy || revalidating;
+  el.cancel.disabled = uploading || resultLocked;
+  el.delete.disabled = resultLocked;
+  el.share.disabled = resultLocked;
+  el.newPhoto.disabled = uploading || resultLocked || internalBusy || resetBusy || activeStatus !== 'ready' || !resultFile;
+  el.newPhoto.querySelector('span').textContent = newSessionBusy ? 'Preparando otra foto…' : 'Crear otra foto';
+  el.download.setAttribute('aria-disabled', String(resultLocked)); el.download.tabIndex = resultLocked ? -1 : 0;
+  el.refresh.disabled = uploading || resultLocked;
   internalControls();
 }
 function setBusyPanel(title, message, detail) {
@@ -106,7 +126,7 @@ function setBusyPanel(title, message, detail) {
   el.refresh.hidden = true;
 }
 function challengeVisible() {
-  return serverConfigured && !creationBlocked && Boolean(config?.turnstileSiteKey) && !uploading && !deleting && !jobID && !el.form.hidden;
+  return serverConfigured && !creationBlocked && Boolean(config?.turnstileSiteKey) && !uploading && !deleting && !newSessionBusy && !revalidating && !jobID && !el.form.hidden;
 }
 function discardChallenge() {
   challengeRevision++; turnstileToken = ''; tokenIssuedAt = 0; verificationPending = false;
@@ -231,12 +251,12 @@ function internalControls() {
   el.internalOpen.setAttribute('aria-expanded', String(internalMode || el.internalDetails.open));
   el.internalDetails.hidden = internalMode;
   el.internalActive.hidden = !internalMode;
-  el.internalCode.disabled = internalBusy || resetBusy || uploading || internalMode || !internalAvailable;
-  el.internalSubmit.disabled = internalBusy || resetBusy || uploading || !internalAvailable || internalMode;
+  el.internalCode.disabled = internalBusy || resetBusy || uploading || newSessionBusy || revalidating || internalMode || !internalAvailable;
+  el.internalSubmit.disabled = internalBusy || resetBusy || uploading || newSessionBusy || revalidating || !internalAvailable || internalMode;
   el.internalSubmit.textContent = internalBusy && !internalMode ? 'Activando…' : 'Activar modo interno';
-  el.internalExit.disabled = internalBusy || resetBusy || uploading;
+  el.internalExit.disabled = internalBusy || resetBusy || uploading || newSessionBusy || revalidating;
   el.internalExit.textContent = internalBusy && internalMode ? 'Cerrando…' : 'Salir del modo interno';
-  el.internalReset.disabled = internalBusy || resetBusy || uploading || !internalMode;
+  el.internalReset.disabled = internalBusy || resetBusy || uploading || newSessionBusy || revalidating || !internalMode;
   el.internalReset.textContent = resetBusy ? 'Restableciendo…' : resetID ? 'Reintentar restablecimiento' : 'Restablecer creaciones para todos';
   el.internalHelp.textContent = config && !internalAvailable ? 'El acceso interno no está disponible en este momento. Recarga la página para volver a comprobarlo.' : internalHelpText;
 }
@@ -263,7 +283,7 @@ function clearDailyBlock() {
   if (quotaNotice) showError();
 }
 async function changeInternalMode(activate) {
-  if (internalBusy || resetBusy || uploading || (activate && !internalAvailable)) return;
+  if (internalBusy || resetBusy || uploading || newSessionBusy || revalidating || (activate && !internalAvailable)) return;
   let code = activate ? el.internalCode.value : '';
   el.internalCode.value = '';
   if (activate && !code) { internalFeedback('Escribe el código de uso interno para continuar.', true); return; }
@@ -302,7 +322,7 @@ async function changeInternalMode(activate) {
   }
 }
 async function resetCreations() {
-  if (!internalMode || internalBusy || resetBusy || uploading) return;
+  if (!internalMode || internalBusy || resetBusy || uploading || newSessionBusy || revalidating) return;
   const question = resetID
     ? '¿Reintentar el mismo restablecimiento pendiente? Las fotos existentes se conservan.'
     : '¿Restablecer las creaciones para todos los dispositivos? Las fotos existentes se conservan.';
@@ -381,8 +401,20 @@ function schedulePoll() {
   if (elapsed >= POLL_DEADLINE) { pausePolling('La imagen está tardando más de lo habitual.'); return; }
   stopPolling(); pollTimer = setTimeout(() => { void readJob(); }, elapsed < 120000 ? 5000 : 10000);
 }
+function displayResult() {
+  el.campaign.src = resultURL; el.campaign.alt = 'Tu foto creada con IA brindando con Jhon Alex en su cumpleaños.';
+  el.photoLabel.textContent = 'ESTE BRINDIS ES TUYO'; el.photoCaption.textContent = 'Imagen creada con IA para celebrar con el Rey.';
+  el.download.href = resultURL;
+  let canShare = false;
+  try { canShare = Boolean(navigator.share && navigator.canShare?.({ files: [resultFile] })); } catch { /* Download is always available. */ }
+  el.share.hidden = !canShare;
+  el.job.hidden = true; el.form.hidden = true; el.result.hidden = false;
+  showError(); controls();
+}
 async function loadResult(id, ticket) {
-  if (resultLoading || resultURL) return;
+  if (ticket !== generation || id !== jobID) return;
+  if (resultURL && resultFile) { displayResult(); return; }
+  if (resultLoading) return;
   resultLoading = true;
   const controller = new AbortController(); requestController = controller;
   try {
@@ -394,14 +426,7 @@ async function loadResult(id, ticket) {
     if (!blob.size || blob.size > 24 * 1024 * 1024) throw new Error('No pudimos cargar tu imagen. Vuelve a consultar tu resultado.');
     cleanupResult(); resultURL = URL.createObjectURL(blob);
     resultFile = new File([blob], 'Mi-cumpleanos-con-el-Rey.png', { type: 'image/png' });
-    el.campaign.src = resultURL; el.campaign.alt = 'Tu foto creada con IA brindando con Jhon Alex en su cumpleaños.';
-    el.photoLabel.textContent = 'ESTE BRINDIS ES TUYO'; el.photoCaption.textContent = 'Imagen creada con IA para celebrar con el Rey.';
-    el.download.href = resultURL;
-    let canShare = false;
-    try { canShare = Boolean(navigator.share && navigator.canShare?.({ files: [resultFile] })); } catch { /* Download is always available. */ }
-    el.share.hidden = !canShare;
-    el.job.hidden = true; el.form.hidden = true; el.result.hidden = false;
-    showError(); controls();
+    displayResult();
   } catch (error) {
     if (error.name === 'AbortError' || ticket !== generation) return;
     pausePolling('Tu foto está lista, pero falta cargarla.'); showError(error.message || 'No pudimos cargar tu foto. Inténtalo otra vez.');
@@ -438,7 +463,7 @@ async function acceptJob(job, ticket) {
   terminalJob(job);
 }
 async function readJob() {
-  if (!jobID || uploading || deleting) return;
+  if (!jobID || uploading || deleting || newSessionBusy || revalidating) return;
   stopPolling(); const id = jobID, ticket = generation;
   const controller = new AbortController(); clearRequest(); requestController = controller;
   try {
@@ -454,12 +479,67 @@ async function readJob() {
       pausePolling('La conexión necesita una comprobación antes de consultar tu foto.'); showError(error.message); return;
     }
     if ([401, 403, 404, 410].includes(error.status)) {
-      rememberJob(''); jobID = ''; if (error.status === 410) requestID = ''; activeStatus = ''; el.job.hidden = true; el.result.hidden = true; el.form.hidden = false;
-      resetPhotoDisplay(); showError(error.status === 410 ? 'Esta foto ya venció. Puedes crear una nueva cuando quieras.' : 'Esta solicitud ya no está disponible en este navegador. Puedes elegir otra foto.'); controls(); return;
+      clearCurrentPhoto();
+      showError(error.status === 410 ? 'Esta foto ya no está disponible aquí. Puedes crear otra.' : 'Esta solicitud ya no está disponible en este navegador. Puedes elegir otra foto.'); controls(); return;
     }
     pausePolling('No pudimos consultar el estado de tu foto.'); showError(error.message || 'Revisa tu conexión e inténtalo otra vez.');
   } finally {
     if (requestController === controller) requestController = null;
+  }
+}
+async function createAnotherPhoto() {
+  if (!jobID || activeStatus !== 'ready' || !resultFile || uploading || deleting || newSessionBusy || revalidating || internalBusy || resetBusy) return;
+  const id = jobID, ticket = ++generation;
+  stopPolling(); clearRequest(); showError(); newSessionBusy = true; controls();
+  const controller = new AbortController(); newSessionController = controller;
+  try {
+    const response = await fetch(`${API}?new-session=1`, {
+      method: 'POST', credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal,
+      headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }),
+    });
+    const data = await responseData(response);
+    if (ticket !== generation || id !== jobID) return;
+    if (data.newSession !== true) throw new Error('No pudimos confirmar el cambio. Tu foto sigue disponible para descargar o volver a intentarlo.');
+    if (config) config.activeJobId = '';
+    clearCurrentPhoto(); newSessionBusy = false; controls();
+    el.availability.hidden = serverConfigured;
+    el.input.focus({ preventScroll: true }); el.upload.scrollIntoView({ block: 'nearest' });
+  } catch (error) {
+    if (error.name === 'AbortError' || ticket !== generation || id !== jobID) return;
+    showError(error.blocked || !error.status
+      ? 'No pudimos confirmar el cambio. Descarga tu foto o vuelve a pulsar «Crear otra foto» para reintentar el mismo intento.'
+      : error.message || 'No pudimos abrir otra foto. Tu resultado sigue disponible.');
+  } finally {
+    if (newSessionController === controller) newSessionController = null;
+    if (ticket === generation) { newSessionBusy = false; controls(); }
+  }
+}
+async function revalidateActiveJob(force = false) {
+  if (!jobID || uploading || deleting || newSessionBusy || revalidating || (!force && Date.now() - lastRevalidation < 750)) return;
+  lastRevalidation = Date.now(); revalidating = true;
+  const previous = jobID, ticket = ++generation;
+  stopPolling(); clearRequest(); showMasterPhoto();
+  setBusyPanel('Comprobando tu foto', 'Comprobamos si esta foto sigue disponible.', 'Un momento…'); controls();
+  const controller = new AbortController(); requestController = controller;
+  try {
+    const response = await fetch(API, { credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal: controller.signal });
+    const data = await responseData(response);
+    if (ticket !== generation || previous !== jobID) return;
+    config = data; serverConfigured = data.enabled === true;
+    internalAvailable = data.internalAvailable === true; internalMode = data.internalMode === true;
+    const active = validID(data.activeJobId) ? data.activeJobId : '';
+    if (requestController === controller) requestController = null;
+    if (!active) { clearCurrentPhoto(); controls(); return; }
+    if (active !== previous) clearCurrentPhoto();
+    jobID = active; requestID = active; rememberJob(active); pollStarted = Date.now();
+    revalidating = false; await readJob();
+  } catch (error) {
+    if (error.name === 'AbortError' || ticket !== generation || previous !== jobID) return;
+    pausePolling('No pudimos comprobar si tu foto sigue disponible.');
+    showError('Revisa tu conexión y consulta de nuevo para recuperar el acceso a tu foto.');
+  } finally {
+    if (requestController === controller) requestController = null;
+    if (ticket === generation) { revalidating = false; controls(); }
   }
 }
 function upload(data, ticket) {
@@ -489,7 +569,7 @@ function upload(data, ticket) {
 }
 async function submitPhoto(event) {
   event.preventDefault();
-  if (uploading || deleting || jobID || creationBlocked || internalBusy || resetBusy) return;
+  if (uploading || deleting || newSessionBusy || revalidating || jobID || creationBlocked || internalBusy || resetBusy) return;
   showError();
   if (!serverConfigured) { showError('Estamos preparando la experiencia. Vuelve a visitarnos pronto.'); return; }
   if (!selectedFile) { showError('Primero elige una foto tuya.'); el.input.focus(); return; }
@@ -541,7 +621,7 @@ async function submitPhoto(event) {
   }
 }
 async function deleteJob() {
-  if (!jobID || uploading || deleting) return;
+  if (!jobID || uploading || deleting || newSessionBusy || revalidating) return;
   const id = jobID; deleting = true; generation++; stopPolling(); clearRequest(); showError(); controls();
   const controller = new AbortController(); requestController = controller;
   try {
@@ -561,12 +641,14 @@ async function deleteJob() {
   }
 }
 async function sharePhoto() {
-  if (!resultFile || !navigator.share) return;
+  if (!resultFile || !navigator.share || newSessionBusy || revalidating || deleting) return;
   try { await navigator.share({ files: [resultFile], title: 'Mi foto con el Rey del Chupe', text: 'Ya estoy listo pa celebrar el cumpleaños del Rey del Chupe en el Movistar Arena.' }); }
   catch (error) { if (error.name !== 'AbortError') showError('No pudimos abrir el menú para compartir. Puedes descargar tu foto y enviarla desde tu galería.'); }
 }
 
 el.input.addEventListener('change', () => choosePhoto(el.input.files?.[0]));
+el.newPhoto.addEventListener('click', () => { void createAnotherPhoto(); });
+el.download.addEventListener('click', event => { if (newSessionBusy || revalidating || deleting) event.preventDefault(); });
 el.internalOpen.addEventListener('click', openInternalPanel);
 el.internalReset.addEventListener('click', () => { void resetCreations(); });
 el.internalForm.addEventListener('submit', event => { event.preventDefault(); void changeInternalMode(true); });
@@ -595,6 +677,8 @@ el.upload.addEventListener('drop', event => {
   choosePhoto(files?.[0]);
 });
 window.addEventListener('pagehide', event => {
+  if (newSessionBusy || revalidating) generation++;
+  newSessionController?.abort(); newSessionController = null; newSessionBusy = false; revalidating = false;
   resetRevision++; resetController?.abort(); resetController = null; resetBusy = false;
   internalRevision++; internalController?.abort(); internalController = null; internalBusy = false;
   el.internalCode.value = ''; internalControls(); controls();
@@ -602,18 +686,19 @@ window.addEventListener('pagehide', event => {
   if (!event.persisted) { xhr?.abort(); clearSelectedPreview(); if (selectedURL) URL.revokeObjectURL(selectedURL); cleanupResult(); }
 });
 window.addEventListener('pageshow', event => {
-  if (event.persisted && jobID && !uploading && !deleting && !resultURL) { pollStarted = Date.now(); void readJob(); }
+  if (event.persisted && jobID && !uploading && !deleting) void revalidateActiveJob(true);
 });
+window.addEventListener('focus', () => { if (jobID && resultURL) void revalidateActiveJob(); });
 
 const internalRequested = new URLSearchParams(location.search).get('interno') === '1' || location.hash === '#internal-panel';
 resetID = storedReset(); if (!validID(resetID)) { resetID = ''; rememberReset(''); }
 if (internalRequested) openInternalPanel();
 await loadConfig();
 if (internalRequested) openInternalPanel();
-const resumed = storedJob() || config?.activeJobId || '';
+const resumed = config ? (validID(config.activeJobId) ? config.activeJobId : '') : storedJob();
 if (validID(resumed)) {
   discardChallenge(); verificationNeedsRefresh = Boolean(config?.turnstileSiteKey);
-  jobID = resumed; requestID = resumed; pollStarted = Date.now();
+  jobID = resumed; requestID = resumed; rememberJob(resumed); pollStarted = Date.now();
   setBusyPanel('Recuperando tu brindis', 'Consultando tu foto…', 'Buscamos la solicitud que dejaste en este navegador.');
   controls(); await readJob();
 } else rememberJob('');

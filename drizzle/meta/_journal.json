@@ -239,6 +239,13 @@
       "when": 1792620000033,
       "tag": "0033_fan_birthday_quota_resets",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1792620000034,
+      "tag": "0034_fan_birthday_new_session",
+      "breakpoints": true
     }
   ]
 }

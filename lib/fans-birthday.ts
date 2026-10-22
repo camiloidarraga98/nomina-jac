@@ -5,7 +5,7 @@ import {generateBirthdayPhoto,normalizeBirthdayUpload} from './fans-birthday-ima
 import {isBirthdayHEIC} from './fans-image-format';
 
 type FanEnv={OPENAI_API_KEY?:string;JAC_FANS_ENABLED?:string;JAC_FANS_TURNSTILE_SITE_KEY?:string;JAC_FANS_TURNSTILE_SECRET?:string;JAC_FANS_INTERNAL_CODE?:string;PAYROLL_AUTH_KEY?:string;BUCKET:R2Bucket};
-type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;internal_mode:number;quota_generation:number;status:string;source_key:string;source_mime:string;result_key:string;claim:string;started_at:string;message:string;created_at:string;expires_at:string;updated_at:string};
+type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;internal_mode:number;quota_generation:number;archived_at:string;status:string;source_key:string;source_mime:string;result_key:string;claim:string;started_at:string;message:string;created_at:string;expires_at:string;updated_at:string};
 type QuotaReset={sequence:number;request_id:string;actor_hash:string;created_at:string};
 const settings=()=>env as unknown as FanEnv;
 const HOUR=3600_000,DAY=24*HOUR;
@@ -89,8 +89,21 @@ function requireID(id:string|null){if(!id||!UUID.test(id))throw new BirthdayFail
 async function ownJob(id:string,owner:string){
  if(!owner)throw new BirthdayFailure('Vuelve a abrir la experiencia en este navegador.',403);
  const job=await row(id);if(!job||job.owner_hash!==owner)throw new BirthdayFailure('Esta foto no está disponible en este navegador.',404);
- if(job.expires_at<=now())throw new BirthdayFailure('Esta foto ya venció. Las fotos se conservan durante 24 horas.',410);
+ if(job.archived_at)throw new BirthdayFailure('Esta creación ya terminó. Puedes crear una foto nueva.',410,'new_session_archived');
+ if(job.expires_at<=now())throw new BirthdayFailure('El acceso a esta creación dura 24 horas y ya venció.',410);
  return job;
+}
+async function startNewSession(req:Request,owner:string){
+ if(!owner)throw new BirthdayFailure('Vuelve a abrir la experiencia en este navegador.',403);
+ const {id}=await boundedInternalJSON(req,'No pudimos identificar la creación que quieres terminar.','new_session_invalid');
+ if(typeof id!=='string'||!UUID.test(id))throw new BirthdayFailure('No pudimos identificar la creación que quieres terminar.',400,'new_session_invalid');
+ const job=await row(id);if(!job||job.owner_hash!==owner)throw new BirthdayFailure('Esta foto no está disponible en este navegador.',404);
+ if(job.archived_at)return {newSession:true};
+ if(job.status!=='ready'||!job.result_key)throw new BirthdayFailure('Espera a que termine tu foto antes de iniciar otra.',409,'new_session_unavailable');
+ const stamp=now();await database().prepare("UPDATE jac_fan_birthday_jobs SET archived_at=?,updated_at=? WHERE id=? AND owner_hash=? AND status='ready' AND result_key<>'' AND archived_at=''").bind(stamp,stamp,id,owner).run();
+ const archived=await row(id);if(!archived||archived.owner_hash!==owner)throw new BirthdayFailure('Esta foto no está disponible en este navegador.',404);
+ if(!archived.archived_at)throw new BirthdayFailure('No pudimos terminar esta creación. Inténtalo de nuevo.',409,'new_session_unavailable');
+ return {newSession:true};
 }
 function publicJob(job:Job){return {id:job.id,status:job.status==='uploading'?'queued':job.status,message:job.message,expiresAt:job.expires_at};}
 async function boundedForm(req:Request){
@@ -128,7 +141,7 @@ async function verifyHuman(req:Request,token:FormDataEntryValue|null){
  if(data.hostname!==new URL(req.url).hostname||data.action!=='birthday-photo')throw new BirthdayFailure('No pudimos validar la verificación para esta página. Abre la experiencia desde su enlace original.',403,'verification_rejected');
 }
 async function removeAsset(key:string){if(key)await settings().BUCKET.delete(key);}
-async function purgeAssets(job:Job,includeResult=true){
+async function purgeAssets(job:Job,includeResult=job.status!=='ready'){
  const keys=[['source_key',job.source_key],...(includeResult?[['result_key',job.result_key]]:[])] as [string,string][];
   for(const [column,key] of keys){if(!key)continue;try{await removeAsset(key);await database().prepare(`UPDATE jac_fan_birthday_jobs SET ${column}='' WHERE id=? AND ${column}=? AND claim='' AND status IN ('ready','failed','uncertain','cancelled')`).bind(job.id,key).run();}catch{/* Keep the key so the next maintenance pass can finish private cleanup. */}}
 }
@@ -140,7 +153,7 @@ async function createJob(req:Request,owner:string,internal=false){
  if(form.getAll('id').length!==1||form.getAll('photo').length!==1||!(photo instanceof File)||photo.size===0)throw new BirthdayFailure('Selecciona una foto para continuar.');
  if(photo.size>BIRTHDAY_LIMITS.photoBytes)throw new BirthdayFailure('La foto debe pesar como máximo 8 MB.',413);
  const raw=new Uint8Array(await photo.arrayBuffer()),mime=imageMime(raw),hash=createHmac('sha256',settings().PAYROLL_AUTH_KEY!).update('jac-birthday-v1:photo\0').update(raw).update(mime).digest('hex'),prior=await row(id);
- if(prior){if(prior.owner_hash!==owner)throw new BirthdayFailure('Este intento no está disponible.',404);if(prior.payload_hash!==hash)throw new BirthdayFailure('Este intento corresponde a otra foto. Inicia una creación nueva.',409);return publicJob(await ownJob(id,owner));}
+ if(prior){if(prior.owner_hash!==owner)throw new BirthdayFailure('Este intento no está disponible.',404);const live=await ownJob(id,owner);if(prior.payload_hash!==hash)throw new BirthdayFailure('Este intento corresponde a otra foto. Inicia una creación nueva.',409);return publicJob(live);}
  const address=req.headers.get('cf-connecting-ip');if(!address||address.length>100)throw new BirthdayFailure('No pudimos verificar la conexión. Inténtalo desde la página original.',403);
  const ip=digest('ip',address),stamp=now(),day=new Date(Date.now()-5*HOUR).toISOString().slice(0,10)+'T05:00:00.000Z',expires=new Date(Date.now()+DAY).toISOString(),key='fans-birthday/source/'+id,uploadClaim=randomBytes(24).toString('hex');
  // Reject exhausted budgets before verification and image transformations.
@@ -186,6 +199,10 @@ async function createJob(req:Request,owner:string,internal=false){
 export async function handleBirthdayApi(req:Request):Promise<Response>{
  try{
   const url=new URL(req.url),identity=browser(req,req.method==='GET'&&!url.searchParams.has('id'));
+  if(url.searchParams.get('new-session')==='1'){
+   if(req.method!=='POST')return reply({error:'Método no disponible.'},405,{Allow:'POST'});
+   writeOrigin(req);return reply(await startNewSession(req,identity.owner),200,identity.cookie?{'Set-Cookie':identity.cookie}:{});
+  }
   if(url.searchParams.get('internal-reset')==='1'){
    if(req.method!=='POST')return reply({error:'Método no disponible.'},405,{Allow:'POST'});
    writeOrigin(req);return reply(await resetPublicQuota(req,identity.owner));
@@ -196,8 +213,8 @@ export async function handleBirthdayApi(req:Request):Promise<Response>{
    const cookie=await enableInternalMode(req,identity.owner),response=reply({internalMode:true},200,{'Set-Cookie':cookie});response.headers.append('Set-Cookie',identity.cookie);return response;
   }
   if(req.method==='GET'&&!url.searchParams.has('id')){
-   const active=await database().prepare("SELECT id FROM jac_fan_birthday_jobs WHERE owner_hash=? AND expires_at>? AND status<>'cancelled' ORDER BY created_at DESC,id DESC LIMIT 1").bind(identity.owner,now()).first<{id:string}>();
-   return reply({enabled:enabled(),turnstileSiteKey:enabled()?settings().JAC_FANS_TURNSTILE_SITE_KEY!:'',retentionHours:BIRTHDAY_LIMITS.retentionHours,activeJobId:active?.id??'',internalAvailable:internalAvailable(),internalMode:internalMode(req,identity.owner),quotaGeneration:await quotaGeneration()},200,identity.cookie?{'Set-Cookie':identity.cookie}:{});
+   const active=await database().prepare("SELECT id,archived_at FROM jac_fan_birthday_jobs WHERE owner_hash=? AND expires_at>? AND status<>'cancelled' ORDER BY created_at DESC,rowid DESC LIMIT 1").bind(identity.owner,now()).first<{id:string;archived_at:string}>();
+   return reply({enabled:enabled(),turnstileSiteKey:enabled()?settings().JAC_FANS_TURNSTILE_SITE_KEY!:'',retentionHours:BIRTHDAY_LIMITS.retentionHours,activeJobId:active?.archived_at?'':active?.id??'',internalAvailable:internalAvailable(),internalMode:internalMode(req,identity.owner),quotaGeneration:await quotaGeneration()},200,identity.cookie?{'Set-Cookie':identity.cookie}:{});
   }
   if(req.method==='POST'){writeOrigin(req);return reply({job:await createJob(req,identity.owner,internalMode(req,identity.owner))},202,identity.cookie?{'Set-Cookie':identity.cookie}:{});}
   if(req.method!=='GET'&&req.method!=='DELETE')return reply({error:'Método no disponible.'},405,{Allow:'GET, POST, DELETE'});
@@ -206,13 +223,14 @@ export async function handleBirthdayApi(req:Request):Promise<Response>{
   if(req.method==='DELETE'){
    // Keep an in-flight lease until its processor exits: cancellation prevents
    // publication, but cannot instantly stop a provider already generating.
-   await database().prepare("UPDATE jac_fan_birthday_jobs SET status='cancelled',message=?,updated_at=? WHERE id=? AND owner_hash=?").bind('Eliminaste esta foto.',now(),id,identity.owner).run();
+   const cancelled=await database().prepare("UPDATE jac_fan_birthday_jobs SET status='cancelled',message=?,updated_at=? WHERE id=? AND owner_hash=? AND archived_at=''").bind('Eliminaste esta foto.',now(),id,identity.owner).run();
+   if(cancelled.meta.changes!==1){await ownJob(id,identity.owner);throw new BirthdayFailure('Esta foto ya no está disponible.',410);}
    await purgeAssets({...job,status:'cancelled'});return reply({job:publicJob((await row(id))!)});
   }
   if(!url.searchParams.has('image'))return reply({job:publicJob(job)});
   if(job.status!=='ready'||!job.result_key)throw new BirthdayFailure('Tu foto todavía no está lista para descargar.',409);
   const image=await settings().BUCKET.get(job.result_key);if(!image)throw new BirthdayFailure('Esta foto ya no está disponible.',410);
-  const live=await ownJob(id,identity.owner);if(live.status!=='ready'||live.result_key!==job.result_key){await image.body.cancel().catch(()=>{});throw new BirthdayFailure('Esta foto ya no está disponible.',410);}
+  try{const live=await ownJob(id,identity.owner);if(live.status!=='ready'||live.result_key!==job.result_key)throw new BirthdayFailure('Esta foto ya no está disponible.',410);}catch(error){await image.body.cancel().catch(()=>{});throw error;}
   return new Response(image.body,{headers:{...privateHeaders,'Content-Type':'image/png','Content-Disposition':`${url.searchParams.has('download')?'attachment':'inline'}; filename="Mi-cumpleanos-con-el-Rey.png"`}});
  }catch(e){return reply({error:e instanceof BirthdayFailure?e.message:'No pudimos completar la operación. Inténtalo de nuevo.',code:e instanceof BirthdayFailure?e.code:'operation_failed'},e instanceof BirthdayFailure?e.status:502);}
 }
@@ -225,8 +243,8 @@ async function cleanupBirthdayJobs(){
  await db.prepare("UPDATE jac_fan_birthday_jobs SET claim='' WHERE claim<>'' AND started_at<?").bind(stale).run();
  await db.prepare("UPDATE jac_fan_birthday_jobs SET status='failed',claim='',message=?,updated_at=? WHERE status='uploading' AND created_at<?").bind('La subida no se completó. Puedes iniciar una creación nueva.',stamp,stale).run();
  await db.prepare("UPDATE jac_fan_birthday_jobs SET status='cancelled',message=?,updated_at=? WHERE expires_at<=? AND status IN ('uploading','queued','processing')").bind('Esta foto ya venció.',stamp,stamp).run();
- const jobs=(await db.prepare("SELECT * FROM jac_fan_birthday_jobs WHERE (source_key<>'' OR result_key<>'') AND (expires_at<=? OR status IN ('failed','uncertain','cancelled') OR (status='ready' AND source_key<>'')) ORDER BY expires_at,id LIMIT 20").bind(stamp).all<Job>()).results;
- for(const job of jobs)await purgeAssets(job,job.status!=='ready'||job.expires_at<=stamp);
+ const jobs=(await db.prepare("SELECT * FROM jac_fan_birthday_jobs WHERE (source_key<>'' OR (result_key<>'' AND status<>'ready')) AND ((status<>'ready' AND expires_at<=?) OR status IN ('failed','uncertain','cancelled') OR (status='ready' AND source_key<>'')) ORDER BY expires_at,id LIMIT 20").bind(stamp).all<Job>()).results;
+ for(const job of jobs)await purgeAssets(job,job.status!=='ready');
  await db.prepare("DELETE FROM jac_fan_birthday_jobs WHERE created_at<? AND source_key='' AND result_key='' AND status IN ('ready','failed','uncertain','cancelled')").bind(old).run();
 }
 

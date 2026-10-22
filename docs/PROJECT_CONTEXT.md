@@ -1,3 +1,7 @@
+## Fans · nuevas creaciones y archivo privado · 22 de octubre de 2026
+
+En `/cumple`, el resultado permite descargar/compartir y después «Crear otra foto». La creación anterior deja de ser accesible al participante y se conserva en R2 privado sin borrado automático; la fuente subida sigue siendo temporal. El acceso a la creación actual vence a las 24 horas. Nueva creación usa otro UUID, sin rotar la identidad de cuotas ni el acceso interno, sin borrar el resultado anterior y sin iniciar otra generación automáticamente. Camilo retiró por completo el aviso «IA de OpenAI · Disponible 24 h · Privacidad» bajo crear. Esta decisión sustituye las referencias históricas a resultados temporales de 24 horas. Ver [FANS_BIRTHDAY_PHOTO.md](FANS_BIRTHDAY_PHOTO.md).
+
 ## Empresarios automáticos al guardar shows · 21 de octubre de 2026
 
 Camilo pidió crear la ficha automáticamente al escribir un empresario nuevo en CRM. Creación y edición de shows reutilizan el nombre completo sin distinguir mayúsculas, tildes o espacios repetidos; si falta la ficha, la crean con solo el nombre en la misma transacción que guarda el show. Selección explícita y nombre vacío conservan sus reglas. Reintentos/concurrencia no duplican fichas; no se alteran textos históricos al editar una ficha. Implementación, verificación y publicación en [CRM_SHOWS_ABONOS.md](CRM_SHOWS_ABONOS.md). Sin cambios de binario, esquema o permisos.
