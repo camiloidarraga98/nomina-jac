@@ -1006,7 +1006,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testSuspendedPushShowsStatusWithoutPermissionOrActivationControls() {
-        let app = fixture()
+        let app = fixture(["--uitest-push-unavailable"])
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
         XCTAssertFalse(springboard.alerts.firstMatch.exists)
         openSection(app, "Gestión"); tap(app, "management.notifications")

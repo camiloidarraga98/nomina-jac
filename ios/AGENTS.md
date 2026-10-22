@@ -1,3 +1,7 @@
+## Apple Developer de pago ·22 de octubre de2026
+
+Camilo confirmó que su membresía pagada está lista y pidió instalación inalámbrica, reactivar push y retomar Apple Wallet. Esta autorización sustituye la suspensión `JAC_PUSH_ENABLED=NO` y el aplazamiento de Wallet para este trabajo. El proyecto iPhone/iPad selecciona los entitlements APNs y `YES` en Debug/Release; conserva development/production y el Team ID previamente pedido hasta confirmar el equipo pagado. Firma, certificados, claves y perfiles permanecen privados en el Mac/cuenta; configurar APNs en el formulario HTTPS existente de JAC, nunca por chat/Git. TestFlight permite la instalación sin cable, con Archive/Upload firmado por Camilo y revisión beta externa cuando corresponda. Wallet todavía requiere implementación y un Pass Type ID/certificado distinto de APNs; no presentar el visor actual como Wallet ni fabricar códigos de embarque. Ver `../docs/APPLE_PAID_SETUP.md` para estado real y pasos. CI focal usa fixtures sin APNs ni claves personales; no equivale a firma/distribución o recepción real.
+
 ## Menú lateral iPhone · decisión vigente · 19 octubre de 2026
 
 Camilo pidió sustituir la barra inferior del iPhone por un menú lateral desde la esquina superior izquierda, con todos los módulos permitidos, incluida Música. Conservar rutas/selecciones de las secciones visitadas y el reproductor persistente. Mi cuenta permanece en Gestión. iPad y Mac conservan su distribución. Ver `../docs/IPHONE_SIDEBAR.md`. Esta decisión sustituye las referencias históricas a pestañas de iPhone.

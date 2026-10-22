@@ -1,5 +1,7 @@
 # Pases de abordar — web e iPhone
 
+> **22 de octubre:** Camilo tiene membresía Apple pagada y pidió retomar Wallet. Todavía no hay generación/importación `.pkpass`; el visor actual conserva los códigos del documento original. Preparación del Pass Type ID, certificado y alcance pendiente en [Apple de pago](APPLE_PAID_SETUP.md). La clave APNs no firma pases Wallet.
+
 Continuidad del Site existente appgprj_6aa0260b82a88191a47960614238350a y del proyecto ios/JACNomina.xcodeproj, esquema JACNomina, bundle co.jacmusic.nomina. App 0.9.0 (10).
 
 ## Acceso y fechas

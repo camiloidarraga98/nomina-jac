@@ -152,7 +152,7 @@ Los itinerarios nuevos también llegan desde **Slack JAC Music → #itinerarios-
 
 La web ofrece el permiso tras iniciar sesión y registra el navegador si ya lo tiene. Algunos navegadores requieren un gesto explícito; no se puede forzar el permiso del sistema. Las preferencias son propias de cada navegador/dispositivo y una desactivación voluntaria se conserva. Safari/Chrome pueden presentar avisos distintos según versión del service worker y ajustes de macOS; no prometer prioridad ni recepción por abrir sesión en otro navegador.
 
-**APNs nativo sigue suspendido (`JAC_PUSH_ENABLED=NO`)** mientras Apple no habilite el equipo y Camilo no pida reactivarlo. No añadir entitlements push para resolver otro cambio. El permiso web no habilita APNs.
+**El22 de octubre Camilo confirmó la membresía pagada y pidió reactivar APNs.** El proyecto habilita `JAC_PUSH_ENABLED=YES` y los entitlements push; siguen pendientes confirmar Team ID, configurar la clave APNs en el formulario privado y firmar/instalar el binario. TestFlight es la vía preparada para instalación y actualización inalámbrica. El permiso web no habilita APNs. Ver [cuenta Apple de pago](../docs/APPLE_PAID_SETUP.md).
 
 Referencias: [ITINERARIES_PUSH_SETUP.md](../docs/ITINERARIES_PUSH_SETUP.md), [TRAVEL_WORKFLOWS.md](../docs/TRAVEL_WORKFLOWS.md). Sus primeras instrucciones de configuración/push contienen historia: prevalecen las decisiones posteriores resumidas aquí y el código actual.
 
@@ -167,7 +167,7 @@ Son documentos individuales, importados de canales configurados por persona (`#p
 - Confirmación breve: «¿Estás seguro de que quieres eliminar este pase de abordar?». Una publicación con varios adjuntos se elimina como conjunto.
 - **Mostrar código**, nativo: detecta y recorta el código original QR/PDF417/Aztec/Data Matrix, sin recrear su contenido. Pantalla completa blanca en iPhone/iPad, brillo 100% solo mientras esté activo; restaurarlo al cerrar o ir a segundo plano. Selector si hay varios códigos y opción del documento completo si no se detecta.
 - Mac muestra el código en hoja nativa sin cambiar brillo. Los archivos ya descargados permiten esta lectura offline con la misma privacidad.
-- **Apple Wallet está aplazado por decisión expresa de Camilo.** No crear pases Wallet ni regenerar códigos como parte de otra mejora. Mostrar código todavía no es un visor web equivalente.
+- **El22 de octubre Camilo pidió retomar Apple Wallet con su membresía pagada.** El visor actual sigue mostrando el código original y todavía no genera `.pkpass`. La integración nueva requiere Pass Type ID, certificado y firma privada, distintos de APNs; no inventar códigos ni datos de vuelo y conservar acceso exclusivo/documento original. Ver [preparación de Wallet](../docs/APPLE_PAID_SETUP.md). Mostrar código todavía no es un visor web equivalente.
 
 Referencias: [BOARDING_PASSES.md](../docs/BOARDING_PASSES.md), [BOARDING_CODE.md](../docs/BOARDING_CODE.md). Los perfiles antiguos de Alex/Jhon Alex de esas guías están sustituidos por el apartado 3.
 

@@ -21,6 +21,9 @@ struct SystemNotificationPermission: NotificationPermissionProviding {
 final class JACNotifications: ObservableObject {
     static let shared: JACNotifications = {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--uitest-push-unavailable") {
+            return JACNotifications(pushAvailable: false, registerRemote: {}, unregisterRemote: {})
+        }
         // Exercise the real, local iOS permission dialog without registering APNs.
         if ProcessInfo.processInfo.arguments.contains("--uitest-push-permission") {
             let defaults = UserDefaults(suiteName: "JACPushPermissionUITest")!

@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, apple-push]
         default: full
 
 permissions:
@@ -63,6 +63,7 @@ jobs:
       - name: Build and check the affected iPhone flows
         shell: bash
         env:
+          JAC_APPLE_PUSH: ${{ inputs.scope == 'apple-push' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-apple-push]')) }}
           JAC_PHOTO_PREVIEW: ${{ inputs.scope == 'photo-preview' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-preview]')) }}
           JAC_AUDIT: ${{ inputs.scope == 'audit' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-audit]')) }}
           JAC_LAYOUT_ONLY: ${{ inputs.scope == 'layout' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-layout]')) }}
@@ -90,6 +91,15 @@ jobs:
           if [ "$JAC_LAYOUT_ONLY" = true ]; then
             checks=()
             build_action=build-for-testing
+          elif [ "$JAC_APPLE_PUSH" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testNotificationPermissionIsRequestedAfterSessionAndDenialIsRespected
+              -only-testing:JACNominaTests/PayrollClientTests/testNotificationsDisablePersistsAndLateTokenCannotRegisterUntilExplicitEnable
+              -only-testing:JACNominaTests/PayrollClientTests/testSuspendedPushCannotRequestPermissionRegisterOrChangeUserPreference
+              -only-testing:JACNominaTests/PayrollClientTests/testPushRoutingValidatesIdentifiersAndLogoutNamesOnlyThisDevice
+              -only-testing:JACNominaUITests/LaunchTests/testSuspendedPushShowsStatusWithoutPermissionOrActivationControls
+              -only-testing:JACNominaUITests/LaunchTests/testNotificationPermissionAppearsAfterAuthenticatedStartupWithoutOpeningItineraries
+            )
           elif [ "$JAC_PHOTO_PREVIEW" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testPendingPhotoPreviewRetriesOnlyTheLightVersionAndKeepsItsSession
@@ -349,7 +359,7 @@ jobs:
           xcodebuild -version | tee native-ci/xcode-version.log
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
             -configuration Release -destination 'generic/platform=iOS' \
-            -derivedDataPath native-ci/device CODE_SIGNING_ALLOWED=NO JAC_PUSH_ENABLED=NO \
+            -derivedDataPath native-ci/device CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee native-ci/iphone-release.log
       - name: Save Release build logs
         if: always()
@@ -360,7 +370,7 @@ jobs:
           path: native-ci/*.log
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

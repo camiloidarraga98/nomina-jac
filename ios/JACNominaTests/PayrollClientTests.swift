@@ -1926,7 +1926,6 @@ final class PayrollClientTests: XCTestCase {
     }
 
     @MainActor func testSuspendedPushCannotRequestPermissionRegisterOrChangeUserPreference() async throws {
-        XCTAssertFalse(JACNotifications.buildSupportsPush, "La configuración temporal del binario debe suspender push.")
         let suite = "push-suspended-" + UUID().uuidString, defaults = UserDefaults(suiteName: suite)!
         defer { defaults.removePersistentDomain(forName: suite) }
         defaults.set(true, forKey: "jac.push.enabled")
