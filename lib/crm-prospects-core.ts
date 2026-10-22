@@ -7,11 +7,11 @@ export type ProspectStage=keyof typeof STAGE_LABELS;
 export type DeliveryStatus=keyof typeof DELIVERY_LABELS;
 export type ReplyStatus='none'|'received'|'automatic'|'bounced';
 export type Delivery={id:string;batchId:string;prospectId:string;email:string;subject:string;body:string;status:DeliveryStatus;replyStatus:ReplyStatus;sentAt:string;messageId:string;threadId:string;rfcMessageId:string;error:string;repliedAt:string;createdAt:string;gmailUrl:string};
-export type Prospect={id:string;version:number;sourceId:string;year:number;department:string;municipality:string;festival:string;period:string;month:number;projectedDate:string;mayorName:string;email:string;emails:string[];dateStatus:'projected';stage:ProspectStage;notes:string;nextFollowUp:string;eligible:boolean;lastDelivery:Delivery|null};
+export type Prospect={id:string;version:number;sourceId:string;year:number;department:string;municipality:string;festival:string;period:string;month:number;projectedDate:string;mayorName:string;email:string;emails:string[];dateStatus:'projected';stage:ProspectStage;notes:string;nextFollowUp:string;eligible:boolean;contacted:boolean;lastDelivery:Delivery|null};
 export type Brochure={id:string;filename:string;size:number;ready:boolean};
 export type Batch={id:string;status:'pending'|'completed'|'cancelled';createdAt:string;total:number;pending:number;sending:number;sent:number;error:number;uncertain:number;cancelled:number};
 export type ProspectMailConnection={sender:string;connected:boolean;trackingConnected:boolean;error:string};
-export type ProspectFeed={prospects:Prospect[];total:number;page:number;pages:number;pageSize:number;summary:{total:number;ready:number;sent:number;replied:number};departments:string[];brochure:Brochure|null;mail:ProspectMailConnection;template:{subject:string;body:string}};
+export type ProspectFeed={prospects:Prospect[];total:number;page:number;pages:number;pageSize:number;summary:{total:number;ready:number;sent:number;replied:number;pending:number;contacted:number};departments:string[];brochure:Brochure|null;mail:ProspectMailConnection;template:{subject:string;body:string}};
 export type ProspectPreview={messages:{prospectId:string;prospectVersion:number;email:string;subject:string;body:string}[];brochure:Brochure|null;excluded:{prospectId:string;reason:string}[];previewHash:string};
 export const PROSPECT_TEMPLATE={
  subject:'{{fiesta}} {{anio}} en {{municipio}}: una noche con Jhon Alex Castaño',
