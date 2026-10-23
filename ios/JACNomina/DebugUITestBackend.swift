@@ -300,6 +300,19 @@ private final class FixtureProtocol: URLProtocol {
             }
             return (200,.object(["id":.string(id)]))
         }
+        if parts.path == "/api/notices/recipients" {
+            let actor=try user.decoded(PayrollUser.self)
+            guard request.httpMethod == "GET",actor.isOwner,actor.hasSection(.crm) else {
+                return (403,.object(["error":.string("Sin permiso para administrar destinatarios.")]))
+            }
+            let users:[JSONValue]=[
+                .object(["id":.string("11111111-1111-4111-8111-111111111111"),"name":.string("Camilo simulado")]),
+                .object(["id":.string("22222222-2222-4222-8222-222222222222"),"name":.string("Luisa simulada")]),
+                .object(["id":.string("77777777-7777-4777-8777-777777777777"),"name":.string("Jhon Alex simulado"),"ready":.bool(false)]),
+                .object(["id":.string("88888888-8888-4888-8888-888888888888"),"name":.string("Alex Zuluaga simulado"),"ready":.bool(false)]),
+            ]
+            return (200,.object(["users":.array(users),"boardingUsers":.array(users)]))
+        }
         if parts.path == "/api/notices/wallet", ProcessInfo.processInfo.arguments.contains("--uitest-wallet-menu") {
             // This flow stops at reviewing/editing data. Any automatic signing
             // request is a regression; the fixture never fabricates a PKPass.

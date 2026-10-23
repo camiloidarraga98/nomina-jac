@@ -1067,8 +1067,21 @@ final class LaunchTests: XCTestCase {
         app.launchArguments=["--uitest-payroll","--uitest-sections=boarding","--uitest-wallet-menu"]
         app.launch()
         let menu=app.buttons["boarding.menu.boarding-fixture-0-pdf"]
-        XCTAssertTrue(menu.waitForExistence(timeout:20));XCTAssertTrue(menu.isHittable);menu.tap()
-        tap(app,"boarding.wallet.menu.boarding-fixture-0-pdf")
+        XCTAssertTrue(menu.waitForExistence(timeout:20))
+        // SwiftUI exposes the Menu's identified accessibility wrapper and its
+        // native button separately. Tap the actual button inside that wrapper.
+        let descendant=menu.descendants(matching:.button).firstMatch
+        let menuButton=descendant.exists ? descendant:menu
+        let tappable=NSPredicate(format:"enabled == true AND hittable == true")
+        XCTAssertTrue(waitFor(menuButton,predicate:tappable,timeout:5));menuButton.tap()
+        var walletAction=app.buttons["boarding.wallet.menu.boarding-fixture-0-pdf"].firstMatch
+        if !walletAction.waitForExistence(timeout:3) {
+            // UIKit menu actions may expose the visible label instead of the
+            // SwiftUI identifier. This label is unique in the open menu.
+            walletAction=app.buttons["Añadir a Apple Wallet"].firstMatch
+        }
+        XCTAssertTrue(walletAction.waitForExistence(timeout:5))
+        XCTAssertTrue(waitFor(walletAction,predicate:tappable,timeout:5));walletAction.tap()
         let passenger=app.textFields["boarding.wallet.passenger"]
         XCTAssertTrue(passenger.waitForExistence(timeout:30))
         XCTAssertTrue(waitFor(passenger,predicate:NSPredicate(format:"value CONTAINS[c] %@","Fixture"),timeout:20))
@@ -1082,14 +1095,14 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(["12A","012A"].contains(seat.value as? String ?? ""))
         XCTAssertFalse(app.images["boarding.code.image"].exists)
         XCTAssertFalse(app.navigationBars["Pase de abordar PDF"].exists)
-        XCTAssertFalse(app.staticTexts["boarding.wallet.error"].exists)
+        XCTAssertFalse(app.descendants(matching:.any)["boarding.wallet.error"].exists)
         for _ in 0..<6 {if passenger.isHittable {break};app.swipeDown()}
         for (id,value) in [("passenger","Fixture Traveller Dos"),("departureTime","19:10"),("boardingTime","18:30"),("seat","14C")] {
             let key="boarding.wallet."+id
             fill(app,key,value);XCTAssertEqual(app.textFields[key].value as? String,value)
             tap(app,"boarding.wallet.keyboard.done")
         }
-        XCTAssertFalse(app.staticTexts["boarding.wallet.error"].exists)
+        XCTAssertFalse(app.descendants(matching:.any)["boarding.wallet.error"].exists)
         attachScreen(app,name:"wallet-menu-datos-del-vuelo-editables")
         tap(app,"boarding.wallet.close")
         XCTAssertTrue(menu.waitForExistence(timeout:10));XCTAssertFalse(passenger.exists)
