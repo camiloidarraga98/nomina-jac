@@ -18,7 +18,8 @@ export function noticePushContent(notice:Pick<Notice,'kind'|'title'|'body'|'revi
  return {...content,body:characters.slice(0,low).join('')+'…'};
 }
 export type WebSubscription={endpoint:string;keys:{p256dh:string;auth:string}};
-export type PushCredentials={apns?:{teamId:string;keyId:string;privateKey:string};slack?:{token:string;signingSecret:string};web?:{publicKey:string;privateKey:JsonWebKey}};
+export type ApplePushCredentials={teamId:string;keyId:string;privateKey:string};
+export type PushCredentials={apns?:ApplePushCredentials;apnsSandbox?:ApplePushCredentials;slack?:{token:string;signingSecret:string};web?:{publicKey:string;privateKey:JsonWebKey}};
 export const base64url=(bytes:Uint8Array)=>btoa(String.fromCharCode(...bytes)).replaceAll('+','-').replaceAll('/','_').replace(/=+$/,'');
 export function unbase64(value:string){if(!/^[\w-]+$/.test(value))throw new NoticeFailure('La suscripción no es válida.');return Uint8Array.from(atob(value.replaceAll('-','+').replaceAll('_','/')),c=>c.charCodeAt(0));}
 const concat=(...parts:Uint8Array[])=>{const out=new Uint8Array(parts.reduce((n,p)=>n+p.length,0));let i=0;for(const p of parts){out.set(p,i);i+=p.length;}return out;};

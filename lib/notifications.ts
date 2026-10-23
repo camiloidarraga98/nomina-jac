@@ -21,7 +21,7 @@ const noticeSectionSql=(user='u',notice='n')=>`((${notice}.kind='itinerary' AND 
 const anyNoticeSectionSql=(user:string)=>`(${sectionSql(user,'itineraries')} OR ${sectionSql(user,'alerts')} OR ${sectionSql(user,'boarding')})`;
 export async function noticeConfig(){return await database().prepare('SELECT credentials,version FROM jac_notice_settings WHERE id=?').bind('jac').first<Config>()??{credentials:'',version:0};}
 export async function pushCredentials(c?:Config):Promise<PushCredentials>{const config=c??await noticeConfig();return config.credentials?decryptMail(config.credentials,mailKey()):{};}
-async function settings(){const c=await noticeConfig(),keys=await pushCredentials(c);return {version:c.version,slackConnected:!!keys.slack,appleConfigured:!!keys.apns,webPublicKey:keys.web?.publicKey??'',channel:'#itinerarios-finales',webhook:'https://jhonalexcastano.com/api/notices/slack'};}
+async function settings(){const c=await noticeConfig(),keys=await pushCredentials(c);return {version:c.version,slackConnected:!!keys.slack,appleConfigured:!!keys.apns,appleSandboxConfigured:!!keys.apnsSandbox,webPublicKey:keys.web?.publicKey??'',channel:'#itinerarios-finales',webhook:'https://jhonalexcastano.com/api/notices/slack'};}
 function view(row:Row):Notice{return {revision:row.revision,updatedAt:row.updated_at,changeSummary:row.change_summary,confirmed:row.confirmed_revision===row.revision,id:row.id,kind:row.kind,title:row.title,body:row.body,filename:row.filename,size:row.size,createdAt:row.created_at,read:!!row.read_at,...(row.kind==='boarding_pass'?{travelDate:row.travel_date}:{})};}
 const accessSql="(n.kind='itinerary' OR EXISTS(SELECT 1 FROM jac_notice_recipients a WHERE a.notice_id=n.id AND a.user_id=?) OR (n.kind<>'boarding_pass' AND ?=1))";
 // Check both the authenticated view and the current row. A grant removed while
@@ -116,8 +116,10 @@ export async function configureNotices(kind:string,input:Record<string,unknown>,
  const c=await noticeConfig();if(input.version!==c.version)throw new NoticeFailure('La configuración cambió. Actualiza antes de guardar.',409);const keys=await pushCredentials(c);
  if(kind==='web')keys.web??=await createWebKeys();
  else if(kind==='apple'){
-  const p=z.object({teamId:z.string().regex(/^[A-Z0-9]{10}$/),keyId:z.string().regex(/^[A-Z0-9]{10}$/),privateKey:z.string().min(50).max(8000)}).safeParse(input);
-  if(!p.success)throw new NoticeFailure('Revisa Team ID, Key ID y la clave .p8 de Apple.');await appleKey(p.data.privateKey);keys.apns=p.data;
+  const p=z.object({teamId:z.string().regex(/^[A-Z0-9]{10}$/),keyId:z.string().regex(/^[A-Z0-9]{10}$/),privateKey:z.string().min(50).max(8000),environment:z.enum(['production','sandbox']).default('production')}).safeParse(input);
+  if(!p.success)throw new NoticeFailure('Revisa el entorno, Team ID, Key ID y la clave .p8 de Apple.');await appleKey(p.data.privateKey);
+  const credentials={teamId:p.data.teamId,keyId:p.data.keyId,privateKey:p.data.privateKey};
+  if(p.data.environment==='sandbox')keys.apnsSandbox=credentials;else keys.apns=credentials;
  }else if(kind==='slack'){
   const p=z.object({token:z.string().regex(/^xoxb-[A-Za-z0-9-]{15,200}$/),signingSecret:z.string().regex(/^[a-f0-9]{32}$/)}).safeParse(input);
   if(!p.success)throw new NoticeFailure('Revisa Bot Token y Signing Secret de la app de Slack.');
@@ -152,15 +154,22 @@ export async function dispatchPush(){
    // A permission/account change after listing must prevent the provider call.
    const activeDelivery=()=>database().prepare(`SELECT d.id,n.kind,n.title,n.body,n.revision,n.change_summary AS changeSummary FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? AND r.push_target=1 JOIN jac_notices n ON n.id=r.notice_id JOIN jac_push_deliveries p ON p.device_id=d.id AND p.notice_id=n.id WHERE p.notice_revision=n.revision AND p.id=? AND p.status='sending' AND d.id=? AND d.data=? AND d.user_id=? AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>''`).bind(row.notice_id,row.id,row.device_id,row.data,row.user_id).first<{id:string;kind:Notice['kind'];title:string;body:string;revision:number;changeSummary:string}>();
    const active=await activeDelivery();
-   if(!active)state='disabled';else if(row.platform==='ios'?!keys.apns:!keys.web)state='unconfigured';
+   if(!active)state='disabled';else if(row.platform==='ios'?(!keys.apns&&!keys.apnsSandbox):!keys.web)state='unconfigured';
    else{
     const data=await decryptMail<Record<string,string>|WebSubscription>(row.data,mailKey());
+    // A device token's entitlement environment determines its endpoint and key.
+    // Retain the legacy key as the Sandbox fallback for existing team-wide
+    // credentials; a Sandbox-only key never substitutes for Production.
+    const appleCredentials=row.platform==='ios'?((data as Record<string,string>).environment==='sandbox'?keys.apnsSandbox??keys.apns:keys.apns):undefined;
+    if(row.platform==='ios'&&!appleCredentials)state='unconfigured';
+    else{
     const content=noticePushContent(active);
-    const request=row.platform==='ios'?await applePushRequest((data as Record<string,string>).token,(data as Record<string,string>).environment,keys.apns!,row.notice_id,content):await webPushRequest(data as WebSubscription,keys.web!,JSON.stringify({id:row.notice_id,...content}));
+    const request=row.platform==='ios'?await applePushRequest((data as Record<string,string>).token,(data as Record<string,string>).environment,appleCredentials!,row.notice_id,content):await webPushRequest(data as WebSubscription,keys.web!,JSON.stringify({id:row.notice_id,...content}));
     // Encryption/signing can yield: revalidate deletion and access immediately before sending.
     if(!await activeDelivery()){await database().prepare("UPDATE jac_push_deliveries SET status='disabled',updated_at=? WHERE id=? AND status='sending'").bind(now(),row.id).run();return;}
     const response=await fetch(request.url,request.options);state=response.ok?'sent':response.status===404||response.status===410?'expired':'failed';
     if(state==='expired')await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND data=?').bind(row.device_id,row.data).run();
+    }
    }
   }catch{/* Delivery might have reached the provider: do not silently resend. */}
   await database().prepare('UPDATE jac_push_deliveries SET status=?,updated_at=? WHERE id=? AND status=\'sending\'').bind(state,now(),row.id).run();
