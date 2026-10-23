@@ -8,7 +8,7 @@ El mismo proyecto `ios/JACNomina.xcodeproj`, esquema `JACNomina`, bundle `co.jac
 
 El servidor ya permite guardar la clave APNs cifrada desde el formulario privado de JAC. Activar la capacidad de Xcode no crea esa clave, regenera un perfil firmado, instala una app ni confirma recepción real. No se requiere volver a publicar la web para esta reactivación.
 
-Wallet todavía no está implementado: el visor existente extrae los píxeles originales del código del PDF/imagen y los muestra dentro de JAC. La preparación de identificador/certificado descrita abajo es un requisito para la nueva integración, no una declaración de que ya genera `.pkpass`.
+Actualización del23 de octubre: Camilo confirmó instalación por TestFlight de0.27.0(40) y recepción real de APNs. Se incorpora Wallet en una entrega posterior al build40; ver [integración, conexión privada y estado de verificación](APPLE_WALLET.md). El código/documento original se conserva. No confundir la confirmación física de push con una prueba de Wallet.
 
 ## 1. Habilitar la firma y las notificaciones
 
@@ -17,7 +17,7 @@ Wallet todavía no está implementado: el visor existente extrae los píxeles or
 3. En **Keys → +**, crear una clave de **Apple Push Notifications service (APNs)** que cubra el topic `co.jacmusic.nomina` y **Production** para TestFlight. Si Apple ofrece **Sandbox & Production**, esa configuración permite usar también Run/Debug. Revisar las restricciones Team Scoped/Topic Specific antes de confirmar; una clave limitada a Production no habilita los avisos de un binario Debug/sandbox. Descargar el archivo `.p8`, anotar su **Key ID** y conservarlo fuera del repositorio. Apple solo permite descargarlo una vez.
 4. En JAC web, iniciar sesión como Camilo y abrir **Configuración general → Servicios conectados → Notificaciones del iPhone**. Ingresar Team ID, Key ID y el archivo `.p8` en ese formulario HTTPS y guardar. No enviar el archivo por chat ni subirlo a GitHub. La clave de APNs no es una credencial de acceso a App Store Connect.
 5. Hacer pull en el mismo Xcode. En el target JACNomina, **Signing & Capabilities**, seleccionar el equipo de pago, mantener **Automatically manage signing** y comprobar **Push Notifications**. Xcode debe crear/renovar los perfiles con `aps-environment`. Si el Team ID cambió, conservarlo también en la fuente para que el siguiente pull no lo retire.
-6. JAC conserva una única clave APNs en esta conexión; guardar otra sustituye la anterior. Tras instalar el binario nuevo, entrar en JAC y permitir las notificaciones. Revisar también **Gestión → Notificaciones** y los ajustes de iOS. Repetir por dispositivo. La validación física de APNs queda pendiente de esa configuración; las pruebas automáticas usan proveedores interceptados y nunca envían un aviso real.
+6. JAC conserva una única clave APNs en esta conexión; guardar otra sustituye la anterior. Tras instalar el binario nuevo, entrar en JAC y permitir las notificaciones. Revisar también **Gestión → Notificaciones** y los ajustes de iOS. Repetir por dispositivo. Camilo confirmó recepción física de APNs después de esta configuración; las pruebas automáticas usan proveedores interceptados y nunca envían un aviso real.
 
 ## 2. Instalar y actualizar sin cable mediante TestFlight
 
@@ -34,17 +34,11 @@ Si en Bundle ID solo aparece `co.jacmusic.nomina.uitests`, ese identificador cor
 
 Alternativas: la distribución Ad Hoc conserva el uso privado con dispositivos registrados y exige UDID/perfiles y renovaciones. La instalación desde Xcode por Wi‑Fi requiere emparejar primero el dispositivo; no sustituye una distribución de actualizaciones al equipo. No hay una IPA firmada de distribución creada por estas comprobaciones de CI: los certificados y la firma permanecen en el Mac/cuenta de Camilo.
 
-## 3. Preparar Apple Wallet
+## 3. Conectar Apple Wallet
 
-Para convertir un PDF en un pase propio de JAC se necesita una integración adicional de lectura del código, construcción/firma del paquete y el botón nativo de PassKit. Si la aerolínea entrega su `.pkpass` original, importar ese archivo firmado conserva su emisor y evita reconstruir el código. El servidor actual todavía no acepta ese tipo de adjunto.
+Usar el identificador original **Apple Wallet → `pass.co.jacmusic.nomina`**, que la captura de Camilo confirma registrado en su cuenta. El certificado y su clave privada deben aparecer vinculados en el mismo llavero del Mac para exportarlos como `.p12`. Si el certificado se instaló en Sistema y la clave CSR está en Inicio de sesión, importar el `.cer` también en Inicio de sesión. No sustituir el certificado por la clave APNs `.p8`.
 
-1. En **Apple Developer → Identifiers → + → Pass Type IDs**, registrar un identificador propio, por ejemplo `pass.co.jacmusic.nomina`, si está disponible. No cambia el bundle de la app.
-2. En el Mac, abrir **Acceso a Llaveros → Asistente de Certificados → Solicitar un certificado de una autoridad de certificación**. Guardar el CSR en disco, conservar la clave privada en el Llavero y usar el CSR para crear el **Pass Type ID Certificate** del identificador anterior.
-3. Descargar e instalar el certificado. Para la firma futura del servidor se necesitarán certificado, clave privada correspondiente y cadena intermedia WWDR válida. Conservar el material privado fuera de Git; aún no hay en JAC un formulario de conexión Wallet donde cargarlo. No copiarlo al chat ni sustituir por la clave `.p8` de APNs: son materiales distintos.
-
-La integración debe mantener acceso exclusivo al destinatario, archivo/revisión y validación de sesión; conservar PDF y Mostrar código, tratar varios códigos con selección explícita y no inventar datos de vuelo o códigos desde nombre/ruta/fecha. Un pase firmado por JAC no se convierte en un pase emitido por la aerolínea ni garantiza aceptación en lectores de aeropuerto. El archivo original debe seguir accesible. Wallet administra sus copias fuera de la caché de JAC; retirar acceso o cerrar sesión no retira automáticamente un pase ya añadido.
-
-Presentar `PKAddPassesViewController` para agregar un pase válido no requiere por sí solo habilitar el entitlement Wallet de gestión de pases. No añadir capacidades de consulta de `PKPassLibrary` ni Associated Domains solo para resolver la instalación o las notificaciones.
+El nuevo formulario privado de JAC recibe `.p12`, contraseña y el intermedio público WWDR G4. El flujo nativo conserva el documento y el código original, y solo ofrece añadir códigos compatibles de pases propios. [Pasos completos, límites y estado real](APPLE_WALLET.md). La copia firmada por JAC no equivale a la emitida por la aerolínea y no se retira automáticamente de Wallet al cerrar sesión.
 
 Referencias de Apple: [TestFlight](https://developer.apple.com/help/app-store-connect/test-a-beta-version/testflight-overview/), [crear una clave privada](https://developer.apple.com/help/account/keys/create-a-private-key/), [Pass Type ID](https://developer.apple.com/help/account/capabilities/create-wallet-identifiers-and-certificates), [certificados de Wallet](https://developer.apple.com/help/account/capabilities/create-wallet-identifiers-and-certificates).
 
@@ -55,6 +49,6 @@ Fuente funcional `f4f1990`: verificados configuración Debug/Release, herencia d
 
 La otra UI, de indisponibilidad de push, pasó sus comprobaciones de estado, ausencia de permiso/activación y regreso desde segundo plano, pero falló después al tocar el PDF del itinerario. Se investigó el árbol de accesibilidad: vistas de navegación retenidas de Gestión e Itinerarios y una única fila existente pero no tocable. Se intentó volver explícitamente a Gestión y se repitió **solo ese caso** en [39872382232](https://github.com/camiloidarraga98/nomina-jac/actions/runs/39872382232), omitiendo Release y los cinco casos ya aprobados; el tramo de navegación volvió a fallar. El ajuste experimental del recorrido se retiró, conservando todas las aserciones originales. Esa UI queda pendiente: **no se declaran seis casos aprobados ni resuelto un problema de navegación físico**. No se rehizo la navegación como parte de la activación de Apple. Evidencia privada/local en `work/local/apple-paid-ci/`.
 
-La fuente de producto no cambió durante ese diagnóstico; se conservan los resultados aprobados. Firma de distribución, carga en TestFlight y recepción real APNs siguen pendientes de los pasos privados de Camilo. Wallet permanece pendiente de implementación y certificado. No hubo cambios web/API, migraciones, datos, claves de producción o conexiones.
+La fuente de producto no cambió durante ese diagnóstico; se conservan los resultados aprobados. Actualización posterior: Camilo completó firma/carga de0.27.0(40), instalación por TestFlight y confirmó recepción real APNs. Wallet se incorpora después de ese build y conserva su verificación física pendiente; ver APPLE_WALLET.md. No hubo cambios web/API, migraciones, datos, claves de producción o conexiones.
 
 Camilo creó el registro «JAC App» en App Store Connect; la captura muestra Distribution y la pestaña TestFlight. Antes de subir debe confirmar en App Information el bundle principal `co.jacmusic.nomina`. La ficha de tienda creada por Apple en versión1.0 no implica una compilación ya subida ni obliga a enviar la app públicamente desde Distribution.

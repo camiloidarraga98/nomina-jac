@@ -5,6 +5,7 @@ import ImageIO
 import CryptoKit
 import PDFKit
 import CoreText
+import CoreImage
 import Vision
 #if os(iOS)
 import UIKit
@@ -153,6 +154,114 @@ private final class MediaDownloadChunkProtocol: URLProtocol, @unchecked Sendable
 }
 
 final class PayrollClientTests: XCTestCase {
+    // Synthetic BCBP with fixed-width fields and deliberate trailing spaces.
+    // It is not a real airline reservation or valid travel document.
+    private var walletIATAFixture: String {
+        "M1" + "DOE/TEST".padding(toLength:20,withPad:" ",startingAt:0) + "E" + "ABC123 " + "BOG" + "MDE" + "XX " + "00001" + "297" + "Y" + "001A" + "00001" + "1" + "00" + "   "
+    }
+    private var walletNoticeFixture: JSONValue {
+        .object(["id":.string("wallet-private-fixture"),"kind":.string("boarding_pass"),"title":.string("Pase ficticio"),"body":.string(""),"filename":.string("Ficticio.pdf"),"size":.number(42),"createdAt":.string("2026-10-23T10:00:00Z"),"read":.bool(false),"revision":.number(2),"attachments":.array([.object(["id":.string("wallet-file"),"filename":.string("Ficticio.pdf"),"mimeType":.string("application/pdf"),"size":.number(42)])])])
+    }
+    func testBoardingWalletPreservesExactIATAPayloadAndOriginalCrop() throws {
+        let payload=walletIATAFixture,filter=try XCTUnwrap(CIFilter(name:"CIQRCodeGenerator"))
+        filter.setValue(Data(payload.utf8),forKey:"inputMessage");filter.setValue("M",forKey:"inputCorrectionLevel")
+        let output=try XCTUnwrap(filter.outputImage).transformed(by:CGAffineTransform(scaleX:10,y:10))
+        let qr=try XCTUnwrap(CIContext(options:[.useSoftwareRenderer:true]).createCGImage(output,from:output.extent))
+        let context=try XCTUnwrap(CGContext(data:nil,width:qr.width+80,height:qr.height+80,bitsPerComponent:8,bytesPerRow:0,space:CGColorSpaceCreateDeviceRGB(),bitmapInfo:CGImageAlphaInfo.premultipliedLast.rawValue))
+        context.setFillColor(CGColor(gray:1,alpha:1));context.fill(CGRect(x:0,y:0,width:qr.width+80,height:qr.height+80));context.interpolationQuality = .none
+        context.draw(qr,in:CGRect(x:40,y:40,width:qr.width,height:qr.height))
+        let image=try XCTUnwrap(context.makeImage())
+        let bytes=NSMutableData(),destination=try XCTUnwrap(CGImageDestinationCreateWithData(bytes,"public.png" as CFString,1,nil))
+        CGImageDestinationAddImage(destination,image,nil);XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let codes=try BoardingCodeExtractor.extract(bytes as Data,mime:"image/png"),code=try XCTUnwrap(codes.first)
+        XCTAssertEqual(codes.count,1);XCTAssertEqual(code.walletBarcode?.format,"PKBarcodeFormatQR")
+        XCTAssertEqual(code.walletBarcode?.message,payload,"Do not trim or regenerate the airline's payload.")
+        let request=VNDetectBarcodesRequest();try BoardingCodeExtractor.configure(request)
+        try VNImageRequestHandler(cgImage:code.image,options:[:]).perform([request])
+        XCTAssertEqual(request.results?.first?.payloadStringValue,payload,"The displayed original crop must still scan exactly.")
+    }
+    func testBoardingWalletRejectsUnsupportedOrLossyBarcodes() throws {
+        let payload=walletIATAFixture
+        for (symbology,format) in [(VNBarcodeSymbology.qr,"PKBarcodeFormatQR"),(.pdf417,"PKBarcodeFormatPDF417"),(.aztec,"PKBarcodeFormatAztec")] {
+            XCTAssertEqual(BoardingWalletBarcode.extracted(symbology,message:payload),BoardingWalletBarcode(format:format,message:payload))
+        }
+        for count in 1...4 { XCTAssertNotNil(BoardingWalletBarcode(format:"PKBarcodeFormatQR",message:"M\(count)"+String(payload.dropFirst(2)))) }
+        XCTAssertNil(BoardingWalletBarcode.extracted(.dataMatrix,message:payload));XCTAssertNil(BoardingWalletBarcode.extracted(.qr,message:nil))
+        for message in ["https://boarding.example.invalid/flight",String(payload.prefix(59)),"M5"+String(payload.dropFirst(2))," "+payload,payload+"\n",payload+"é",payload+"\u{0000}","M1"+String(repeating:"A",count:4095)] {
+            XCTAssertNil(BoardingWalletBarcode(format:"PKBarcodeFormatQR",message:message))
+        }
+        XCTAssertNotNil(BoardingWalletBarcode(format:"PKBarcodeFormatAztec",message:"M1"+String(repeating:"A",count:4094)))
+        XCTAssertNil(BoardingWalletBarcode(format:"PKBarcodeFormatDataMatrix",message:payload))
+    }
+    @MainActor func testBoardingWalletUsesPrivateNetworkContractAndRejectsWrongPackages() async throws {
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer {try? FileManager.default.removeItem(at:cache.root)}
+        let (client,_)=relaunchFixture(cache),workspace=try await UITestBackend.client(downloadOffline:false).workspace()
+        client.rememberWorkspace(workspace)
+        let item=try walletNoticeFixture.decoded(JACNotice.self),file=try XCTUnwrap(item.files.first)
+        let source=Data("%PDF-fixture-only".utf8),hash=SHA256.hash(data:source).map {String(format:"%02x",$0)}.joined()
+        let barcode=try XCTUnwrap(BoardingWalletBarcode(format:"PKBarcodeFormatQR",message:walletIATAFixture))
+        let package=Data([0x50,0x4b,0x03,0x04])+Data("transport fixture; deliberately unsigned".utf8)
+        var mime="application/vnd.apple.pkpass",responseBytes=package,requests=0
+        MockProtocol.handler={request in
+            requests += 1;XCTAssertEqual(request.url?.host,"ui-fixture.example.invalid");XCTAssertEqual(request.url?.path,"/api/notices/wallet")
+            XCTAssertEqual(request.value(forHTTPHeaderField:"Cookie"),"__Host-jac_session="+String(repeating:"f",count:43))
+            let headers:[String:String],data:Data
+            if request.httpMethod == "POST" {
+                XCTAssertEqual(request.value(forHTTPHeaderField:"Origin"),"https://ui-fixture.example.invalid")
+                let sent=try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(request))
+                XCTAssertEqual(sent["action"].text,"create");XCTAssertEqual(sent["id"].text,item.id);XCTAssertEqual(sent["file"].text,file.id)
+                XCTAssertEqual(sent["revision"].number,2);XCTAssertEqual(sent["sourceSha256"].text,hash)
+                XCTAssertEqual(sent["barcode"]["format"].text,barcode.format);XCTAssertEqual(sent["barcode"]["message"].text,barcode.message)
+                headers=["Content-Type":mime];data=responseBytes
+            } else {headers=["Content-Type":"application/json"];data=Data("{\"configured\":true,\"version\":1,\"passTypeId\":\"pass.example.invalid.fixture\"}".utf8)}
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:headers)!,data)
+        }
+        let status=try await client.boardingWalletStatus(item,file:file)
+        let received=try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode)
+        XCTAssertTrue(status.configured);XCTAssertEqual(received,package)
+        let scope=OfflineResponseCache.scope(origin:UITestBackend.base.absoluteString,token:String(repeating:"f",count:43))
+        XCTAssertFalse(cache.entries(scope).contains {$0.url.contains("/api/notices/wallet")},"Do not persist Wallet status or signed packages in the offline cache.")
+        let beforeInvalid=requests
+        let wrongKind=try JSONValue.object(walletNoticeFixture.fields.merging(["kind":.string("itinerary")]) {_,new in new}).decoded(JACNotice.self)
+        do {_ = try await client.boardingWalletPass(wrongKind,file:file,sourceSha256:hash,barcode:barcode);XCTFail("Only boarding passes may produce Wallet packages.")} catch {}
+        let foreignFile=NoticeAttachment(id:"different-user-file",filename:"Other.pdf",mimeType:"application/pdf",size:42)
+        do {_ = try await client.boardingWalletPass(item,file:foreignFile,sourceSha256:hash,barcode:barcode);XCTFail("An attachment outside this private notice must be rejected locally.")} catch {}
+        do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:"not-a-source-hash",barcode:barcode);XCTFail("The hash must identify the exact analyzed original.")} catch {}
+        XCTAssertEqual(requests,beforeInvalid)
+        mime="application/pdf"
+        do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode);XCTFail("PDFs are not signed Wallet packages.")} catch APIError.invalid {}
+        mime="application/vnd.apple.pkpass";responseBytes=Data(repeating:0x50,count:1024*1024+1)
+        do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode);XCTFail("Oversized packages must not reach PassKit.")} catch APIError.invalid {}
+        responseBytes=Data("wrong zip format".utf8)
+        do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode);XCTFail("Wrong package headers must not reach PassKit.")} catch APIError.invalid {}
+        let beforeOffline=requests;client.beginOfflineRestore()
+        do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode);XCTFail("Do not create passes from an offline copy.")} catch APIError.invalid {}
+        XCTAssertEqual(requests,beforeOffline)
+    }
+    @MainActor func testBoardingWalletDenialAndChangedSessionRejectPrivatePass() async throws {
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer {try? FileManager.default.removeItem(at:cache.root)}
+        let (client,vault)=relaunchFixture(cache),workspace=try await UITestBackend.client(downloadOffline:false).workspace()
+        client.rememberWorkspace(workspace)
+        let itemJSON=walletNoticeFixture,hash=String(repeating:"a",count:64)
+        let barcode=try XCTUnwrap(BoardingWalletBarcode(format:"PKBarcodeFormatQR",message:walletIATAFixture))
+        MockProtocol.handler={request in
+            let wallet=request.url?.path == "/api/notices/wallet"
+            return (HTTPURLResponse(url:request.url!,statusCode:wallet ? 403:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,wallet ? Data("{\"error\":\"Revocado\"}".utf8):try JSONEncoder().encode(JSONValue.object(["item":itemJSON])))
+        }
+        let item=try await client.notice(id:"wallet-private-fixture"),file=try XCTUnwrap(item.files.first)
+        let stamp=try client.boardingCodeAccessStamp(item,file:file)
+        do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode);XCTFail("A denial must never use a downloaded copy.")} catch APIError.forbidden {}
+        XCTAssertNil(client.cachedNotice(item.id));XCTAssertNotEqual(stamp,try client.boardingCodeAccessStamp(item,file:file))
+        let package=Data([0x50,0x4b,0x03,0x04])+Data("late private fixture".utf8)
+        MockProtocol.handler={request in
+            vault.token=String(repeating:"r",count:43)
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/vnd.apple.pkpass"])!,package)
+        }
+        do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode);XCTFail("A response from a previous login must not become a Wallet pass.")} catch is CancellationError {}
+        XCTAssertFalse(cache.entries(OfflineResponseCache.scope(origin:UITestBackend.base.absoluteString,token:String(repeating:"f",count:43))).contains {$0.url.contains("/api/notices/wallet")})
+    }
     func testBoardingCodeCropsKeepOriginalQRAndPDF417PayloadAcrossPagesAndRotation() throws {
         let pdf=try XCTUnwrap(PDFDocument(data:UITestBackend.boardingCodePDF()))
         // Nonzero crop origin and rotation catch both PDF drawing and Vision's

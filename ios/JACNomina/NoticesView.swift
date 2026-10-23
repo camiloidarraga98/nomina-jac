@@ -3,8 +3,10 @@ import UniformTypeIdentifiers
 import PhotosUI
 import Vision
 import ImageIO
+import CryptoKit
 #if os(iOS)
 import UIKit
+import PassKit
 #else
 import AppKit
 #endif
@@ -255,6 +257,34 @@ struct BoardingCodeImage: Identifiable, @unchecked Sendable {
     let image: CGImage
     let format: String
     let page: Int
+    var walletBarcode: BoardingWalletBarcode? = nil
+}
+
+// Wallet accepts a text barcode, unlike the viewer which keeps original pixels.
+// Only exact, printable ASCII BCBP payloads are eligible: never normalize, trim,
+// transcode a binary barcode, or make a boarding code from itinerary metadata.
+struct BoardingWalletBarcode: Equatable, Sendable {
+    let format: String
+    let message: String
+    init?(format: String, message: String) {
+        guard ["PKBarcodeFormatQR", "PKBarcodeFormatPDF417", "PKBarcodeFormatAztec"].contains(format),
+              (60...4096).contains(message.utf8.count), message.utf8.count == message.unicodeScalars.count,
+              message.unicodeScalars.allSatisfy({ (32...126).contains($0.value) }),
+              message.first == "M", let count = message.dropFirst().first, "1234".contains(count) else { return nil }
+        self.format = format; self.message = message
+    }
+    static func extracted(_ symbology: VNBarcodeSymbology, message: String?) -> BoardingWalletBarcode? {
+        let formats: [VNBarcodeSymbology: String] = [.qr: "PKBarcodeFormatQR", .pdf417: "PKBarcodeFormatPDF417", .aztec: "PKBarcodeFormatAztec"]
+        guard let format = formats[symbology], let message else { return nil }
+        return BoardingWalletBarcode(format: format, message: message)
+    }
+}
+
+struct BoardingWalletStatus: Decodable, Sendable {
+    let configured: Bool
+    let version: Int
+    let passTypeId: String?
+    let expiresAt: String?
 }
 
 enum BoardingCodeExtractor {
@@ -333,7 +363,7 @@ enum BoardingCodeExtractor {
             context.draw(original,in:CGRect(x:padding,y:padding,width:original.width,height:original.height))
             guard let cropped=context.makeImage() else {return nil}
             let names:[VNBarcodeSymbology:String]=[.qr:"QR",.pdf417:"PDF417",.aztec:"Aztec",.dataMatrix:"Data Matrix"]
-            return BoardingCodeImage(image:cropped,format:names[observation.symbology] ?? "Código",page:page)
+            return BoardingCodeImage(image:cropped,format:names[observation.symbology] ?? "Código",page:page,walletBarcode:BoardingWalletBarcode.extracted(observation.symbology,message:observation.payloadStringValue))
         }
     }
 }
@@ -352,6 +382,45 @@ enum BoardingCodeExtractor {
 
 #if os(iOS)
 extension UIScreen: BoardingScreenBrightness {}
+
+@MainActor private struct BoardingWalletPresentation: Identifiable {
+    let id = UUID()
+    let controller: PKAddPassesViewController
+}
+
+@MainActor private struct BoardingWalletAddButton: UIViewRepresentable {
+    let enabled: Bool
+    let action: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(action) }
+    func makeUIView(context: Context) -> PKAddPassButton {
+        let button = PKAddPassButton(addPassButtonStyle: .black)
+        button.addTarget(context.coordinator, action: #selector(Coordinator.add), for: .touchUpInside)
+        button.accessibilityIdentifier = "boarding.wallet.add"
+        return button
+    }
+    func updateUIView(_ button: PKAddPassButton, context: Context) { context.coordinator.action = action; button.isEnabled = enabled }
+    final class Coordinator: NSObject {
+        var action: () -> Void
+        init(_ action: @escaping () -> Void) { self.action = action }
+        @objc func add() { action() }
+    }
+}
+
+@MainActor private struct BoardingWalletAddSheet: UIViewControllerRepresentable {
+    let presentation: BoardingWalletPresentation
+    let finished: () -> Void
+    func makeCoordinator() -> Coordinator { Coordinator(finished) }
+    func makeUIViewController(context: Context) -> PKAddPassesViewController {
+        presentation.controller.delegate = context.coordinator
+        return presentation.controller
+    }
+    func updateUIViewController(_ controller: PKAddPassesViewController, context: Context) { context.coordinator.finished = finished }
+    final class Coordinator: NSObject, PKAddPassesViewControllerDelegate {
+        var finished: () -> Void
+        init(_ finished: @escaping () -> Void) { self.finished = finished }
+        func addPassesViewControllerDidFinish(_ controller: PKAddPassesViewController) { finished() }
+    }
+}
 
 private struct BoardingBrightness: UIViewRepresentable {
     let enabled:Bool
@@ -399,6 +468,17 @@ private struct BoardingCodeView: View {
     @State private var error:String?
     @State private var stamp:String?
     @State private var revoked=false
+    #if os(iOS)
+    @State private var sourceSha256: String?
+    @State private var walletConfigured = false
+    @State private var preparingWallet = false
+    @State private var walletError: String?
+    @State private var walletPresentation: BoardingWalletPresentation?
+    @State private var walletGeneration = 0
+    @State private var walletStatusGeneration = 0
+    @State private var walletTask: Task<Void, Never>?
+    private var canUseWallet: Bool { UIDevice.current.userInterfaceIdiom == .phone && PKAddPassesViewController.canAddPasses() }
+    #endif
     private var visible:Bool { !codes.isEmpty && !revoked && scenePhase == .active }
     var body:some View {
         NavigationStack {
@@ -417,6 +497,17 @@ private struct BoardingCodeView: View {
                         }
                         Text("Elige el código que corresponde a tu vuelo.").font(.footnote).foregroundStyle(.secondary)
                     }
+                    #if os(iOS)
+                    if canUseWallet, code.walletBarcode != nil {
+                        if walletConfigured {
+                            BoardingWalletAddButton(enabled: !preparingWallet && !store.isOffline) { beginWallet() }
+                                .frame(width: 220, height: 44)
+                            Text("Se guardará una copia en Wallet.").font(.caption).foregroundStyle(.secondary)
+                        }
+                        if preparingWallet { ProgressView("Preparando pase…").accessibilityIdentifier("boarding.wallet.loading") }
+                        if let walletError { Text(walletError).font(.footnote).multilineTextAlignment(.center).accessibilityIdentifier("boarding.wallet.error") }
+                    }
+                    #endif
                 } else {Spacer();Color.white;Spacer()}
                 if !loading && !revoked {Button("Abrir pase completo",action:openFullPass).accessibilityIdentifier("boarding.code.fullpass").padding(.bottom,12)}
             }.padding(20).frame(maxWidth:.infinity,maxHeight:.infinity).background(.white).foregroundStyle(.black)
@@ -429,12 +520,29 @@ private struct BoardingCodeView: View {
         }.preferredColorScheme(.light).task {await load()}
             .onChange(of:store.cacheRevision) {_,_ in validateAccess()}
             .onChange(of:store.overview?.user) {_,_ in validateAccess()}
-            .onDisappear {codes=[];stamp=nil}
+            .onDisappear {codes=[];stamp=nil
+                #if os(iOS)
+                stopWallet(resetStatus:true); sourceSha256=nil
+                #endif
+            }
+            #if os(iOS)
+            .sheet(item:$walletPresentation,onDismiss:{walletPresentation=nil}) { presentation in
+                BoardingWalletAddSheet(presentation:presentation) { walletPresentation=nil }.privacySensitive()
+            }
+            .onChange(of:index) { _,_ in stopWallet();walletError=nil }
+            .onChange(of:scenePhase) { _,phase in
+                if phase == .background { stopWallet(resetStatus:true) }
+                else if phase == .active { Task { await refreshWalletStatus() } }
+            }
+            #endif
     }
     private func validateAccess() {
         guard let stamp else {return}
         if (try? store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) != stamp {
             revoked=true;codes=[];error="El pase cambió o ya no está disponible. Vuelve a abrir tus pases.";loading=false
+            #if os(iOS)
+            stopWallet(resetStatus:true); sourceSha256=nil
+            #endif
         }
     }
     private func load() async {
@@ -444,18 +552,71 @@ private struct BoardingCodeView: View {
             defer {TemporaryDocuments.remove(document)}
             try Task.checkCancellation()
             let data=try Data(contentsOf:document.url),mime=selection.file.mimeType
-            let worker=Task.detached(priority:.userInitiated) {try BoardingCodeExtractor.extract(data,mime:mime)}
-            let found=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+            let worker=Task.detached(priority:.userInitiated) {
+                let codes=try BoardingCodeExtractor.extract(data,mime:mime)
+                let hash=SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined()
+                return (codes,hash)
+            }
+            let result=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+            let found=result.0
             try Task.checkCancellation()
             guard !revoked,start == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
             if found.isEmpty {error="No se encontró un código legible. Puedes abrir el pase completo."} else {codes=found}
             loading=false
+            #if os(iOS)
+            sourceSha256=result.1
+            await refreshWalletStatus()
+            #endif
         } catch {
             guard !Task.isCancelled else {return}
             codes=[];loading=false
             if !revoked {self.error=error is CancellationError ? "El pase cambió. Vuelve a abrir tus pases.":store.reportReadFailure(error)}
         }
     }
+    #if os(iOS)
+    private func stopWallet(resetStatus:Bool=false) {
+        walletGeneration += 1; walletTask?.cancel(); walletTask=nil; walletPresentation=nil; preparingWallet=false
+        if resetStatus {walletStatusGeneration += 1;walletConfigured=false;walletError=nil}
+    }
+    private func refreshWalletStatus() async {
+        guard !loading, !revoked, canUseWallet, sourceSha256 != nil, codes.contains(where:{$0.walletBarcode != nil}), let stamp else { return }
+        walletStatusGeneration += 1
+        let generation=walletStatusGeneration
+        do {
+            let status=try await store.client.boardingWalletStatus(selection.item,file:selection.file)
+            try Task.checkCancellation()
+            guard generation == walletStatusGeneration, !revoked, sourceSha256 != nil, scenePhase == .active,
+                  stamp == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else { return }
+            walletConfigured=status.configured
+            walletError=status.configured ? nil : "Wallet estará disponible cuando el administrador complete la conexión."
+        } catch {
+            guard !Task.isCancelled, generation == walletStatusGeneration else {return}
+            walletConfigured=false; walletError=error.localizedDescription; validateAccess()
+        }
+    }
+    private func beginWallet() {
+        guard !preparingWallet, !revoked, scenePhase == .active, walletConfigured, canUseWallet,
+              codes.indices.contains(index), let barcode=codes[index].walletBarcode, let sourceSha256, let stamp else {return}
+        stopWallet(); preparingWallet=true; walletError=nil
+        let generation=walletGeneration, codeID=codes[index].id
+        walletTask=Task {
+            defer { if generation == walletGeneration {preparingWallet=false;walletTask=nil} }
+            do {
+                let bytes=try await store.client.boardingWalletPass(selection.item,file:selection.file,sourceSha256:sourceSha256,barcode:barcode)
+                try Task.checkCancellation()
+                guard generation == walletGeneration, !revoked, scenePhase == .active, codes.indices.contains(index), codes[index].id == codeID,
+                      stamp == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
+                let pass:PKPass
+                do {pass=try PKPass(data:bytes)} catch {throw APIError.invalid("Apple Wallet no pudo validar este pase. Conserva el documento original y vuelve a intentarlo.")}
+                guard let controller=PKAddPassesViewController(pass:pass) else {throw APIError.invalid("No se pudo abrir Apple Wallet en este iPhone.")}
+                walletPresentation=BoardingWalletPresentation(controller:controller)
+            } catch {
+                guard !Task.isCancelled, generation == walletGeneration else {return}
+                walletError=error.localizedDescription;validateAccess()
+            }
+        }
+    }
+    #endif
 }
 
 struct NoticeDetail: View {

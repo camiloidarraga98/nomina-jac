@@ -258,6 +258,7 @@ final class PayrollClient: ObservableObject {
         if path.hasPrefix("api/expenses") {return user.hasSection(.itineraries)}
         if path.hasPrefix("api/music") {return user.canReadMusic}
         if path.hasPrefix("api/media") {return user.canReadMedia}
+        if path == "api/notices/wallet" {return user.hasSection(.boarding)}
         if path.hasPrefix("api/notices") {return query.contains{$0.name == "boarding"} ? user.hasSection(.boarding) : user.hasNotices}
         return true
     }
@@ -388,6 +389,8 @@ final class PayrollClient: ObservableObject {
             if path.hasPrefix("api/music"), response.statusCode == 403, let scope = try musicScope() { musicOffline.clear(scope) }
             if path.hasPrefix("api/media"), response.statusCode == 403, let mediaScope = try mediaScope() { cacheGeneration += 1; mediaOffline.clear(mediaScope); TemporaryDocuments.clear() }
             if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), response.statusCode == 403 { try clearSession(); throw APIError.unauthorized }
+            if path == "api/notices/wallet", [403,404,410].contains(response.statusCode), let scope, let body,
+               !body["id"].text.isEmpty { removeCachedNotice(body["id"].text,scope:scope) }
             if let scope, (body == nil || path == "api/crm" || path == "api/mobile/contracts"), [403, 404, 410].contains(response.statusCode) {
                 if path.hasPrefix("api/notices"), let id = query.first(where: { ["id", "item"].contains($0.name) })?.value { removeCachedNotice(id, scope: scope) }
                 else { let prefix=(path.hasPrefix("api/crm") || path == "api/mobile/contracts") && response.statusCode == 403 ? "/api/crm":"/"+path;offlineCache.remove(scope) { URL(string: $0.url)?.path.hasPrefix(prefix) == true || (prefix == "/api/crm" && URL(string:$0.url)?.path == "/api/mobile/contracts") } }
@@ -645,6 +648,37 @@ final class PayrollClient: ObservableObject {
             throw APIError.invalid("El pase cambió. Abre la versión más reciente.")
         }
         return "\(scope.id):\(cacheGeneration):\(noticeInvalidations[item.id, default: 0]):\(item.revision ?? 1)"
+    }
+    // Status and signed packages are always network-only. Wallet owns a copy
+    // only after the user explicitly accepts Apple's add-pass interface.
+    private func boardingWalletAccessStamp(_ item:JACNotice,file:NoticeAttachment) throws -> String {
+        guard permissionUser?.hasSection(.boarding) == true, (item.revision ?? 1)>0 else {throw APIError.forbidden("Tu cuenta no tiene acceso a pases de abordar.")}
+        return try boardingCodeAccessStamp(item,file:file)
+    }
+    func boardingWalletStatus(_ item:JACNotice,file:NoticeAttachment) async throws -> BoardingWalletStatus {
+        let stamp=try boardingWalletAccessStamp(item,file:file)
+        do {
+            let (data,response)=try await request(path:"api/notices/wallet",forceNetwork:true)
+            try Task.checkCancellation()
+            guard stamp == (try boardingWalletAccessStamp(item,file:file)) else {throw CancellationError()}
+            guard response.mimeType == "application/json", data.count<=16*1024 else {throw APIError.invalid("No se pudo consultar Apple Wallet.")}
+            return try decoder.decode(BoardingWalletStatus.self,from:data)
+        } catch APIError.forbidden(let message) {
+            if let scope=try? offlineScope() {removeCachedNotice(item.id,scope:scope)}
+            throw APIError.forbidden(message)
+        }
+    }
+    func boardingWalletPass(_ item:JACNotice,file:NoticeAttachment,sourceSha256:String,barcode:BoardingWalletBarcode) async throws -> Data {
+        let stamp=try boardingWalletAccessStamp(item,file:file)
+        guard sourceSha256.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil else {throw APIError.invalid("Vuelve a abrir el documento original antes de añadirlo a Wallet.")}
+        let payload:JSONValue = .object(["action":.string("create"),"id":.string(item.id),"file":.string(file.id),"revision":.number(Double(item.revision ?? 1)),"sourceSha256":.string(sourceSha256),"barcode":.object(["format":.string(barcode.format),"message":.string(barcode.message)])])
+        let (data,response)=try await request(path:"api/notices/wallet",body:payload,document:true,forceNetwork:true)
+        try Task.checkCancellation()
+        guard stamp == (try boardingWalletAccessStamp(item,file:file)) else {throw CancellationError()}
+        guard response.mimeType == "application/vnd.apple.pkpass", (4...1024*1024).contains(data.count),data.starts(with:[0x50,0x4b,0x03,0x04]) else {
+            throw APIError.invalid("No se recibió un pase válido para Apple Wallet. Conserva el documento original.")
+        }
+        return data
     }
     func confirmNotice(_ item: JACNotice) async throws {
         try await noticeCommand(.object(["action":.string("confirm"),"id":.string(item.id),"revision":.number(Double(item.revision ?? 1))]))
