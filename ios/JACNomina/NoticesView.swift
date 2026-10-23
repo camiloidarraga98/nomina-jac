@@ -526,7 +526,8 @@ private struct BoardingWalletPreparationView: View {
     private var legs:[BoardingWalletLeg] {
         guard let code=selectedCode else {return []}
         let parsed=BoardingWalletDetailsExtractor.legs(barcode:code.barcode)
-        if parsed.isEmpty,let count=BoardingWalletDetailsExtractor.declaredLegCount(barcode:code.barcode),count>1 {
+        let count=BoardingWalletDetailsExtractor.declaredLegCount(barcode:code.barcode)
+        if parsed.isEmpty,count>1 {
             return (0..<count).map {BoardingWalletLeg(index:$0,details:BoardingWalletDetails())}
         }
         return parsed
