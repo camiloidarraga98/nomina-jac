@@ -213,7 +213,7 @@ struct NoticesView: View {
                     }.buttonStyle(.plain).accessibilityIdentifier("boarding.open.\(file.id)")
                     Menu { boardingMenuActions(item,file:file) } label: {
                         Image(systemName:"ellipsis.circle").font(.title3).frame(width:44,height:44).contentShape(Rectangle())
-                    }.accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
+                    }.buttonStyle(.borderless).accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
                 }.foregroundStyle(JACTone.teal.color).padding(.horizontal,18).padding(.bottom,14).disabled(openingFile != nil || deleting)
                 }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
                     .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1))
