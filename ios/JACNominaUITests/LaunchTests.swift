@@ -1062,6 +1062,25 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"itinerario-manual-eliminado")
     }
 
+    @MainActor private func tapVisibleWalletControl(_ element:XCUIElement,in app:XCUIApplication) -> Bool {
+        guard element.waitForExistence(timeout:5),waitFor(element,predicate:NSPredicate(format:"enabled == true"),timeout:5) else {
+            XCTFail("El control de Wallet debe existir y estar habilitado.");return false
+        }
+        let frame=element.frame,window=app.windows.firstMatch
+        guard window.exists,!frame.isEmpty,!frame.isNull,!frame.isInfinite,window.frame.contains(frame) else {
+            XCTFail("El control de Wallet debe estar completamente dentro de la ventana visible.");return false
+        }
+        if element.isHittable {element.tap()}
+        else {
+            // Some SwiftUI Menu buttons have a valid enabled native frame while
+            // accessibility reports hittable=false. Exercise that control's
+            // own center; do not guess a coordinate elsewhere on the screen.
+            print("Wallet UI: tapping visible native control \(element.identifier) at its relative center; frame=\(frame)")
+            element.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
+        }
+        return true
+    }
+
     @MainActor func testBoardingWalletMenuOpensEditableFlightDetailsWithoutShowingTheCode() {
         let app=XCUIApplication()
         app.launchArguments=["--uitest-payroll","--uitest-sections=boarding","--uitest-wallet-menu"]
@@ -1072,16 +1091,14 @@ final class LaunchTests: XCTestCase {
         // native button separately. Tap the actual button inside that wrapper.
         let descendant=menu.descendants(matching:.button).firstMatch
         let menuButton=descendant.exists ? descendant:menu
-        let tappable=NSPredicate(format:"enabled == true AND hittable == true")
-        XCTAssertTrue(waitFor(menuButton,predicate:tappable,timeout:5));menuButton.tap()
+        guard tapVisibleWalletControl(menuButton,in:app) else {return}
         var walletAction=app.buttons["boarding.wallet.menu.boarding-fixture-0-pdf"].firstMatch
         if !walletAction.waitForExistence(timeout:3) {
             // UIKit menu actions may expose the visible label instead of the
             // SwiftUI identifier. This label is unique in the open menu.
             walletAction=app.buttons["Añadir a Apple Wallet"].firstMatch
         }
-        XCTAssertTrue(walletAction.waitForExistence(timeout:5))
-        XCTAssertTrue(waitFor(walletAction,predicate:tappable,timeout:5));walletAction.tap()
+        guard tapVisibleWalletControl(walletAction,in:app) else {return}
         let passenger=app.textFields["boarding.wallet.passenger"]
         XCTAssertTrue(passenger.waitForExistence(timeout:30))
         XCTAssertTrue(waitFor(passenger,predicate:NSPredicate(format:"value CONTAINS[c] %@","Fixture"),timeout:20))
