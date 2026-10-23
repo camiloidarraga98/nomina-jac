@@ -262,6 +262,101 @@ final class PayrollClientTests: XCTestCase {
         do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode);XCTFail("A response from a previous login must not become a Wallet pass.")} catch is CancellationError {}
         XCTAssertFalse(cache.entries(OfflineResponseCache.scope(origin:UITestBackend.base.absoluteString,token:String(repeating:"f",count:43))).contains {$0.url.contains("/api/notices/wallet")})
     }
+    @MainActor func testBoardingWalletConfirmedDetailsKeepExplicitBlanksAndSelectedLeg() async throws {
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer {try? FileManager.default.removeItem(at:cache.root)}
+        let (client,_)=relaunchFixture(cache),workspace=try await UITestBackend.client(downloadOffline:false).workspace()
+        client.rememberWorkspace(workspace)
+        let item=try walletNoticeFixture.decoded(JACNotice.self),file=try XCTUnwrap(item.files.first)
+        let firstLeg=String(walletIATAFixture.dropFirst(23).prefix(37))
+        let secondLeg="DEF456 "+"MDE"+"BOG"+"XX "+"00002"+"297"+"Y"+"014B"+"00002"+"1"+"00"
+        let message="M2"+String(walletIATAFixture.dropFirst(2).prefix(21))+firstLeg+secondLeg
+        let barcode=try XCTUnwrap(BoardingWalletBarcode(format:"PKBarcodeFormatPDF417",message:message))
+        let hash=String(repeating:"b",count:64),package=Data([0x50,0x4b,0x03,0x04])+Data("synthetic transport only".utf8)
+        let confirmed=BoardingWalletDetails(passenger:" Paula Fixture ",origin:"Bogotá (BOG)",destination:"Medellín (MDE)",departureTime:"18:35",boardingTime:"17:55",seat:"")
+        var sent:[JSONValue]=[]
+        MockProtocol.handler={request in
+            XCTAssertEqual(request.url?.path,"/api/notices/wallet");XCTAssertEqual(request.httpMethod,"POST")
+            XCTAssertEqual(request.value(forHTTPHeaderField:"Origin"),"https://ui-fixture.example.invalid")
+            sent.append(try JSONDecoder().decode(JSONValue.self,from:MockProtocol.requestBody(request)))
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/vnd.apple.pkpass"])!,package)
+        }
+        let received=try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode,legIndex:1,details:confirmed)
+        XCTAssertEqual(received,package)
+        XCTAssertEqual(sent[0]["legIndex"].number,1);XCTAssertEqual(sent[0]["barcode"]["message"].text,message)
+        XCTAssertEqual(sent[0]["sourceSha256"].text,hash);XCTAssertEqual(sent[0]["revision"].number,2)
+        XCTAssertEqual(Set(sent[0]["details"].fields.keys),Set(["passenger","origin","destination","departureTime","boardingTime","seat"]))
+        XCTAssertEqual(sent[0]["details"]["passenger"].text,"Paula Fixture")
+        XCTAssertEqual(sent[0]["details"]["departureTime"].text,"18:35");XCTAssertEqual(sent[0]["details"]["boardingTime"].text,"17:55")
+        XCTAssertEqual(sent[0]["details"]["seat"].text,"","Removing a suggestion must stay an explicit blank.")
+        _ = try await client.boardingWalletPass(item,file:file,sourceSha256:hash,barcode:barcode)
+        XCTAssertNil(sent[1].fields["details"]);XCTAssertNil(sent[1].fields["legIndex"],"Existing callers retain their private transport contract.")
+        let scope=OfflineResponseCache.scope(origin:UITestBackend.base.absoluteString,token:String(repeating:"f",count:43))
+        XCTAssertFalse(cache.entries(scope).contains {$0.url.contains("/api/notices/wallet")})
+    }
+    @MainActor func testBoardingWalletFlightFieldsValidateBeforeAnyNetworkRequest() async throws {
+        let blank=BoardingWalletDetails()
+        XCTAssertNil(blank.validationMessage)
+        let fields=try blank.walletRequestFields();XCTAssertEqual(fields.count,6)
+        XCTAssertTrue(fields.values.allSatisfy {$0.text.isEmpty},"Missing source data must never be guessed from a JAC profile.")
+        let seat=BoardingWalletDetails(seat:" 12a ");XCTAssertEqual(try seat.walletRequestFields()["seat"]?.text,"12A")
+        let invalid=[BoardingWalletDetails(passenger:"Fixture\nOther"),BoardingWalletDetails(origin:String(repeating:"A",count:101)),BoardingWalletDetails(destination:"MDE\u{0000}"),BoardingWalletDetails(departureTime:"25:00"),BoardingWalletDetails(boardingTime:"8:30"),BoardingWalletDetails(departureTime:"18:99"),BoardingWalletDetails(seat:"12 A"),BoardingWalletDetails(seat:"1234567"),BoardingWalletDetails(seat:"0000")]
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer {try? FileManager.default.removeItem(at:cache.root)}
+        let (client,_)=relaunchFixture(cache),workspace=try await UITestBackend.client(downloadOffline:false).workspace()
+        client.rememberWorkspace(workspace)
+        let item=try walletNoticeFixture.decoded(JACNotice.self),file=try XCTUnwrap(item.files.first)
+        let barcode=try XCTUnwrap(BoardingWalletBarcode(format:"PKBarcodeFormatQR",message:walletIATAFixture))
+        var requests=0
+        MockProtocol.handler={request in requests += 1;throw APIError.invalid("Unexpected synthetic request")}
+        for details in invalid {
+            XCTAssertNotNil(details.validationMessage)
+            do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:String(repeating:"a",count:64),barcode:barcode,legIndex:0,details:details);XCTFail("Invalid details must be rejected before transport.")} catch APIError.invalid {}
+        }
+        for leg in [-1,4] {
+            do {_ = try await client.boardingWalletPass(item,file:file,sourceSha256:String(repeating:"a",count:64),barcode:barcode,legIndex:leg,details:blank);XCTFail("A leg outside the supported range must be rejected locally.")} catch APIError.invalid {}
+        }
+        XCTAssertEqual(requests,0)
+    }
+    @MainActor func testNativeNoticeRecipientsRefreshKeepsExplicitSelections() async throws {
+        let camilo=NoticeUser(id:"fixture-owner",name:"Persona uno"),luisa=NoticeUser(id:"fixture-reader",name:"Persona dos"),andres=NoticeUser(id:"fixture-new",name:"Andrés ficticio",ready:false)
+        let first=NoticeRecipientSelection.reconcile([],users:[camilo,luisa],initialized:false)
+        XCTAssertEqual(first.selected,Set([camilo.id,luisa.id]));XCTAssertFalse(first.removed)
+        var chosen=first.selected;chosen.remove(luisa.id)
+        let added=NoticeRecipientSelection.reconcile(chosen,users:[camilo,luisa,andres],initialized:true)
+        XCTAssertEqual(added.selected,Set([camilo.id]),"Refreshing must not reselect a previously unchecked person or select a new user.")
+        XCTAssertFalse(added.removed)
+        chosen=added.selected;chosen.insert(andres.id)
+        let revoked=NoticeRecipientSelection.reconcile(chosen,users:[luisa,andres],initialized:true)
+        XCTAssertEqual(revoked.selected,Set([andres.id]));XCTAssertTrue(revoked.removed,"The composer must ask the user to review a removed selected recipient before publishing.")
+        let automatic=NoticeRecipientSelection.reconcile(revoked.selected,users:[luisa,andres],initialized:true,reviewRequired:revoked.reviewRequired)
+        XCTAssertFalse(automatic.removed);XCTAssertTrue(automatic.reviewRequired,"A later automatic refresh must not dismiss the pending review.")
+        let reviewed=NoticeRecipientSelection.reconcile(automatic.selected,users:[luisa,andres],initialized:true,reviewRequired:automatic.reviewRequired,reviewed:true)
+        XCTAssertFalse(reviewed.reviewRequired);XCTAssertEqual(reviewed.selected,Set([andres.id]),"Acknowledging the refreshed list must not select other people.")
+        let cache=OfflineResponseCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        defer {try? FileManager.default.removeItem(at:cache.root)}
+        let (client,vault)=relaunchFixture(cache),workspace=try await UITestBackend.client(downloadOffline:false).workspace()
+        client.rememberWorkspace(workspace)
+        var requests=0,late=false
+        MockProtocol.handler={request in
+            requests += 1;XCTAssertEqual(request.url?.path,"/api/notices/recipients");XCTAssertEqual(request.httpMethod,"GET")
+            XCTAssertEqual(request.value(forHTTPHeaderField:"Cookie"),"__Host-jac_session="+String(repeating:"f",count:43))
+            if late {vault.token=String(repeating:"r",count:43)}
+            let json=JSONValue.object(["users":.array([.object(["id":.string(camilo.id),"name":.string(camilo.name),"ready":.bool(true)]),.object(["id":.string(andres.id),"name":.string(andres.name),"ready":.bool(false)])]),"boardingUsers":.array([.object(["id":.string(luisa.id),"name":.string(luisa.name)])])])
+            return (HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,try JSONEncoder().encode(json))
+        }
+        let roster=try await client.noticeRecipients()
+        XCTAssertEqual(roster.users.map(\.id),[camilo.id,andres.id]);XCTAssertEqual(roster.users.last?.ready,false)
+        XCTAssertEqual(roster.boardingUsers.map(\.id),[luisa.id]);XCTAssertEqual(requests,1)
+        let scope=OfflineResponseCache.scope(origin:UITestBackend.base.absoluteString,token:String(repeating:"f",count:43))
+        XCTAssertFalse(cache.entries(scope).contains {$0.url.contains("/api/notices/recipients")},"Recipient lists are fresh reads, never an offline cache or a notice publication.")
+        late=true
+        do {_ = try await client.noticeRecipients();XCTFail("A roster from a previous login must not become a recipient selection.")} catch is CancellationError {}
+        XCTAssertEqual(requests,2)
+        client.beginOfflineRestore()
+        do {_ = try await client.noticeRecipients();XCTFail("Do not use offline recipient lists to publish.")} catch APIError.invalid {}
+        XCTAssertEqual(requests,2)
+    }
     func testBoardingCodeCropsKeepOriginalQRAndPDF417PayloadAcrossPagesAndRotation() throws {
         let pdf=try XCTUnwrap(PDFDocument(data:UITestBackend.boardingCodePDF()))
         // Nonzero crop origin and rotation catch both PDF drawing and Vision's

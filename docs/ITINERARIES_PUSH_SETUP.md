@@ -1,3 +1,13 @@
+## Destinatarios actuales ·22 de octubre de2026 (Colombia)
+
+Camilo pidió que las cuentas recién creadas aparezcan al crear alertas y reportó que faltaba Andrés. El diagnóstico mínimo mostró su cuenta activa sin la sección Alertas. Se habilitó **solo Alertas para `andres`**, conservando las otras cinco secciones; se aplicaron CAS/version y cierre de sesiones/invitaciones anteriores, como en Gestión. No se cambiaron otros usuarios ni se enviaron avisos reales. Debe iniciar sesión nuevamente para recibir los permisos actualizados.
+
+El selector consulta `/api/notices/recipients` al abrir, reanudar, cambiar usuarios y antes de publicar; también se refresca cada30s mientras está abierto. Solo usuarios activos con Alertas aparecen como destinatarios de alertas; Pases mantiene su lista independiente y acceso exclusivo. Las cuentas pendientes de activación elegibles siguen mostrándose con su estado. Una cuenta creada sin Alertas debe recibir ese permiso desde Gestión para aparecer: el refresco no concede secciones automáticamente.
+
+Los formularios web/nativo conservan el borrador y las elecciones. Tras la primera carga, las cuentas nuevas aparecen sin seleccionar; no se amplían destinatarios silenciosamente. Una cuenta retirada o sin permiso se elimina de la selección y exige revisar la lista antes de publicar. Un error al refrescar bloquea el envío sin borrar el borrador, y un401/403 retira la lista privada. El endpoint solo lee nombres/IDs/estado, requiere administrador actual y revalida sesión; no importa Slack ni envía notificaciones.
+
+Verificación local: cuatro casos Node focales y dos recorridos de navegador con24 comprobaciones aprobados; TypeScript y build correctos. Una regresión antigua necesitó inicializar su propia conexión Slack ficticia para ejecutarse aislada; se repitió solo ese caso. El primer intento del harness usó un nombre accesible equivocado; se corrigió únicamente el selector y los dos recorridos quedaron aprobados. Fuente, CI Apple y publicación finales pendientes de cerrar esta entrega. Las pruebas no usaron la cuenta real de Andrés ni servicios de envío reales.
+
 # Itinerarios y alertas de JAC
 
 > **Actualización22 de octubre:** Camilo confirmó membresía Apple pagada y pidió reactivar push. El proyecto activa la capacidad y los entitlements APNs. Configurar la clave en JAC y firmar/instalar con el equipo pagado sigue siendo necesario. La actualización se obtiene con pull del mismo proyecto, sin otro ZIP; TestFlight permite distribución inalámbrica. Ver [pasos vigentes](APPLE_PAID_SETUP.md).

@@ -57,6 +57,13 @@ struct NoticeFeed: Decodable {
 }
 struct NoticeSettings: Decodable { let version: Int; let slackConnected: Bool; let appleConfigured: Bool; let webPublicKey: String }
 struct NoticeUser: Decodable, Identifiable { let id: String; let name: String; var ready: Bool? = nil }
+struct NoticeRecipientRoster: Decodable {let users:[NoticeUser];let boardingUsers:[NoticeUser]}
+enum NoticeRecipientSelection {
+    static func reconcile(_ selected:Set<String>,users:[NoticeUser],initialized:Bool,reviewRequired:Bool=false,reviewed:Bool=false) -> (selected:Set<String>,removed:Bool,reviewRequired:Bool) {
+        let allowed=Set(users.map(\.id)),removed=initialized && !selected.subtracting(allowed).isEmpty
+        return (initialized ? selected.intersection(allowed):allowed,removed,removed || (reviewRequired && !reviewed))
+    }
+}
 
 struct NoticesView: View {
     @EnvironmentObject private var store: PayrollStore
@@ -81,6 +88,9 @@ struct NoticesView: View {
     @State private var tomorrowCount = 0
     @State private var boardingDocument: ExportedDocument?
     @State private var boardingCode: BoardingCodeSelection?
+    #if os(iOS)
+    @State private var boardingWallet: BoardingCodeSelection?
+    #endif
     @State private var fullPassAfterCode: BoardingCodeSelection?
     @State private var previousBoardingDocument: ExportedDocument?
     @State private var openingFile: String?
@@ -159,6 +169,9 @@ struct NoticesView: View {
             .onDisappear { documentGeneration += 1; if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }
             .sheet(item: $detail, onDismiss: { Task { await refresh() } }) { item in NoticeDetail(item: item, owner: user.isOwner) }
             .sheet(isPresented: $editor) { if let feed { NoticeComposer(users: feed.users, boardingUsers: feed.boardingUsers ?? feed.users) { savedKind in incomingKind = savedKind; notice = savedKind == "boarding_pass" ? "Pase publicado únicamente para la persona elegida." : savedKind == "itinerary" ? "Itinerario publicado para todo el equipo." : "Alerta guardada para los destinatarios elegidos."; await refresh() } } }
+            #if os(iOS)
+            .sheet(item:$boardingWallet) { selection in BoardingWalletPreparationView(selection:selection) }
+            #endif
     }
     @ViewBuilder private func deleteButton(_ item:JACNotice,destructive:Bool = true) -> some View {
         Button(role:destructive ? .destructive : nil) { pendingDelete=item; confirmingListDelete=true } label: { Label(item.kind == "boarding_pass" ? "Eliminar pase de abordar" : "Eliminar itinerario",systemImage:"trash").font(.subheadline) }
@@ -198,14 +211,28 @@ struct NoticesView: View {
                     Button {Task {await openBoarding(item,file:file)}} label: {
                         HStack(spacing:8) {if openingFile == file.id {ProgressView()};Text(file.mimeType == "application/pdf" ? "Abrir PDF":"Abrir imagen").font(.subheadline.weight(.semibold))}.frame(minHeight:44).contentShape(Rectangle())
                     }.buttonStyle(.plain).accessibilityIdentifier("boarding.open.\(file.id)")
+                    Menu { boardingMenuActions(item,file:file) } label: {
+                        Image(systemName:"ellipsis.circle").font(.title3).frame(width:44,height:44).contentShape(Rectangle())
+                    }.accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
                 }.foregroundStyle(JACTone.teal.color).padding(.horizontal,18).padding(.bottom,14).disabled(openingFile != nil || deleting)
                 }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
                     .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1))
+                    .contextMenu { boardingMenuActions(item,file:file) }
             }
         }.padding(.vertical,6).jacStandaloneRow()
             .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner { deleteButton(item,destructive:false).tint(.red) } }
-            .contextMenu { if user.isOwner { deleteButton(item) } }
         }
+    }
+    @ViewBuilder private func boardingMenuActions(_ item:JACNotice,file:NoticeAttachment) -> some View {
+        #if os(iOS)
+        if UIDevice.current.userInterfaceIdiom == .phone {
+            Button {boardingWallet=BoardingCodeSelection(item:item,file:file)} label:{Label("Añadir a Apple Wallet",systemImage:"wallet.pass")}
+                .disabled(store.isOffline).accessibilityIdentifier("boarding.wallet.menu.\(file.id)")
+        }
+        #endif
+        Button {boardingCode=BoardingCodeSelection(item:item,file:file)} label:{Label("Mostrar código",systemImage:"qrcode.viewfinder")}
+        Button {Task {await openBoarding(item,file:file)}} label:{Label(file.mimeType == "application/pdf" ? "Abrir PDF":"Abrir imagen",systemImage:"doc")}
+        if user.isOwner {Divider();deleteButton(item)}
     }
     private func codeViewer(_ selection:BoardingCodeSelection) -> some View {
         BoardingCodeView(selection:selection) { fullPassAfterCode=selection;boardingCode=nil }
@@ -456,6 +483,251 @@ private struct BoardingBrightness: UIViewRepresentable {
 }
 #endif
 
+#if os(iOS)
+private struct BoardingWalletCodeOption: Identifiable, Sendable {
+    let id:Int
+    let page:Int
+    let format:String
+    let barcode:BoardingWalletBarcode
+}
+private struct BoardingWalletSource: Sendable {
+    let data:Data
+    let codes:[BoardingWalletCodeOption]
+    let sha256:String
+}
+
+private struct BoardingWalletPreparationView: View {
+    @EnvironmentObject private var store:PayrollStore
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
+    let selection:BoardingCodeSelection
+    @State private var codes:[BoardingWalletCodeOption]=[]
+    @State private var codeIndex=0
+    @State private var legIndex=0
+    @State private var details=BoardingWalletDetails()
+    @State private var sourceData:Data?
+    @State private var sourceSha256:String?
+    @State private var stamp:String?
+    @State private var loading=true
+    @State private var resolvingDetails=false
+    @State private var revoked=false
+    @State private var error:String?
+    @State private var walletStatus:BoardingWalletStatus?
+    @State private var preparingWallet=false
+    @State private var walletPresentation:BoardingWalletPresentation?
+    @State private var generation=0
+    @State private var detailGeneration=0
+    @State private var walletGeneration=0
+    @State private var extractionTask:Task<BoardingWalletSource,Error>?
+    @State private var detailsTask:Task<Void,Never>?
+    @State private var walletTask:Task<Void,Never>?
+    @FocusState private var focusedField:String?
+    private var selectedCode:BoardingWalletCodeOption? {codes.indices.contains(codeIndex) ? codes[codeIndex]:nil}
+    private var legs:[BoardingWalletLeg] {
+        guard let code=selectedCode else {return []}
+        let parsed=BoardingWalletDetailsExtractor.legs(barcode:code.barcode)
+        if parsed.isEmpty,let count=BoardingWalletDetailsExtractor.declaredLegCount(barcode:code.barcode),count>1 {
+            return (0..<count).map {BoardingWalletLeg(index:$0,details:BoardingWalletDetails())}
+        }
+        return parsed
+    }
+    private var canAddPasses:Bool {UIDevice.current.userInterfaceIdiom == .phone && PKAddPassesViewController.canAddPasses()}
+    private var hasSelectedLeg:Bool {
+        guard let code=selectedCode,let count=Int(String(code.barcode.message.dropFirst().prefix(1))) else {return false}
+        return count == 1 ? legIndex == 0:legs.count == count && legs.contains(where:{$0.index == legIndex})
+    }
+    private var canPrepare:Bool {
+        !loading && !resolvingDetails && !preparingWallet && !revoked && !store.isOffline && walletStatus?.configured == true &&
+        selectedCode != nil && hasSelectedLeg && details.validationMessage == nil && scenePhase == .active
+    }
+    var body:some View {
+        NavigationStack {
+            Group {
+                if scenePhase != .active {Color.clear}
+                else if revoked {ContentUnavailableView("Pase no disponible",systemImage:"lock",description:Text("Vuelve a abrir tus pases con tu sesión actual."))}
+                else {preparationForm}
+            }.privacySensitive().navigationTitle("Añadir a Apple Wallet").jacInlineTitle()
+                .toolbar {
+                    ToolbarItem(placement:.cancellationAction) {Button("Cerrar") {dismiss()}.accessibilityIdentifier("boarding.wallet.close")}
+                    ToolbarItemGroup(placement:.keyboard) {Spacer();Button("Listo") {focusedField=nil}.accessibilityIdentifier("boarding.wallet.keyboard.done")}
+                }
+        }
+        .task {await load()}
+        .onChange(of:codeIndex) {_,_ in guard !loading else {return};legIndex=legs.count>1 ? -1:0;stopSigning();startSuggestions()}
+        .onChange(of:legIndex) {_,_ in guard !loading else {return};stopSigning();startSuggestions()}
+        .onChange(of:details) {_,_ in stopSigning()}
+        .onChange(of:store.cacheRevision) {_,_ in validateAccess()}
+        .onChange(of:store.overview?.user) {_,_ in validateAccess()}
+        .onChange(of:store.isOffline) {_,offline in if offline {stopSigning()}}
+        .onChange(of:scenePhase) {_,phase in
+            if phase == .background {clearPrivate()}
+            else if phase == .active,sourceData == nil,!revoked {Task {await load()}}
+        }
+        .sheet(item:$walletPresentation,onDismiss:{walletPresentation=nil}) {presentation in
+            BoardingWalletAddSheet(presentation:presentation) {walletPresentation=nil}.privacySensitive()
+        }
+        .onDisappear {clearPrivate()}
+    }
+    private var preparationForm:some View {
+        Form {
+            Section {Text(selection.file.filename).font(.footnote).foregroundStyle(.secondary)}
+            if loading {Section {ProgressView("Leyendo los datos del pase…").accessibilityIdentifier("boarding.wallet.loading")}}
+            if let error {Section {InlineError(message:error).accessibilityIdentifier("boarding.wallet.error")}}
+            if !loading,!codes.isEmpty {
+                if codes.count>1 || legs.count>1 {
+                    Section("Elige tu vuelo") {
+                        if codes.count>1 {
+                            Picker("Código del documento",selection:$codeIndex) {
+                                ForEach(Array(codes.enumerated()),id:\.element.id) {index,code in
+                                    Text("Código \(index+1) · Pág. \(code.page) · \(code.format)").tag(index)
+                                }
+                            }.accessibilityIdentifier("boarding.wallet.codePicker")
+                        }
+                        if legs.count>1 {
+                            Picker("Tramo",selection:$legIndex) {
+                                Text("Selecciona tu vuelo").tag(-1)
+                                ForEach(legs,id:\.index) {leg in Text(leg.label).tag(leg.index)}
+                            }
+                                .accessibilityIdentifier("boarding.wallet.legPicker")
+                        }
+                    }.disabled(resolvingDetails || preparingWallet)
+                }
+                if !hasSelectedLeg {Section {Text(legs.count>1 ? "Selecciona el tramo de este pase antes de preparar Wallet.":"No se pudieron identificar los tramos de este código. Conserva el documento original.").font(.footnote).foregroundStyle(.secondary)}}
+                Section {
+                    if resolvingDetails {ProgressView("Leyendo los datos de este vuelo…")}
+                    detailField("Nombre del pasajero",text:$details.passenger,id:"passenger")
+                    detailField("Origen",text:$details.origin,id:"origin")
+                    detailField("Destino",text:$details.destination,id:"destination")
+                    detailField("Hora del vuelo",text:$details.departureTime,id:"departureTime",clock:true)
+                    detailField("Hora en sala",text:$details.boardingTime,id:"boardingTime",clock:true)
+                    detailField("Silla asignada",text:$details.seat,id:"seat")
+                } header:{Text("Datos del vuelo")} footer:{
+                    Text("Revisa estos datos con tu pase original. Puedes corregirlos o dejar vacíos los que no aparezcan. Las horas se muestran como figuran en el documento.")
+                }.disabled(resolvingDetails || preparingWallet || !hasSelectedLeg)
+                if let message=details.validationMessage {Section {Text(message).foregroundStyle(.red).font(.footnote)}}
+                Section {
+                    if walletStatus?.configured == false {Text("Wallet estará disponible cuando el administrador complete la conexión.").foregroundStyle(.secondary)}
+                    if canAddPasses {
+                        BoardingWalletAddButton(enabled:canPrepare) {beginWallet()}.frame(width:220,height:44).frame(maxWidth:.infinity)
+                        Text("Se guardará una copia en Wallet.").font(.caption).foregroundStyle(.secondary)
+                    } else {Text("Este dispositivo no permite añadir pases a Apple Wallet.").font(.footnote).foregroundStyle(.secondary)}
+                    if preparingWallet {ProgressView("Preparando pase…").accessibilityIdentifier("boarding.wallet.signing")}
+                }
+            }
+            if !loading,error != nil || walletStatus?.configured == nil {
+                Section {Button("Volver a leer el pase") {Task {await load()}}.disabled(store.isOffline || preparingWallet)}
+            }
+        }.scrollDismissesKeyboard(.interactively).accessibilityIdentifier("boarding.wallet.form")
+    }
+    private func detailField(_ label:String,text:Binding<String>,id:String,clock:Bool=false) -> some View {
+        VStack(alignment:.leading,spacing:5) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            TextField(clock ? "HH:mm":"Sin detectar",text:text).textInputAutocapitalization(clock ? .never:.words)
+                .autocorrectionDisabled().keyboardType(clock ? .numbersAndPunctuation:.default).submitLabel(.done)
+                .focused($focusedField,equals:id).accessibilityLabel(label).accessibilityIdentifier("boarding.wallet."+id)
+        }
+    }
+    private func validateAccess() {
+        guard let stamp else {return}
+        if (try? store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) != stamp {
+            revoked=true;clearPrivate();loading=false
+        }
+    }
+    private func clearPrivate() {
+        generation += 1;detailGeneration += 1;extractionTask?.cancel();extractionTask=nil;detailsTask?.cancel();detailsTask=nil
+        stopSigning();sourceData=nil;sourceSha256=nil;stamp=nil;codes=[];details=BoardingWalletDetails();walletStatus=nil
+        loading=false;resolvingDetails=false
+    }
+    private func stopSigning() {
+        walletGeneration += 1;walletTask?.cancel();walletTask=nil;walletPresentation=nil;preparingWallet=false
+    }
+    private func load() async {
+        guard !revoked,scenePhase == .active else {return}
+        clearPrivate();loading=true;error=nil;codeIndex=0;legIndex=0
+        let request=generation
+        do {
+            let start=try store.client.boardingCodeAccessStamp(selection.item,file:selection.file);stamp=start
+            let document=try await store.client.noticeFile(selection.item,file:selection.file)
+            defer {TemporaryDocuments.remove(document)}
+            try Task.checkCancellation()
+            guard request == generation,!revoked,scenePhase == .active,start == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
+            let url=document.url,mime=selection.file.mimeType
+            let worker=Task.detached(priority:.userInitiated) { () throws -> BoardingWalletSource in
+                let data=try Data(contentsOf:url)
+                let found=try BoardingCodeExtractor.extract(data,mime:mime)
+                let codes=found.enumerated().compactMap {index,code in
+                    code.walletBarcode.map {BoardingWalletCodeOption(id:index,page:code.page,format:code.format,barcode:$0)}
+                }
+                try Task.checkCancellation()
+                return BoardingWalletSource(data:data,codes:codes,sha256:SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined())
+            }
+            extractionTask=worker
+            let source=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+            try Task.checkCancellation()
+            guard request == generation,!revoked,scenePhase == .active,start == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
+            guard !source.codes.isEmpty else {throw APIError.invalid("No se encontró un código de embarque compatible con Wallet. Puedes seguir usando el documento original y Mostrar código.")}
+            let status=try await store.client.boardingWalletStatus(selection.item,file:selection.file)
+            try Task.checkCancellation()
+            guard request == generation,!revoked,scenePhase == .active,start == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
+            sourceData=source.data;sourceSha256=source.sha256;codes=source.codes;walletStatus=status
+            legIndex=legs.count>1 ? -1:0;loading=false;extractionTask=nil
+            startSuggestions()
+        } catch {
+            guard request == generation,!Task.isCancelled else {return}
+            loading=false;extractionTask=nil
+            if !revoked {self.error=error is CancellationError ? "El pase cambió. Vuelve a abrir tus pases.":store.reportReadFailure(error)}
+            validateAccess()
+        }
+    }
+    private func startSuggestions() {
+        guard !loading,!revoked,let code=selectedCode,let data=sourceData,let stamp else {return}
+        detailGeneration += 1;detailsTask?.cancel();details=BoardingWalletDetails();error=nil
+        guard hasSelectedLeg else {resolvingDetails=false;detailsTask=nil;return}
+        resolvingDetails=true
+        let request=detailGeneration,sourceGeneration=generation,selectedLeg=legIndex,mime=selection.file.mimeType
+        let worker=Task.detached(priority:.userInitiated) {
+            try BoardingWalletDetailsExtractor.suggestions(data:data,mime:mime,barcode:code.barcode,page:code.page,legIndex:selectedLeg)
+        }
+        detailsTask=Task {
+            defer {if request == detailGeneration {resolvingDetails=false;detailsTask=nil}}
+            do {
+                let found=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
+                try Task.checkCancellation()
+                guard request == detailGeneration,sourceGeneration == generation,!revoked,scenePhase == .active,
+                      selectedCode?.id == code.id,legIndex == selectedLeg,stamp == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {return}
+                details=found
+            } catch {
+                guard request == detailGeneration,!Task.isCancelled else {return}
+                self.error="No se pudieron leer todos los datos. Puedes completarlos con el documento original."
+                validateAccess()
+            }
+        }
+    }
+    private func beginWallet() {
+        guard canPrepare,let code=selectedCode,let sourceSha256,let stamp else {return}
+        stopSigning();preparingWallet=true;error=nil
+        let request=walletGeneration,sourceGeneration=generation,selectedLeg=legIndex,confirmed=details
+        walletTask=Task {
+            defer {if request == walletGeneration {preparingWallet=false;walletTask=nil}}
+            do {
+                let bytes=try await store.client.boardingWalletPass(selection.item,file:selection.file,sourceSha256:sourceSha256,barcode:code.barcode,legIndex:selectedLeg,details:confirmed)
+                try Task.checkCancellation()
+                guard request == walletGeneration,sourceGeneration == generation,!revoked,scenePhase == .active,
+                      selectedCode?.id == code.id,legIndex == selectedLeg,details == confirmed,
+                      stamp == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
+                let pass:PKPass
+                do {pass=try PKPass(data:bytes)} catch {throw APIError.invalid("Apple Wallet no pudo validar este pase. Conserva el documento original y vuelve a intentarlo.")}
+                guard let controller=PKAddPassesViewController(pass:pass) else {throw APIError.invalid("No se pudo abrir Apple Wallet en este iPhone.")}
+                walletPresentation=BoardingWalletPresentation(controller:controller)
+            } catch {
+                guard request == walletGeneration,!Task.isCancelled else {return}
+                self.error=error.localizedDescription;validateAccess()
+            }
+        }
+    }
+}
+#endif
+
 private struct BoardingCodeView: View {
     @EnvironmentObject private var store:PayrollStore
     @Environment(\.dismiss) private var dismiss
@@ -468,17 +740,6 @@ private struct BoardingCodeView: View {
     @State private var error:String?
     @State private var stamp:String?
     @State private var revoked=false
-    #if os(iOS)
-    @State private var sourceSha256: String?
-    @State private var walletConfigured = false
-    @State private var preparingWallet = false
-    @State private var walletError: String?
-    @State private var walletPresentation: BoardingWalletPresentation?
-    @State private var walletGeneration = 0
-    @State private var walletStatusGeneration = 0
-    @State private var walletTask: Task<Void, Never>?
-    private var canUseWallet: Bool { UIDevice.current.userInterfaceIdiom == .phone && PKAddPassesViewController.canAddPasses() }
-    #endif
     private var visible:Bool { !codes.isEmpty && !revoked && scenePhase == .active }
     var body:some View {
         NavigationStack {
@@ -497,17 +758,6 @@ private struct BoardingCodeView: View {
                         }
                         Text("Elige el código que corresponde a tu vuelo.").font(.footnote).foregroundStyle(.secondary)
                     }
-                    #if os(iOS)
-                    if canUseWallet, code.walletBarcode != nil {
-                        if walletConfigured {
-                            BoardingWalletAddButton(enabled: !preparingWallet && !store.isOffline) { beginWallet() }
-                                .frame(width: 220, height: 44)
-                            Text("Se guardará una copia en Wallet.").font(.caption).foregroundStyle(.secondary)
-                        }
-                        if preparingWallet { ProgressView("Preparando pase…").accessibilityIdentifier("boarding.wallet.loading") }
-                        if let walletError { Text(walletError).font(.footnote).multilineTextAlignment(.center).accessibilityIdentifier("boarding.wallet.error") }
-                    }
-                    #endif
                 } else {Spacer();Color.white;Spacer()}
                 if !loading && !revoked {Button("Abrir pase completo",action:openFullPass).accessibilityIdentifier("boarding.code.fullpass").padding(.bottom,12)}
             }.padding(20).frame(maxWidth:.infinity,maxHeight:.infinity).background(.white).foregroundStyle(.black)
@@ -520,29 +770,12 @@ private struct BoardingCodeView: View {
         }.preferredColorScheme(.light).task {await load()}
             .onChange(of:store.cacheRevision) {_,_ in validateAccess()}
             .onChange(of:store.overview?.user) {_,_ in validateAccess()}
-            .onDisappear {codes=[];stamp=nil
-                #if os(iOS)
-                stopWallet(resetStatus:true); sourceSha256=nil
-                #endif
-            }
-            #if os(iOS)
-            .sheet(item:$walletPresentation,onDismiss:{walletPresentation=nil}) { presentation in
-                BoardingWalletAddSheet(presentation:presentation) { walletPresentation=nil }.privacySensitive()
-            }
-            .onChange(of:index) { _,_ in stopWallet();walletError=nil }
-            .onChange(of:scenePhase) { _,phase in
-                if phase == .background { stopWallet(resetStatus:true) }
-                else if phase == .active { Task { await refreshWalletStatus() } }
-            }
-            #endif
+            .onDisappear {codes=[];stamp=nil}
     }
     private func validateAccess() {
         guard let stamp else {return}
         if (try? store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) != stamp {
             revoked=true;codes=[];error="El pase cambió o ya no está disponible. Vuelve a abrir tus pases.";loading=false
-            #if os(iOS)
-            stopWallet(resetStatus:true); sourceSha256=nil
-            #endif
         }
     }
     private func load() async {
@@ -552,71 +785,18 @@ private struct BoardingCodeView: View {
             defer {TemporaryDocuments.remove(document)}
             try Task.checkCancellation()
             let data=try Data(contentsOf:document.url),mime=selection.file.mimeType
-            let worker=Task.detached(priority:.userInitiated) {
-                let codes=try BoardingCodeExtractor.extract(data,mime:mime)
-                let hash=SHA256.hash(data:data).map {String(format:"%02x",$0)}.joined()
-                return (codes,hash)
-            }
-            let result=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
-            let found=result.0
+            let worker=Task.detached(priority:.userInitiated) {try BoardingCodeExtractor.extract(data,mime:mime)}
+            let found=try await withTaskCancellationHandler {try await worker.value} onCancel:{worker.cancel()}
             try Task.checkCancellation()
             guard !revoked,start == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
             if found.isEmpty {error="No se encontró un código legible. Puedes abrir el pase completo."} else {codes=found}
             loading=false
-            #if os(iOS)
-            sourceSha256=result.1
-            await refreshWalletStatus()
-            #endif
         } catch {
             guard !Task.isCancelled else {return}
             codes=[];loading=false
             if !revoked {self.error=error is CancellationError ? "El pase cambió. Vuelve a abrir tus pases.":store.reportReadFailure(error)}
         }
     }
-    #if os(iOS)
-    private func stopWallet(resetStatus:Bool=false) {
-        walletGeneration += 1; walletTask?.cancel(); walletTask=nil; walletPresentation=nil; preparingWallet=false
-        if resetStatus {walletStatusGeneration += 1;walletConfigured=false;walletError=nil}
-    }
-    private func refreshWalletStatus() async {
-        guard !loading, !revoked, canUseWallet, sourceSha256 != nil, codes.contains(where:{$0.walletBarcode != nil}), let stamp else { return }
-        walletStatusGeneration += 1
-        let generation=walletStatusGeneration
-        do {
-            let status=try await store.client.boardingWalletStatus(selection.item,file:selection.file)
-            try Task.checkCancellation()
-            guard generation == walletStatusGeneration, !revoked, sourceSha256 != nil, scenePhase == .active,
-                  stamp == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else { return }
-            walletConfigured=status.configured
-            walletError=status.configured ? nil : "Wallet estará disponible cuando el administrador complete la conexión."
-        } catch {
-            guard !Task.isCancelled, generation == walletStatusGeneration else {return}
-            walletConfigured=false; walletError=error.localizedDescription; validateAccess()
-        }
-    }
-    private func beginWallet() {
-        guard !preparingWallet, !revoked, scenePhase == .active, walletConfigured, canUseWallet,
-              codes.indices.contains(index), let barcode=codes[index].walletBarcode, let sourceSha256, let stamp else {return}
-        stopWallet(); preparingWallet=true; walletError=nil
-        let generation=walletGeneration, codeID=codes[index].id
-        walletTask=Task {
-            defer { if generation == walletGeneration {preparingWallet=false;walletTask=nil} }
-            do {
-                let bytes=try await store.client.boardingWalletPass(selection.item,file:selection.file,sourceSha256:sourceSha256,barcode:barcode)
-                try Task.checkCancellation()
-                guard generation == walletGeneration, !revoked, scenePhase == .active, codes.indices.contains(index), codes[index].id == codeID,
-                      stamp == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {throw CancellationError()}
-                let pass:PKPass
-                do {pass=try PKPass(data:bytes)} catch {throw APIError.invalid("Apple Wallet no pudo validar este pase. Conserva el documento original y vuelve a intentarlo.")}
-                guard let controller=PKAddPassesViewController(pass:pass) else {throw APIError.invalid("No se pudo abrir Apple Wallet en este iPhone.")}
-                walletPresentation=BoardingWalletPresentation(controller:controller)
-            } catch {
-                guard !Task.isCancelled, generation == walletGeneration else {return}
-                walletError=error.localizedDescription;validateAccess()
-            }
-        }
-    }
-    #endif
 }
 
 struct NoticeDetail: View {
@@ -693,6 +873,7 @@ struct NoticeDetail: View {
 struct NoticeComposer: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.scenePhase) private var scenePhase
     let users: [NoticeUser]
     let boardingUsers: [NoticeUser]
     let onSaved: (String) async -> Void
@@ -702,7 +883,14 @@ struct NoticeComposer: View {
     @State private var travelDate = Date()
     @State private var title = ""
     @State private var message = ""
-    @State private var recipients: Set<String>
+    @State private var recipients=Set<String>()
+    @State private var roster:NoticeRecipientRoster?
+    @State private var rosterInitialized=false
+    @State private var rosterReady=false
+    @State private var rosterBusy=false
+    @State private var rosterGeneration=0
+    @State private var rosterError:String?
+    @State private var recipientReviewRequired=false
     @State private var files: [NoticeUpload] = []
     @State private var picking = false
     @State private var photos: [PhotosPickerItem] = []
@@ -710,11 +898,13 @@ struct NoticeComposer: View {
     @State private var attempted = false
     @State private var importing = false
     @State private var error: String?
-    init(users: [NoticeUser], boardingUsers: [NoticeUser]? = nil, onSaved: @escaping (String) async -> Void) { self.users = users; self.boardingUsers = boardingUsers ?? users; self.onSaved = onSaved; _recipients = State(initialValue: Set(users.map(\.id))) }
+    init(users: [NoticeUser], boardingUsers: [NoticeUser]? = nil, onSaved: @escaping (String) async -> Void) { self.users = users; self.boardingUsers = boardingUsers ?? users; self.onSaved = onSaved }
     var body: some View {
         NavigationStack {
             Form {
                 if let error { Section { InlineError(message: error) } }
+                if let rosterError {Section {InlineError(message:rosterError);Button("Actualizar destinatarios") {Task {_ = await refreshRecipients(reviewed:true)}}.disabled(rosterBusy || busy)}}
+                if rosterBusy && !rosterInitialized {Section {ProgressView("Consultando destinatarios…")}}
                 Group {
                     Section("Publicar como") { Picker("Tipo", selection: $kind) { Text("Alerta").tag("alert"); Text("Itinerario").tag("itinerary"); Text("Pase").tag("boarding_pass") }.pickerStyle(.segmented).accessibilityIdentifier("notices.editor.kind") }
                     Section(kind == "itinerary" ? "Itinerario" : "Alerta") { TextField("Título", text: $title).accessibilityIdentifier("notices.editor.title"); TextField(kind == "itinerary" ? "Mensaje opcional" : "Mensaje", text: $message, axis: .vertical).lineLimit(4...10).accessibilityIdentifier("notices.editor.message") }
@@ -727,12 +917,12 @@ struct NoticeComposer: View {
                         if store.client.baseURL.host?.hasSuffix(".invalid") == true { Button("Adjuntar PDF ficticio") { let data = JACPlatform.fixturePDF(); add([NoticeUpload(filename:"Prueba.pdf",data:data)]) }.accessibilityIdentifier("notices.editor.fixture") }
                         #endif
                     }
-                    if kind == "alert" { Section("Destinatarios") { ForEach(users) { user in Toggle(user.name + (user.ready == false ? " · Pendiente de activación" : ""), isOn: Binding(get: { recipients.contains(user.id) }, set: { value in if value { recipients.insert(user.id) } else { recipients.remove(user.id) } })).accessibilityIdentifier("notices.recipient.\(user.id)") } } }
-                    else if kind == "boarding_pass" { Section("Pase de abordar privado") { Picker("Persona",selection:$passOwner) { Text("Selecciona una persona").tag(""); ForEach(boardingUsers) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("boarding.recipient"); JACDatePicker("Fecha del pase",selection:$travelDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("boarding.date"); Text("Solo la persona elegida podrá abrirlo. Usa Camilo 16 de octubre Pereira-Bogota; puedes incluir el año. El pasajero debe corresponder a la persona elegida. Sin año se usa la fecha más cercana; revisa la fecha antes de publicar.").font(.footnote).foregroundStyle(.secondary) } }
+                    if kind == "alert" { Section("Destinatarios") { ForEach(roster?.users ?? []) { user in Toggle(user.name + (user.ready == false ? " · Pendiente de activación" : ""), isOn: Binding(get: { recipients.contains(user.id) }, set: { value in if value { recipients.insert(user.id) } else { recipients.remove(user.id) } })).accessibilityIdentifier("notices.recipient.\(user.id)") } } }
+                    else if kind == "boarding_pass" { Section("Pase de abordar privado") { Picker("Persona",selection:$passOwner) { Text("Selecciona una persona").tag(""); ForEach(roster?.boardingUsers ?? []) { Text($0.name).tag($0.id) } }.accessibilityIdentifier("boarding.recipient"); JACDatePicker("Fecha del pase",selection:$travelDate,displayedComponents:.date).environment(\.timeZone,CalendarClock.calendar.timeZone).accessibilityIdentifier("boarding.date"); Text("Solo la persona elegida podrá abrirlo. Usa Camilo 16 de octubre Pereira-Bogota; puedes incluir el año. El pasajero debe corresponder a la persona elegida. Sin año se usa la fecha más cercana; revisa la fecha antes de publicar.").font(.footnote).foregroundStyle(.secondary) } }
                     else { Section { Text("Se publicará directamente en Itinerarios para todo el equipo activo y enviará el aviso de itinerario nuevo.") } }
                 }.disabled(busy || attempted || importing)
                 if attempted && !busy && error != nil { Section { Text("Reintenta con estos mismos datos. Para cambiar el contenido, cierra y abre un formulario nuevo.").font(.footnote) } }
-                Section { Button(busy ? "Guardando…" : kind == "boarding_pass" ? "Publicar pase y notificar" : kind == "itinerary" ? "Publicar itinerario y notificar" : "Crear alerta y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline).accessibilityIdentifier("notices.editor.save") }
+                Section { Button(busy ? "Guardando…" : kind == "boarding_pass" ? "Publicar pase y notificar" : kind == "itinerary" ? "Publicar itinerario y notificar" : "Crear alerta y notificar") { Task { await save() } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || importing || store.isOffline || rosterBusy || !rosterReady).accessibilityIdentifier("notices.editor.save") }
             }.jacSurface().navigationTitle("Crear alerta o itinerario").jacInlineTitle().toolbar { ToolbarItem(placement: .cancellationAction) { Button("Cancelar") { dismiss() }.disabled(busy) } }
                 .fileImporter(isPresented: $picking, allowedContentTypes: [.pdf,.jpeg,.png], allowsMultipleSelection: true) { result in
                     do { let urls = try result.get(); var incoming: [NoticeUpload] = []
@@ -742,6 +932,49 @@ struct NoticeComposer: View {
                 .jacFileDrop(enabled:!busy && !attempted && !importing) {urls in do{add(try NoticeUpload.readLocalFiles(urls))}catch{self.error=error.localizedDescription}}
                 .onChange(of: photos) { _, selected in Task { await readPhotos(selected) } }
         }.interactiveDismissDisabled(busy)
+            .task {
+                _ = await refreshRecipients()
+                while !Task.isCancelled {
+                    do {try await Task.sleep(for:.seconds(30))} catch {break}
+                    if scenePhase == .active,!busy {_ = await refreshRecipients()}
+                }
+            }
+            .onChange(of:scenePhase) {_,phase in
+                if phase == .active,!busy {Task {_ = await refreshRecipients()}}
+                else if phase == .background {rosterGeneration += 1;rosterBusy=false;rosterReady=false}
+            }
+            .onChange(of:store.overview?.user) {_,user in
+                if user?.isOwner != true || user?.hasSection(.crm) != true {rosterGeneration += 1;roster=nil;recipients=[];passOwner="";rosterReady=false;rosterBusy=false;rosterError="Tu sesión o tus permisos cambiaron. Cierra este formulario."}
+            }
+            .onDisappear {rosterGeneration += 1;rosterBusy=false}
+    }
+    private func refreshRecipients(reviewed:Bool=false) async -> Bool {
+        guard !rosterBusy,scenePhase == .active else {return false}
+        rosterBusy=true;rosterGeneration += 1
+        let request=rosterGeneration
+        defer {if request == rosterGeneration {rosterBusy=false}}
+        do {
+            let fresh=try await store.client.noticeRecipients()
+            try Task.checkCancellation()
+            guard request == rosterGeneration,scenePhase == .active else {return false}
+            let next=NoticeRecipientSelection.reconcile(recipients,users:fresh.users,initialized:rosterInitialized,reviewRequired:recipientReviewRequired,reviewed:reviewed)
+            let ownerRemoved = !passOwner.isEmpty && !fresh.boardingUsers.contains(where:{$0.id == passOwner})
+            roster=fresh
+            if attempted && (next.removed || ownerRemoved) {
+                rosterReady=false;rosterError="Los destinatarios cambiaron. Cierra y abre un formulario nuevo antes de volver a enviar.";return false
+            }
+            recipients=next.selected;rosterInitialized=true;rosterReady=true
+            if ownerRemoved {passOwner=""}
+            recipientReviewRequired=next.reviewRequired || ownerRemoved
+            if recipientReviewRequired {rosterError="Cambió el acceso de algún destinatario. Revisa la lista y pulsa Actualizar destinatarios antes de publicar.";return false}
+            rosterError=nil;return true
+        } catch {
+            guard request == rosterGeneration,!Task.isCancelled else {return false}
+            rosterReady=false;rosterError=error.localizedDescription
+            if case APIError.forbidden = error {roster=nil;recipients=[];passOwner=""}
+            if case APIError.unauthorized = error {roster=nil;recipients=[];passOwner=""}
+            return false
+        }
     }
     private func add(_ incoming: [NoticeUpload]) { guard !attempted, !busy else { return }; let combined = files + incoming; guard combined.count <= 5, combined.reduce(0, { $0 + $1.data.count }) <= 10*1024*1024 else { error = "Elige hasta 5 archivos que sumen como máximo 10 MB."; return }; files = combined; if let name=incoming.first?.filename,let parsed=BoardingClock.filenameDate(name) { travelDate=parsed }; error = nil }
     private func readPhotos(_ selected: [PhotosPickerItem]) async {
@@ -751,7 +984,9 @@ struct NoticeComposer: View {
     }
     private func save() async {
         guard !busy else { return }; guard !title.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty, title.utf16.count <= 120, message.utf16.count <= 2000, (kind == "boarding_pass" && !passOwner.isEmpty && !files.isEmpty) || kind == "itinerary" || (kind == "alert" && !message.trimmingCharacters(in:.whitespacesAndNewlines).isEmpty && !recipients.isEmpty) else { error = "Revisa el título, mensaje y destinatarios."; return }
-        busy = true; attempted = true; defer { busy = false }; error = nil
+        busy = true; defer { busy = false }; error = nil
+        guard await refreshRecipients() else {return}
+        attempted = true
         do { try await store.client.publishNotice(id:requestID,kind:kind,title:title,body:message,recipients:kind == "boarding_pass" ? [passOwner] : kind == "alert" ? recipients.sorted() : [],files:files,travelDate:kind == "boarding_pass" ? BoardingClock.today(travelDate) : nil); dismiss(); await onSaved(kind) }
         catch { if case APIError.invalid = error { attempted = false }; self.error = error.localizedDescription; store.report(error) }
     }

@@ -49,6 +49,9 @@ const digest=bytes=>createHash('sha256').update(bytes).digest('hex');
 const noticeId='33333333-3333-4333-8333-333333333333',fileId='44444444-4444-4444-8444-444444444444',sourceKey='private-fixture-boarding-source';
 const message='M1'+'FAKE FIXTURE PASSENGER'.padEnd(58,' ');
 const createInput=()=>({action:'create',id:noticeId,file:fileId,revision:1,sourceSha256:digest(original),barcode:{format:'PKBarcodeFormatPDF417',message}});
+const bcbpLeg=({origin='BOG',destination='MDE',seat='012A',variable=''}={})=>'DEMO123'+origin+destination+'XX '+'00123'+'100'+'Y'+seat+'00001'+'1'+variable.length.toString(16).toUpperCase().padStart(2,'0')+variable;
+const bcbp=(legs=[bcbpLeg()])=>'M'+legs.length+'TRAVELLER/FIXTURE'.padEnd(20,' ')+'E'+legs.join('');
+const emptyDetails=()=>({passenger:'',origin:'',destination:'',departureTime:'',boardingTime:'',seat:''});
 const currentVersion=()=>sql.prepare('SELECT version FROM jac_notice_settings WHERE id=?').get('jac').version;
 const configureInput=()=>({action:'configure',version:currentVersion(),teamId:'TESTTEAM01',passTypeId:'pass.invalid.jac.boarding',p12:'SYNTHETIC_PKCS12_ONLY',password:'SYNTHETIC_PASSWORD_ONLY',wwdr:'SYNTHETIC_INTERMEDIATE_ONLY'});
 async function request(token,{body,raw,method=body||raw?'POST':'GET',origin=base,headers={}}={}){
@@ -111,6 +114,53 @@ test('Only the private boarding recipient can create a revision and hash-bound p
  assert.equal(signatures.length,1);assert.equal(signatures[0].input.barcode.message,message);assert.equal(signatures[0].input.origin,'Pereira');assert.equal(signatures[0].input.destination,'Bogota');assert.equal(signatures[0].input.travelDate,'2027-04-10');assert.equal(signatures[0].input.passenger,'Reader');
  assert.match(signatures[0].input.serialNumber,/^JAC-[a-f0-9]{64}$/);assert.ok(!signatures[0].input.serialNumber.includes(reader));
  assert.deepEqual(bucket.get(sourceKey),original);assert.equal(sql.prepare('SELECT count(*) n FROM jac_push_deliveries').get().n,0);assert.deepEqual(calls,[]);
+});
+
+test('Wallet signs reviewed flight details while preserving the private source and exact original barcode',async()=>{
+ const details={passenger:'Andrea Torres',origin:'Medellín · MDE',destination:'Bogotá · BOG',departureTime:'00:15',boardingTime:'23:40',seat:'12A'};
+ const input={...createInput(),details,legIndex:0};
+ assert.equal((await request(otherToken,{body:input})).status,404);
+ assert.equal((await request(readerToken,{body:{...input,sourceSha256:'0'.repeat(64)}})).status,409);
+ const result=await request(readerToken,{body:input});assert.equal(result.status,200);
+ for(const [key,value] of Object.entries(details))assert.equal(signatures[0].input[key],value);
+ assert.equal(signatures[0].input.barcode.message,message);assert.deepEqual(bucket.get(sourceKey),original);
+ assert.deepEqual(calls,[]);
+});
+
+test('Wallet omitted details can use conservative source suggestions while explicit blanks suppress them and never become profile data',async()=>{
+ const barcode={format:'PKBarcodeFormatPDF417',message:bcbp()};
+ assert.equal((await request(readerToken,{body:{...createInput(),barcode}})).status,200);
+ assert.equal(signatures[0].input.passenger,'FIXTURE TRAVELLER');assert.equal(signatures[0].input.origin,'BOG');assert.equal(signatures[0].input.destination,'MDE');assert.equal(signatures[0].input.seat,'12A');
+ assert.equal(signatures[0].input.departureTime,undefined);assert.equal(signatures[0].input.boardingTime,undefined);
+ assert.equal((await request(readerToken,{body:{...createInput(),barcode,details:emptyDetails()}})).status,200);
+ for(const key of Object.keys(emptyDetails()))assert.equal(signatures[1].input[key],undefined,key+' stays intentionally blank');
+ sql.prepare('UPDATE jac_notice_attachments SET filename=? WHERE id=?').run('unidentified-source.pdf',fileId);
+ assert.equal((await request(readerToken,{body:createInput()})).status,200);
+ assert.equal(signatures[2].input.passenger,undefined,'The authenticated profile is not the traveller identity.');assert.equal(signatures[2].input.origin,undefined);assert.equal(signatures[2].input.seat,undefined);
+ assert.deepEqual(calls,[]);
+});
+
+test('Wallet selects multi-leg display data explicitly and old clients receive a compatible minimal copy',async()=>{
+ const barcode={format:'PKBarcodeFormatPDF417',message:bcbp([bcbpLeg({variable:'ABCD'}),bcbpLeg({origin:'MDE',destination:'CTG',seat:'002F'})])};
+ const input={...createInput(),barcode};
+ assert.equal((await request(readerToken,{body:input})).status,200);
+ assert.equal(signatures[0].input.passenger,'FIXTURE TRAVELLER');assert.equal(signatures[0].input.origin,undefined);assert.equal(signatures[0].input.destination,undefined);assert.equal(signatures[0].input.seat,undefined);
+ assert.equal((await request(readerToken,{body:{...input,details:{}}})).status,400,'The new flow must choose its leg.');
+ assert.equal((await request(readerToken,{body:{...input,legIndex:2}})).status,400);
+ assert.equal((await request(readerToken,{body:{...input,legIndex:0,details:{}}})).status,200);
+ assert.equal((await request(readerToken,{body:{...input,legIndex:1,details:{}}})).status,200);
+ assert.equal(signatures[1].input.origin,'BOG');assert.equal(signatures[1].input.destination,'MDE');assert.equal(signatures[1].input.seat,'12A');
+ assert.equal(signatures[2].input.origin,'MDE');assert.equal(signatures[2].input.destination,'CTG');assert.equal(signatures[2].input.seat,'2F');
+ assert.equal(signatures[0].input.serialNumber,signatures[1].input.serialNumber);assert.notEqual(signatures[1].input.serialNumber,signatures[2].input.serialNumber);
+ assert.equal(signatures[2].input.barcode.message,barcode.message);assert.deepEqual(calls,[]);
+});
+
+test('Wallet rejects unbounded, hidden or invalid reviewed details before signing',async()=>{
+ for(const changes of [{departureTime:'24:00'},{boardingTime:'7:30'},{boardingTime:'17:60'},{seat:'12 A'},{seat:'0000'},{passenger:'a'.repeat(121)},{origin:'City\u202eOther'},{destination:'Line\nOther'},{departureTime:'14:30Z'},{unknown:'x'}]){
+  const result=await request(readerToken,{body:{...createInput(),details:{...emptyDetails(),...changes}}});assert.equal(result.status,400);
+ }
+ for(const legIndex of [-1,4,0.5])assert.equal((await request(readerToken,{body:{...createInput(),legIndex}})).status,400);
+ assert.equal(signatures.length,0);assert.deepEqual(calls,[]);
 });
 
 test('Credential configuration refuses revoked sessions during normalization and enforces SQL session and CAS guards at the write',async()=>{

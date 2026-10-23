@@ -28,9 +28,12 @@ export type WalletCredentialInput = {
 export type BoardingWalletInput = {
   serialNumber: string;
   description: string;
-  passenger: string;
+  passenger?: string;
   origin?: string;
   destination?: string;
+  departureTime?: string;
+  boardingTime?: string;
+  seat?: string;
   travelDate?: string;
   barcode: WalletBarcode;
 };
@@ -181,7 +184,7 @@ export function validateWalletBarcode(value: unknown): WalletBarcode {
 }
 function display(value: unknown, label: string, max: number, optional = false) {
   if (optional && value === undefined) return undefined;
-  if (typeof value !== 'string' || !value.trim() || value.length > max || /[\x00-\x1f\x7f]/.test(value)) failure(`El campo ${label} no es válido.`);
+  if (typeof value !== 'string' || !value.trim() || value.length > max || /\p{C}/u.test(value)) failure(`El campo ${label} no es válido.`);
   return value;
 }
 
@@ -229,8 +232,12 @@ export function createWalletCrypto(trustedRootPem: string) {
       const barcode = validateWalletBarcode(input?.barcode);
       if (typeof input.serialNumber !== 'string' || !/^[A-Za-z0-9_-]{1,180}$/.test(input.serialNumber)) failure('El identificador del pase no es válido.');
       const description = display(input.description, 'descripción', 200)!;
-      const passenger = display(input.passenger, 'pasajero', 120)!;
+      const passenger = display(input.passenger, 'pasajero', 120, true);
       const origin = display(input.origin, 'origen', 100, true), destination = display(input.destination, 'destino', 100, true);
+      const departureTime = display(input.departureTime, 'hora del vuelo', 5, true), boardingTime = display(input.boardingTime, 'hora en sala', 5, true);
+      for (const time of [departureTime, boardingTime]) if (time !== undefined && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(time)) failure('Las horas del pase deben tener formato HH:mm.');
+      const seat = display(input.seat, 'silla', 6, true);
+      if (seat !== undefined && !/^(?=.*[1-9A-Z])[A-Z0-9]{1,6}$/.test(seat)) failure('La silla del pase no es válida.');
       if (input.travelDate !== undefined && (typeof input.travelDate !== 'string' || !validBoardingDate(input.travelDate))) failure('La fecha del pase no es válida.');
       const pass = new PKPass(Object.fromEntries(Object.entries(walletIconBase64).map(([name, data]) => [name, Buffer.from(data, 'base64')])), {
         signerCert: credentials.certificate, signerKey: credentials.privateKey, wwdr: credentials.wwdr,
@@ -243,7 +250,12 @@ export function createWalletCrypto(trustedRootPem: string) {
       boarding.transitType = 'PKTransitTypeAir';
       if (origin) boarding.primaryFields.push({ key: 'origin', label: 'ORIGEN', value: origin });
       if (destination) boarding.primaryFields.push({ key: 'destination', label: 'DESTINO', value: destination });
-      boarding.secondaryFields.push({ key: 'passenger', label: 'PASAJERO', value: passenger });
+      if (seat) boarding.headerFields.push({ key: 'seat', label: 'SILLA', value: seat });
+      if (passenger) boarding.secondaryFields.push({ key: 'passenger', label: 'PASAJERO', value: passenger });
+      // These are civil display times read/reviewed from the original. Do not
+      // assign a timezone or turn an unzoned time into a fabricated Date.
+      if (departureTime) boarding.auxiliaryFields.push({ key: 'departureTime', label: 'HORA DEL VUELO', value: departureTime });
+      if (boardingTime) boarding.auxiliaryFields.push({ key: 'boardingTime', label: 'EN SALA', value: boardingTime });
       if (input.travelDate) boarding.auxiliaryFields.push({ key: 'travelDate', label: 'FECHA', value: input.travelDate });
       boarding.backFields.push({ key: 'original', label: 'Copia en JAC', value: 'Código copiado del documento original de la aerolínea. JAC no emite ni actualiza el pase de abordar. Conserva el documento original y consulta los cambios con la aerolínea.' });
       pass.types.push(boarding);

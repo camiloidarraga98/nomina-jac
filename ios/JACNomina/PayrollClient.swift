@@ -18,6 +18,38 @@ enum APIError: LocalizedError {
     }
 }
 
+// These are display fields confirmed on the Wallet preparation screen. The
+// airline's barcode remains a separate, immutable value from the source file.
+extension BoardingWalletDetails {
+    var validationMessage:String? {
+        let fields:[(String,String,Int)]=[("Nombre",passenger,120),("Origen",origin,100),("Destino",destination,100),("Silla",seat,6)]
+        for (label,value,limit) in fields {
+            if value.trimmingCharacters(in:.whitespacesAndNewlines).utf16.count>limit || value.rangeOfCharacter(from:.controlCharacters) != nil {
+                return "Revisa el campo \(label.lowercased())."
+            }
+        }
+        for value in [departureTime,boardingTime] {
+            let time=value.trimmingCharacters(in:.whitespacesAndNewlines)
+            if !time.isEmpty && time.range(of:"^(?:[01][0-9]|2[0-3]):[0-5][0-9]$",options:.regularExpression) == nil {
+                return "Escribe las horas en formato de 24 horas, por ejemplo 08:30."
+            }
+        }
+        let selectedSeat=seat.trimmingCharacters(in:.whitespacesAndNewlines).uppercased()
+        if !selectedSeat.isEmpty && selectedSeat.range(of:"^(?=.*[1-9A-Z])[A-Z0-9]{1,6}$",options:.regularExpression) == nil {
+            return "Revisa la silla asignada, por ejemplo 12A."
+        }
+        return nil
+    }
+    func walletRequestFields() throws -> [String:JSONValue] {
+        if let validationMessage {throw APIError.invalid(validationMessage)}
+        let trim:(String)->String={$0.trimmingCharacters(in:.whitespacesAndNewlines)}
+        // Explicit blanks are intentional omissions, not requests to restore a
+        // suggestion that the user has removed.
+        return ["passenger":.string(trim(passenger)),"origin":.string(trim(origin)),"destination":.string(trim(destination)),
+                "departureTime":.string(trim(departureTime)),"boardingTime":.string(trim(boardingTime)),"seat":.string(trim(seat).uppercased())]
+    }
+}
+
 struct MediaFileRemoved: LocalizedError {
     var errorDescription: String? { "Esta foto o video ya no está disponible. Actualiza la carpeta." }
 }
@@ -258,6 +290,7 @@ final class PayrollClient: ObservableObject {
         if path.hasPrefix("api/expenses") {return user.hasSection(.itineraries)}
         if path.hasPrefix("api/music") {return user.canReadMusic}
         if path.hasPrefix("api/media") {return user.canReadMedia}
+        if path == "api/notices/recipients" {return user.isOwner && user.hasSection(.crm)}
         if path == "api/notices/wallet" {return user.hasSection(.boarding)}
         if path.hasPrefix("api/notices") {return query.contains{$0.name == "boarding"} ? user.hasSection(.boarding) : user.hasNotices}
         return true
@@ -612,6 +645,19 @@ final class PayrollClient: ObservableObject {
         let (data, _) = try await request(path: "api/notices", query: (cursor.isEmpty ? [] : [URLQueryItem(name: "cursor", value: cursor)]) + (boarding.map { [URLQueryItem(name:"boarding",value:$0)] } ?? []))
         return try decoder.decode(NoticeFeed.self, from: data)
     }
+    func noticeRecipients() async throws -> NoticeRecipientRoster {
+        guard !usingOfflineCopy else {throw APIError.invalid("Conéctate para actualizar los destinatarios antes de publicar.")}
+        guard let user=permissionUser,user.isOwner,user.hasSection(.crm),let scope=try offlineScope() else {throw APIError.forbidden("Tu cuenta no puede administrar los destinatarios.")}
+        let generation=cacheGeneration
+        let (data,response)=try await request(path:"api/notices/recipients",forceNetwork:true)
+        try Task.checkCancellation()
+        guard generation == cacheGeneration,user == permissionUser,scope.id == (try offlineScope())?.id else {throw CancellationError()}
+        guard response.mimeType == "application/json",data.count<=256*1024 else {throw APIError.invalid("No se pudo leer la lista actual de destinatarios.")}
+        let roster=try decoder.decode(NoticeRecipientRoster.self,from:data)
+        guard roster.users.count<=1000,roster.boardingUsers.count<=1000,
+              Set(roster.users.map(\.id)).count == roster.users.count,Set(roster.boardingUsers.map(\.id)).count == roster.boardingUsers.count else {throw APIError.invalid("La lista de destinatarios no es válida.")}
+        return roster
+    }
     func noticeCommand(_ command: JSONValue) async throws { _ = try await request(path: "api/notices", body: command) }
     func notice(id: String) async throws -> JACNotice {
         struct Response: Decodable { let item: JACNotice }
@@ -668,10 +714,13 @@ final class PayrollClient: ObservableObject {
             throw APIError.forbidden(message)
         }
     }
-    func boardingWalletPass(_ item:JACNotice,file:NoticeAttachment,sourceSha256:String,barcode:BoardingWalletBarcode) async throws -> Data {
+    func boardingWalletPass(_ item:JACNotice,file:NoticeAttachment,sourceSha256:String,barcode:BoardingWalletBarcode,legIndex:Int?=nil,details:BoardingWalletDetails?=nil) async throws -> Data {
         let stamp=try boardingWalletAccessStamp(item,file:file)
         guard sourceSha256.range(of:"^[a-f0-9]{64}$",options:.regularExpression) != nil else {throw APIError.invalid("Vuelve a abrir el documento original antes de añadirlo a Wallet.")}
-        let payload:JSONValue = .object(["action":.string("create"),"id":.string(item.id),"file":.string(file.id),"revision":.number(Double(item.revision ?? 1)),"sourceSha256":.string(sourceSha256),"barcode":.object(["format":.string(barcode.format),"message":.string(barcode.message)])])
+        var fields:[String:JSONValue] = ["action":.string("create"),"id":.string(item.id),"file":.string(file.id),"revision":.number(Double(item.revision ?? 1)),"sourceSha256":.string(sourceSha256),"barcode":.object(["format":.string(barcode.format),"message":.string(barcode.message)])]
+        if let legIndex {guard (0...3).contains(legIndex) else {throw APIError.invalid("Elige el tramo que corresponde a este pase.")};fields["legIndex"] = .number(Double(legIndex))}
+        if let details {fields["details"] = .object(try details.walletRequestFields())}
+        let payload:JSONValue = .object(fields)
         let (data,response)=try await request(path:"api/notices/wallet",body:payload,document:true,forceNetwork:true)
         try Task.checkCancellation()
         guard stamp == (try boardingWalletAccessStamp(item,file:file)) else {throw CancellationError()}

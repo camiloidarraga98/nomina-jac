@@ -31,15 +31,20 @@ async function noticeViews(rows:Row[]){
  if(!rows.length)return [];const attachments=(await database().prepare(`SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments WHERE state='ready' AND notice_id IN (${rows.map(()=>'?').join(',')}) ORDER BY id`).bind(...rows.map(r=>r.id)).all<{id:string;notice_id:string;filename:string;mime_type:string;size:number}>()).results;
  return rows.map(row=>({...view(row),attachments:[...(row.file_key?[{id:row.id,filename:row.filename,mimeType:'application/pdf',size:row.size}]:[]),...attachments.filter(a=>a.notice_id===row.id).map(a=>({id:a.id,filename:a.filename,mimeType:a.mime_type,size:a.size}))]}));
 }
+export async function noticeRecipientRoster(u:AccessUser){
+ if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede consultar destinatarios.',403);
+ const users=(await database().prepare(`SELECT id,name,(password_hash<>'') AS ready FROM payroll_users WHERE active=1 AND ${sectionSql('payroll_users','alerts')} ORDER BY name,id`).all<{id:string;name:string;ready:number}>()).results.map(person=>({...person,ready:person.ready===1}));
+ const boardingUsers=(await database().prepare(`SELECT id,name FROM payroll_users WHERE active=1 AND ${sectionSql('payroll_users','boarding')} ORDER BY name,id`).all<{id:string;name:string}>()).results;
+ return {users,boardingUsers};
+}
 export async function noticeFeed(u:AccessUser,cursor=''){
  if(!anyNoticeSection(u))throw new NoticeFailure('Tu cuenta no tiene acceso a alertas, itinerarios o pases.',403);
  if(cursor&&!/^\d{4}-\d{2}-\d{2}T[\d:.]+Z\|[a-f0-9-]{36}$/.test(cursor))throw new NoticeFailure('Actualiza el listado.');
  const [time,id]=cursor.split('|');
  const rows=await database().prepare(`SELECT n.*,CASE WHEN n.updated_at='' THEN n.created_at ELSE n.updated_at END AS sort_at,r.read_at,r.confirmed_revision,r.confirmed_at FROM jac_notices n LEFT JOIN jac_notice_recipients r ON r.notice_id=n.id AND r.user_id=? WHERE n.kind<>'boarding_pass' AND ${noticeAccessSql(u)} ${cursor?"AND ((CASE WHEN n.updated_at='' THEN n.created_at ELSE n.updated_at END)<? OR ((CASE WHEN n.updated_at='' THEN n.created_at ELSE n.updated_at END)=? AND n.id<?))":''} ORDER BY sort_at DESC,n.id DESC LIMIT 41`).bind(u.id,u.id,noticeOwner(u)?1:0,u.id,...(cursor?[time,time,id]:[])).all<Row>();
  const all=rows.results,list=all.slice(0,40),last=list.at(-1);
- const users=noticeOwner(u)?(await database().prepare(`SELECT id,name,(password_hash<>'') AS ready FROM payroll_users WHERE active=1 AND ${sectionSql('payroll_users','alerts')} ORDER BY name`).all<{id:string;name:string;ready:number}>()).results.map(person=>({...person,ready:person.ready===1})):[];
+ const {users,boardingUsers}=noticeOwner(u)?await noticeRecipientRoster(u):{users:[],boardingUsers:[]};
  const failures=noticeOwner(u)?(await database().prepare("SELECT id,error FROM jac_slack_files WHERE status='failed' ORDER BY created_at DESC LIMIT 20").all<{id:string;error:string}>()).results:[];
- const boardingUsers=noticeOwner(u)?(await database().prepare(`SELECT id,name FROM payroll_users WHERE active=1 AND ${sectionSql('payroll_users','boarding')} ORDER BY name`).all<{id:string;name:string}>()).results:[];
  const boardingChannels=noticeOwner(u)?(await database().prepare('SELECT id,user_id AS userId,version,enabled FROM jac_boarding_channels').all()).results:[];
  return {boardingUsers,boardingChannels,notices:await noticeViews(list),nextCursor:all.length>40&&last?last.sort_at+'|'+last.id:'',settings:await settings(),users,failures};
 }

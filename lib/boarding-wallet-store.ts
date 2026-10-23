@@ -7,6 +7,7 @@ import {allowedNotice,noticeAttachment,noticeConfig,noticeOwner,pushCredentials}
 import {MAX_PDF_BYTES,NoticeFailure,type PushCredentials} from './notifications-core';
 import {boardingFilenameDetails,validBoardingDate} from './boarding-passes';
 import {fileMime} from './notice-files';
+import {parseWalletBarcodeDetails} from './boarding-wallet-details';
 import {normalizeWalletCredentials,validateWalletBarcode,buildBoardingWalletPass,type WalletCredentials} from './boarding-wallet-core';
 
 export const MAX_WALLET_BYTES=1024*1024;
@@ -16,7 +17,11 @@ type StoredCredentials=PushCredentials&{wallet?:WalletCredentials};
 type WalletRole='view'|'configure'|'create';
 const uuid=z.string().uuid();
 const configureSchema=z.object({action:z.literal('configure'),version:z.number().int().nonnegative(),teamId:z.string().regex(/^[A-Z0-9]{10}$/),passTypeId:z.string().min(6).max(200),p12:z.string().min(1).max(180000),password:z.string().max(200),wwdr:z.string().min(1).max(24000)}).strict();
-const createSchema=z.object({action:z.literal('create'),id:uuid,file:uuid,revision:z.number().int().positive(),sourceSha256:z.string().regex(/^[a-f0-9]{64}$/),barcode:z.object({format:z.string().max(40),message:z.string().max(4096)}).strict()}).strict();
+const readable=(max:number)=>z.string().max(max).refine(value=>!/[\p{C}]/u.test(value)).transform(value=>value.trim());
+const time=readable(5).refine(value=>value===''||/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value));
+const seat=readable(6).refine(value=>value===''||/^(?=.*[1-9A-Z])[A-Z0-9]{1,6}$/.test(value));
+const detailsSchema=z.object({passenger:readable(120).optional(),origin:readable(100).optional(),destination:readable(100).optional(),departureTime:time.optional(),boardingTime:time.optional(),seat:seat.optional()}).strict();
+const createSchema=z.object({action:z.literal('create'),id:uuid,file:uuid,revision:z.number().int().positive(),sourceSha256:z.string().regex(/^[a-f0-9]{64}$/),barcode:z.object({format:z.string().max(40),message:z.string().max(4096)}).strict(),details:detailsSchema.optional(),legIndex:z.number().int().min(0).max(3).optional()}).strict();
 
 function permitted(user:AccessUser,role:WalletRole){
  return !user.legacy&&(role==='configure'?noticeOwner(user):role==='create'?hasSection(user,'boarding'):hasSection(user,'boarding')||noticeOwner(user));
@@ -85,7 +90,25 @@ async function readSource(body:ReadableStream<Uint8Array>){
  const bytes=new Uint8Array(length);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}return bytes;
 }
 async function sha256(bytes:Uint8Array){return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new Uint8Array(bytes)))).map(value=>value.toString(16).padStart(2,'0')).join('');}
-const displayText=(value:string)=>value.replace(/[\x00-\x1f\x7f]/g,'').slice(0,100);
+type DisplayDetails={passenger?:string;origin?:string;destination?:string;departureTime?:string;boardingTime?:string;seat?:string};
+function displayDetails(barcode:string,filename:string,confirmed:DisplayDetails|undefined,legIndex:number|undefined):DisplayDetails{
+ const count=Number(barcode[1]),parsed=parseWalletBarcodeDetails(barcode);
+ if(legIndex!==undefined&&legIndex>=count)throw new NoticeFailure('Elige un tramo válido del pase de abordar.');
+ if(confirmed&&count>1&&legIndex===undefined)throw new NoticeFailure('Elige el tramo del pase antes de preparar Wallet.');
+ // Legacy clients did not select a leg. Keep the common passenger, but never
+ // combine a filename route or seat with an arbitrary multi-leg selection.
+ const leg=parsed?.legs[legIndex??(count===1?0:-1)];
+ const filenameDetails=count===1?boardingFilenameDetails(filename):null;
+ const fallback:DisplayDetails={passenger:parsed?.passenger??filenameDetails?.passenger,origin:leg?.origin??filenameDetails?.origin,destination:leg?.destination??filenameDetails?.destination,seat:leg?.seat};
+ const result:DisplayDetails={};
+ for(const key of ['passenger','origin','destination','departureTime','boardingTime','seat'] as const){
+  // An explicit blank is the user's choice to omit a suggestion. Missing keys
+  // from older clients can still use conservative original-document metadata.
+  const value=confirmed&&Object.hasOwn(confirmed,key)?confirmed[key]:fallback[key];
+  if(value)result[key]=value;
+ }
+ return result;
+}
 async function finalSourceGate(user:AccessUser,guard:WalletGuard,p:{id:string;file:string;revision:number},source:Source,config:{credentials:string;version:number}){
  const legacy=source.legacy;
  const attachment=legacy?"wallet_notice.file_key=? AND wallet_notice.filename=? AND wallet_notice.size=?":`EXISTS(SELECT 1 FROM jac_notice_attachments wallet_attachment WHERE wallet_attachment.notice_id=wallet_notice.id AND wallet_attachment.id=? AND wallet_attachment.state='ready' AND wallet_attachment.file_key=? AND wallet_attachment.filename=? AND wallet_attachment.mime_type=? AND wallet_attachment.size=?)`;
@@ -95,7 +118,7 @@ async function finalSourceGate(user:AccessUser,guard:WalletGuard,p:{id:string;fi
 }
 export async function createBoardingWallet(user:AccessUser,input:unknown,guard:WalletGuard){
  await authorize(user,guard,'create');
- const parsed=createSchema.safeParse(input);if(!parsed.success)throw new NoticeFailure('Abre el pase actual y vuelve a preparar Wallet.');
+ const parsed=createSchema.safeParse(input);if(!parsed.success)throw new NoticeFailure('Revisa los datos del pase, la silla y las horas en formato HH:mm.');
  const p=parsed.data,barcode=validateWalletBarcode(p.barcode),config=await noticeConfig(),keys=await pushCredentials(config) as StoredCredentials;
  if(!usableWallet(keys.wallet))throw new NoticeFailure('Wallet todavía no está configurado o su certificado venció.',409);
  const snapshot=await sourceMetadata(user,p.id,p.file,p.revision);
@@ -109,12 +132,17 @@ export async function createBoardingWallet(user:AccessUser,input:unknown,guard:W
  if(hash!==p.sourceSha256)throw new NoticeFailure('La copia del pase cambió. Vuelve a abrir el original.',409);
  const revalidateSource=async()=>{const source=await sourceMetadata(user,p.id,p.file,p.revision);if(JSON.stringify(source)!==JSON.stringify(snapshot))throw new NoticeFailure('El pase cambió. Abre su versión actual.',409);};
  await revalidateSource();
- const details=boardingFilenameDetails(snapshot.filename),serialNumber='JAC-'+await sha256(new TextEncoder().encode(JSON.stringify(['boarding-wallet-v1',user.id,p.id,p.file,hash,barcode.format,barcode.message])));
+ const details=displayDetails(barcode.message,snapshot.filename,p.details,p.legIndex);
+ const serialParts:unknown[]=['boarding-wallet-v1',user.id,p.id,p.file,hash,barcode.format,barcode.message];
+ // Preserve the old stable serial for a single/first leg. Other selected legs
+ // must not overwrite each other's copies when the same barcode covers both.
+ if(p.legIndex!==undefined&&p.legIndex>0)serialParts.push(p.legIndex);
+ const serialNumber='JAC-'+await sha256(new TextEncoder().encode(JSON.stringify(serialParts)));
  await authorize(user,guard,'create');
  // The native reader supplies an exact supported IATA payload from the
  // authorized original. Hash binding detects stale source copies; it does not
  // claim independent server-side barcode decoding or airline issuance.
- const output=await buildBoardingWalletPass(keys.wallet,{serialNumber,description:'Pase de abordar · JAC',passenger:displayText(details?.passenger||user.fullName||user.displayName),...(details?{origin:displayText(details.origin),destination:displayText(details.destination)}:{}),...(validBoardingDate(snapshot.travelDate)?{travelDate:snapshot.travelDate}:{}),barcode});
+ const output=await buildBoardingWalletPass(keys.wallet,{serialNumber,description:'Pase de abordar · JAC',...details,...(validBoardingDate(snapshot.travelDate)?{travelDate:snapshot.travelDate}:{}),barcode});
  await authorize(user,guard,'create');
  if(output.length===0||output.length>MAX_WALLET_BYTES)throw new NoticeFailure('No se pudo preparar un pase de Wallet dentro del límite permitido.',413);
  await revalidateSource();

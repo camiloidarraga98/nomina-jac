@@ -12,6 +12,7 @@ import {createWalletFixture} from './helpers/wallet-synthetic.mjs';
 // The test-only factory is never exposed by the production HTTP endpoint.
 test('Workerd signs a real in-memory Wallet package with synthetic PKI and no outbound services',{timeout:120000},async()=>{
  const fixture=await createWalletFixture();
+ Object.assign(fixture.passInput,{departureTime:"18:45",boardingTime:"18:05",seat:"12A"});
  const output=await build({
   stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
    import {Buffer} from 'node:buffer';
@@ -55,6 +56,9 @@ test('Workerd signs a real in-memory Wallet package with synthetic PKI and no ou
   assert.equal(json.teamIdentifier,fixture.input.teamId);
   assert.equal(json.serialNumber,fixture.passInput.serialNumber);
   assert.equal(json.boardingPass.transitType,'PKTransitTypeAir');
+  assert.equal(json.boardingPass.headerFields.find(field=>field.key==='seat')?.value,'12A');
+  assert.equal(json.boardingPass.auxiliaryFields.find(field=>field.key==='departureTime')?.value,'18:45');
+  assert.equal(json.boardingPass.auxiliaryFields.find(field=>field.key==='boardingTime')?.value,'18:05');
   assert.equal(json.barcodes[0].message,fixture.passInput.barcode.message);
   assert.equal(json.barcodes[0].format,fixture.passInput.barcode.format);
   assert.equal(json.barcodes[0].messageEncoding,'iso-8859-1');

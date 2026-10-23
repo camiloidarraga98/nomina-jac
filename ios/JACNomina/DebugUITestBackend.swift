@@ -1,6 +1,7 @@
 #if DEBUG
 import Foundation
 import CoreImage
+import CoreText
 import ImageIO
 
 // Opt-in UI fixtures use .invalid URLs and an ephemeral protocol. They are
@@ -22,6 +23,30 @@ enum UITestBackend {
             pdf.endPDFPage()
         }
         pdf.closePDF();return bytes as Data
+    }
+    // Generated locally for one Wallet-menu UI flow. No real passenger, flight,
+    // airline credentials or provider request is included in this document.
+    static func boardingWalletPDF() throws -> Data {
+        let passenger = "TRAVELLER/FIXTURE".padding(toLength:20,withPad:" ",startingAt:0)
+        let message = "M1" + passenger + "E" + "DEMO123" + "BOG" + "MDE" + "ZZ " + "00123" + "123" + "Y" + "012A" + "00001" + "1" + "00"
+        let bytes=NSMutableData(),consumer=CGDataConsumer(data:bytes)!
+        var box=CGRect(x:0,y:0,width:600,height:800)
+        let pdf=CGContext(consumer:consumer,mediaBox:&box,nil)!,filter=CIFilter(name:"CIQRCodeGenerator")!
+        filter.setValue(Data(message.utf8),forKey:"inputMessage")
+        filter.setValue("M",forKey:"inputCorrectionLevel")
+        let output=filter.outputImage!,image=CIContext().createCGImage(output,from:output.extent)!
+        pdf.beginPDFPage(nil);pdf.setFillColor(CGColor(gray:1,alpha:1));pdf.fill(box)
+        let attributes:[NSAttributedString.Key:Any]=[
+            NSAttributedString.Key(kCTFontAttributeName as String):CTFontCreateWithName("Helvetica" as CFString,16,nil),
+            NSAttributedString.Key(kCTForegroundColorAttributeName as String):CGColor(gray:0,alpha:1),
+        ]
+        let labels=["DOCUMENTO FICTICIO - SIN VALIDEZ", "PASAJERO: FIXTURE TRAVELLER", "ORIGEN: BOG", "DESTINO: MDE", "HORA DEL VUELO: 18:45", "HORA EN SALA: 18:05", "SILLA: 12A"]
+        for (index,text) in labels.enumerated() {
+            pdf.textMatrix = .identity;pdf.textPosition=CGPoint(x:50,y:740-CGFloat(index)*30)
+            CTLineDraw(CTLineCreateWithAttributedString(NSAttributedString(string:text,attributes:attributes) as CFAttributedString),pdf)
+        }
+        pdf.interpolationQuality = .none;pdf.draw(image,in:CGRect(x:70,y:110,width:300,height:300))
+        pdf.endPDFPage();pdf.closePDF();return bytes as Data
     }
     @MainActor static func client(reader: Bool = false, conflict: Bool = false, cancelledReads: Bool = false, offline: Bool = false, slowAgenda: Bool = false, persistentAgenda: Bool = false, resetAgenda: Bool = false, contentCache: OfflineResponseCache? = nil, downloadOffline: Bool? = nil) -> PayrollClient {
         FixtureProtocol.reset(reader: reader, conflict: conflict, cancelledReads: cancelledReads, offline: offline, slowAgenda: slowAgenda)
@@ -186,7 +211,9 @@ private final class FixtureProtocol: URLProtocol {
                 let viewer=Self.reader ? "22222222-2222-4222-8222-222222222222" : "11111111-1111-4111-8111-111111111111"
                 let item=(Self.boardingFixtures+Self.alerts).first { $0["id"].text==notice }
                 guard item?["kind"].text != "boarding_pass" || item?["recipients"].elements.contains(.string(viewer)) == true else { throw URLError(.fileDoesNotExist) }
-                let codePDF = ProcessInfo.processInfo.arguments.contains("--uitest-boarding-code") && id.hasPrefix("boarding-fixture-") ? try UITestBackend.boardingCodePDF():nil
+                let codePDF:Data?
+                if ProcessInfo.processInfo.arguments.contains("--uitest-wallet-menu"),id.hasPrefix("boarding-fixture-") { codePDF=try UITestBackend.boardingWalletPDF() }
+                else { codePDF=ProcessInfo.processInfo.arguments.contains("--uitest-boarding-code") && id.hasPrefix("boarding-fixture-") ? try UITestBackend.boardingCodePDF():nil }
                 guard !Self.deletedNotices.contains(notice), let bytes = Self.attachments[id] ?? codePDF ?? (id.hasPrefix("boarding-fixture-") ? Data(base64Encoded:Self.pdf) : nil) else { throw URLError(.fileDoesNotExist) }
                 let reply = HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":try NoticeUpload.mime(bytes)])!; client?.urlProtocol(self,didReceive:reply,cacheStoragePolicy:.notAllowed); client?.urlProtocol(self,didLoad:bytes); client?.urlProtocolDidFinishLoading(self); return
             }
@@ -272,6 +299,12 @@ private final class FixtureProtocol: URLProtocol {
                 item["attachments"] = .array(files); item["files"] = .null; item["filename"] = .string(""); item["size"] = .number(0); item["createdAt"] = .string("2026-10-07T12:00:00Z"); item["read"] = .bool(false); alerts.append(item)
             }
             return (200,.object(["id":.string(id)]))
+        }
+        if parts.path == "/api/notices/wallet", ProcessInfo.processInfo.arguments.contains("--uitest-wallet-menu") {
+            // This flow stops at reviewing/editing data. Any automatic signing
+            // request is a regression; the fixture never fabricates a PKPass.
+            precondition(request.httpMethod == "GET", "Wallet UI fixture must not create a pass before an explicit add action.")
+            return (200,.object(["configured":.bool(true),"version":.number(1),"passTypeId":.string("pass.co.jacmusic.fixture"),"expiresAt":.string("2090-01-01T00:00:00Z")]))
         }
         if parts.path == "/api/notices" {
             if request.httpMethod == "POST" {

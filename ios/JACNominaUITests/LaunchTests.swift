@@ -1062,6 +1062,44 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"itinerario-manual-eliminado")
     }
 
+    @MainActor func testBoardingWalletMenuOpensEditableFlightDetailsWithoutShowingTheCode() {
+        let app=XCUIApplication()
+        app.launchArguments=["--uitest-payroll","--uitest-sections=boarding","--uitest-wallet-menu"]
+        app.launch()
+        let menu=app.buttons["boarding.menu.boarding-fixture-0-pdf"]
+        XCTAssertTrue(menu.waitForExistence(timeout:20));XCTAssertTrue(menu.isHittable);menu.tap()
+        tap(app,"boarding.wallet.menu.boarding-fixture-0-pdf")
+        let passenger=app.textFields["boarding.wallet.passenger"]
+        XCTAssertTrue(passenger.waitForExistence(timeout:30))
+        XCTAssertTrue(waitFor(passenger,predicate:NSPredicate(format:"value CONTAINS[c] %@","Fixture"),timeout:20))
+        for (id,value) in [("origin","BOG"),("destination","MDE"),("departureTime","18:45"),("boardingTime","18:05")] {
+            let field=app.textFields["boarding.wallet."+id]
+            for _ in 0..<6 {if field.exists && field.isHittable {break};app.swipeUp()}
+            XCTAssertEqual(field.value as? String,value)
+        }
+        let seat=app.textFields["boarding.wallet.seat"]
+        for _ in 0..<6 {if seat.exists && seat.isHittable {break};app.swipeUp()}
+        XCTAssertTrue(["12A","012A"].contains(seat.value as? String ?? ""))
+        XCTAssertFalse(app.images["boarding.code.image"].exists)
+        XCTAssertFalse(app.navigationBars["Pase de abordar PDF"].exists)
+        XCTAssertFalse(app.staticTexts["boarding.wallet.error"].exists)
+        for _ in 0..<6 {if passenger.isHittable {break};app.swipeDown()}
+        for (id,value) in [("passenger","Fixture Traveller Dos"),("departureTime","19:10"),("boardingTime","18:30"),("seat","14C")] {
+            let key="boarding.wallet."+id
+            fill(app,key,value);XCTAssertEqual(app.textFields[key].value as? String,value)
+            tap(app,"boarding.wallet.keyboard.done")
+        }
+        XCTAssertFalse(app.staticTexts["boarding.wallet.error"].exists)
+        attachScreen(app,name:"wallet-menu-datos-del-vuelo-editables")
+        tap(app,"boarding.wallet.close")
+        XCTAssertTrue(menu.waitForExistence(timeout:10));XCTAssertFalse(passenger.exists)
+        tap(app,"boarding.code.boarding-fixture-0-pdf")
+        XCTAssertTrue(app.images["boarding.code.image"].waitForExistence(timeout:30))
+        XCTAssertFalse(app.buttons["boarding.wallet.add"].exists)
+        tap(app,"boarding.code.close")
+        XCTAssertTrue(menu.waitForExistence(timeout:10))
+    }
+
     @MainActor func testBoardingCodesFullScreenMultiplePagesAndReturnToFullPDF() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-boarding-code"];app.launch()
         openSection(app, "Itinerarios");tap(app,"boarding.open");tap(app,"boarding.code.boarding-fixture-0-pdf")

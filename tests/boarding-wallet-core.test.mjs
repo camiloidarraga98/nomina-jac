@@ -38,6 +38,22 @@ test('synthetic PKI produces a signed ZIP with the exact original barcode and su
   assert(!JSON.stringify(minimal).includes('flightNumber')); assert(!JSON.stringify(minimal).includes('gate'));
 });
 
+test('Wallet displays the reviewed traveller, route, local flight times and assigned seat without manufacturing missing fields', async () => {
+  const fixture = await createWalletFixture(), crypto = core.createWalletCrypto(fixture.rootPem);
+  const credentials = await crypto.normalizeWalletCredentials(fixture.input);
+  const input = { ...fixture.passInput, passenger: 'Andrea Torres', origin: 'Medellín · MDE', destination: 'Bogotá · BOG', departureTime: '00:15', boardingTime: '23:40', seat: '12A' };
+  const { pass } = verifyWalletPackage(await crypto.buildBoardingWalletPass(credentials, input), fixture);
+  assert.deepEqual(pass.boardingPass.primaryFields.map(({ key, value }) => [key, value]), [['origin', input.origin], ['destination', input.destination]]);
+  assert.deepEqual(pass.boardingPass.secondaryFields.map(({ key, value }) => [key, value]), [['passenger', input.passenger]]);
+  assert.deepEqual(pass.boardingPass.headerFields.map(({ key, value }) => [key, value]), [['seat', input.seat]]);
+  assert.deepEqual(pass.boardingPass.auxiliaryFields.map(({ key, value }) => [key, value]), [['departureTime', '00:15'], ['boardingTime', '23:40'], ['travelDate', input.travelDate]]);
+  assert.deepEqual(pass.barcodes, [{ ...fixture.barcode, messageEncoding: 'iso-8859-1' }]);
+  assert.equal(pass.relevantDate, undefined, 'A civil clock time has no fabricated timezone or absolute flight date.');
+  const missing = verifyWalletPackage(await crypto.buildBoardingWalletPass(credentials, { ...fixture.passInput, passenger: undefined, origin: undefined, destination: undefined, travelDate: undefined }), fixture).pass;
+  assert.deepEqual(missing.boardingPass.primaryFields, []); assert.deepEqual(missing.boardingPass.secondaryFields, []); assert.deepEqual(missing.boardingPass.headerFields, []); assert.deepEqual(missing.boardingPass.auxiliaryFields, []);
+  for (const changes of [{ departureTime: '24:00' }, { boardingTime: '7:30' }, { departureTime: '07:60' }, { seat: '12 A' }, { seat: '0000' }, { seat: '12\nA' }, { passenger: 'Name\u202eOther' }]) await assert.rejects(() => crypto.buildBoardingWalletPass(credentials, { ...input, ...changes }));
+});
+
 test('PEM upload and DER upload normalize equally; the production trust root rejects synthetic Apple names', async () => {
   const fixture = await createWalletFixture();
   const crypto = core.createWalletCrypto(fixture.rootPem);

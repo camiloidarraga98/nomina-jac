@@ -18,7 +18,7 @@ class Query {
 const bucket=new Map();let writes=0,scheduled=0,waiting=[],beforeFirst,beforePut,beforeDelete,beforeGet,afterAll;
 globalThis.__noticesEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},BUCKET:{put:async(k,v)=>{if(beforePut)await beforePut(k);if(bucket.has(k))return null;bucket.set(k,new Uint8Array(v));writes++;return {key:k};},delete:async k=>{const after=await beforeDelete?.(k);bucket.delete(k);if(after)await after();},get:async k=>{if(beforeGet)await beforeGet(k);return bucket.has(k)?{body:new Response(bucket.get(k)).body}:null;}},PAYROLL_AUTH_KEY:'notices-independent-authentication-key-tests-only',PAYROLL_MAIL_KEY:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url')};
 globalThis.__noticesHeaders=new Headers();globalThis.__noticesWait=p=>{scheduled++;waiting.push(p);};
-const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as publish from './app/api/notices/publish/route';export * as attachment from './app/api/notices/file/route';export * as expensesApi from './app/api/expenses/route';export * as expenseFilesApi from './app/api/expenses/file/route';export * from './lib/travel-expenses';export * from './lib/payroll-store';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
+const bundle=await build({stdin:{contents:"export * as api from './app/api/notices/route';export * as recipientApi from './app/api/notices/recipients/route';export * as slack from './app/api/notices/slack/route';export * as pdf from './app/api/notices/pdf/route';export * as publish from './app/api/notices/publish/route';export * as attachment from './app/api/notices/file/route';export * as expensesApi from './app/api/expenses/route';export * as expenseFilesApi from './app/api/expenses/file/route';export * from './lib/travel-expenses';export * from './lib/payroll-store';export * as auth from './app/api/auth/route';export * from './lib/notifications';export * from './lib/notifications-core';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'test'}));b.onLoad({filter:/.*/,namespace:'test'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__noticesEnv;export const waitUntil=globalThis.__noticesWait;':'export const headers=async()=>globalThis.__noticesHeaders;',loader:'js'}));}}]});
 const dir=await mkdtemp(resolve('work/notices-tests-')),file=dir+'/bundle.mjs';await writeFile(file,bundle.outputFiles[0].contents);const m=await import(pathToFileURL(file).href);await rm(dir,{recursive:true});
 const owner=await m.bootstrapOwner('notice-owner','1'),ownerToken=await m.makeSession(owner),luisa=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('info@jacmusic.co').id,paula=sql.prepare('SELECT id FROM payroll_users WHERE email=?').get('contabilidad@jacmusic.co').id;
 for(const id of [luisa,paula])sql.prepare('UPDATE payroll_users SET password_hash=?,permissions=? WHERE id=?').run(m.hashPassword('1',globalThis.__noticesEnv.PAYROLL_AUTH_KEY),'[]',id);
@@ -516,6 +516,8 @@ test('secciones independientes: híbrido de fotografía y alertas no hereda itin
  await assert.rejects(()=>m.confirmNotice(alerts.user,itinerary.id,1,async()=>true),e=>e.status===404);
 });
 test('destinatarios y altas automáticas respetan la sección de cada aviso, no el perfil compatible',async()=>{
+ // This case also runs in isolation; its synthetic Slack setup must not depend on another test.
+ if(!(await m.pushCredentials()).slack)assert.equal((await configure('slack',{token:slackToken,signingSecret:slackSecret})).status,200);
  const alertOnly=await sectionFixture(['media','alerts']),travelOnly=await sectionFixture(['media','itineraries']),passOnly=await sectionFixture(['media','boarding']),calendarOnly=await sectionFixture(['calendar']),photoOnly=await sectionFixture(['media']);
  const feed=await m.noticeFeed(await m.authenticatedSession(ownerToken));
  assert.ok(feed.users.some(u=>u.id===alertOnly.id));assert.ok(!feed.users.some(u=>[travelOnly.id,passOnly.id,calendarOnly.id,photoOnly.id].includes(u.id)));
@@ -573,4 +575,39 @@ test('abandoned push claims become uncertain and fresh in-flight deliveries are 
  const old='audit-stale-push',fresh='audit-live-push';
  for(const [id,stamp] of [[old,'2000-01-01T00:00:00Z'],[fresh,new Date().toISOString()]])sql.prepare("INSERT INTO jac_push_deliveries(id,notice_id,device_id,status,updated_at) VALUES(?,'fixture-only','fixture-only','sending',?)").run(id,stamp);
  await m.dispatchPush();assert.equal(sql.prepare('SELECT status FROM jac_push_deliveries WHERE id=?').get(old).status,'uncertain');assert.equal(sql.prepare('SELECT status FROM jac_push_deliveries WHERE id=?').get(fresh).status,'sending');await m.dispatchPush();assert.equal(sql.prepare('SELECT status FROM jac_push_deliveries WHERE id=?').get(old).status,'uncertain');
+});
+
+
+async function recipientRoster(token){
+ globalThis.__noticesHeaders=new Headers({cookie:token?'__Host-jac_session='+token:'',host:'notices.example.invalid'});
+ const response=await m.recipientApi.GET();return {response,status:response.status,body:await response.json()};
+}
+test('destinatarios actualizados: consulta privada solo administrativa sin importaciones ni envíos',async()=>{
+ const beforeScheduled=scheduled,beforeCalls=calls.length;
+ assert.equal((await recipientRoster('')).status,401);
+ assert.equal((await recipientRoster(luisaToken)).status,403);
+ const result=await recipientRoster(ownerToken);assert.equal(result.status,200);
+ assert.deepEqual(Object.keys(result.body).sort(),['boardingUsers','users']);
+ assert.match(result.response.headers.get('Cache-Control'),/private, no-store/);
+ for(const user of result.body.users)assert.deepEqual(Object.keys(user).sort(),['id','name','ready']);
+ for(const user of result.body.boardingUsers)assert.deepEqual(Object.keys(user).sort(),['id','name']);
+ assert.equal(scheduled,beforeScheduled);assert.equal(calls.length,beforeCalls);
+});
+test('destinatarios actualizados: usuarios nuevos y pendientes aparecen por permisos actuales sin ampliar otras cuentas',async()=>{
+ const fresh=crypto.randomUUID(),pending=crypto.randomUUID(),excluded=crypto.randomUUID(),inactive=crypto.randomUUID(),boardingOnly=crypto.randomUUID();
+ const insert=(id,name,sections,active=1,password='')=>sql.prepare("INSERT INTO payroll_users(id,username,email,name,active,permissions,itineraries_only,media_only,section_access,password_hash,created_at,updated_at) VALUES (?,?,?,?,?,'[]',1,0,?,?, 'fixture','fixture')").run(id,id,id+'@example.invalid',name,active,JSON.stringify(sections),password);
+ insert(excluded,'Sin alertas ficticio',['music']);insert(inactive,'Inactivo ficticio',['alerts'],0);insert(boardingOnly,'Solo pase ficticio',['boarding']);
+ let result=await recipientRoster(ownerToken);for(const id of [excluded,inactive,boardingOnly])assert.ok(!result.body.users.some(user=>user.id===id));assert.ok(result.body.boardingUsers.some(user=>user.id===boardingOnly));
+ insert(fresh,'Persona nueva ficticia',['alerts','music'],1,'fixture-hash');insert(pending,'Persona pendiente ficticia',['alerts']);
+ result=await recipientRoster(ownerToken);assert.deepEqual(result.body.users.find(user=>user.id===fresh),{id:fresh,name:'Persona nueva ficticia',ready:true});assert.deepEqual(result.body.users.find(user=>user.id===pending),{id:pending,name:'Persona pendiente ficticia',ready:false});
+ const other=sql.prepare('SELECT section_access,permissions,itineraries_only,media_only FROM payroll_users WHERE id=?').get(excluded);
+ sql.prepare('UPDATE payroll_users SET section_access=? WHERE id=?').run('["music"]',fresh);
+ sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(pending);
+ result=await recipientRoster(ownerToken);assert.ok(!result.body.users.some(user=>user.id===fresh||user.id===pending));assert.deepEqual(sql.prepare('SELECT section_access,permissions,itineraries_only,media_only FROM payroll_users WHERE id=?').get(excluded),other);
+});
+test('destinatarios actualizados: cambio de sesión durante la consulta impide devolver los nombres',async()=>{
+ const original=sql.prepare('SELECT name FROM payroll_users WHERE id=?').get(owner).name;let changed=false;
+ afterAll=async query=>{if(!changed&&query.text.includes('ORDER BY name,id')){changed=true;sql.prepare('UPDATE payroll_users SET name=? WHERE id=?').run('Actor cambiado durante consulta',owner);}};
+ try{const result=await recipientRoster(ownerToken);assert.equal(changed,true);assert.equal(result.status,403);assert.deepEqual(Object.keys(result.body),['error']);}
+ finally{afterAll=undefined;sql.prepare('UPDATE payroll_users SET name=? WHERE id=?').run(original,owner);}
 });
