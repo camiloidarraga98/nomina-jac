@@ -46,3 +46,9 @@ Referencias: [identificadores y certificados Wallet](https://developer.apple.com
 ## Pull de Xcode y cambios locales
 
 Durante el Pull, Xcode reaplicó un stash y dejó conflicto únicamente en `ios/JACNomina.xcodeproj/project.pbxproj`. Camilo guardó una copia del archivo en su Escritorio y restauró ese archivo desde HEAD, que ya era `de65d2e`. Confirmó estado sin conflictos y main/origin/main en esa versión. Se conservaron sus cambios locales de `ios/JACNomina/Info.plist` y su carpeta `project.xcworkspace`; no se borró el stash ni se hizo reset general. Estos cambios locales no están en el repositorio Cloud. Para futuros conflictos identificar primero los archivos y conservar una copia antes de elegir una versión.
+
+## Validación de App Store Connect ·22 de octubre de2026 (Colombia)
+
+La carga del build41 devolvió orientación genérica incompleta para multitarea iPad y aviso de configuración de documentos. La fuente Info.plist ya tenía las cuatro orientaciones `~ipad` y apertura in-place, pero Camilo conservaba ese archivo local modificado; no se inspeccionó el Archive privado y no se atribuye su contenido exacto a la fuente.
+
+El build **0.28.0(42)** fija en Debug/Release las cuatro orientaciones genéricas, incluida PortraitUpsideDown, y `INFOPLIST_KEY_LSSupportsOpeningDocumentsInPlace=YES`. Conserva multitarea/iPad, importación de audio, Team, push y bundle. No activa UIDocumentBrowser ni exige pantalla completa. La CI `ios-bundle` ejecuta únicamente Release iOS y comprueba ambas configuraciones en el Info.plist real del `.app`, guardando `bundle-config.json`; omite simulador, suites ya aprobadas y Mac. Resultado final pendiente. Se requiere crear y subir un Archive nuevo; volver a subir el Archive41 conserva el error.

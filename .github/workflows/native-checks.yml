@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, apple-push, apple-push-ui, apple-wallet]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, apple-push, apple-push-ui, apple-wallet, ios-bundle]
         default: full
 
 permissions:
@@ -28,7 +28,7 @@ concurrency:
 jobs:
   iphone:
     # Public standard runners are free; never use the exhausted private quota.
-    if: ${{ github.event.repository.private == false }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) }}
     runs-on: macos-15
     timeout-minutes: 25
     steps:
@@ -374,16 +374,39 @@ jobs:
             -configuration Release -destination 'generic/platform=iOS' \
             -derivedDataPath native-ci/device CODE_SIGNING_ALLOWED=NO \
             build 2>&1 | tee native-ci/iphone-release.log
+      - name: Verify orientations and document configuration in the compiled iOS bundle
+        shell: bash
+        run: |
+          python3 - <<'PYCODE'
+          import json, pathlib, plistlib
+          path = pathlib.Path('native-ci/device/Build/Products/Release-iphoneos/JACNomina.app/Info.plist')
+          with path.open('rb') as source:
+              info = plistlib.load(source)
+          required = {'UIInterfaceOrientationPortrait', 'UIInterfaceOrientationPortraitUpsideDown', 'UIInterfaceOrientationLandscapeLeft', 'UIInterfaceOrientationLandscapeRight'}
+          orientations = info.get('UISupportedInterfaceOrientations', [])
+          ipad = info.get('UISupportedInterfaceOrientations~ipad', orientations)
+          assert info.get('CFBundleIdentifier') == 'co.jacmusic.nomina', 'Unexpected application bundle'
+          assert 2 in info.get('UIDeviceFamily', []), 'iPad support must remain enabled'
+          assert required.issubset(orientations), 'The generated orientations must support iPad multitasking'
+          assert required.issubset(ipad), 'The effective iPad orientations must support multitasking'
+          assert info.get('CFBundleDocumentTypes'), 'Audio import document types must remain present'
+          assert info.get('LSSupportsOpeningDocumentsInPlace') is True, 'Document opening must be declared as boolean YES'
+          result = {'bundle': info['CFBundleIdentifier'], 'version': info.get('CFBundleShortVersionString'), 'build': info.get('CFBundleVersion'), 'orientations': orientations, 'ipadOrientations': ipad, 'opensDocumentsInPlace': info['LSSupportsOpeningDocumentsInPlace']}
+          pathlib.Path('native-ci/bundle-config.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result))
+          PYCODE
       - name: Save Release build logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: JAC-iPhone-Release-${{ github.sha }}
           retention-days: 7
-          path: native-ci/*.log
+          path: |
+            native-ci/*.log
+            native-ci/bundle-config.json
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
