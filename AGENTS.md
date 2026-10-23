@@ -1,3 +1,11 @@
+## Conexiones web por servicio ·23 de octubre de2026
+
+Camilo pidió ordenar la interfaz web de Conexiones. La vista reúne siete tarjetas en Notificaciones (iPhone · TestFlight, iPhone · Xcode, Navegador) y Viajes y documentos (Slack · Itinerarios, Apple Wallet, Canales de pases, Fotografía). Abrir una tarjeta muestra solo su formulario y permite volver a servicios; mantener estados independientes, permisos, borradores privados y bloqueo mientras se guarda. Fotografía usa el componente y permiso existentes dentro de su tarjeta. Publicación y verificación en `docs/PROJECT_CONTEXT.md`; no repetir pruebas Apple por este cambio exclusivamente web.
+
+## APNs: conexiones separadas ·22 de octubre de2026 (Colombia)
+
+Camilo confirmó push en TestFlight pero no desde Xcode; su clave era `Team scoped (All topics) [Production]`. Pidió añadir Sandbox separado y descargó otra `.p8`. El servidor/formulario ya admiten ambas conexiones cifradas sin sobrescribir producción y seleccionan según el entorno registrado por cada app. Mantener Debug Sandbox y Release producción; no cambiar entitlements ni enviar tokens al otro endpoint. Camilo guardó la nueva clave en el formulario privado y confirmó ambos entornos configurados; todavía no ha confirmado recepción física desde Xcode. Ver `docs/ITINERARIES_PUSH_SETUP.md`.
+
 ## Wallet desde el menú del pase ·22 de octubre de2026 (Colombia)
 
 Camilo pidió Añadir a Apple Wallet desde el menú de cada pase, sin entrar a Mostrar código, y datos de pasajero, origen/destino, hora de vuelo, hora en sala y silla. Preparación/revisión editable con sugerencias conservadoras del documento/código, selección explícita de código/tramo y campos desconocidos vacíos; nunca usar perfil JAC ni inventar horas/zona/puerta. Conservar payload original, sesión/hash/revisión/destinatario y conexión privada. Blanco confirmado significa ausencia, no reponerlo en servidor. Ver `docs/APPLE_WALLET.md` para estado real y límites; nuevo flujo0.29.0(43).

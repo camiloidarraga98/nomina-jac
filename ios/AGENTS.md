@@ -1,3 +1,7 @@
+## APNs: producción confirmada ·22 de octubre de2026 (Colombia)
+
+Camilo confirmó recepción desde TestFlight y fallo solo desde Xcode; su clave Apple es `Team scoped (All topics) [Production]`. La instalación Debug de Xcode usa Sandbox, coherente con sus entitlements. Pidió añadir otra conexión/credencial Sandbox en el servidor; ya está publicada y confirmó ambas conexiones configuradas tras guardar la segunda clave en el formulario privado. Conservar la separación y la conexión de producción; no cambiar Debug a producción ni sobrescribir la clave vigente. La nueva selección del servidor usa el entorno que la app ya registra y no requiere cambios nativos. Ver `../docs/ITINERARIES_PUSH_SETUP.md` para publicación y guardado privado de la clave.
+
 ## Wallet desde el menú del pase ·22 de octubre de2026 (Colombia)
 
 Camilo pidió Añadir a Apple Wallet desde el menú de cada pase, sin entrar a Mostrar código, y datos de pasajero, origen/destino, hora de vuelo, hora en sala y silla. Preparación/revisión editable con sugerencias conservadoras del documento/código, selección explícita de código/tramo y campos desconocidos vacíos; nunca usar perfil JAC ni inventar horas/zona/puerta. Conservar payload original, sesión/hash/revisión/destinatario y conexión privada. Blanco confirmado significa ausencia, no reponerlo en servidor. Ver `../docs/APPLE_WALLET.md` para estado real y límites; nuevo flujo0.29.0(43).
