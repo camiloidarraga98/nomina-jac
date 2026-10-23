@@ -1,0 +1,614 @@
+/* Services stay separate here; these rules do not change the other editors. */
+.connections-panel {
+  min-width: 0;
+}
+
+.connections-panel-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 24px 26px 20px;
+  border-bottom: 1px solid var(--jac-line);
+}
+
+.connections-panel-heading h2 {
+  margin: 0;
+  font-size: 1.25rem;
+  line-height: 1.35;
+}
+
+.connections-panel-heading p {
+  margin: 6px 0 0;
+  color: var(--jac-muted);
+  font-size: .9rem;
+  line-height: 1.55;
+}
+
+.connections-access {
+  display: inline-flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+  border: 1px solid var(--jac-line);
+  border-radius: 7px;
+  background: var(--jac-canvas);
+  color: var(--jac-muted);
+  font-size: .75rem;
+  line-height: 1.35;
+}
+
+.connections-hub {
+  width: 100%;
+  min-width: 0;
+  padding: 24px 26px 28px;
+  box-sizing: border-box;
+}
+
+.connections-hub .connections-intro {
+  max-width: 68ch;
+  margin: 0 0 24px;
+  color: var(--jac-muted);
+  font-size: .9rem;
+  line-height: 1.6;
+}
+
+.connections-hub .connection-group + .connection-group {
+  margin-top: 28px;
+}
+
+.connections-hub .connection-group-title {
+  margin: 0 0 12px;
+  color: var(--jac-muted);
+  font-size: .78rem;
+  font-weight: 650;
+  letter-spacing: .065em;
+  line-height: 1.5;
+  text-transform: uppercase;
+}
+
+.connections-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.connections-hub .connection-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-rows: auto 1fr auto;
+  align-items: start;
+  gap: 16px 10px;
+  width: 100%;
+  min-width: 0;
+  min-height: 198px;
+  padding: 20px;
+  border: 1px solid var(--jac-line);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--jac-ink);
+  text-align: left;
+  white-space: normal;
+  cursor: pointer;
+  box-shadow: 0 2px 7px #062f4604;
+  transition: border-color .15s ease, box-shadow .15s ease;
+}
+
+.connections-hub .connection-card:hover:not(:disabled) {
+  border-color: #93bfdf;
+  box-shadow: 0 4px 15px #062f4609;
+}
+
+.connections-hub .connection-card:focus-visible {
+  outline: 3px solid var(--jac-blue);
+  outline-offset: 3px;
+}
+
+.connections-hub .connection-card:disabled {
+  opacity: .6;
+  cursor: wait;
+}
+
+.connection-card-icon {
+  display: inline-flex;
+  grid-column: 1;
+  grid-row: 1;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--jac-soft);
+  color: var(--jac-blue);
+}
+
+.connection-card-icon svg {
+  width: 21px;
+  height: 21px;
+  flex-shrink: 0;
+  stroke-width: 1.8;
+}
+
+.connection-card-info {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+}
+
+.connections-hub .connection-card-info h3,
+.connections-hub .connection-card-info h4 {
+  margin: 0 0 6px;
+  font-size: 1rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.connections-hub .connection-card-info p {
+  max-width: 42ch;
+  margin: 0;
+  color: var(--jac-muted);
+  font-size: .83rem;
+  line-height: 1.55;
+}
+
+.connection-card-state,
+.connection-detail-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--jac-line);
+  border-radius: 20px;
+  background: var(--jac-canvas);
+  color: var(--jac-muted);
+  font-size: .72rem;
+  font-weight: 550;
+  line-height: 1.35;
+}
+
+.connection-card-state {
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: end;
+  align-self: center;
+}
+
+.connection-card-state::before,
+.connection-detail-status::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.connection-card-state[data-state='ready'],
+.connection-detail-status[data-state='ready'] {
+  border-color: #cde5d5;
+  background: #edf7f0;
+  color: #326b47;
+}
+
+.connection-card-state[data-state='unknown'],
+.connection-detail-status[data-state='unknown'] {
+  border-color: #e9dcc3;
+  background: #fff8ed;
+  color: #866226;
+}
+
+.connection-card-action {
+  display: inline-flex;
+  grid-column: 1 / -1;
+  grid-row: 3;
+  align-items: center;
+  gap: 7px;
+  color: var(--jac-blue);
+  font-size: .82rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.connection-card-action svg {
+  width: 16px;
+  height: 16px;
+}
+
+.connection-detail {
+  width: 100%;
+  max-width: 760px;
+  min-width: 0;
+  padding: 24px;
+  border: 1px solid var(--jac-line);
+  border-radius: 14px;
+  background: #fff;
+  box-sizing: border-box;
+}
+
+.connections-panel > .connection-detail {
+  width: calc(100% - 52px);
+  margin: 24px 26px 28px;
+}
+
+.connection-detail-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px 16px;
+  margin-bottom: 24px;
+  padding-bottom: 22px;
+  border-bottom: 1px solid var(--jac-line);
+}
+
+.connection-detail .connection-back {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  justify-self: start;
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 7px;
+  width: auto;
+  min-height: 40px;
+  height: auto;
+  margin-left: -8px;
+  padding: 6px 8px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--jac-blue);
+  font-size: .84rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.connection-detail .connection-back:hover:not(:disabled) {
+  background: var(--jac-soft);
+}
+
+.connection-detail-heading {
+  display: flex;
+  grid-column: 1;
+  grid-row: 2;
+  align-items: center;
+  gap: 14px;
+  min-width: 0;
+}
+
+.connection-detail-heading > div {
+  min-width: 0;
+}
+
+.connection-detail .connection-detail-heading h3 {
+  margin: 0;
+  font-size: 1.12rem;
+  font-weight: 650;
+  line-height: 1.4;
+}
+
+.connection-detail .connection-detail-heading p {
+  margin: 5px 0 0;
+  color: var(--jac-muted);
+  font-size: .84rem;
+  line-height: 1.5;
+}
+
+.connection-detail-header > .connection-detail-status {
+  grid-column: 2;
+  grid-row: 2;
+  justify-self: end;
+}
+
+.connection-detail .editor,
+.connection-detail .travel-fields,
+.connection-detail .boarding-day {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.connection-detail :is(.field, .media-storage-form label) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  color: var(--jac-ink);
+  font-size: .86rem;
+  font-weight: 600;
+  line-height: 1.4;
+}
+
+.connection-detail :is(.field, .media-storage-form label) input,
+.connection-detail :is(.field, .media-storage-form label) select,
+.connection-detail :is(.field, .media-storage-form label) textarea {
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  min-height: 46px;
+  height: auto;
+  padding: 11px 13px;
+  border: 1px solid #c8d9e6;
+  border-radius: 9px;
+  background: #fff;
+  color: var(--jac-ink);
+  font-size: .94rem !important;
+  font-weight: 400;
+  line-height: 1.45;
+  box-sizing: border-box;
+}
+
+.connection-detail :is(.field, .media-storage-form label) input:focus-visible,
+.connection-detail :is(.field, .media-storage-form label) select:focus-visible,
+.connection-detail :is(.field, .media-storage-form label) textarea:focus-visible {
+  outline: 2px solid var(--jac-blue);
+  outline-offset: 2px;
+}
+
+.connection-detail .field input[type='file'] {
+  padding: 8px;
+  overflow: hidden;
+  font-size: .82rem !important;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.connection-detail input[type='file']::file-selector-button {
+  margin-right: 10px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--jac-soft);
+  color: var(--jac-blue);
+  font: inherit;
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.connection-detail .connection-help,
+.connection-detail .panel-note {
+  margin: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--jac-line);
+  border-radius: 10px;
+  background: var(--jac-canvas);
+  color: var(--jac-muted);
+  font-size: .85rem;
+  line-height: 1.65;
+}
+
+.connection-detail .muted,
+.connection-detail .wallet-connection-help {
+  margin: 0;
+  color: var(--jac-muted);
+  font-size: .84rem;
+  line-height: 1.65;
+}
+
+.connection-detail a {
+  color: var(--jac-blue);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.connection-detail .notice-webhook {
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--jac-line);
+  border-radius: 8px;
+  background: var(--jac-canvas);
+  color: var(--jac-ink);
+  font-size: .8rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  box-sizing: border-box;
+}
+
+.connection-form-actions,
+.connection-detail .notice-actions,
+.connection-detail .media-dialog-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  padding-top: 2px;
+}
+
+.connection-detail [data-slot='button'] {
+  min-height: 44px;
+  height: auto;
+  border-radius: 8px;
+  font-size: .88rem;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.connection-detail .primary {
+  min-height: 46px;
+  padding: 11px 18px;
+  font-weight: 600;
+}
+
+.connection-detail .connection-pending-files {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e7dac2;
+  border-radius: 10px;
+  background: #fffaf1;
+}
+
+.connection-detail .connection-pending-files h3,
+.connection-detail .connection-pending-files h4,
+.connection-detail .boarding-day h3 {
+  margin: 0;
+  font-size: .95rem;
+  line-height: 1.4;
+}
+
+.connection-detail .message {
+  margin: 0;
+}
+
+.connection-detail .connection-storage > .panel {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.connection-detail .connection-storage .panel-title {
+  justify-content: flex-start;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.connection-detail .connection-storage .panel-title h2,
+.connection-detail .connection-storage .panel-title:not(:has(.badge)) {
+  display: none;
+}
+
+.connection-detail .connection-storage p {
+  margin: 0;
+  font-size: .88rem;
+  line-height: 1.6;
+}
+
+.connection-detail .media-storage-form {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 20px;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.connection-detail details.connection-help > summary {
+  color: var(--jac-ink);
+  font-weight: 550;
+  cursor: pointer;
+}
+
+.connection-detail details.connection-help[open] > summary {
+  margin-bottom: 12px;
+}
+
+.connection-detail details.connection-help p {
+  margin: 0 0 12px;
+}
+
+.connections-hub p,
+.connections-hub h3,
+.connections-hub h4,
+.connections-hub label,
+.connection-detail p,
+.connection-detail h3,
+.connection-detail h4,
+.connection-detail label {
+  overflow-wrap: anywhere;
+}
+
+@media (min-width: 1250px) {
+  .connections-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .connections-grid:has(> .connection-card:nth-child(4)) {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .connections-panel-heading {
+    flex-wrap: wrap;
+    gap: 12px;
+    padding: 20px 18px 18px;
+  }
+
+  .connections-hub {
+    padding: 20px 18px 24px;
+  }
+
+  .connections-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+
+  .connections-hub .connection-card {
+    gap: 12px 10px;
+    min-height: 178px;
+    padding: 18px;
+  }
+
+  .connections-hub .connection-group + .connection-group {
+    margin-top: 24px;
+  }
+
+  .connection-detail {
+    padding: 18px;
+  }
+
+  .connections-panel > .connection-detail {
+    width: calc(100% - 36px);
+    margin: 20px 18px 24px;
+  }
+
+  .connection-detail-header {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 14px;
+    margin-bottom: 22px;
+    padding-bottom: 20px;
+  }
+
+  .connection-detail-header > .connection-detail-status {
+    grid-column: 1;
+    grid-row: 3;
+    justify-self: start;
+    margin-left: 54px;
+  }
+
+  .connection-detail :is(.field, .media-storage-form label) input,
+  .connection-detail :is(.field, .media-storage-form label) select,
+  .connection-detail :is(.field, .media-storage-form label) textarea {
+    font-size: 1rem !important;
+  }
+
+  .connection-form-actions,
+  .connection-detail .notice-actions,
+  .connection-detail .media-dialog-actions {
+    align-items: stretch;
+  }
+
+  .connection-form-actions > button,
+  .connection-detail .notice-actions > button,
+  .connection-detail .media-dialog-actions > button {
+    flex: 1 1 180px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .connections-hub .connection-card {
+    transition: none;
+  }
+}
