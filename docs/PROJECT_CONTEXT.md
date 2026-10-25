@@ -1,3 +1,7 @@
+## Rediseño UX/UI final de iPhone · 25 de octubre de 2026
+
+Implementación aprobada iOS0.33.0(50), producción `783a9af`: ocho recorridos UI distintos y una unitaria correctos; Release iPhone final y Mac de fuentes compartidas correctos. Comprobaciones focales y resultados reutilizados documentados en `IPHONE_UX_REDESIGN.md`, incluido el último CRM40172103215 correcto154s. Corregida la oclusión de controles al cambiar de sección; preservar el orden superior de la vista activa y el menú físico sin desmontar rutas. Fuente publicada, sin cambios web/API ni despliegue del Worker. Actualizar con pull/Archive/Upload en el Mac del propietario; CI no equivale a instalación o distribución real.
+
 ## Rediseño UX/UI aprobado de iPhone · 25 de octubre de 2026
 
 Camilo aprobó la propuesta de seis vistas con «Me encanta, hazlo así». iOS0.33.0(50) aplica cabecera única alineada, menú físico agrupado, Agenda compacta, tarjetas de pases con cuatro campos, playlists/minirreproductor navy, CRM y Quincenas más claros. Mantener funciones/datos/permisos reales, sesiones/cachés, Wallet, pagos y todos los accesos secundarios. Las maquetas son ilustrativas: no inventar IATA, historial de escucha ni importes. Mac conserva su distribución; iPad mantiene adaptación. Ver `IPHONE_UX_REDESIGN.md` para alcance y comprobaciones; no inferir instalación física desde CI.
