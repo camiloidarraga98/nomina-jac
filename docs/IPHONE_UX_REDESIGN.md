@@ -1,5 +1,11 @@
 # Rediseño aprobado de JAC para iPhone
 
+## Corrección de compilación de Agenda · 25 de octubre de 2026
+
+Camilo reportó en Xcode `The compiler is unable to type-check this expression in reasonable time` en `CalendarView`. iOS0.33.1(51) divide la expresión raíz en contenido, estados, variantes de dispositivo, toolbar, observación y hojas; también separa la celda del calendario y declara tipos concretos para los eventos agrupados, colores y callback de edición. Conserva estados en la vista original, jerarquía sin contenedores nuevos, accesibilidad, diseño, permisos, caché y operaciones de Agenda. No usa `AnyView` ni cambia la firma personal, APNs o los datos.
+
+Las comprobaciones anteriores del rediseño usaron Xcode16.4. El scope focal `calendar-compile` selecciona el Xcode más reciente ya instalado en el runner estándar `macos-15`, registra sus versiones y compila iPhone Debug/Release y Mac. Reutiliza dos recorridos UI existentes de Agenda con fixtures: mes/próximos/detalle/cuenta y toque del borde de la celda. La verificación de esta corrección está pendiente; se documentará el resultado observado al terminar, sin inferir compilación en el Mac del propietario ni subida a TestFlight.
+
 Camilo aprobó el 25 de octubre de 2026 la propuesta visual de seis vistas con «Me encanta, hazlo así». La implementación iOS0.33.0(50) lleva esa dirección a las funciones reales, con datos y permisos existentes. No incorpora los importes, nombres de eventos ni códigos de aeropuertos ilustrativos de las maquetas.
 
 ## Presentación
