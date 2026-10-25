@@ -184,8 +184,8 @@ struct CalendarView: View {
             HStack(spacing: 0) {
                 Button("Hoy") { month = CalendarClock.month(Date()); day = CalendarClock.day(Date()) }
                     .font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44).foregroundStyle(JACTheme.action)
-                Button { shift(-1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("Mes anterior")
-                Button { shift(1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.accessibilityLabel("Mes siguiente")
+                Button { shift(-1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44).contentShape(Rectangle()) }.accessibilityLabel("Mes anterior")
+                Button { shift(1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44).contentShape(Rectangle()) }.accessibilityLabel("Mes siguiente")
             }.buttonStyle(.plain)
         }
     }

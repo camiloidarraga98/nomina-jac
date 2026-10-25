@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, redesign, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
+        options: [full, redesign, redesign-followup, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -63,7 +63,8 @@ jobs:
       - name: Build and check the affected iPhone flows
         shell: bash
         env:
-          JAC_REDESIGN: ${{ inputs.scope == 'redesign' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-redesign]')) }}
+          JAC_REDESIGN: ${{ inputs.scope == 'redesign' || inputs.scope == 'redesign-followup' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-redesign]') || contains(github.event.head_commit.message, '[redesign-followup]'))) }}
+          JAC_REDESIGN_FOLLOWUP: ${{ inputs.scope == 'redesign-followup' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-followup]')) }}
           JAC_WALLET_DETAILS: ${{ inputs.scope == 'wallet-details' || inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wallet-details]')) }}
           JAC_WALLET_DETAILS_UI_ONLY: ${{ inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[wallet-ui-only]')) }}
           JAC_BOARDING_CARD: ${{ inputs.scope == 'boarding-card' || inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-boarding-card]')) }}
@@ -104,6 +105,17 @@ jobs:
           elif [ "$JAC_REDESIGN" = true ]; then
             # Reuse the real fixture-based journeys touched by the redesign.
             # No production accounts, passengers, notifications or payments.
+            if [ "$JAC_REDESIGN_FOLLOWUP" = true ]; then
+            # Recheck the three failures and the two navigation journeys after
+            # changing drawer layout. Reuse the earlier media/permission results.
+            checks=(
+              -only-testing:JACNominaUITests/LaunchTests/testAgendaMonthUpcomingDetailsAndAccountRemainAccessible
+              -only-testing:JACNominaUITests/LaunchTests/testCreatePeriodAndManageItsActivitiesWithNativeForms
+              -only-testing:JACNominaUITests/LaunchTests/testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary
+              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
+              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
+            )
+            else
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testModernSectionsAreExactAndLegacyRestrictionsRemainDefensive
               -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
@@ -115,6 +127,7 @@ jobs:
               -only-testing:JACNominaUITests/LaunchTests/testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary
               -only-testing:JACNominaUITests/LaunchTests/testCreatePeriodAndManageItsActivitiesWithNativeForms
             )
+            fi
           elif [ "$JAC_BOARDING_CARD" = true ]; then
             checks=(-only-testing:JACNominaUITests/LaunchTests/testBoardingCardShowsFlightDetailsBeforeOpeningTheOriginal)
             if [ "$JAC_BOARDING_CARD_UI_ONLY" != true ]; then
@@ -406,7 +419,7 @@ jobs:
       - name: Export compact test diagnostics
         if: always()
         env:
-          JAC_REDESIGN: ${{ inputs.scope == 'redesign' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-redesign]')) }}
+          JAC_REDESIGN: ${{ inputs.scope == 'redesign' || inputs.scope == 'redesign-followup' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-redesign]') || contains(github.event.head_commit.message, '[redesign-followup]'))) }}
           JAC_BOARDING_CARD: ${{ inputs.scope == 'boarding-card' || inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-boarding-card]')) }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
         shell: bash
@@ -508,7 +521,7 @@ jobs:
             native-ci/bundle-config.json
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && inputs.scope != 'boarding-card-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'redesign-followup' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-followup]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && inputs.scope != 'boarding-card-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

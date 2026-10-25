@@ -220,8 +220,9 @@ struct PayrollHomeView: View {
     private var phoneDrawerWorkspace: some View {
         GeometryReader { geometry in
             let width = min(314, geometry.size.width * 0.86)
-            // One rigid translation moves the persistent panel and the entire
-            // screen together. Its full width keeps navigation/scroll layout stable.
+            // Move the persistent panel and screen as one layout. A render-only
+            // offset leaves UIKit accessibility children at the old drawer x;
+            // positioning the layout also updates their native hit-test frames.
             HStack(spacing: 0) {
                 phoneSidebar
                     .frame(width: width, height: geometry.size.height)
@@ -239,7 +240,8 @@ struct PayrollHomeView: View {
                     }
             }
             .frame(width: geometry.size.width + width, height: geometry.size.height, alignment: .leading)
-            .offset(x: phoneMenuOpen ? 0 : -width)
+            .position(x: phoneMenuOpen ? (geometry.size.width + width) / 2 : (geometry.size.width - width) / 2,
+                      y: geometry.size.height / 2)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
             .clipped()
         }.background(JACTheme.canvas.ignoresSafeArea())
@@ -253,6 +255,7 @@ struct PayrollHomeView: View {
         ZStack {
             ForEach(phoneDestinations.filter { $0.id == selected || phoneVisited.contains($0.id) }, id: \.id) { item in
                 phoneContent(item.id)
+                    .zIndex(selected == item.id ? 1 : 0)
                     .opacity(selected == item.id ? 1 : 0)
                     .allowsHitTesting(selected == item.id && !phoneMenuOpen)
                     .accessibilityHidden(selected != item.id || phoneMenuOpen)
