@@ -1,3 +1,7 @@
+## Pases: código en cuarta columna y menú superior · 25 de octubre de 2026
+
+Fuente `99b91bd`, iOS0.32.3(49): Silla/Salida/En sala/Código en cuatro columnas, tres puntos en la cabecera en lugar de PDF y retirada de la fila inferior. Datos pasivos y fondo permiten abrir el original; Código y menú son controles independientes. Texto grande sigue vertical, icono QR escalable y objetivo44puntos. CI40165430740 aprobó compilación iPhone y el único recorrido UI existente (115.750s, cero fallos). Se conservan pruebas unitarias anteriores; Mac/Release no se repiten. Sin pruebas nuevas, cambios web/API ni despliegue. Ver `BOARDING_CARD_FLIGHT_INFO.md`.
+
 ## Pases: tarjeta completa abre el original · 25 de octubre de 2026
 
 Camilo pidió ocultar el nombre de archivo y eliminar el botón Abrir PDF. Fuente `5329b37`, iOS0.32.2(48): el fondo completo de la tarjeta abre el documento privado; datos/cabecera dejan pasar el toque y código/menú son controles independientes. Conserva los campos alineados y mueve la indicación de apertura a la cabecera. CI40164488391 aprobó la compilación iPhone y el único recorrido UI/captura, incluida apertura desde la zona de silla y código/menú independientes. Se conservan las unitarias previas de cálculo/caché/permisos; no se recompiló Mac/Release ni se repitieron pruebas web/API o despliegues. Ver `BOARDING_CARD_FLIGHT_INFO.md`.
