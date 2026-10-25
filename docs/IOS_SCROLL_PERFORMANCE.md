@@ -1,6 +1,6 @@
 # Fluidez y trabajo de las secciones nativas
 
-Entrega verificada: iOS **0.35.0 (53)**, 25 de octubre de 2026, Colombia. Camilo reportó desplazamiento entrecortado en varias vistas y pidió revisar la causa con profundidad. Implementación y comprobaciones de CI correctas. La instalación, firma del propietario y medición en dispositivo físico siguen pendientes; los resultados de simulador no se presentan como una medición de FPS real.
+Entrega verificada: iOS **0.35.0 (53)**, 25 de octubre de 2026, Colombia. Camilo reportó desplazamiento entrecortado en varias vistas y pidió revisar la causa con profundidad. Implementación y comprobaciones de CI correctas. Posteriormente se completaron firma/instalación en el iPhone 17 Pro y una primera captura física de Animation Hitches + Time Profiler: [activación local, resultados y límites](IPHONE_WIDGETS_LOCAL_ACTIVATION.md). El propietario confirmó scroll fluido; la traza contiene pausas breves en transiciones y no se presenta como una garantía de FPS. Los apartados de evidencia CI siguientes conservan el estado previo a la comprobación local.
 
 ## Hallazgos de revisión de código
 

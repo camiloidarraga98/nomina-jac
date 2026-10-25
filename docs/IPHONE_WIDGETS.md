@@ -1,5 +1,7 @@
 # Widgets de JAC para iPhone
 
+**Activación local posterior al cierre de CI:** app y extensión 0.35.0 (53) firmadas y provisionadas en el Mac, instaladas en el iPhone 17 Pro y comprobadas con widgets reales. Archive/IPA de distribución verificados; Apple terminó de procesar la compilación interna, lista para las pruebas y asociada exclusivamente a **Equipo JAC**. Evidencia y límites físicos en [IPHONE_WIDGETS_LOCAL_ACTIVATION.md](IPHONE_WIDGETS_LOCAL_ACTIVATION.md). Los apartados de cierre de CI siguientes describen el estado previo a esta activación.
+
 ## Alcance autorizado
 
 Camilo pidió un widget de pantalla de inicio que permita elegir Calendario y próximos eventos o las últimas fotografías. iOS 0.35.0 (53) añade la extensión `JACWidgets`, con tamaños pequeño, mediano y grande y selector **Mostrar → Calendario / Fotografía** al editar el widget. Se conserva el calendario como inicio de la app y no se cambian los permisos de módulos ni las conexiones existentes.
