@@ -288,6 +288,7 @@ final class PayrollClientTests: XCTestCase {
         for item in items { if await reopened.mediaPinnedForPresentation(item) { pinned.append(item.id) } }
         let sample = JACPerformanceDiagnostics.snapshot().delta(from: before)
         XCTAssertEqual(pinned, [items[0].id], "A cold offline client must read real pin status, including local-but-unpinned and unavailable items.")
+        XCTAssertGreaterThanOrEqual(sample.count(.diskRead), 80, "The budget must observe the actual pin-cache probes, not merely an empty counter.")
         XCTAssertEqual(sample.count(.sessionRead), 0)
         XCTAssertEqual(sample.mainThreadExpensiveOperations, 0)
         var revoked = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))

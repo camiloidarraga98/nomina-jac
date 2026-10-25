@@ -1971,6 +1971,9 @@ final class MediaOfflineCache: @unchecked Sendable {
     }
     func isPinned(_ item:MediaItem,scope:AgendaCacheScope) -> Bool {
         lock.lock();defer{lock.unlock()}
+        // The pin probe inspects encrypted-index metadata and file existence.
+        // Count the real cache entry point so tests detect a move to MainActor.
+        JACPerformanceDiagnostics.record(.diskRead)
         return hasFile(item,scope:scope) && (readIndex(scope).pinnedFiles?[item.id] != nil || readIndex(scope).downloads.values.contains{$0.items.contains{$0.id==item.id}})
     }
     func hasFile(_ item: MediaItem, scope: AgendaCacheScope) -> Bool {
