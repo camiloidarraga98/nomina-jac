@@ -310,39 +310,40 @@ struct NoticesView: View {
         ForEach(items) { item in VStack(alignment:.leading,spacing:16) {
             ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
                 VStack(alignment:.leading,spacing:0) {
-                Button { Task { await openBoarding(item,file:file) } } label: {
                     VStack(alignment:.leading,spacing:16) {
                         let info=BoardingClock.filenameDetails(file.filename)
-                        HStack { Label("PASE DE ABORDAR",systemImage:"airplane").font(.caption2.weight(.bold)).tracking(1);Spacer();JACBadge(title:file.mimeType == "application/pdf" ? "PDF":"Imagen",tone:.teal) }.foregroundStyle(JACTone.teal.color)
+                        HStack { Label("PASE DE ABORDAR",systemImage:"airplane").font(.caption2.weight(.bold)).tracking(1);Spacer();if openingFile == file.id {ProgressView()};JACBadge(title:file.mimeType == "application/pdf" ? "PDF":"Imagen",tone:.teal) }.foregroundStyle(JACTone.teal.color)
                         if let info {
                             Text(info.origin + " → " + info.destination).font(.system(.title3,design:.rounded,weight:.bold)).fixedSize(horizontal:false,vertical:true)
                             Text(info.passenger).font(.subheadline.weight(.medium))
-                        } else { Text(item.title).font(.system(.headline,design:.rounded)) }
-                        Rectangle().fill(JACTone.teal.color.opacity(0.18)).frame(height:1)
-                        Text(file.filename).font(.caption).foregroundStyle(.secondary).multilineTextAlignment(.leading)
+                        } else { Text("Pase de abordar").font(.system(.headline,design:.rounded)) }
                         HStack(alignment:.center,spacing:14) {
                             Label(BoardingClock.label(item.travelDate ?? ""),systemImage:"calendar").font(.caption).foregroundStyle(.secondary)
                             Spacer(minLength:0)
                         }
-                    }.padding(18).contentShape(Rectangle())
-                }.buttonStyle(.plain).disabled(openingFile != nil || deleting).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
-                BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id)
-                    .padding(.horizontal,18).padding(.bottom,16)
-                HStack(spacing:16) {
-                    Button { boardingCode=BoardingCodeSelection(item:item,file:file) } label: {
-                        Label("Mostrar código",systemImage:"qrcode.viewfinder").font(.subheadline.weight(.semibold)).padding(.horizontal,12).frame(minHeight:44)
-                            .background(JACTone.teal.color.opacity(0.09),in:RoundedRectangle(cornerRadius:12))
-                    }.buttonStyle(.plain).accessibilityIdentifier("boarding.code.\(file.id)")
-                    Spacer(minLength:0)
-                    Button {Task {await openBoarding(item,file:file)}} label: {
-                        HStack(spacing:8) {if openingFile == file.id {ProgressView()};Text(file.mimeType == "application/pdf" ? "Abrir PDF":"Abrir imagen").font(.subheadline.weight(.semibold))}.frame(minHeight:44).contentShape(Rectangle())
-                    }.buttonStyle(.plain).accessibilityIdentifier("boarding.open.\(file.id)")
-                    Menu { boardingMenuActions(item,file:file) } label: {
-                        Image(systemName:"ellipsis.circle").font(.title3).frame(width:44,height:44).contentShape(Rectangle())
-                    }.buttonStyle(.borderless).accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
-                }.foregroundStyle(JACTone.teal.color).padding(.horizontal,18).padding(.bottom,14).disabled(openingFile != nil || deleting)
-                }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
-                    .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1))
+                    }.padding(18).allowsHitTesting(false)
+                    BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id)
+                        .padding(.horizontal,18).padding(.bottom,16).allowsHitTesting(false)
+                    HStack(spacing:16) {
+                        Button { boardingCode=BoardingCodeSelection(item:item,file:file) } label: {
+                            Label("Mostrar código",systemImage:"qrcode.viewfinder").font(.subheadline.weight(.semibold)).padding(.horizontal,12).frame(minHeight:44)
+                                .background(JACTone.teal.color.opacity(0.09),in:RoundedRectangle(cornerRadius:12))
+                        }.buttonStyle(.plain).accessibilityIdentifier("boarding.code.\(file.id)")
+                        Spacer(minLength:0)
+                        Menu { boardingMenuActions(item,file:file) } label: {
+                            Image(systemName:"ellipsis.circle").font(.title3).frame(width:44,height:44).contentShape(Rectangle())
+                        }.buttonStyle(.borderless).accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
+                    }.foregroundStyle(JACTone.teal.color).padding(.horizontal,18).padding(.bottom,14).disabled(openingFile != nil || deleting)
+                }.background {
+                    Button { Task { await openBoarding(item,file:file) } } label: {
+                        RoundedRectangle(cornerRadius:22).fill(JACTheme.card)
+                            .contentShape(RoundedRectangle(cornerRadius:22))
+                    }.buttonStyle(.plain).disabled(openingFile != nil || deleting)
+                        .accessibilityLabel(BoardingClock.filenameDetails(file.filename).map { "Abrir pase de abordar de \($0.passenger), \($0.origin) a \($0.destination)" } ?? "Abrir pase de abordar")
+                        .accessibilityHint("Abre el documento original del pase.")
+                        .accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
+                }
+                    .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1).allowsHitTesting(false))
                     .contextMenu { boardingMenuActions(item,file:file) }
                     .task(id: boardingDetails.key(item, file: file, client: store.client)) {
                         boardingDetails.load(item, file: file, client: store.client)

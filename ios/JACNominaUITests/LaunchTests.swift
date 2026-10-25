@@ -1152,13 +1152,32 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(waitFor(seat,predicate:NSPredicate(format:"label == %@","12A"),timeout:20))
         XCTAssertEqual(departure.label,"18:45")
         XCTAssertEqual(boarding.label,"17:45", "La tarjeta usa una hora antes, aunque el PDF diga 18:05")
+        XCTAssertFalse(app.staticTexts["Camilo 16 de octubre Pereira-Bogota.pdf"].exists)
+        XCTAssertFalse(app.buttons["boarding.open."+suffix].exists)
         XCTAssertFalse(app.images["boarding.code.image"].exists)
         XCTAssertFalse(app.navigationBars["Añadir a Apple Wallet"].exists)
+        let card=app.buttons["notices.item.boarding-fixture-0"]
+        XCTAssertTrue(card.waitForExistence(timeout:10))
+        XCTAssertTrue(card.frame.contains(seat.frame), "La tarjeta completa incluye la zona de datos del vuelo")
         attachScreen(app,name:"pase-con-silla-salida-y-hora-en-sala")
-        tap(app,"boarding.open."+suffix)
+        seat.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
         XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15))
         tap(app,"notices.pdf.close")
         XCTAssertTrue(seat.waitForExistence(timeout:10));XCTAssertEqual(seat.label,"12A")
+        tap(app,"boarding.code."+suffix)
+        XCTAssertTrue(app.buttons["boarding.code.close"].waitForExistence(timeout:10))
+        XCTAssertFalse(app.navigationBars["Pase de abordar PDF"].exists)
+        tap(app,"boarding.code.close")
+        XCTAssertTrue(seat.waitForExistence(timeout:10))
+        XCTAssertFalse(app.navigationBars["Pase de abordar PDF"].exists)
+        let menu=app.buttons["boarding.menu."+suffix]
+        let descendant=menu.descendants(matching:.button).firstMatch
+        guard tapVisibleWalletControl(descendant.exists ? descendant:menu,in:app) else {return}
+        var refresh=app.buttons["boarding.details.refresh."+suffix].firstMatch
+        if !refresh.waitForExistence(timeout:3) {refresh=app.buttons["Actualizar datos del vuelo"].firstMatch}
+        guard tapVisibleWalletControl(refresh,in:app) else {return}
+        XCTAssertFalse(app.navigationBars["Pase de abordar PDF"].exists)
+        XCTAssertTrue(waitFor(seat,predicate:NSPredicate(format:"label == %@","12A"),timeout:20))
         app.terminate();app.launchArguments=args+["--uitest-boarding-card-midnight"];app.launch()
         XCTAssertTrue(boarding.waitForExistence(timeout:20))
         XCTAssertTrue(waitFor(boarding,predicate:NSPredicate(format:"label == %@","23:30"),timeout:20))
