@@ -298,6 +298,44 @@ final class PayrollClientTests: XCTestCase {
         try client.clearSession()
         let loggedOut = await client.mediaPinnedForPresentation(items[0]); XCTAssertFalse(loggedOut)
     }
+    #if os(iOS)
+    @MainActor func testDecodedGalleryThumbnailsReuseEightyWarmImagesWithoutSessionReadsAndRejectRevocation() async throws {
+        let workspace = try await UITestBackend.client(downloadOffline: false).workspace()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let vault = MemorySession(); vault.token = token
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: base, vault: vault, configuration: config, mediaOffline: MediaOfflineCache(root: root), automaticallyDownloadOffline: false)
+        client.rememberWorkspace(workspace)
+        let loader = MediaGridThumbnailLoader()
+        let items = (0..<80).map { MediaItem(id: "decoded-presentation-\($0)", name: "Fixture-\($0).png", mimeType: "image/png", kind: "image", size: Int64(MediaFixture.photo.count), modifiedAt: "fixture", thumbnailAvailable: true) }
+        var requests = 0
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/api/media/file")
+            let parts = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)
+            XCTAssertEqual(parts?.queryItems?.first { $0.name == "thumbnail" }?.value, "1")
+            requests += 1
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "image/png"])!, MediaFixture.photo)
+        }
+        defer { MockProtocol.handler = nil; loader.clear(); try? client.clearSession(); try? FileManager.default.removeItem(at: root) }
+        // Populate decoded memory through the real authenticated loader rather
+        // than writing a fabricated cache key or supplying prebuilt pixels.
+        for item in items { let image = try await loader.image(item, client: client); XCTAssertNotNil(image) }
+        XCTAssertEqual(requests, 80)
+        let baseline = JACPerformanceDiagnostics.snapshot()
+        for item in items { let image = try await loader.image(item, client: client, priority: .prefetch); XCTAssertNotNil(image) }
+        let sample = JACPerformanceDiagnostics.snapshot().delta(from: baseline)
+        XCTAssertEqual(requests, 80, "Warm prefetch must reuse decoded pixels without another HTTP request.")
+        XCTAssertEqual(sample.count(.sessionRead), 0)
+        XCTAssertEqual(sample.mainThreadExpensiveOperations, 0)
+        var revoked = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))
+        revoked["user"]["isOwner"] = .bool(false); revoked["user"]["sections"] = .array([.string("calendar")])
+        client.rememberWorkspace(try revoked.decoded(PayrollWorkspace.self))
+        do { _ = try await loader.image(items[0], client: client); XCTFail("Revoked photo access must reject decoded pixels.") } catch is CancellationError {}
+        try client.clearSession()
+        do { _ = try await loader.image(items[0], client: client); XCTFail("Logging out must reject decoded pixels.") } catch is CancellationError {}
+        XCTAssertEqual(requests, 80)
+    }
+    #endif
     @MainActor func testUnrelatedCacheWritesKeepFortyWarmCardsOffMainThreadIO() async throws {
         let workspace = try await UITestBackend.client(downloadOffline: false).workspace()
         var workspaceValue = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))

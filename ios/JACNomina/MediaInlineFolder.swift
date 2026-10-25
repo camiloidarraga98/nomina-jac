@@ -114,6 +114,12 @@ final class MediaGridThumbnailLoader {
         cache.object(forKey: key(item, client: client, stamp: stamp) as NSString)?.image
     }
     func image(_ item: MediaItem, client: PayrollClient, networkAllowed: Bool = true, priority: Priority = .visible) async throws -> UIImage? {
+        try Task.checkCancellation()
+        // Decoded, session-scoped pixels are the same presentation snapshot
+        // used by visible tiles. Reusing them starts no file or network read.
+        if item.thumbnailAvailable, client.accessUser?.canReadMedia == true,
+           let stamp = client.mediaPresentationStamp,
+           let image = cachedImage(item, client: client, stamp: stamp) { return image }
         guard let stamp = try client.mediaAccessStamp(), client.accessUser?.canReadMedia != false else { throw CancellationError() }
         guard item.thumbnailAvailable else { return nil }
         return try await load(key: key(item, client: client, stamp: stamp), authorized: { stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false }, priority: priority, bytes: { try await client.mediaThumbnail(item, networkAllowed: networkAllowed && !client.usingOfflineCopy) })
