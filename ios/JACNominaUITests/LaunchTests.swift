@@ -707,7 +707,13 @@ final class LaunchTests: XCTestCase {
         if menuVisible(app) { return true }
         let opener=app.buttons["phone.menu.open"]
         guard opener.waitForExistence(timeout: timeout) else { return false }
-        let frame=opener.frame,screen=app.windows.firstMatch.frame
+        // UIKit can retain the drawer's old translation in the child Button's
+        // AX rect while its native toolbar wrapper has the correct visible rect.
+        // Require the real button, anchor to that identified wrapper when present,
+        // and still require the actual sidebar to open after the touch.
+        let wrapper=app.navigationBars.descendants(matching:.other).matching(identifier:"phone.menu.open").firstMatch
+        let anchor=wrapper.exists ? wrapper:opener
+        let frame=anchor.frame,screen=app.windows.firstMatch.frame
         guard frame.width >= 44,frame.height >= 44,screen.contains(frame) else { return false }
         // After focus returns, XCTest may include the full header/status area
         // in the button frame. The actual 44pt control is at its bottom-left;
@@ -715,7 +721,7 @@ final class LaunchTests: XCTestCase {
         // One bounded retry handles an event lost during cold launch;
         // both attempts must open the real panel, never a synthetic state.
         for _ in 0..<2 {
-            opener.coordinate(withNormalizedOffset:CGVector(dx:0,dy:1)).withOffset(CGVector(dx:22,dy:-22)).tap()
+            anchor.coordinate(withNormalizedOffset:CGVector(dx:0,dy:1)).withOffset(CGVector(dx:22,dy:-22)).tap()
             if waitForMenu(app, visible:true) {return true}
             if !opener.exists {return false}
         }
