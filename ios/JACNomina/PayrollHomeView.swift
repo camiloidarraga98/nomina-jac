@@ -17,20 +17,52 @@ extension EnvironmentValues {
 }
 struct PhoneSidebarToolbar: ViewModifier {
     @Environment(\.phoneSidebarMenu) private var menu
-    @Environment(\.isPresented) private var isPresented
+    @State private var insideModal = true
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.toolbar {
-            if let menu, !isPresented, !JACDevice.isPad {
-                ToolbarItem(placement: .topBarLeading) {
-                    Button(action: menu.open) {
-                        Image(systemName: "line.3.horizontal")
-                            .font(.system(size: 18, weight: .semibold))
-                            .frame(width: 44, height: 44)
-                            .background(JACTheme.action.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-                    }.buttonStyle(.plain).foregroundStyle(JACTheme.action)
-                        .accessibilityLabel("Abrir menú").accessibilityHint("También puedes deslizar desde el borde izquierdo.")
-                        .accessibilityIdentifier("phone.menu.open").accessibilityFocused(menu.focus)
+        if let menu, !JACDevice.isPad {
+            content.background(PhoneSidebarPresentationReader { value in
+                if insideModal != value { insideModal = value }
+            }).toolbar {
+                if !insideModal {
+                    ToolbarItem(placement: .topBarLeading) {
+                        Button(action: menu.open) {
+                            Image(systemName: "line.3.horizontal")
+                                .font(.system(size: 18, weight: .semibold))
+                                .frame(width: 44, height: 44)
+                                .background(JACTheme.action.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                        }.buttonStyle(.plain).foregroundStyle(JACTheme.action)
+                            .accessibilityLabel("Abrir menú").accessibilityHint("También puedes deslizar desde el borde izquierdo.")
+                            .accessibilityIdentifier("phone.menu.open").accessibilityFocused(menu.focus)
+                    }
                 }
+            }
+        } else { content }
+    }
+}
+
+// SwiftUI's isPresented is also true for pushed destinations. Resolve only a
+// UIKit modal ancestor so details retain the menu and sheets keep their own exit.
+private struct PhoneSidebarPresentationReader: UIViewRepresentable {
+    let changed: (Bool) -> Void
+    func makeUIView(context: Context) -> PhoneSidebarPresentationAnchor { PhoneSidebarPresentationAnchor() }
+    func updateUIView(_ view: PhoneSidebarPresentationAnchor, context: Context) {
+        view.changed = changed; view.reportPresentation()
+    }
+}
+private final class PhoneSidebarPresentationAnchor: UIView {
+    var changed: ((Bool) -> Void)?
+    override func didMoveToWindow() { super.didMoveToWindow(); isUserInteractionEnabled = false; reportPresentation() }
+    func reportPresentation() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, window != nil else { return }
+            var responder: UIResponder? = self
+            while let current = responder, !(current is UIViewController) { responder = current.next }
+            guard var controller = responder as? UIViewController else { return }
+            while true {
+                if controller.presentingViewController != nil { changed?(true); return }
+                guard let parent = controller.parent else { changed?(false); return }
+                controller = parent
             }
         }
     }

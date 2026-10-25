@@ -159,7 +159,7 @@ struct HistoricalConditionsView: View {
                     }.disabled(!store.canWrite || d.period.isClosed || !user.can("modifyClosed"))
                 }
             }
-        }.jacSurface().navigationTitle("Condiciones del corte").sheet(item: $editor) { PayrollEditorView(session: $0) }
+        }.jacSurface().navigationTitle("Condiciones del corte").jacInlineTitle().sheet(item: $editor) { PayrollEditorView(session: $0) }
     }
 }
 struct AmountRow: View {

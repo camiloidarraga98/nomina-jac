@@ -84,6 +84,6 @@ struct ChangePasswordView: View {
                     }
                 } label: { HStack { Text("Guardar contraseña"); Spacer(); if busy { ProgressView() } } }
             }
-        }.jacSurface().navigationTitle("Contraseña").disabled(busy || store.isOffline)
+        }.jacSurface().navigationTitle("Contraseña").jacInlineTitle().disabled(busy || store.isOffline)
     }
 }

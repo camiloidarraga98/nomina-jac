@@ -37,7 +37,7 @@ struct EmployeesView: View {
                         }
                     }
                 }
-            }.jacSurface().navigationTitle("Equipo JAC").jacSearchable(text: $search, prompt: "Buscar persona o cargo")
+            }.jacSurface().navigationTitle("Equipo JAC").jacInlineTitle().jacSearchable(text: $search, prompt: "Buscar persona o cargo")
                 .refreshable { try? await store.refresh() }
                 .toolbar {
                     if overview.user.can("staff") {
