@@ -1,3 +1,7 @@
+## Pases: tarjeta completa abre el original · 25 de octubre de 2026
+
+Camilo pidió ocultar el nombre de archivo y eliminar el botón Abrir PDF. Fuente `5329b37`, iOS0.32.2(48): el fondo completo de la tarjeta abre el documento privado; datos/cabecera dejan pasar el toque y código/menú son controles independientes. Conserva los campos alineados y mueve la indicación de apertura a la cabecera. CI40164488391 aprobó la compilación iPhone y el único recorrido UI/captura, incluida apertura desde la zona de silla y código/menú independientes. Se conservan las unitarias previas de cálculo/caché/permisos; no se recompiló Mac/Release ni se repitieron pruebas web/API o despliegues. Ver `BOARDING_CARD_FLIGHT_INFO.md`.
+
 ## Alineación de datos de los pases · 25 de octubre de 2026
 
 Camilo pidió alinear Silla, Salida y En sala con sus valores. Fuente `580a203`, iOS0.32.1(47): títulos de texto con el mismo borde/altura, sin espacios reservados a iconos. Solo presentación; conservar la evidencia de cálculo/parser/caché/revocación y Mac anterior. CI40163521420 aprobó compilación iPhone y el único recorrido UI/captura; sin pruebas nuevas, repeticiones de unitarias/Mac ni despliegue del Worker. Ver `BOARDING_CARD_FLIGHT_INFO.md`.
