@@ -712,13 +712,19 @@ final class LaunchTests: XCTestCase {
         if menuVisible(app) { return true }
         let opener=app.buttons["phone.menu.open"]
         guard opener.waitForExistence(timeout: timeout) else { return false }
+        guard opener.isEnabled else { return false }
         // UIKit can retain the drawer's old translation in the child Button's
         // AX rect while its native toolbar wrapper has the correct visible rect.
         // Require the real button, anchor to that identified wrapper when present,
         // and still require the actual sidebar to open after the touch.
         let wrapper=app.navigationBars.descendants(matching:.other).matching(identifier:"phone.menu.open").firstMatch
-        let anchor=wrapper.exists ? wrapper:opener
-        let frame=anchor.frame,screen=app.windows.firstMatch.frame
+        let screen=app.windows.firstMatch.frame
+        // iOS26 exposes a 36pt toolbar wrapper around the actual 44pt Button.
+        // That wrapper is not the hit target. Prefer a fully visible 44pt
+        // wrapper when available (older UIKit), otherwise use the real Button.
+        let wrapperIsVisible=wrapper.exists && wrapper.frame.width >= 44 && wrapper.frame.height >= 44 && screen.contains(wrapper.frame)
+        let anchor=wrapperIsVisible ? wrapper:opener
+        let frame=anchor.frame
         guard frame.width >= 44,frame.height >= 44,screen.contains(frame) else { return false }
         // After focus returns, XCTest may include the full header/status area
         // in the button frame. The actual 44pt control is at its bottom-left;
