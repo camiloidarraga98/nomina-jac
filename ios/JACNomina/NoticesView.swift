@@ -425,16 +425,16 @@ private struct BoardingCardFlightInfo: View {
             .background(JACTone.teal.color.opacity(0.06),in:RoundedRectangle(cornerRadius:14))
     }
     @ViewBuilder private var fields: some View {
-        field("Silla",symbol:"seat.airplane",value:details.seat,id:"seat")
-        field("Salida",symbol:"airplane.departure",value:details.departureTime,id:"departure")
+        field("Silla",value:details.seat,id:"seat")
+        field("Salida",value:details.departureTime,id:"departure")
         VStack(alignment:.leading,spacing:4) {
-            field("En sala",symbol:"clock",value:details.boardingTime,id:"boarding")
+            field("En sala",value:details.boardingTime,id:"boarding")
             if details.boardingPreviousDay { Text("Día anterior").font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("boarding.card.previousDay.\(fileID)") }
         }.frame(maxWidth:.infinity,alignment:.leading)
     }
-    private func field(_ title:String,symbol:String,value:String,id:String) -> some View {
+    private func field(_ title:String,value:String,id:String) -> some View {
         VStack(alignment:.leading,spacing:6) {
-            Label(title,systemImage:symbol).font(.caption2).foregroundStyle(.secondary)
+            Text(title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
             Text(value.isEmpty ? "Sin indicar":value).font(.subheadline.weight(.semibold)).monospacedDigit()
                 .foregroundStyle(value.isEmpty ? JACTheme.ink.opacity(0.55):JACTheme.ink)
                 .lineLimit(1).minimumScaleFactor(0.8)
