@@ -1,6 +1,6 @@
 # Pases de abordar — web e iPhone
 
-> **22 de octubre:** Camilo tiene membresía Apple pagada y pidió retomar Wallet. Todavía no hay generación/importación `.pkpass`; el visor actual conserva los códigos del documento original. Preparación del Pass Type ID, certificado y alcance pendiente en [Apple de pago](APPLE_PAID_SETUP.md). La clave APNs no firma pases Wallet.
+> **25 de octubre de 2026:** la tarjeta nativa incorpora silla, salida y hora en sala calculada una hora antes, con «Día anterior» cuando corresponda. Los datos no detectados se muestran como «Sin indicar». Ver [Lectura de datos del vuelo](BOARDING_CARD_FLIGHT_INFO.md). Apple Wallet ya está implementado desde el menú del pase; configuración, revisión de datos y límites reales en [Apple Wallet](APPLE_WALLET.md). Las versiones históricas siguientes no sustituyen estas decisiones actuales.
 
 Continuidad del Site existente appgprj_6aa0260b82a88191a47960614238350a y del proyecto ios/JACNomina.xcodeproj, esquema JACNomina, bundle co.jacmusic.nomina. App 0.9.0 (10).
 

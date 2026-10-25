@@ -180,6 +180,8 @@ Son documentos individuales, importados de canales configurados por persona (`#p
 
 Referencias: [BOARDING_PASSES.md](../docs/BOARDING_PASSES.md), [BOARDING_CODE.md](../docs/BOARDING_CODE.md). Los perfiles antiguos de Alex/Jhon Alex de esas guías están sustituidos por el apartado 3.
 
+**Tarjeta de pase · 25 de octubre de 2026:** mostrar silla asignada, salida y hora en sala directamente en el listado nativo. Por instrucción expresa, la hora en sala de la tarjeta es salida menos una hora, marcando «Día anterior» al cruzar medianoche; no confundir este recordatorio con la hora de embarque original de Wallet. Leer el adjunto privado localmente, sin servicios externos; datos ausentes o ambiguos «Sin indicar», sin escoger otro vuelo. Mantener destinatario, revisión, sesión, caché y originales. iOS 0.32.0 (46); instalación física mediante Xcode/TestFlight. Ver [BOARDING_CARD_FLIGHT_INFO.md](../docs/BOARDING_CARD_FLIGHT_INFO.md).
+
 ## 9. Gastos de viaje y OCR de facturas
 
 Gestión → Gastos de viaje permite al usuario con acceso registrar concepto, fecha, COP, nota y comprobantes privados; comienza pendiente. El autor y los administradores pueden consultarlo. No exponer gastos de otras personas a usuarios normales.
