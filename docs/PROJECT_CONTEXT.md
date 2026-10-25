@@ -1,3 +1,7 @@
+## Corrección de compilación de Agenda · 25 de octubre de 2026
+
+iOS0.33.1(51), fuente `eb7a210`: `CalendarView` dividido en helpers y tipos concretos para resolver el timeout de inferencia de Xcode conservando el rediseño, estados, permisos, datos y refresco. CI40217354037 verificó Release iPhone/Mac con Xcode26.3/Swift6.2.4; seguimiento40218235724 aprobó dos UI de Agenda en iOS26.2 tras ajustar el helper al contenedor de toolbar36pt que envuelve el botón real44pt. Aplicación/proyecto sin cambios entre ambas ejecuciones; ambas Release se reutilizan. Ver `IPHONE_UX_REDESIGN.md` para evidencia y límites. Actualizar con pull en el mismo Xcode y compilar; distribución/instalación física siguen en el Mac de Camilo. Sin cambios web/API ni publicación de Cloudflare.
+
 ## Rediseño UX/UI final de iPhone · 25 de octubre de 2026
 
 Implementación aprobada iOS0.33.0(50), producción `783a9af`: ocho recorridos UI distintos y una unitaria correctos; Release iPhone final y Mac de fuentes compartidas correctos. Comprobaciones focales y resultados reutilizados documentados en `IPHONE_UX_REDESIGN.md`, incluido el último CRM40172103215 correcto154s. Corregida la oclusión de controles al cambiar de sección; preservar el orden superior de la vista activa y el menú físico sin desmontar rutas. Fuente publicada, sin cambios web/API ni despliegue del Worker. Actualizar con pull/Archive/Upload en el Mac del propietario; CI no equivale a instalación o distribución real.

@@ -1,3 +1,5 @@
+> **Agenda · 0.33.1(51):** expresiones SwiftUI separadas para evitar el timeout del compilador de Xcode en `CalendarView`, conservando el rediseño y las funciones. Actualizar con pull en el mismo proyecto; si Xcode conserva un diagnóstico anterior, usar Product → Clean Build Folder y compilar. [Corrección y comprobaciones](../docs/IPHONE_UX_REDESIGN.md).
+
 > **Rediseño aprobado · 0.33.0(50):** nueva interfaz de iPhone para Agenda, menú lateral, Pases, Música, CRM y Quincenas. Funciones, cálculos, permisos y conexiones conservados. Actualizar con pull y Archive/Upload en el mismo proyecto. [Alcance y verificación](../docs/IPHONE_UX_REDESIGN.md).
 
 > **Cuenta Apple de pago ·22 de octubre:** Camilo pidió reactivar push e instalación inalámbrica. El proyecto ya habilita APNs en Debug/Release; las referencias anteriores a push suspendido son históricas. Falta configurar la clave APNs en el formulario privado de JAC y firmar/subir el binario con su equipo de pago. Usar TestFlight para instalar y actualizar sin cable. Wallet requiere integración y certificado propios; todavía no genera pases. [Pasos completos y estado](../docs/APPLE_PAID_SETUP.md).
