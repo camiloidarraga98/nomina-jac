@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
+        options: [full, redesign, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -63,6 +63,7 @@ jobs:
       - name: Build and check the affected iPhone flows
         shell: bash
         env:
+          JAC_REDESIGN: ${{ inputs.scope == 'redesign' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-redesign]')) }}
           JAC_WALLET_DETAILS: ${{ inputs.scope == 'wallet-details' || inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wallet-details]')) }}
           JAC_WALLET_DETAILS_UI_ONLY: ${{ inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[wallet-ui-only]')) }}
           JAC_BOARDING_CARD: ${{ inputs.scope == 'boarding-card' || inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-boarding-card]')) }}
@@ -100,6 +101,20 @@ jobs:
           if [ "$JAC_LAYOUT_ONLY" = true ]; then
             checks=()
             build_action=build-for-testing
+          elif [ "$JAC_REDESIGN" = true ]; then
+            # Reuse the real fixture-based journeys touched by the redesign.
+            # No production accounts, passengers, notifications or payments.
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testModernSectionsAreExactAndLegacyRestrictionsRemainDefensive
+              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
+              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
+              -only-testing:JACNominaUITests/LaunchTests/testAgendaMonthUpcomingDetailsAndAccountRemainAccessible
+              -only-testing:JACNominaUITests/LaunchTests/testMusicSectionsAndGlobalSearchRespectListeningPermission
+              -only-testing:JACNominaUITests/LaunchTests/testMusicSectionSearchAndUploaderControls
+              -only-testing:JACNominaUITests/LaunchTests/testBoardingCardShowsFlightDetailsBeforeOpeningTheOriginal
+              -only-testing:JACNominaUITests/LaunchTests/testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary
+              -only-testing:JACNominaUITests/LaunchTests/testCreatePeriodAndManageItsActivitiesWithNativeForms
+            )
           elif [ "$JAC_BOARDING_CARD" = true ]; then
             checks=(-only-testing:JACNominaUITests/LaunchTests/testBoardingCardShowsFlightDetailsBeforeOpeningTheOriginal)
             if [ "$JAC_BOARDING_CARD_UI_ONLY" != true ]; then
@@ -391,13 +406,14 @@ jobs:
       - name: Export compact test diagnostics
         if: always()
         env:
+          JAC_REDESIGN: ${{ inputs.scope == 'redesign' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-redesign]')) }}
           JAC_BOARDING_CARD: ${{ inputs.scope == 'boarding-card' || inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-boarding-card]')) }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
         shell: bash
         run: |
           if [ -d native-ci/iphone.xcresult ]; then
             xcrun xcresulttool get test-results summary --path native-ci/iphone.xcresult > native-ci/test-summary.json || true
-            if [ "${JAC_NAVIGATION:-false}" = true ] || [ "${JAC_BOARDING_CARD:-false}" = true ]; then
+            if [ "${JAC_REDESIGN:-false}" = true ] || [ "${JAC_NAVIGATION:-false}" = true ] || [ "${JAC_BOARDING_CARD:-false}" = true ]; then
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments || true
             else
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true

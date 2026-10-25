@@ -663,7 +663,7 @@ struct MediaGalleryView: View {
         }
     }
     private var galleryNavigation: some View {
-        galleryContent.jacSurface().navigationTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : "Fotografía").jacInlineTitle()
+        galleryContent.jacSurface().jacWorkspaceTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : "Fotografía")
             #if os(iOS)
             .toolbar(compactGallery && notificationFolderID == nil && phoneMenu == nil ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }

@@ -1,3 +1,7 @@
+## Rediseño UX/UI aprobado de iPhone · 25 de octubre de 2026
+
+Camilo aprobó la propuesta de seis vistas con «Me encanta, hazlo así». iOS0.33.0(50) aplica cabecera única alineada, menú físico agrupado, Agenda compacta, tarjetas de pases con cuatro campos, playlists/minirreproductor navy, CRM y Quincenas más claros. Mantener funciones/datos/permisos reales, sesiones/cachés, Wallet, pagos y todos los accesos secundarios. Las maquetas son ilustrativas: no inventar IATA, historial de escucha ni importes. Mac conserva su distribución; iPad mantiene adaptación. Ver `IPHONE_UX_REDESIGN.md` para alcance y comprobaciones; no inferir instalación física desde CI.
+
 ## Pases: código en cuarta columna y menú superior · 25 de octubre de 2026
 
 Fuente `99b91bd`, iOS0.32.3(49): Silla/Salida/En sala/Código en cuatro columnas, tres puntos en la cabecera en lugar de PDF y retirada de la fila inferior. Datos pasivos y fondo permiten abrir el original; Código y menú son controles independientes. Texto grande sigue vertical, icono QR escalable y objetivo44puntos. CI40165430740 aprobó compilación iPhone y el único recorrido UI existente (115.750s, cero fallos). Se conservan pruebas unitarias anteriores; Mac/Release no se repiten. Sin pruebas nuevas, cambios web/API ni despliegue. Ver `BOARDING_CARD_FLIGHT_INFO.md`.

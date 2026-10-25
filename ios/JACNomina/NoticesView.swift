@@ -242,14 +242,7 @@ struct NoticesView: View {
                 }.jacStandaloneRow()
             }
             if effectiveKind == "boarding_pass" {
-                ForEach(BoardingClock.priorityDays(day,hasToday:records.contains { $0.travelDate == day }),id:\.self) { date in
-                    Section("Pases de abordar para " + (date == day ? "hoy" : "mañana") + " · \(records.filter { $0.travelDate == date }.count)") { let items=records.filter { $0.travelDate == date }; if items.isEmpty { Text(date == day ? "No tienes pases para hoy." : "No tienes pases para mañana.").foregroundStyle(.secondary) }; boardingRows(items) }
-                }
-                ForEach(Array(Set(records.compactMap(\.travelDate))).filter { $0 > BoardingClock.nextDay(day) }.sorted(),id:\.self) { date in Section(BoardingClock.label(date)) { boardingRows(records.filter { $0.travelDate == date }) } }
-                if let cursor = feed?.nextCursor, !cursor.isEmpty { Section { Button("Ver más próximos pases") { Task { await refresh(cursor) } }.disabled(loading) } }
-                Section { Button { historyOpen.toggle() } label: { Label(historyOpen ? "Ocultar historial de pases anteriores" : "Historial de pases anteriores",systemImage:historyOpen ? "chevron.up" : "chevron.down") }.buttonStyle(JACSecondaryButtonStyle(tone:.teal)).accessibilityIdentifier("boarding.history") }
-                if historyOpen { Section("Pases anteriores") { boardingRows(historyRecords.filter { ($0.travelDate ?? "") < day }); if historyRecords.isEmpty { Text("No tienes pases anteriores.").foregroundStyle(.secondary) }; if let cursor=history?.nextCursor,!cursor.isEmpty { Button("Ver más del historial") { Task { await loadHistory(cursor) } } } } }
-
+                boardingSections
             } else { Section(effectiveKind == "itinerary" ? "Itinerarios del equipo" : "Avisos del equipo") {
                 let items = records.filter { $0.kind == effectiveKind }
                 if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
@@ -264,8 +257,108 @@ struct NoticesView: View {
 
         }
     }
+    @ViewBuilder private var boardingSections: some View {
+        #if os(iOS)
+        Section {
+            HStack(spacing: 3) {
+                boardingModeButton("Próximos", history: false, id: "boarding.upcoming")
+                boardingModeButton("Anteriores", history: true, id: "boarding.history")
+            }.padding(.horizontal, 3).background(JACTheme.border.opacity(0.7), in: RoundedRectangle(cornerRadius: 12))
+                .jacStandaloneRow()
+        }
+        if historyOpen {
+            boardingHistorySection
+        } else {
+            boardingUpcomingSections
+        }
+        #else
+        boardingUpcomingSections
+        Section {
+            Button { historyOpen.toggle() } label: {
+                Label(historyOpen ? "Ocultar historial de pases anteriores" : "Historial de pases anteriores", systemImage: historyOpen ? "chevron.up" : "chevron.down")
+            }.buttonStyle(JACSecondaryButtonStyle(tone: .teal)).accessibilityIdentifier("boarding.history")
+        }
+        if historyOpen { boardingHistorySection }
+        #endif
+    }
+    #if os(iOS)
+    private func boardingModeButton(_ title: String, history: Bool, id: String) -> some View {
+        Button { historyOpen = history } label: {
+            Text(title).font(.subheadline.weight(historyOpen == history ? .semibold : .regular))
+                .foregroundStyle(historyOpen == history ? JACTheme.ink : JACTheme.muted)
+                .frame(maxWidth: .infinity, minHeight: 38)
+                .background {
+                    if historyOpen == history { RoundedRectangle(cornerRadius: 9).fill(JACTheme.card) }
+                }.padding(.vertical, 3).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityIdentifier(id)
+            .accessibilityAddTraits(historyOpen == history ? .isSelected : [])
+    }
+    #endif
+    @ViewBuilder private var boardingUpcomingSections: some View {
+        ForEach(BoardingClock.priorityDays(day, hasToday: records.contains { $0.travelDate == day }), id: \.self) { date in
+            let items = records.filter { $0.travelDate == date }
+            Section {
+                if items.isEmpty { Text(date == day ? "No tienes pases para hoy." : "No tienes pases para mañana.").font(.subheadline).foregroundStyle(.secondary) }
+                boardingRows(items)
+            } header: {
+                boardingSectionHeader(date, count: items.count)
+            }
+        }
+        ForEach(Array(Set(records.compactMap(\.travelDate))).filter { $0 > BoardingClock.nextDay(day) }.sorted(), id: \.self) { date in
+            Section { boardingRows(records.filter { $0.travelDate == date }) } header: {
+                boardingSectionHeader(date, count: records.filter { $0.travelDate == date }.count)
+            }
+        }
+        if let cursor = feed?.nextCursor, !cursor.isEmpty {
+            Section { Button("Ver más próximos pases") { Task { await refresh(cursor) } }.disabled(loading) }
+        }
+    }
+    private var boardingHistorySection: some View {
+        Section("Pases anteriores") {
+            boardingRows(historyRecords.filter { ($0.travelDate ?? "") < day })
+            if historyRecords.isEmpty { Text("No tienes pases anteriores.").foregroundStyle(.secondary) }
+            if let cursor = history?.nextCursor, !cursor.isEmpty {
+                Button("Ver más del historial") { Task { await loadHistory(cursor) } }
+            }
+        }
+    }
+    @ViewBuilder private func boardingSectionHeader(_ date: String, count: Int) -> some View {
+        let oldLabel = date == day || date == BoardingClock.nextDay(day)
+            ? "Pases de abordar para " + (date == day ? "hoy" : "mañana") + " · \(count)"
+            : BoardingClock.label(date)
+        #if os(iOS)
+        HStack(alignment: .firstTextBaseline) {
+            Text(date == day ? "Hoy" : date == BoardingClock.nextDay(day) ? "Mañana" : "Próximo viaje")
+                .font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink)
+                .accessibilityLabel(oldLabel)
+            Spacer(minLength: 8)
+            Text(boardingDateLabel(date)).font(.caption).foregroundStyle(JACTheme.muted)
+        }.textCase(nil)
+        #else
+        Text(oldLabel)
+        #endif
+    }
+    private func boardingDateLabel(_ value: String, includesWeekday: Bool = false) -> String {
+        guard let date = BoardingClock.parse(value) else { return "Fecha no disponible" }
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "es_CO")
+        formatter.timeZone = CalendarClock.calendar.timeZone
+        formatter.dateFormat = includesWeekday ? "EEE, d MMM · yyyy" : "d 'de' MMMM"
+        let label = formatter.string(from: date)
+        return label.prefix(1).uppercased() + label.dropFirst()
+    }
+    private var noticeTitle: String {
+        if effectiveKind == "boarding_pass" {
+            #if os(iOS)
+            return "Pases"
+            #else
+            return "Pases de abordar"
+            #endif
+        }
+        return effectiveKind == "itinerary" ? "Itinerarios" : "Alertas"
+    }
     private var noticeUpdates: some View {
-        noticeList.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().refreshable { boardingDetails.retryUnavailable(); await refresh() }
+        noticeList.jacSurface().jacWorkspaceTitle(noticeTitle).refreshable { boardingDetails.retryUnavailable(); await refresh() }
             .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
             .onChange(of: store.cacheRevision) { _, _ in boardingDetails.revalidate(); restoreCached() }
             .onChange(of: store.overview?.user) { _, _ in boardingDetails.revalidate() }
@@ -310,6 +403,36 @@ struct NoticesView: View {
         ForEach(items) { item in VStack(alignment:.leading,spacing:16) {
             ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
                 VStack(alignment:.leading,spacing:0) {
+                    #if os(iOS)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack(spacing: 8) {
+                            Text(boardingDateLabel(item.travelDate ?? "", includesWeekday: true))
+                                .font(.caption).foregroundStyle(JACTheme.muted).allowsHitTesting(false)
+                            Spacer(minLength: 0)
+                            if openingFile == file.id { ProgressView().allowsHitTesting(false) }
+                            Menu { boardingMenuActions(item, file: file) } label: {
+                                Image(systemName: "ellipsis").font(.body.weight(.semibold))
+                                    .frame(width: 44, height: 44).contentShape(Rectangle())
+                            }.buttonStyle(.borderless).foregroundStyle(JACTheme.ink)
+                                .accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
+                                .disabled(openingFile != nil || deleting)
+                        }
+                        VStack(alignment: .leading, spacing: 10) {
+                            if let info = BoardingClock.filenameDetails(file.filename) {
+                                Text(info.origin + " → " + info.destination)
+                                    .font(.system(.title3, weight: .bold)).fixedSize(horizontal: false, vertical: true)
+                                Label(info.passenger, systemImage: "person")
+                                    .font(.subheadline).labelStyle(.titleAndIcon)
+                            } else {
+                                Text("Pase de abordar").font(.headline)
+                            }
+                        }.frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false)
+                        Rectangle().fill(JACTheme.border).frame(height: 1).allowsHitTesting(false)
+                        BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id, controlsDisabled: openingFile != nil || deleting) {
+                            boardingCode = BoardingCodeSelection(item: item, file: file)
+                        }
+                    }.padding(16)
+                    #else
                     VStack(alignment:.leading,spacing:16) {
                         HStack {
                             Label("PASE DE ABORDAR",systemImage:"airplane").font(.caption2.weight(.bold)).tracking(1).allowsHitTesting(false)
@@ -334,6 +457,7 @@ struct NoticesView: View {
                     BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id, controlsDisabled: openingFile != nil || deleting) {
                         boardingCode=BoardingCodeSelection(item:item,file:file)
                     }.padding(.horizontal,18).padding(.bottom,18)
+                    #endif
                 }.background {
                     Button { Task { await openBoarding(item,file:file) } } label: {
                         RoundedRectangle(cornerRadius:22).fill(JACTheme.card)
@@ -343,7 +467,12 @@ struct NoticesView: View {
                         .accessibilityHint("Abre el documento original del pase.")
                         .accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
                 }
-                    .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1).allowsHitTesting(false))
+                    .overlay(RoundedRectangle(cornerRadius:22).stroke(boardingCardBorder,lineWidth:1).allowsHitTesting(false))
+                    #if os(iOS)
+                    .overlay(alignment: .top) {
+                        Capsule().fill(JACTheme.action).frame(height: 3).padding(.horizontal, 20).allowsHitTesting(false)
+                    }
+                    #endif
                     .contextMenu { boardingMenuActions(item,file:file) }
                     .task(id: boardingDetails.key(item, file: file, client: store.client)) {
                         boardingDetails.load(item, file: file, client: store.client)
@@ -352,6 +481,13 @@ struct NoticesView: View {
         }.padding(.vertical,6).jacStandaloneRow()
             .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner { deleteButton(item,destructive:false).tint(.red) } }
         }
+    }
+    private var boardingCardBorder: Color {
+        #if os(iOS)
+        JACTheme.border
+        #else
+        JACTone.teal.color.opacity(0.18)
+        #endif
     }
     @ViewBuilder private func boardingMenuActions(_ item:JACNotice,file:NoticeAttachment) -> some View {
         Button { boardingDetails.load(item, file: file, client: store.client, retry: true) } label: {
@@ -425,9 +561,19 @@ private struct BoardingCardFlightInfo: View {
             if entry == .loading {
                 HStack(spacing:6) { ProgressView().controlSize(.mini); Text("Leyendo datos del vuelo…").font(.caption2).foregroundStyle(.secondary) }.allowsHitTesting(false)
             }
-        }.padding(12).frame(maxWidth:.infinity,alignment:.leading)
-            .background { RoundedRectangle(cornerRadius:14).fill(JACTone.teal.color.opacity(0.06)).allowsHitTesting(false) }
+        }.padding(compactCard ? 0 : 12).frame(maxWidth:.infinity,alignment:.leading)
+            .background {
+                if !compactCard { RoundedRectangle(cornerRadius:14).fill(JACTone.teal.color.opacity(0.06)).allowsHitTesting(false) }
+            }
     }
+    private var compactCard: Bool {
+        #if os(iOS)
+        true
+        #else
+        false
+        #endif
+    }
+    private var actionColor: Color { compactCard ? JACTheme.action : JACTone.teal.color }
     @ViewBuilder private var fields: some View {
         field("Silla",value:details.seat,id:"seat").allowsHitTesting(false)
         field("Salida",value:details.departureTime,id:"departure").allowsHitTesting(false)
@@ -437,16 +583,16 @@ private struct BoardingCardFlightInfo: View {
         }.frame(maxWidth:.infinity,alignment:.leading).allowsHitTesting(false)
         Button(action: showCode) {
             VStack(alignment:.leading,spacing:6) {
-                Text("Código").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Text("Código").font(.caption2).foregroundStyle(compactCard ? JACTheme.action : JACTheme.muted).lineLimit(1)
                 Image(systemName:"qrcode.viewfinder").font(.subheadline.weight(.semibold)).frame(height:codeValueHeight,alignment:.leading)
             }.frame(minWidth:44,maxWidth:.infinity,minHeight:44,alignment:.topLeading).contentShape(Rectangle())
-        }.buttonStyle(.plain).foregroundStyle(JACTone.teal.color).disabled(controlsDisabled)
+        }.buttonStyle(.plain).foregroundStyle(actionColor).disabled(controlsDisabled)
             .accessibilityLabel("Mostrar código").accessibilityIdentifier("boarding.code.\(fileID)")
     }
     private func field(_ title:String,value:String,id:String) -> some View {
         VStack(alignment:.leading,spacing:6) {
             Text(title).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
-            Text(value.isEmpty ? "Sin indicar":value).font(.subheadline.weight(.semibold)).monospacedDigit()
+            Text(value.isEmpty ? "Sin indicar":value).font(compactCard ? .body.weight(.semibold) : .subheadline.weight(.semibold)).monospacedDigit()
                 .foregroundStyle(value.isEmpty ? JACTheme.ink.opacity(0.55):JACTheme.ink)
                 .lineLimit(1).minimumScaleFactor(0.8)
                 .accessibilityIdentifier("boarding.card.\(id).\(fileID)")

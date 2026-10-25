@@ -203,28 +203,114 @@ struct MusicMiniPlayer: View {
     @ObservedObject var player: MusicPlayer
     @State private var scrubbing = false
     @State private var scrubValue: Double = 0
+    #if os(iOS)
+    @State private var expanded = false
+    #endif
     var body: some View {
         if let track=player.current {
-            VStack(spacing:8) {
-                HStack(spacing:12) {
-                    Image(systemName:"music.note").font(.title2).foregroundStyle(JACTheme.action).frame(width:36)
-                    VStack(alignment:.leading,spacing:3) {Text(track.title).font(.subheadline.weight(.semibold)).lineLimit(1);Text(track.section.title).font(.caption).foregroundStyle(.secondary)}
-                    Spacer(minLength:4)
-                    if player.preparing {ProgressView().controlSize(.small)}
-                    Button {player.previous()} label:{Image(systemName:"backward.end.fill")}.accessibilityLabel("Audio anterior")
-                    Button {player.toggle()} label:{Image(systemName:player.playing ? "pause.fill":"play.fill").font(.title3).frame(width:36,height:36)}.accessibilityLabel(player.playing ? "Pausar música":"Reproducir música").accessibilityIdentifier("music.player.toggle")
-                    Button {player.next()} label:{Image(systemName:"forward.end.fill")}.accessibilityLabel("Siguiente audio")
-                    Button {player.stop()} label:{Image(systemName:"xmark").foregroundStyle(.secondary).frame(width:30,height:36)}.accessibilityLabel("Cerrar reproductor")
-                }.buttonStyle(.plain)
-                HStack(spacing:8) {
-                    Text(Self.time(scrubbing ? scrubValue:player.elapsed)).monospacedDigit().font(.caption2).foregroundStyle(.secondary)
-                    Slider(value:Binding(get:{scrubbing ? scrubValue:player.elapsed},set:{scrubValue=$0}),in:0...max(1,player.duration),onEditingChanged:{editing in if editing {scrubValue=player.elapsed;scrubbing=true} else {player.seek(scrubValue);scrubbing=false}}).accessibilityLabel("Posición del audio")
-                    Text(Self.time(player.duration)).monospacedDigit().font(.caption2).foregroundStyle(.secondary)
-                }
-                if let error=player.error {Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)}
-            }.padding(.horizontal,16).padding(.vertical,10).background(.bar).overlay(alignment:.top){Divider()}.accessibilityIdentifier("music.player")
+            #if os(iOS)
+            mobilePlayer(track)
+                .sheet(isPresented:$expanded) { playbackDetails }
+            #else
+            legacyPlayer(track)
+            #endif
         }
     }
+    #if os(iOS)
+    private func mobilePlayer(_ track: MusicTrack) -> some View {
+        VStack(spacing:0) {
+            VStack(alignment:.leading,spacing:6) {
+                HStack(spacing:8) {
+                    Button {expanded=true} label:{
+                        HStack(spacing:10) {
+                            Image(systemName:"waveform").font(.system(size:20,weight:.medium))
+                                .foregroundStyle(JACTheme.highlight).frame(width:40,height:40)
+                                .background(.white.opacity(0.09),in:RoundedRectangle(cornerRadius:10))
+                            VStack(alignment:.leading,spacing:4) {
+                                Text(track.title).font(.subheadline.weight(.semibold)).lineLimit(1)
+                                Text(track.section.title+" · "+Self.time(player.elapsed)+" / "+Self.time(player.duration))
+                                    .font(.caption2).foregroundStyle(Color.white.opacity(0.76)).lineLimit(1).monospacedDigit()
+                            }.frame(maxWidth:.infinity,alignment:.leading)
+                        }.frame(minHeight:44).contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel("Abrir reproductor: "+track.title)
+                    if player.preparing {ProgressView().tint(.white).controlSize(.small).accessibilityLabel("Preparando audio")}
+                    Button {player.toggle()} label:{Image(systemName:player.playing ? "pause.fill":"play.fill").font(.system(size:20,weight:.medium)).frame(width:44,height:44)}
+                        .accessibilityLabel(player.playing ? "Pausar música":"Reproducir música").accessibilityIdentifier("music.player.toggle")
+                    Button {player.next()} label:{Image(systemName:"forward.end.fill").font(.system(size:19,weight:.medium)).frame(width:44,height:44)}.accessibilityLabel("Siguiente audio")
+                }.buttonStyle(.plain)
+                if let error=player.error {Text(error).font(.caption).foregroundStyle(Color(red:1,green:0.79,blue:0.73)).fixedSize(horizontal:false,vertical:true)}
+            }.padding(.horizontal,12).padding(.vertical,10)
+            GeometryReader { geometry in
+                ZStack(alignment:.leading) {
+                    Rectangle().fill(.white.opacity(0.18))
+                    Rectangle().fill(JACTheme.highlight).frame(width:geometry.size.width * CGFloat(min(1,max(0,player.duration > 0 ? player.elapsed/player.duration:0))))
+                }
+            }.frame(height:3).accessibilityHidden(true)
+        }.foregroundStyle(.white)
+            .background(JACTheme.navy,in:RoundedRectangle(cornerRadius:17))
+            .clipShape(RoundedRectangle(cornerRadius:17))
+            .contextMenu {
+                Button {expanded=true} label:{Label("Abrir reproductor",systemImage:"waveform")}
+                Button {player.previous()} label:{Label("Audio anterior",systemImage:"backward.end")}
+                Button {player.stop()} label:{Label("Cerrar reproductor",systemImage:"xmark")}
+            }
+            .padding(.horizontal,14).padding(.vertical,8)
+            .background(JACTheme.canvas)
+            .accessibilityIdentifier("music.player")
+    }
+    private var playbackDetails: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(spacing:24) {
+                    if let track=player.current {
+                        Image(systemName:"waveform").font(.system(size:48,weight:.light)).foregroundStyle(JACTheme.action)
+                            .frame(width:128,height:128).background(JACTheme.action.opacity(0.08),in:RoundedRectangle(cornerRadius:26)).accessibilityHidden(true)
+                        VStack(spacing:8) {
+                            Text(track.title).font(.title2.weight(.semibold)).multilineTextAlignment(.center)
+                            Text(track.section.title).font(.subheadline).foregroundStyle(.secondary)
+                        }
+                        timeline
+                        HStack(spacing:28) {
+                            Button {player.previous()} label:{Image(systemName:"backward.end.fill").font(.title2).frame(width:48,height:48)}.accessibilityLabel("Audio anterior")
+                            Button {player.toggle()} label:{Image(systemName:player.playing ? "pause.fill":"play.fill").font(.title).frame(width:68,height:68).foregroundStyle(.white).background(JACTheme.primary,in:Circle())}.accessibilityLabel(player.playing ? "Pausar música":"Reproducir música")
+                            Button {player.next()} label:{Image(systemName:"forward.end.fill").font(.title2).frame(width:48,height:48)}.accessibilityLabel("Siguiente audio")
+                        }.buttonStyle(.plain)
+                        if player.preparing {ProgressView("Preparando audio…")}
+                        if let error=player.error {InlineError(message:error)}
+                        Button {player.stop();expanded=false} label:{Label("Cerrar reproductor",systemImage:"xmark.circle").frame(minHeight:44)}.foregroundStyle(.secondary)
+                    }
+                }.padding(24).frame(maxWidth:.infinity)
+            }.jacSurface()
+                .navigationTitle("Reproduciendo").navigationBarTitleDisplayMode(.inline)
+                .toolbar {ToolbarItem(placement:.confirmationAction){Button("Listo"){expanded=false}}}
+        }.presentationDetents([.medium,.large]).presentationDragIndicator(.visible)
+    }
+    #endif
+    private var timeline: some View {
+        HStack(spacing:8) {
+            Text(Self.time(scrubbing ? scrubValue:player.elapsed)).monospacedDigit().font(.caption2).foregroundStyle(.secondary)
+            Slider(value:Binding(get:{scrubbing ? scrubValue:player.elapsed},set:{scrubValue=$0}),in:0...max(1,player.duration),onEditingChanged:{editing in if editing {scrubValue=player.elapsed;scrubbing=true} else {player.seek(scrubValue);scrubbing=false}}).accessibilityLabel("Posición del audio")
+            Text(Self.time(player.duration)).monospacedDigit().font(.caption2).foregroundStyle(.secondary)
+        }
+    }
+    #if os(macOS)
+    private func legacyPlayer(_ track: MusicTrack) -> some View {
+        VStack(spacing:8) {
+            HStack(spacing:12) {
+                Image(systemName:"music.note").font(.title2).foregroundStyle(JACTheme.action).frame(width:36)
+                VStack(alignment:.leading,spacing:3) {Text(track.title).font(.subheadline.weight(.semibold)).lineLimit(1);Text(track.section.title).font(.caption).foregroundStyle(.secondary)}
+                Spacer(minLength:4)
+                if player.preparing {ProgressView().controlSize(.small)}
+                Button {player.previous()} label:{Image(systemName:"backward.end.fill")}.accessibilityLabel("Audio anterior")
+                Button {player.toggle()} label:{Image(systemName:player.playing ? "pause.fill":"play.fill").font(.title3).frame(width:36,height:36)}.accessibilityLabel(player.playing ? "Pausar música":"Reproducir música").accessibilityIdentifier("music.player.toggle")
+                Button {player.next()} label:{Image(systemName:"forward.end.fill")}.accessibilityLabel("Siguiente audio")
+                Button {player.stop()} label:{Image(systemName:"xmark").foregroundStyle(.secondary).frame(width:30,height:36)}.accessibilityLabel("Cerrar reproductor")
+            }.buttonStyle(.plain)
+            timeline
+            if let error=player.error {Text(error).font(.caption).foregroundStyle(.red).lineLimit(2)}
+        }.padding(.horizontal,16).padding(.vertical,10).background(.bar).overlay(alignment:.top){Divider()}.accessibilityIdentifier("music.player")
+    }
+    #endif
     private static func time(_ value: Double) -> String {guard value.isFinite,value>=0 else{return "0:00"};return String(format:"%d:%02d",Int(value)/60,Int(value)%60)}
 }
 
@@ -243,8 +329,155 @@ struct MusicLibraryView: View {
     @State private var downloaded: Set<String> = []
     @State private var downloadTask: Task<Void,Never>?
     @State private var downloadProgress: String?
-    private var tracks: [MusicTrack] { MusicTrack.sorted((library?.tracks ?? []).filter{(section == nil || $0.section == section) && $0.matches(search)}) }
+    #if os(iOS)
+    @State private var downloadedOnly = false
+    #endif
+    private var tracks: [MusicTrack] { MusicTrack.sorted((library?.tracks ?? []).filter{(section == nil || $0.section == section) && $0.matches(search) && includesDownload($0)}) }
     var body: some View {
+        titledContent
+            .jacSearchable(text:$search,prompt:section == nil ? "Buscar en toda Música":"Buscar en esta sección")
+            .toolbar {
+                if section != nil {ToolbarItem(placement:.cancellationAction){Button {section=nil;search=""} label:{Label("Música",systemImage:"chevron.left")}}}
+                if user.canUploadMusic {ToolbarItem(placement:.primaryAction){importButton}}
+                #if os(macOS)
+                ToolbarItem {Button {Task{await load()}} label:{Image(systemName:"arrow.clockwise")}.disabled(loading).accessibilityLabel("Actualizar Música")}
+                #endif
+            }
+            .fileImporter(isPresented:$picker,allowedContentTypes:[.audio],allowsMultipleSelection:true) {result in
+                do {let urls=try result.get();Task {await prepare(urls)}} catch {self.error=error.localizedDescription}
+            }
+            .sheet(item:$importing,onDismiss:{Task{await load()}}){incoming in MusicImportView(incoming:incoming,initialSection:section ?? .warmup).environmentObject(store)}
+            .confirmationDialog("Eliminar audio",isPresented:Binding(get:{deleting != nil},set:{if !$0 {deleting=nil}}),titleVisibility:.visible) {
+                if let track=deleting {Button("Eliminar «\(track.title)»",role:.destructive){Task{await remove(track)}}}
+            } message:{Text("Dejará de estar disponible para el equipo.")}
+            .task {library=store.client.cachedMusic();updateDownloads();await load()}
+            .onDisappear {downloadTask?.cancel()}
+    }
+    @ViewBuilder private var titledContent: some View {
+        #if os(iOS)
+        if section == nil {mobileLibrary.jacSurface().jacWorkspaceTitle("Música")}
+        else {mobileLibrary.jacSurface().navigationTitle(section!.title).jacInlineTitle()}
+        #else
+        legacyLibrary.jacSurface().navigationTitle(section?.title ?? "Música").jacInlineTitle()
+        #endif
+    }
+    @ViewBuilder private var importButton: some View {
+        #if os(iOS)
+        Button {picker=true} label:{
+            Image(systemName:"plus").font(.system(size:20,weight:.medium)).frame(width:44,height:44)
+                .foregroundStyle(.white).background(JACTheme.primary,in:RoundedRectangle(cornerRadius:14))
+        }.buttonStyle(.plain).disabled(store.isOffline).accessibilityLabel("Subir audios").accessibilityIdentifier("music.import")
+        #else
+        Button {picker=true} label:{Label("Subir audios",systemImage:"plus")}.disabled(store.isOffline).accessibilityIdentifier("music.import")
+        #endif
+    }
+    private func includesDownload(_ track: MusicTrack) -> Bool {
+        #if os(iOS)
+        !downloadedOnly || downloaded.contains(track.id)
+        #else
+        true
+        #endif
+    }
+    #if os(iOS)
+    private var recentlyAdded: [MusicTrack] {
+        Array((library?.tracks ?? []).sorted {a,b in a.createdAt == b.createdAt ? a.id < b.id:a.createdAt > b.createdAt}.prefix(2))
+    }
+    private var mobileLibrary: some View {
+        ScrollView {
+            VStack(alignment:.leading,spacing:18) {
+                if let error {InlineError(message:error)}
+                if let notice {Text(notice).font(.subheadline).foregroundStyle(.secondary)}
+                if let downloadProgress {
+                    HStack(spacing:10) {
+                        ProgressView().controlSize(.small)
+                        Text(downloadProgress).font(.caption).frame(maxWidth:.infinity,alignment:.leading)
+                        Button("Cancelar"){downloadTask?.cancel()}.frame(minHeight:44)
+                    }.padding(12).background(JACTheme.card,in:RoundedRectangle(cornerRadius:14))
+                }
+                if section == nil && search.isEmpty && !downloadedOnly {
+                    HStack {
+                        Text("Tu biblioteca").font(.headline)
+                        Spacer()
+                        libraryOptions
+                    }
+                    VStack(spacing:0) {
+                        ForEach(MusicSection.allCases) {item in
+                            playlistRow(item)
+                            if item != MusicSection.allCases.last {Divider().overlay(JACTheme.border)}
+                        }
+                    }
+                    if !recentlyAdded.isEmpty {
+                        VStack(alignment:.leading,spacing:8) {
+                            Text("Agregados recientemente").font(.headline)
+                            VStack(spacing:0) {
+                                ForEach(recentlyAdded) {track in
+                                    row(track)
+                                    if track.id != recentlyAdded.last?.id {Divider().overlay(JACTheme.border)}
+                                }
+                            }
+                        }.padding(.top,2)
+                    }
+                } else {
+                    HStack(alignment:.center) {
+                        Text(downloadedOnly ? "Descargados":section?.title ?? "Resultados en Música").font(.headline)
+                        Spacer()
+                        libraryOptions
+                    }
+                    if let section, let library, !library.tracks.filter({$0.section==section}).isEmpty {
+                        Button {download(library.tracks.filter{$0.section==section})} label:{
+                            Label("Descargar sección sin conexión",systemImage:"arrow.down.circle").font(.subheadline.weight(.medium)).frame(minHeight:44)
+                        }.disabled(downloadTask != nil || store.isOffline).accessibilityIdentifier("music.download.section")
+                    }
+                    LazyVStack(spacing:0) {
+                        ForEach(tracks) {track in
+                            row(track)
+                            if track.id != tracks.last?.id {Divider().overlay(JACTheme.border)}
+                        }
+                    }
+                    if tracks.isEmpty && !loading {
+                        ContentUnavailableView(downloadedOnly ? "Sin audios descargados":search.isEmpty ? "Aún no hay audios":"No encontramos ese audio",systemImage:downloadedOnly ? "arrow.down.circle":"headphones",description:Text(downloadedOnly ? "Descarga un audio o una sección para escuchar sin conexión.":search.isEmpty ? "Los audios aparecerán cuando el equipo los suba.":"Prueba con otro nombre."))
+                    }
+                }
+                if loading && library == nil {ProgressView("Cargando Música…").frame(maxWidth:.infinity).padding(.vertical,20)}
+            }.padding(.horizontal,20).padding(.top,8).padding(.bottom,20)
+        }.refreshable {await load()}
+    }
+    private var libraryOptions: some View {
+        Menu {
+            Button {downloadedOnly.toggle()} label:{Label(downloadedOnly ? "Ver todos los audios":"Ver audios descargados",systemImage:downloadedOnly ? "music.note.list":"arrow.down.circle")}
+            Button {Task{await load()}} label:{Label("Actualizar Música",systemImage:"arrow.clockwise")}.disabled(loading)
+        } label:{Image(systemName:downloadedOnly ? "arrow.down.circle.fill":"arrow.down.to.line").font(.system(size:19,weight:.medium)).frame(width:44,height:44).contentShape(Rectangle())}
+            .accessibilityLabel("Descargas y opciones de Música")
+    }
+    private func playlistRow(_ item: MusicSection) -> some View {
+        let list=library?.tracks.filter{$0.section==item} ?? []
+        let available = !list.isEmpty && list.allSatisfy{downloaded.contains($0.id)}
+        return Button {section=item;search="";downloadedOnly=false} label:{
+            HStack(spacing:13) {
+                Image(systemName:playlistIcon(item)).font(.system(size:23,weight:.regular)).foregroundStyle(playlistTint(item))
+                    .frame(width:52,height:52).background(playlistTint(item).opacity(0.09),in:RoundedRectangle(cornerRadius:13))
+                VStack(alignment:.leading,spacing:5) {
+                    Text(item.title).font(.system(.body,weight:.semibold)).foregroundStyle(JACTheme.ink)
+                    Text("\(list.count) audios"+(available ? " · Sin conexión":"")).font(.caption).foregroundStyle(.secondary)
+                }.frame(maxWidth:.infinity,alignment:.leading)
+                if available {Image(systemName:"checkmark.circle").font(.subheadline).foregroundStyle(.teal).accessibilityLabel("Disponible sin conexión")}
+                Image(systemName:"chevron.right").font(.caption.weight(.medium)).foregroundStyle(.secondary)
+            }.padding(.vertical,13).contentShape(Rectangle())
+        }.buttonStyle(.plain).accessibilityIdentifier("music.section."+item.rawValue)
+    }
+    private func playlistIcon(_ section: MusicSection) -> String {
+        switch section {case .warmup:"mic";case .tracks:"opticaldisc";case .demos:"square.and.pencil";case .studio:"waveform"}
+    }
+    private func playlistTint(_ section: MusicSection) -> Color {
+        switch section {
+        case .warmup,.tracks:JACTheme.action
+        case .demos:JACAdaptiveColor(light:(0.30,0.36,0.53),dark:(0.66,0.72,0.91))
+        case .studio:JACAdaptiveColor(light:(0.22,0.45,0.48),dark:(0.53,0.79,0.81))
+        }
+    }
+    #endif
+    #if os(macOS)
+    private var legacyLibrary: some View {
         List {
             if let error {Section {InlineError(message:error)}}
             if let notice {Section {Text(notice).font(.subheadline).foregroundStyle(.secondary)}}
@@ -272,24 +505,42 @@ struct MusicLibraryView: View {
             }
             if loading && library == nil {Section {ProgressView("Cargando Música…")}}
             Section {Label("Las descargas están disponibles en este dispositivo sin conexión.",systemImage:"arrow.down.circle").font(.caption).foregroundStyle(.secondary)}
-        }.jacSurface().navigationTitle(section?.title ?? "Música").jacInlineTitle()
-            .jacSearchable(text:$search,prompt:section == nil ? "Buscar en toda Música":"Buscar en esta sección")
-            .toolbar {
-                if section != nil {ToolbarItem(placement:.cancellationAction){Button {section=nil;search=""} label:{Label("Música",systemImage:"chevron.left")}}}
-                if user.canUploadMusic {ToolbarItem(placement:.primaryAction){Button {picker=true} label:{Label("Subir audios",systemImage:"plus")}.disabled(store.isOffline).accessibilityIdentifier("music.import")}}
-                ToolbarItem {Button {Task{await load()}} label:{Image(systemName:"arrow.clockwise")}.disabled(loading).accessibilityLabel("Actualizar Música")}
-            }
-            .fileImporter(isPresented:$picker,allowedContentTypes:[.audio],allowsMultipleSelection:true) {result in
-                do {let urls=try result.get();Task {await prepare(urls)}} catch {self.error=error.localizedDescription}
-            }
-            .sheet(item:$importing,onDismiss:{Task{await load()}}){incoming in MusicImportView(incoming:incoming,initialSection:section ?? .warmup).environmentObject(store)}
-            .confirmationDialog("Eliminar audio",isPresented:Binding(get:{deleting != nil},set:{if !$0 {deleting=nil}}),titleVisibility:.visible) {
-                if let track=deleting {Button("Eliminar «\(track.title)»",role:.destructive){Task{await remove(track)}}}
-            } message:{Text("Dejará de estar disponible para el equipo.")}
-            .task {library=store.client.cachedMusic();updateDownloads();await load()}
-            .onDisappear {downloadTask?.cancel()}
+        }
     }
-    private func row(_ track: MusicTrack) -> some View {
+    #endif
+    @ViewBuilder private func row(_ track: MusicTrack) -> some View {
+        #if os(iOS)
+        mobileTrackRow(track)
+        #else
+        legacyTrackRow(track)
+        #endif
+    }
+    #if os(iOS)
+    private func mobileTrackRow(_ track: MusicTrack) -> some View {
+        HStack(spacing:10) {
+            Button {store.music.play(track,queue:tracks)} label:{
+                HStack(spacing:12) {
+                    Image(systemName:"music.note").font(.system(size:17,weight:.medium)).foregroundStyle(JACTheme.action).frame(width:40,height:40)
+                        .background(JACTheme.action.opacity(0.08),in:RoundedRectangle(cornerRadius:10))
+                    VStack(alignment:.leading,spacing:5) {
+                        Text(track.title).font(.body.weight(.medium)).foregroundStyle(JACTheme.ink).lineLimit(2)
+                        Text((section == nil ? track.section.title+" · ":"")+track.filename.components(separatedBy:".").last!.uppercased()+" · "+track.sizeLabel).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                    }
+                    Spacer(minLength:4)
+                }.frame(minHeight:44).contentShape(Rectangle())
+            }.buttonStyle(.plain).accessibilityIdentifier("music.track."+track.id)
+            if downloaded.contains(track.id) {Image(systemName:"checkmark.circle.fill").foregroundStyle(.teal).accessibilityLabel("Disponible sin conexión")}
+            Menu {
+                Button {store.music.play(track,queue:tracks)} label:{Label("Reproducir",systemImage:"play")}
+                if downloaded.contains(track.id) {Button {do {if store.music.current?.id==track.id {store.music.stop()};try store.client.forgetMusic(track);updateDownloads()} catch {self.error=error.localizedDescription}} label:{Label("Quitar descarga de este dispositivo",systemImage:"arrow.down.circle")}}
+                else {Button {download([track])} label:{Label("Descargar sin conexión",systemImage:"arrow.down.circle")}.disabled(downloadTask != nil || store.isOffline)}
+                if library?.canDelete == true {Button(role:.destructive){deleting=track} label:{Label("Eliminar audio",systemImage:"trash")}}
+            } label:{Image(systemName:"ellipsis").frame(width:44,height:44).contentShape(Rectangle())}.accessibilityLabel("Opciones de "+track.title)
+        }.padding(.vertical,8)
+    }
+    #endif
+    #if os(macOS)
+    private func legacyTrackRow(_ track: MusicTrack) -> some View {
         HStack(spacing:12) {
             Button {store.music.play(track,queue:tracks)} label:{
                 HStack(spacing:14) {
@@ -307,6 +558,7 @@ struct MusicLibraryView: View {
             } label:{Image(systemName:"ellipsis").frame(width:36,height:44).contentShape(Rectangle())}.accessibilityLabel("Opciones de "+track.title)
         }.padding(.vertical,5)
     }
+    #endif
     private func prepare(_ urls:[URL]) async {
         do {let files=try await Task.detached(priority:.userInitiated){var files:[MusicImportFile]=[];do {for url in urls {files.append(try MusicImportFile.copy(url))};return files} catch {files.forEach{$0.remove()};throw error}}.value;importing=MusicIncomingAudio(files:files)} catch {self.error=error.localizedDescription}
     }

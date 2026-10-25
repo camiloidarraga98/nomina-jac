@@ -40,13 +40,39 @@ struct CRMHomeView:View {
     @State private var error:String?
     @State private var busy=false
     @State private var lastSync=Date.distantPast
+    @State private var showingFilters=false
+    @ScaledMetric(relativeTo:.subheadline) private var sectionHeight:CGFloat=44
     init(client:PayrollClient){ _crm=StateObject(wrappedValue:CRMStore(client)) }
     var body:some View {
         Group {
             if crm.denied || store.overview?.user.hasSection(.crm) != true { ContentUnavailableView("CRM no disponible",systemImage:"lock",description:Text(crm.message ?? "Solo administradores de JAC.")) }
-            else { Group {
-              if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractsHome() } }
-              else { List {
+            else { workspaceContent.jacSurface().jacWorkspaceTitle(section == "contracts" ? "Contratos":"CRM")
+                #if os(iOS)
+                .toolbar {
+                    if !JACDevice.isPad {
+                        ToolbarItem(placement:.topBarTrailing) { phoneCreateMenu }
+                    }
+                }
+                .sheet(isPresented:$showingFilters) { phoneFilters }
+                #endif
+                .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));if section != "contracts" {await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60)} } catch { break } } }
+                .refreshable { await load(sync:!store.isOffline) }
+                .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
+            }
+        }.environmentObject(crm)
+    }
+    @ViewBuilder private var workspaceContent:some View {
+        #if os(iOS)
+        if !JACDevice.isPad { phoneContent }
+        else { legacyContent }
+        #else
+        legacyContent
+        #endif
+    }
+    private var legacyContent:some View {
+        Group {
+            if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractsHome() } }
+            else { List {
                 if let error { InlineError(message:error) }
                 Section {
                     ViewThatFits(in:.horizontal) {
@@ -58,14 +84,151 @@ struct CRMHomeView:View {
                 if section == "shows" { showList }
                 else if section == "weekly" { CRMWeeklyView() }
                 else { CRMContactsView() }
-              } }
-            }.jacSurface().navigationTitle(section == "contracts" ? "Contratos":"CRM").jacInlineTitle()
-                .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));if section != "contracts" {await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60)} } catch { break } } }
-                .refreshable { await load(sync:!store.isOffline) }
-                .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
-            }
-        }.environmentObject(crm)
+            } }
+        }
     }
+    private var upcomingShows:[CRMItem] {
+        feed["shows"].crmItems.filter { $0.value["status"].text != "ignored" && $0.value["showDate"].text >= BoardingClock.today() }
+    }
+    private var searchedShows:[CRMItem] {
+        upcomingShows.filter { search.isEmpty || ($0.value["title"].text+" "+$0.value["entrepreneur"].text).localizedStandardContains(search) }
+    }
+    // A missing price/balance is not a confirmed zero or a complete total.
+    private var knownPending:Double? {
+        guard !feed.isNull,upcomingShows.allSatisfy({ !$0.value["sale"].isNull && !$0.value["balance"].isNull }) else { return nil }
+        return upcomingShows.reduce(0) { $0 + max(0,$1.value["balance"].number) }
+    }
+    #if os(iOS)
+    private var phoneContent:some View {
+        VStack(spacing:0) {
+            phoneSections.padding(.horizontal,20).padding(.bottom,12)
+            if section == "contracts" { CRMContractsHome() }
+            else if section == "shows" { phoneShows }
+            else { List {
+                if let error { InlineError(message:error) }
+                if section == "weekly" { CRMWeeklyView() }
+                else { CRMContactsView() }
+            }.listStyle(.insetGrouped) }
+        }
+    }
+    private var phoneSections:some View {
+        ScrollView(.horizontal,showsIndicators:false) {
+        HStack(spacing:24) {
+            phoneSection("Shows",value:"shows")
+            phoneSection("Empresarios",value:"contacts")
+            Menu {
+                Button("Resumen semanal") { section="weekly" }
+                Button("Contratos") { section="contracts" }
+                Link(destination:URL(string:"https://jhonalexcastano.com/crm?seccion=prospectos")!) { Label("Prospectos 2027 · Web",systemImage:"arrow.up.right") }
+            } label: {
+                HStack(spacing:5) { Text(section == "weekly" ? "Semana":section == "contracts" ? "Contratos":"Más");Image(systemName:"chevron.down").font(.caption2) }
+                    .font(.subheadline.weight(section == "weekly" || section == "contracts" ? .semibold:.regular))
+                    .foregroundStyle(section == "weekly" || section == "contracts" ? JACTheme.action:JACTheme.muted)
+                    .frame(minHeight:44)
+                    .overlay(alignment:.bottom) { if section == "weekly" || section == "contracts" { Capsule().fill(JACTheme.action).frame(height:2) } }
+            }.accessibilityLabel("Más secciones del CRM").accessibilityIdentifier("crm.moreSections")
+            Spacer(minLength:0)
+        }.fixedSize(horizontal:true,vertical:false)
+        }.frame(height:sectionHeight)
+            .overlay(alignment:.bottom) { Rectangle().fill(JACTheme.border).frame(height:1).allowsHitTesting(false) }
+            .accessibilityIdentifier("crm.sections")
+    }
+    private func phoneSection(_ title:String,value:String)->some View {
+        Button { section=value } label: {
+            Text(title).font(.subheadline.weight(section == value ? .semibold:.regular))
+                .foregroundStyle(section == value ? JACTheme.action:JACTheme.muted)
+                .frame(minHeight:44)
+                .overlay(alignment:.bottom) { if section == value { Capsule().fill(JACTheme.action).frame(height:2) } }
+        }.buttonStyle(.plain).accessibilityAddTraits(section == value ? .isSelected:[])
+    }
+    private var phoneCreateMenu:some View {
+        Menu {
+            Button { editor=CRMEditorRequest(kind:.create,record:.null,feed:feed) } label:{ Label("Nuevo show",systemImage:"calendar.badge.plus") }
+            Button { editor=CRMEditorRequest(kind:.payment,record:.null,feed:feed) } label:{ Label("Registrar abono",systemImage:"plus.circle") }.accessibilityIdentifier("crm.quickPayment")
+            Button { Task { await load(sync:true) } } label:{ Label("Actualizar shows de Calendar",systemImage:"arrow.clockwise") }
+        } label: {
+            Image(systemName:"plus").font(.title3.weight(.medium)).foregroundStyle(.white)
+                .frame(width:44,height:44).background(JACTheme.primary,in:RoundedRectangle(cornerRadius:14))
+        }.disabled(busy || store.isOffline || feed.isNull).accessibilityLabel("Nuevo show o registrar abono").accessibilityIdentifier("crm.add")
+    }
+    private var phoneShows:some View {
+        ScrollView {
+            LazyVStack(alignment:.leading,spacing:12) {
+                if let error { InlineError(message:error).padding(.bottom,2) }
+                phoneMetrics
+                HStack(spacing:10) {
+                    Image(systemName:"magnifyingglass").foregroundStyle(JACTheme.muted).accessibilityHidden(true)
+                    TextField("Buscar show o empresario",text:$search).font(.subheadline).accessibilityIdentifier("crm.search")
+                }.padding(.horizontal,12).frame(minHeight:44)
+                    .background(JACTheme.border.opacity(0.52),in:RoundedRectangle(cornerRadius:12))
+                HStack(spacing:8) {
+                    Text("Próximos").font(.caption.weight(.semibold)).foregroundStyle(JACTheme.action)
+                        .padding(.horizontal,12).frame(minHeight:36).background(JACTheme.action.opacity(0.08),in:RoundedRectangle(cornerRadius:10))
+                    Spacer(minLength:4)
+                    Button { showingFilters=true } label: { Label("Desde "+phoneMonthLabel,systemImage:"slider.horizontal.3").font(.caption).foregroundStyle(JACTheme.muted).frame(minHeight:44) }
+                        .accessibilityLabel("Filtrar shows desde "+phoneMonthLabel).accessibilityIdentifier("crm.filters")
+                }
+                ForEach(searchedShows) { item in
+                    NavigationLink { CRMShowView(id:item.id,contacts:feed["contacts"],feed:feed).environmentObject(crm) } label:{ CRMShowRow(show:item.value) }
+                        .buttonStyle(.plain).accessibilityIdentifier("crm.show."+item.id)
+                }
+                if searchedShows.isEmpty {
+                    Text(feed.isNull ? "Consultando…":search.isEmpty ? "No hay shows próximos en este rango.":"No hay shows que coincidan con la búsqueda.")
+                        .font(.subheadline).foregroundStyle(JACTheme.muted).frame(maxWidth:.infinity,alignment:.leading).padding(.vertical,16)
+                }
+                phoneSheets.padding(.top,8)
+            }.padding(.horizontal,20).padding(.top,2).padding(.bottom,24)
+        }.scrollDismissesKeyboard(.interactively)
+    }
+    private var phoneMetrics:some View {
+        HStack(alignment:.top,spacing:18) {
+            VStack(alignment:.leading,spacing:5) {
+                Text(feed.isNull ? "—":String(upcomingShows.count)).font(.title2.weight(.semibold)).monospacedDigit()
+                Text("Próximos shows").font(.caption).foregroundStyle(JACTheme.muted)
+            }.frame(maxWidth:.infinity,alignment:.leading)
+            Rectangle().fill(JACTheme.border).frame(width:1)
+            VStack(alignment:.leading,spacing:5) {
+                Text(knownPending.map(CRMFields.money) ?? (feed.isNull ? "—":"Por completar"))
+                    .font(.title3.weight(.semibold)).monospacedDigit().minimumScaleFactor(0.8)
+                Text("Por cobrar · COP").font(.caption).foregroundStyle(JACTheme.muted)
+            }.frame(maxWidth:.infinity,alignment:.leading)
+        }.fixedSize(horizontal:false,vertical:true).padding(.bottom,16)
+            .overlay(alignment:.bottom) { Rectangle().fill(JACTheme.border).frame(height:1) }.padding(.bottom,2)
+    }
+    private var phoneSheets:some View {
+        DisclosureGroup {
+            VStack(alignment:.leading,spacing:12) {
+                Text(feed["sheets"]["ready"].flag ? "Google Sheets conectado":"Configura la conexión desde el CRM web.").font(.footnote).foregroundStyle(JACTheme.muted)
+                if let url=URL(string:feed["sheets"]["url"].text),url.scheme == "https",url.host == "docs.google.com" {
+                    Link(destination:url) {
+                        Text("Abrir hoja de abonos").font(.subheadline).frame(maxWidth:.infinity,minHeight:44,alignment:.leading).contentShape(Rectangle())
+                    }
+                }
+                Button { Task { do { _ = try await crm.command("syncSheets");await load() } catch { self.error=error.localizedDescription } } } label: {
+                    Text("Sincronizar abonos pendientes").font(.subheadline).frame(maxWidth:.infinity,minHeight:44,alignment:.leading).contentShape(Rectangle())
+                }.disabled(store.isOffline || !feed["sheets"]["ready"].flag)
+            }.frame(maxWidth:.infinity,alignment:.leading).padding(.top,10)
+        } label: {
+            Text("Control de abonos JAC").frame(maxWidth:.infinity,minHeight:44,alignment:.leading).contentShape(Rectangle())
+        }.font(.footnote).tint(JACTheme.action)
+    }
+    private var phoneMonthLabel:String {
+        guard let date=ReceiptParser.civilDate(month+"-01") else { return month }
+        let formatter=DateFormatter();formatter.locale=Locale(identifier:"es_CO");formatter.timeZone=CalendarClock.calendar.timeZone;formatter.dateFormat="MMM yyyy"
+        return formatter.string(from:date)
+    }
+    private var phoneFilters:some View {
+        NavigationStack {
+            Form {
+                Section("Rango de consulta") {
+                    JACDatePicker("Desde el mes",selection:Binding(get:{ ReceiptParser.civilDate(month+"-01") ?? Date() },set:{ month=CalendarClock.month($0);Task { await load() } }),in:(ReceiptParser.civilDate(CalendarClock.month(Date())+"-01") ?? Date())...,displayedComponents:.date)
+                        .disabled(busy).accessibilityIdentifier("crm.month")
+                }
+            }.jacSurface().navigationTitle("Filtros de shows").jacInlineTitle()
+                .toolbar { ToolbarItem(placement:.confirmationAction) { Button("Listo") { showingFilters=false } } }
+        }.presentationDetents([.medium,.large])
+    }
+    #endif
     private var sectionPicker:some View {Picker("Sección",selection:$section) {Text("Shows").tag("shows");Text("Semana").tag("weekly");Text("Empresarios").tag("contacts");Text("Contratos").tag("contracts")}.pickerStyle(.segmented).accessibilityIdentifier("crm.sections")}
     private var quickPayment:some View {
         Button { editor=CRMEditorRequest(kind:.payment,record:.null,feed:feed) } label: { Label("Registrar abono",systemImage:"plus.circle").frame(maxWidth:.infinity) }
@@ -103,7 +266,16 @@ struct CRMHomeView:View {
 }
 struct CRMShowRow:View {
     let show:JSONValue
-    var body:some View {
+    @ScaledMetric(relativeTo:.title3) private var dateBadgeWidth:CGFloat=44
+    @ViewBuilder var body:some View {
+        #if os(iOS)
+        if !JACDevice.isPad { phoneCard }
+        else { legacyRow }
+        #else
+        legacyRow
+        #endif
+    }
+    private var legacyRow:some View {
         VStack(alignment:.leading,spacing:14) {
             HStack(alignment:.top,spacing:12) {
                 JACIcon(symbol:"music.mic",tone:.violet)
@@ -117,6 +289,77 @@ struct CRMShowRow:View {
             }.monospacedDigit()
         }.padding(.vertical,10)
     }
+    #if os(iOS)
+    private var phoneCard:some View {
+        VStack(alignment:.leading,spacing:12) {
+            HStack(spacing:12) {
+                dateBadge
+                VStack(alignment:.leading,spacing:5) {
+                    Text(primaryTitle).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal:false,vertical:true)
+                    if !secondaryTitle.isEmpty { Text(secondaryTitle).font(.caption).foregroundStyle(JACTheme.muted).fixedSize(horizontal:false,vertical:true) }
+                }.frame(maxWidth:.infinity,alignment:.leading)
+                Image(systemName:"chevron.right").font(.caption).foregroundStyle(JACTheme.muted).accessibilityHidden(true)
+            }
+            Rectangle().fill(JACTheme.border).frame(height:1)
+            ViewThatFits(in:.horizontal) {
+                HStack(alignment:.center,spacing:10) { financialStatus;Spacer(minLength:8);balanceValue }
+                VStack(alignment:.leading,spacing:10) { financialStatus;balanceValue }
+            }
+        }.padding(14).frame(maxWidth:.infinity,alignment:.leading)
+            .background(JACTheme.card,in:RoundedRectangle(cornerRadius:18))
+            .overlay(RoundedRectangle(cornerRadius:18).stroke(JACTheme.border,lineWidth:1))
+            .contentShape(RoundedRectangle(cornerRadius:18))
+    }
+    private var primaryTitle:String {
+        let municipality=show["municipality"].text
+        return municipality.isEmpty ? (show["title"].text.isEmpty ? "Show sin nombre":show["title"].text):municipality
+    }
+    private var secondaryTitle:String {
+        if !show["municipality"].text.isEmpty,!show["title"].text.isEmpty { return show["title"].text }
+        return show["entrepreneur"].text
+    }
+    @ViewBuilder private var dateBadge:some View {
+        if let date=CalendarClock.date(show["showDate"].text) {
+            VStack(spacing:3) {
+                Text(datePart(date,"MMM").uppercased()).font(.caption2.weight(.semibold)).foregroundStyle(JACTheme.muted)
+                Text(datePart(date,"dd")).font(.title3.weight(.semibold)).monospacedDigit().foregroundStyle(JACTheme.ink)
+            }.frame(width:dateBadgeWidth).padding(.vertical,7)
+                .background(JACTheme.canvas,in:RoundedRectangle(cornerRadius:10))
+                .overlay(RoundedRectangle(cornerRadius:10).stroke(JACTheme.border,lineWidth:1))
+                .accessibilityElement(children:.ignore).accessibilityLabel(CalendarClock.dayLabel(show["showDate"].text))
+        } else {
+            Image(systemName:"calendar").font(.title3).foregroundStyle(JACTheme.muted).frame(width:dateBadgeWidth,height:52)
+                .background(JACTheme.canvas,in:RoundedRectangle(cornerRadius:10)).accessibilityLabel("Fecha por confirmar")
+        }
+    }
+    private func datePart(_ date:Date,_ pattern:String)->String {
+        let formatter=DateFormatter();formatter.locale=Locale(identifier:"es_CO");formatter.calendar=CalendarClock.calendar;formatter.timeZone=CalendarClock.calendar.timeZone;formatter.dateFormat=pattern
+        return formatter.string(from:date)
+    }
+    private var statusText:String {
+        if show["sale"].isNull { return "Sin precio" }
+        if show["balance"].isNull { return "Por completar" }
+        if show["balance"].number < 0 { return "Saldo a favor" }
+        if show["balance"].number == 0 { return show["sale"].number > 0 ? "Pagado":"Sin saldo" }
+        return show["paid"].number > 0 ? "Abono recibido":"Saldo pendiente"
+    }
+    private var settled:Bool { !show["sale"].isNull && !show["balance"].isNull && show["balance"].number <= 0 }
+    private var financialStatus:some View {
+        Text(statusText).font(.caption2.weight(.semibold))
+            .foregroundStyle(settled ? JACTone.teal.color:JACTone.amber.color)
+            .padding(.horizontal,9).padding(.vertical,6)
+            .background((settled ? JACTone.teal.color:JACTone.amber.color).opacity(0.09),in:RoundedRectangle(cornerRadius:7))
+    }
+    private var balanceValue:some View {
+        VStack(alignment:.trailing,spacing:3) {
+            Text(!show["balance"].isNull && show["balance"].number < 0 ? "Saldo a favor":"Saldo por cobrar")
+                .font(.caption2).foregroundStyle(JACTheme.muted)
+            Text(show["sale"].isNull || show["balance"].isNull ? "Por completar":CRMFields.money(abs(show["balance"].number)))
+                .font(.subheadline.weight(.semibold)).monospacedDigit().foregroundStyle(JACTheme.ink)
+        }
+    }
+    #endif
+
 }
 struct CRMEditorRequest:Identifiable {
     enum Kind { case price,create,payment,contact,contracts,void }

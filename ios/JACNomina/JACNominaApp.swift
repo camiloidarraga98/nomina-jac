@@ -202,9 +202,11 @@ enum JACTheme {
     #if os(iOS)
     static let pageTopSpacing: CGFloat = 8
     static let card = Color(uiColor: .secondarySystemGroupedBackground)
-    static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 11/255, green: 24/255, blue: 35/255, alpha: 1) : UIColor(red: 243/255, green: 247/255, blue: 251/255, alpha: 1) })
+    static let canvas = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 11/255, green: 25/255, blue: 37/255, alpha: 1) : UIColor(red: 245/255, green: 247/255, blue: 250/255, alpha: 1) })
     static let action = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 98/255, green: 206/255, blue: 255/255, alpha: 1) : UIColor(red: 0/255, green: 111/255, blue: 189/255, alpha: 1) })
-    static let ink = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 231/255, green: 241/255, blue: 250/255, alpha: 1) : UIColor(red: 22/255, green: 52/255, blue: 73/255, alpha: 1) })
+    static let ink = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 232/255, green: 241/255, blue: 246/255, alpha: 1) : UIColor(red: 18/255, green: 47/255, blue: 66/255, alpha: 1) })
+    static let border = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 42/255, green: 61/255, blue: 75/255, alpha: 1) : UIColor(red: 225/255, green: 231/255, blue: 238/255, alpha: 1) })
+    static let muted = Color(UIColor { $0.userInterfaceStyle == .dark ? UIColor(red: 167/255, green: 183/255, blue: 197/255, alpha: 1) : UIColor(red: 98/255, green: 111/255, blue: 126/255, alpha: 1) })
     @MainActor static func configure() {
         let tabs = UITabBarAppearance(); tabs.configureWithOpaqueBackground(); tabs.backgroundColor = .systemBackground
         for item in [tabs.stackedLayoutAppearance, tabs.inlineLayoutAppearance, tabs.compactInlineLayoutAppearance] {
@@ -213,6 +215,14 @@ enum JACTheme {
             item.selected.iconColor = UIColor(action); item.selected.titleTextAttributes = [.foregroundColor: UIColor(action)]
         }
         UITabBar.appearance().standardAppearance = tabs; UITabBar.appearance().scrollEdgeAppearance = tabs
+        let navigation = UINavigationBarAppearance()
+        navigation.configureWithOpaqueBackground()
+        navigation.backgroundColor = UIColor(canvas)
+        navigation.shadowColor = .clear
+        navigation.titleTextAttributes = [.foregroundColor: UIColor(ink)]
+        UINavigationBar.appearance().standardAppearance = navigation
+        UINavigationBar.appearance().scrollEdgeAppearance = navigation
+        UINavigationBar.appearance().compactAppearance = navigation
     }
     #else
     static let pageTopSpacing: CGFloat = 18
@@ -220,6 +230,8 @@ enum JACTheme {
     static let canvas = JACAdaptiveColor(light: (0.953,0.969,0.984), dark: (0.043,0.094,0.137))
     static let action = JACAdaptiveColor(light: (0,0.435,0.741), dark: (0.384,0.808,1))
     static let ink = JACAdaptiveColor(light: (0.086,0.204,0.286), dark: (0.906,0.945,0.980))
+    static let border = JACAdaptiveColor(light: (0.88,0.91,0.94), dark: (0.16,0.24,0.29))
+    static let muted = Color.secondary
     @MainActor static func configure() {}
     #endif
 }
@@ -234,8 +246,8 @@ struct JACPrimaryButtonStyle: ButtonStyle {
     @Environment(\.isEnabled) private var enabled
     func makeBody(configuration: Configuration) -> some View {
         configuration.label.fontWeight(.semibold).padding(.horizontal, 16).padding(.vertical, 12)
-            .foregroundStyle(.white).background(LinearGradient(colors: [JACTheme.primary, Color(red: 0.02, green: 0.33, blue: 0.59)], startPoint: .topLeading, endPoint: .bottomTrailing), in: RoundedRectangle(cornerRadius: 16))
-            .contentShape(RoundedRectangle(cornerRadius: 16))
+            .foregroundStyle(.white).background(JACTheme.primary, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(RoundedRectangle(cornerRadius: 12))
             .opacity(enabled ? (configuration.isPressed ? 0.8 : 1) : 0.45)
     }
 }
@@ -278,7 +290,11 @@ enum JACTone {
 }
 struct JACCanvas: View {
     var body: some View {
+        #if os(iOS)
+        JACTheme.canvas.ignoresSafeArea()
+        #else
         LinearGradient(colors: [JACTheme.action.opacity(0.055), JACTheme.canvas, JACTheme.canvas], startPoint: .topLeading, endPoint: .bottomTrailing).ignoresSafeArea()
+        #endif
     }
 }
 struct JACFeatureBanner: View {
@@ -411,6 +427,17 @@ extension View {
         navigationBarTitleDisplayMode(.inline).modifier(PhoneSidebarToolbar())
         #else
         self
+        #endif
+    }
+    // One root heading beside the drawer button; details keep their native back
+    // button and sheets keep the system title/close controls. Preserve the
+    // navigation title as the bar's identity for VoiceOver and state restoration.
+    @ViewBuilder func jacWorkspaceTitle(_ title: String) -> some View {
+        #if os(iOS)
+        navigationTitle(title).navigationBarTitleDisplayMode(.inline)
+            .modifier(PhoneSidebarToolbar(title: title))
+        #else
+        navigationTitle(title)
         #endif
     }
     @ViewBuilder func jacListSpacing() -> some View {

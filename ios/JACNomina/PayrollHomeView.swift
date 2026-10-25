@@ -16,6 +16,7 @@ extension EnvironmentValues {
     }
 }
 struct PhoneSidebarToolbar: ViewModifier {
+    var title: String? = nil
     @Environment(\.phoneSidebarMenu) private var menu
     @State private var insideModal = true
     @ViewBuilder
@@ -25,15 +26,26 @@ struct PhoneSidebarToolbar: ViewModifier {
                 if insideModal != value { insideModal = value }
             }).toolbar {
                 if !insideModal {
+                    if title != nil {
+                        ToolbarItem(placement: .principal) {
+                            Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
+                        }
+                    }
                     ToolbarItem(placement: .topBarLeading) {
-                        Button(action: menu.open) {
-                            Image(systemName: "line.3.horizontal")
-                                .font(.system(size: 18, weight: .semibold))
-                                .frame(width: 44, height: 44)
-                                .background(JACTheme.action.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
-                        }.buttonStyle(.plain).foregroundStyle(JACTheme.action)
+                        HStack(spacing: 6) {
+                            Button(action: menu.open) {
+                                Image(systemName: "line.3.horizontal")
+                                    .font(.system(size: 18, weight: .medium))
+                                    .frame(width: 44, height: 44)
+                            }.buttonStyle(.plain).foregroundStyle(JACTheme.ink)
                             .accessibilityLabel("Abrir menú").accessibilityHint("También puedes deslizar desde el borde izquierdo.")
                             .accessibilityIdentifier("phone.menu.open").accessibilityFocused(menu.focus)
+                            if let title {
+                                Text(title).font(.system(.title2, weight: .bold))
+                                    .foregroundStyle(JACTheme.ink).lineLimit(1).minimumScaleFactor(0.8)
+                                    .accessibilityAddTraits(.isHeader)
+                            }
+                        }
                     }
                 }
             }
@@ -188,12 +200,12 @@ struct PayrollHomeView: View {
     @AccessibilityFocusState private var menuOpenFocused: Bool
     private var phoneDestinations: [(id: String, title: String, symbol: String)] {
         var items: [(String, String, String)] = []
-        if user.hasSection(.crm) { items.append(("crm", "CRM", "briefcase")) }
-        if user.hasSection(.payroll) { items.append(("payroll", "Quincena", "wallet.pass")) }
         if user.hasSection(.calendar) { items.append(("agenda", "Agenda", "calendar.badge.clock")) }
+        if user.hasSection(.crm) { items.append(("crm", "CRM", "briefcase")) }
+        if user.hasSection(.payroll) { items.append(("payroll", "Quincenas", "list.clipboard")) }
         if user.hasSection(.itineraries) || user.hasSection(.boarding) { items.append(("itineraries", user.hasSection(.itineraries) ? "Itinerarios" : "Pases", "doc.text")) }
-        if user.hasSection(.alerts) { items.append(("alerts", "Alertas", "bell.badge")) }
         if user.hasSection(.itineraries) && user.hasSection(.boarding) { items.append(("boarding", "Pases", "airplane")) }
+        if user.hasSection(.alerts) { items.append(("alerts", "Alertas", "bell")) }
         if user.canReadMedia { items.append(("media", "Fotografía", "photo.on.rectangle.angled")) }
         if user.canReadMusic { items.append(("music", "Música", "music.note.list")) }
         items.append(("management", "Gestión", "slider.horizontal.3"))
@@ -207,7 +219,7 @@ struct PayrollHomeView: View {
     }
     private var phoneDrawerWorkspace: some View {
         GeometryReader { geometry in
-            let width = min(330, geometry.size.width * 0.86)
+            let width = min(314, geometry.size.width * 0.86)
             // One rigid translation moves the persistent panel and the entire
             // screen together. Its full width keeps navigation/scroll layout stable.
             HStack(spacing: 0) {
@@ -269,38 +281,39 @@ struct PayrollHomeView: View {
     private var phoneSidebar: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack {
-                BrandView().frame(maxWidth: 150).accessibilityHidden(true)
+                Image("JACLogo").resizable().scaledToFit().frame(width: 114)
+                    .padding(8).background(.white, in: RoundedRectangle(cornerRadius: 10)).accessibilityHidden(true)
                 Spacer()
                 Button { setPhoneMenu(false) } label: { Image(systemName: "xmark").frame(width: 44, height: 44) }
                     .accessibilityLabel("Cerrar menú").accessibilityIdentifier("phone.menu.close").accessibilityFocused($menuCloseFocused)
-            }.padding(.horizontal, 18).padding(.top, 12).padding(.bottom, 18)
-            Divider()
+            }.padding(.horizontal, 18).padding(.top, 10).padding(.bottom, 12)
             ScrollView {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("TU ESPACIO").font(.caption.weight(.semibold)).foregroundStyle(.secondary).padding(.horizontal, 14).padding(.vertical, 10)
-                    ForEach(phoneDestinations, id: \.id) { item in
-                        Button {
-                            phoneVisited.insert(selected); phoneVisited.insert(item.id); selected = item.id; setPhoneMenu(false)
-                        } label: {
-                            HStack(spacing: 14) {
-                                Image(systemName: item.symbol).font(.body).frame(width: 25)
-                                Text(item.title).font(.body.weight(selected == item.id ? .semibold : .regular))
-                                Spacer(minLength: 4)
-                                if selected == item.id { Image(systemName: "checkmark").font(.caption.weight(.semibold)) }
-                            }.padding(.horizontal, 14).frame(minHeight: 50).contentShape(Rectangle())
-                        }.buttonStyle(.plain)
-                            .foregroundStyle(selected == item.id ? JACTheme.action : JACTheme.ink)
-                            .background(selected == item.id ? JACTheme.action.opacity(0.12) : Color.clear, in: RoundedRectangle(cornerRadius: 14))
-                            .accessibilityAddTraits(selected == item.id ? [.isSelected] : [])
-                            .accessibilityIdentifier("phone.section." + item.id)
+                VStack(alignment: .leading, spacing: 2) {
+                    let operations = phoneDestinations.filter { !["media", "music", "management"].contains($0.id) }
+                    if !operations.isEmpty {
+                        phoneSidebarHeading("OPERACIÓN")
+                        ForEach(operations, id: \.id) { phoneSidebarItem($0) }
                     }
-                }.padding(12)
+                    let library = phoneDestinations.filter { ["media", "music"].contains($0.id) }
+                    if !library.isEmpty {
+                        phoneSidebarHeading("BIBLIOTECA").padding(.top, 10)
+                        ForEach(library, id: \.id) { phoneSidebarItem($0) }
+                    }
+                    if let management = phoneDestinations.first(where: { $0.id == "management" }) {
+                        phoneSidebarItem(management).padding(.top, 12)
+                    }
+                }.padding(.horizontal, 16).padding(.bottom, 12)
             }.accessibilityIdentifier("phone.sidebar.scroll")
-            Divider()
-            VStack(alignment: .leading, spacing: 4) {
-                Text(user.displayName).font(.subheadline.weight(.semibold)).lineLimit(2)
-                Text("Tu equipo, en un solo lugar.").font(.caption).foregroundStyle(.secondary)
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(22).privacySensitive()
+            Divider().padding(.horizontal, 20)
+            HStack(spacing: 10) {
+                Text(user.displayName.split(separator: " ").prefix(2).map { String($0.prefix(1)) }.joined().uppercased())
+                    .font(.caption.weight(.semibold)).foregroundStyle(JACTheme.action)
+                    .frame(width: 34, height: 34).background(JACTheme.action.opacity(0.09), in: Circle())
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(user.displayName).font(.subheadline.weight(.semibold)).lineLimit(2)
+                    Text(user.isOwner ? "Administración" : "Mi espacio").font(.caption).foregroundStyle(JACTheme.muted)
+                }
+            }.frame(maxWidth: .infinity, alignment: .leading).padding(.horizontal, 24).padding(.vertical, 16).privacySensitive()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(JACTheme.card)
@@ -308,6 +321,26 @@ struct PayrollHomeView: View {
         .accessibilityElement(children: .contain)
         .accessibilityAddTraits(phoneMenuOpen ? [.isModal] : [])
         .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { closePhoneMenuOnSwipe($0) })
+    }
+    private func phoneSidebarHeading(_ title: String) -> some View {
+        Text(title).font(.caption2.weight(.semibold)).tracking(1.2).foregroundStyle(JACTheme.muted)
+            .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 6)
+    }
+    private func phoneSidebarItem(_ item: (id: String, title: String, symbol: String)) -> some View {
+        Button {
+            phoneVisited.insert(selected); phoneVisited.insert(item.id); selected = item.id; setPhoneMenu(false)
+        } label: {
+            HStack(spacing: 13) {
+                Image(systemName: item.symbol).font(.system(size: 18, weight: .regular)).frame(width: 22)
+                    .foregroundStyle(selected == item.id ? JACTheme.action : JACTheme.muted)
+                Text(item.title).font(.subheadline.weight(selected == item.id ? .semibold : .regular))
+                Spacer(minLength: 4)
+                if selected == item.id { Circle().fill(JACTheme.action).frame(width: 5, height: 5).accessibilityHidden(true) }
+            }.padding(.horizontal, 13).frame(minHeight: 49).contentShape(Rectangle())
+        }.buttonStyle(.plain).foregroundStyle(selected == item.id ? JACTheme.action : JACTheme.ink)
+            .background(selected == item.id ? JACTheme.action.opacity(0.09) : Color.clear, in: RoundedRectangle(cornerRadius: 12))
+            .accessibilityAddTraits(selected == item.id ? [.isSelected] : [])
+            .accessibilityIdentifier("phone.section." + item.id)
     }
     @State private var sidebarVisibility: NavigationSplitViewVisibility = .all
     @State private var compactColumn: NavigationSplitViewColumn = .detail
@@ -411,6 +444,7 @@ struct PeriodsView: View {
     private var content: some View {
             List {
                 if store.hasOperationStatus { OperationStatusSection() }
+                #if os(macOS)
                 if archive {
                     Section {
                         JACFeatureBanner(eyebrow: "JAC · Archivo", title: "Cada cierre, a mano.", subtitle: "Consulta tus quincenas y documentos conservados.", symbol: "archivebox")
@@ -423,6 +457,7 @@ struct PeriodsView: View {
                             .buttonStyle(JACPrimaryButtonStyle()).accessibilityLabel("Crear quincena").accessibilityIdentifier("period.create").disabled(!store.canWrite)
                     }.jacStandaloneRow()
                 }
+                #endif
                 if periods.isEmpty {
                     ContentUnavailableView(search.isEmpty ? (archive ? "Archivo vacío" : "Sin quincenas") : "Sin resultados", systemImage: archive ? "archivebox" : "calendar", description: Text(archive ? "Consulta los cierres y sus documentos." : "Crea una quincena para comenzar."))
                 }
@@ -439,12 +474,47 @@ struct PeriodsView: View {
                         }
                     }
                 }
-            }.jacSurface().navigationTitle(archive ? "Archivo" : "Quincenas").jacInlineTitle()
+            }.jacSurface().jacWorkspaceTitle(archive ? "Archivo" : "Quincenas")
                 .jacSearchable(text: $search, prompt: "Buscar mes o estado")
+                #if os(iOS)
+                .toolbar {
+                    if !archive && overview.user.can("payroll") {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                if let w = store.workspace { editor = PayrollEditorSession(kind: .period, workspace: w, detail: nil, record: PayrollEditorSession.newRecord(.period, workspace: w)) }
+                            } label: {
+                                Image(systemName: "plus").font(.title3.weight(.medium)).foregroundStyle(.white)
+                                    .frame(width: 44, height: 44).background(JACTheme.primary, in: RoundedRectangle(cornerRadius: 14))
+                            }.buttonStyle(.plain).accessibilityLabel("Crear quincena").accessibilityIdentifier("period.create").disabled(!store.canWrite)
+                        }
+                    }
+                }
+                #endif
                 .refreshable { try? await store.refresh() }
                 .sheet(item: $editor, onDismiss: { if let id = createdPeriod { path.append(id); createdPeriod = nil } }) { session in PayrollEditorView(session: session) { createdPeriod = $0 } }
     }
-    private func periodRow(_ period: PeriodSummary) -> some View {
+    @ViewBuilder private func periodRow(_ period: PeriodSummary) -> some View {
+        #if os(iOS)
+        if !JACDevice.isPad {
+            HStack(alignment: .center, spacing: 12) {
+                Image(systemName: period.isClosed ? "checkmark.seal" : "calendar")
+                    .font(.body).foregroundStyle(JACTheme.action).frame(width: 38, height: 38)
+                    .background(JACTheme.action.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 7) {
+                    Text(period.title).font(.subheadline.weight(.semibold)).fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 8) {
+                        Text(period.isClosed ? "Cerrada" : "En curso").foregroundStyle(JACTheme.action)
+                        Text("· \(period.showCount) shows").foregroundStyle(JACTheme.muted)
+                    }.font(.caption)
+                    if period.ownerOnly { Text("Corrección de cierre").font(.caption).foregroundStyle(.orange) }
+                }
+            }.padding(.vertical, 8)
+        } else { legacyPeriodRow(period) }
+        #else
+        legacyPeriodRow(period)
+        #endif
+    }
+    private func legacyPeriodRow(_ period: PeriodSummary) -> some View {
         HStack(alignment: .top, spacing: 14) {
             JACIcon(symbol: period.isClosed ? "checkmark.seal" : "wallet.pass", tone: period.isClosed ? .violet : .blue)
             VStack(alignment: .leading, spacing: 10) {

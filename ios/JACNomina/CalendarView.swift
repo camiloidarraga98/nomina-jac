@@ -3,6 +3,7 @@ import SwiftUI
 struct CalendarView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var phase
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let user: PayrollUser
     @StateObject private var connectivity = AgendaConnectivity()
     @State private var month = CalendarClock.month(Date())
@@ -21,6 +22,13 @@ struct CalendarView: View {
     @State private var liveMonth: String?
     @State private var contentWidth: CGFloat = 0
     private var wideTablet: Bool { JACDevice.isPad && contentWidth >= 820 }
+    private var compactPhone: Bool {
+        #if os(iOS)
+        !JACDevice.isPad
+        #else
+        false
+        #endif
+    }
     @State private var offlineMessage: String?
     init(user: PayrollUser, initialMonth: String? = nil) {
         self.user = user
@@ -33,7 +41,7 @@ struct CalendarView: View {
     var body: some View {
         let byDay = visible.map { CalendarClock.eventsByDay($0.events, days: $0.days) } ?? [:]
         return NavigationStack {
-            AgendaPage {
+            AgendaPage(compact: compactPhone) {
                 if let notice { AgendaSection { Label(notice, systemImage: "checkmark.circle").foregroundStyle(JACTheme.action) } }
                 if let error { AgendaSection { InlineError(message: error); Button("Reintentar") { Task { await refresh() } } } }
                 if visible == nil, let offlineMessage {
@@ -56,28 +64,32 @@ struct CalendarView: View {
                     AgendaSection { agendaActions }
                 }
                 if let visible, visible.connection.connected, visible.connection.selected != nil {
-                    AgendaSection { Picker("Vista de agenda", selection: $mode) { Text("Mes").tag("Mes"); Text("Próximos").tag("Próximos") }.pickerStyle(.segmented).accessibilityIdentifier("agenda.mode") }
-                    if mode == "Mes" {
-                        if wideTablet {
-                            AgendaSection {
-                                HStack(alignment: .top, spacing: 28) {
-                                    VStack(spacing: 12) { monthPanel(visible, byDay: byDay) }.frame(minWidth: 350, maxWidth: 490)
-                                    VStack(alignment: .leading, spacing: 18) {
-                                        Text(CalendarClock.dayLabel(day).capitalized).font(.headline)
-                                        dayEvents(byDay)
-                                    }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.top, 8)
-                                }.padding(.vertical, 8).accessibilityElement(children: .contain).accessibilityIdentifier("ipad.agenda.columns")
+                    if compactPhone {
+                        phoneAgenda(visible, byDay: byDay)
+                    } else {
+                        AgendaSection { Picker("Vista de agenda", selection: $mode) { Text("Mes").tag("Mes"); Text("Próximos").tag("Próximos") }.pickerStyle(.segmented).accessibilityIdentifier("agenda.mode") }
+                        if mode == "Mes" {
+                            if wideTablet {
+                                AgendaSection {
+                                    HStack(alignment: .top, spacing: 28) {
+                                        VStack(spacing: 12) { monthPanel(visible, byDay: byDay) }.frame(minWidth: 350, maxWidth: 490)
+                                        VStack(alignment: .leading, spacing: 18) {
+                                            Text(CalendarClock.dayLabel(day).capitalized).font(.headline)
+                                            dayEvents(byDay)
+                                        }.frame(maxWidth: .infinity, alignment: .topLeading).padding(.top, 8)
+                                    }.padding(.vertical, 8).accessibilityElement(children: .contain).accessibilityIdentifier("ipad.agenda.columns")
+                                }
+                            } else {
+                                AgendaSection { monthPanel(visible, byDay: byDay) }
+                                AgendaSection(title:CalendarClock.dayLabel(day).capitalized) { dayEvents(byDay) }
                             }
                         } else {
-                            AgendaSection { monthPanel(visible, byDay: byDay) }
-                            AgendaSection(title:CalendarClock.dayLabel(day).capitalized) { dayEvents(byDay) }
-                        }
-                    } else {
-                        AgendaSection { agendaActions }
-                        AgendaSection {
-                            Text("Próximos 90 días · hasta " + CalendarClock.dayLabel(visible.upcomingUntil)).font(.caption).foregroundStyle(.secondary)
-                            if visible.upcoming.isEmpty { Text("No hay eventos programados en los próximos 90 días.").foregroundStyle(.secondary) }
-                            ForEach(visible.upcoming) { item in Button { event = item } label: { AgendaEventRow(event: item, showsDay: true) }.buttonStyle(.plain).accessibilityIdentifier("agenda.upcoming.\(item.id)") }
+                            AgendaSection { agendaActions }
+                            AgendaSection {
+                                Text("Próximos 90 días · hasta " + CalendarClock.dayLabel(visible.upcomingUntil)).font(.caption).foregroundStyle(.secondary)
+                                if visible.upcoming.isEmpty { Text("No hay eventos programados en los próximos 90 días.").foregroundStyle(.secondary) }
+                                ForEach(visible.upcoming) { item in Button { event = item } label: { AgendaEventRow(event: item, showsDay: true) }.buttonStyle(.plain).accessibilityIdentifier("agenda.upcoming.\(item.id)") }
+                            }
                         }
                     }
                     if let warning = store.agendaStorageWarning {
@@ -87,9 +99,33 @@ struct CalendarView: View {
                         AgendaSection { Text(visible.connection.writeAuthorized == true ? "Este calendario permite consultar. Elige en Conexión uno que puedas editar." : "Abre Conexión y vuelve a autorizar Google para crear y editar eventos.").font(.footnote).foregroundStyle(.secondary) }
                     }
                 }
-            }.background { GeometryReader { geometry in Color.clear.onAppear { contentWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in contentWidth = width } }.allowsHitTesting(false) }.jacSurface().navigationTitle("Agenda").jacInlineTitle().refreshable { await refresh() }.jacRefreshCommand { Task { await refresh() } }
+            }.background { GeometryReader { geometry in Color.clear.onAppear { contentWidth = geometry.size.width }.onChange(of: geometry.size.width) { _, width in contentWidth = width } }.allowsHitTesting(false) }.jacSurface().jacWorkspaceTitle("Agenda").refreshable { await refresh() }.jacRefreshCommand { Task { await refresh() } }
                 .toolbar {
-                    if user.isOwner { ToolbarItem(placement:.jacTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) } }
+                    if compactPhone {
+                        if user.isOwner || visible != nil {
+                            ToolbarItem(placement: .jacTrailing) {
+                                Menu {
+                                    Button { Task { await refresh() } } label: { Label("Actualizar agenda", systemImage: "arrow.clockwise") }
+                                        .accessibilityIdentifier(loading ? "agenda.updating" : "agenda.refresh").disabled(loading)
+                                    if user.isOwner {
+                                        Button { settings = true } label: { Label("Conexión de Agenda", systemImage: "gearshape") }
+                                            .accessibilityIdentifier("agenda.configure").disabled(!live)
+                                    }
+                                } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                                    .accessibilityLabel("Opciones de Agenda").accessibilityIdentifier("agenda.options")
+                            }
+                        }
+                        if live, let visible, visible.canEditEvents == true {
+                            ToolbarItem(placement: .jacTrailing) {
+                                Button { editor = AgendaEditorSession(event: nil, day: day, revision: visible.connection.revision) } label: {
+                                    Image(systemName: "plus").font(.title3.weight(.medium)).foregroundStyle(.white)
+                                        .frame(width: 44, height: 44).background(JACTheme.primary, in: RoundedRectangle(cornerRadius: 14))
+                                }.buttonStyle(.plain).accessibilityLabel("Crear evento").accessibilityIdentifier("agenda.create").disabled(loading)
+                            }
+                        }
+                    } else if user.isOwner {
+                        ToolbarItem(placement:.jacTrailing) { Button { settings = true } label: { Image(systemName: "gearshape") }.accessibilityLabel("Conexión de Agenda").accessibilityIdentifier("agenda.configure").disabled(!live) }
+                    }
                 }
                 .task(id: month) {
                     await refresh()
@@ -106,6 +142,93 @@ struct CalendarView: View {
                 }
                 .sheet(item: $editor) { session in AgendaEventEditor(session: session) { result in notice = result.notice; await refresh() } }
         }
+    }
+    @ViewBuilder private func phoneAgenda(_ visible: AgendaData, byDay: [String: [AgendaEvent]]) -> some View {
+        if mode == "Mes" { phoneMonthHeading }
+        Picker("Vista de agenda", selection: $mode) { Text("Mes").tag("Mes"); Text("Próximos").tag("Próximos") }
+            .pickerStyle(.segmented).accessibilityIdentifier("agenda.mode")
+        if mode == "Mes" {
+            phoneCalendar(visible, byDay: byDay)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(phoneDayLabel).font(.subheadline.weight(.semibold)).accessibilityLabel(CalendarClock.dayLabel(day))
+                    Spacer(minLength: 8)
+                    let count = byDay[day]?.count ?? 0
+                    Text(count == 1 ? "1 evento" : "\(count) eventos").font(.caption).foregroundStyle(JACTheme.muted)
+                }
+                let events = byDay[day] ?? []
+                if events.isEmpty { Text("No hay eventos para este día.").font(.subheadline).foregroundStyle(JACTheme.muted).padding(.vertical, 12) }
+                ForEach(events) { item in
+                    Button { event = item } label: { AgendaEventRow(event: item, compact: true) }
+                        .buttonStyle(.plain).accessibilityIdentifier("agenda.event.\(item.id)")
+                }
+            }
+            Button { mode = "Próximos" } label: {
+                HStack { Text("Ver próximos eventos"); Spacer(); Image(systemName: "arrow.right") }
+                    .font(.subheadline.weight(.semibold)).frame(minHeight: 44)
+            }.buttonStyle(.plain).foregroundStyle(JACTheme.action).accessibilityIdentifier("agenda.showUpcoming")
+                .overlay(alignment: .top) { Rectangle().fill(JACTheme.border).frame(height: 1).allowsHitTesting(false) }
+        } else {
+            Text("Próximos 90 días · hasta " + CalendarClock.dayLabel(visible.upcomingUntil)).font(.caption).foregroundStyle(JACTheme.muted)
+            if visible.upcoming.isEmpty { Text("No hay eventos programados en los próximos 90 días.").font(.subheadline).foregroundStyle(JACTheme.muted) }
+            ForEach(visible.upcoming) { item in
+                Button { event = item } label: { AgendaEventRow(event: item, showsDay: true, compact: true) }
+                    .buttonStyle(.plain).accessibilityIdentifier("agenda.upcoming.\(item.id)")
+            }
+        }
+    }
+    private var phoneMonthHeading: some View {
+        let columns = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 4)) : AnyLayout(HStackLayout(alignment: .center, spacing: 0))
+        return columns {
+            Text(phoneMonthLabel).font(.title3.weight(.semibold)).frame(maxWidth: .infinity, alignment: .leading).fixedSize(horizontal: false, vertical: true)
+            HStack(spacing: 0) {
+                Button("Hoy") { month = CalendarClock.month(Date()); day = CalendarClock.day(Date()) }
+                    .font(.subheadline.weight(.semibold)).frame(minWidth: 44, minHeight: 44).foregroundStyle(JACTheme.action)
+                Button { shift(-1) } label: { Image(systemName: "chevron.left").frame(width: 44, height: 44) }.accessibilityLabel("Mes anterior")
+                Button { shift(1) } label: { Image(systemName: "chevron.right").frame(width: 44, height: 44) }.accessibilityLabel("Mes siguiente")
+            }.buttonStyle(.plain)
+        }
+    }
+    private var phoneMonthLabel: String {
+        guard let date = CalendarClock.date(month + "-01") else { return month }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "es_CO"); formatter.calendar = CalendarClock.calendar
+        formatter.timeZone = CalendarClock.calendar.timeZone; formatter.dateFormat = "MMMM yyyy"
+        let label = formatter.string(from: date)
+        return label.prefix(1).uppercased() + label.dropFirst()
+    }
+    private var phoneDayLabel: String {
+        guard let date = CalendarClock.date(day) else { return CalendarClock.dayLabel(day) }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "es_CO"); formatter.calendar = CalendarClock.calendar
+        formatter.timeZone = CalendarClock.calendar.timeZone; formatter.dateFormat = "EEEE, d 'de' MMMM"
+        let label = formatter.string(from: date)
+        return label.prefix(1).uppercased() + label.dropFirst()
+    }
+    private func phoneCalendar(_ visible: AgendaData, byDay: [String: [AgendaEvent]]) -> some View {
+        VStack(spacing: 8) {
+            LazyVGrid(columns: Array(repeating: GridItem(.flexible(minimum: 44), spacing: 0), count: 7), spacing: 0) {
+                ForEach(["L", "M", "X", "J", "V", "S", "D"], id: \.self) { Text($0).font(.caption2.weight(.semibold)).foregroundStyle(JACTheme.muted).frame(height: 24) }
+                ForEach(phoneMonthDays(visible.days), id: \.self) { date in
+                    let count = byDay[date]?.count ?? 0
+                    Button { day = date } label: {
+                        VStack(spacing: 3) {
+                            Text(String(Int(date.suffix(2)) ?? 0)).font(.subheadline.weight(day == date ? .semibold : .regular)).lineLimit(1).minimumScaleFactor(0.75)
+                            HStack(spacing: 2) { ForEach(0..<min(count, 3), id: \.self) { _ in Circle().fill(day == date ? Color.white : JACTheme.action).frame(width: 4, height: 4) } }.frame(height: 4)
+                        }.frame(maxWidth: .infinity, minHeight: 44)
+                            .foregroundStyle(day == date ? Color.white : date.hasPrefix(month) ? JACTheme.ink : JACTheme.muted)
+                            .background(day == date ? JACTheme.primary : .clear, in: RoundedRectangle(cornerRadius: 14))
+                            .overlay(RoundedRectangle(cornerRadius: 14).stroke(date == visible.today && day != date ? JACTheme.action.opacity(0.5) : .clear, lineWidth: 1))
+                            .contentShape(Rectangle())
+                    }.buttonStyle(.plain).accessibilityLabel(CalendarClock.dayLabel(date) + ", \(count) eventos").accessibilityValue(day == date ? "Seleccionado" : "")
+                        .accessibilityAddTraits(day == date ? .isSelected : []).accessibilityIdentifier("agenda.day.\(date)")
+                }
+            }
+            HStack(spacing: 4) { Spacer(); Circle().fill(JACTheme.action).frame(width: 4, height: 4); Text("Con actividad").font(.caption2).foregroundStyle(JACTheme.muted) }.accessibilityHidden(true)
+        }.padding(10).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(JACTheme.border, lineWidth: 1).allowsHitTesting(false))
+    }
+    private func phoneMonthDays(_ dates: [String]) -> [String] {
+        guard let first = dates.firstIndex(where: { $0.hasPrefix(month) }), let last = dates.lastIndex(where: { $0.hasPrefix(month) }) else { return dates }
+        return Array(dates[(first / 7 * 7)..<min((last / 7 + 1) * 7, dates.count)])
     }
     private func monthPanel(_ visible: AgendaData, byDay: [String: [AgendaEvent]]) -> some View {
         Group {
@@ -183,9 +306,15 @@ struct CalendarView: View {
     }
 }
 struct AgendaEventRow: View {
+    @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @ScaledMetric(relativeTo: .caption) private var timeColumnWidth: CGFloat = 44
     let event: AgendaEvent
     var showsDay = false
-    var body: some View {
+    var compact = false
+    @ViewBuilder var body: some View {
+        if compact { compactRow } else { legacyRow }
+    }
+    private var legacyRow: some View {
         HStack(alignment:.top,spacing:14) {
             RoundedRectangle(cornerRadius:3).fill(JACTone.teal.color).frame(width:4)
             VStack(alignment:.leading,spacing:9) {
@@ -197,6 +326,38 @@ struct AgendaEventRow: View {
             Spacer(minLength:0)
             Image(systemName:"arrow.up.right").font(.caption).foregroundStyle(JACTone.teal.color).accessibilityHidden(true)
         }.padding(.vertical,10).fixedSize(horizontal:false,vertical:true)
+    }
+    private var compactRow: some View {
+        let eventLayout = dynamicTypeSize.isAccessibilitySize ? AnyLayout(VStackLayout(alignment: .leading, spacing: 8)) : AnyLayout(HStackLayout(alignment: .top, spacing: 12))
+        return VStack(alignment: .leading, spacing: 8) {
+            if showsDay { Text(CalendarClock.dayLabel(event.firstDay).capitalized).font(.caption.weight(.semibold)).foregroundStyle(JACTheme.muted) }
+            eventLayout {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(compactTime(event.start)).font(.caption.weight(.semibold)).foregroundStyle(JACTheme.ink)
+                    if !event.allDay { Text(compactTime(event.end)).font(.caption2).foregroundStyle(JACTheme.muted) }
+                }.frame(minWidth: dynamicTypeSize.isAccessibilitySize ? nil : timeColumnWidth, alignment: .leading)
+                    .fixedSize(horizontal: true, vertical: true).padding(.top, dynamicTypeSize.isAccessibilitySize ? 0 : 13)
+                HStack(spacing: 10) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(event.title).font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink).fixedSize(horizontal: false, vertical: true)
+                        if !event.location.isEmpty { Text(event.location).font(.caption).foregroundStyle(JACTheme.muted).fixedSize(horizontal: false, vertical: true) }
+                        if !event.allDay, let start = CalendarClock.instant(event.start), let end = CalendarClock.instant(event.end), CalendarClock.day(start) != CalendarClock.day(end) {
+                            Text(event.timeLabel).font(.caption).foregroundStyle(JACTheme.muted).fixedSize(horizontal: false, vertical: true)
+                        }
+                    }.frame(maxWidth: .infinity, alignment: .leading)
+                    Image(systemName: "chevron.right").font(.caption).foregroundStyle(JACTheme.muted).accessibilityHidden(true)
+                }.frame(maxWidth: .infinity, minHeight: 54, alignment: .leading).padding(12)
+                    .background(JACTheme.card, in: RoundedRectangle(cornerRadius: 16))
+                    .overlay(RoundedRectangle(cornerRadius: 16).stroke(JACTheme.border, lineWidth: 1).allowsHitTesting(false))
+                    .overlay(alignment: .leading) { RoundedRectangle(cornerRadius: 2).fill(JACTheme.action).frame(width: 3).padding(.vertical, 15).allowsHitTesting(false) }
+            }
+        }.frame(maxWidth: .infinity, alignment: .leading).contentShape(Rectangle())
+    }
+    private func compactTime(_ value: String) -> String {
+        guard !event.allDay, let date = CalendarClock.instant(value) else { return "Todo el día" }
+        let formatter = DateFormatter(); formatter.locale = Locale(identifier: "es_CO"); formatter.calendar = CalendarClock.calendar
+        formatter.timeZone = CalendarClock.calendar.timeZone; formatter.dateFormat = "HH:mm"
+        return formatter.string(from: date)
     }
 }
 struct AgendaEventDetail: View {
@@ -357,10 +518,11 @@ struct AgendaEventEditor: View {
 
 private struct AgendaPage<Content:View>:View {
     private let content:Content
-    init(@ViewBuilder content:()->Content){self.content=content()}
+    private let compact:Bool
+    init(compact:Bool=false,@ViewBuilder content:()->Content){self.compact=compact;self.content=content()}
     var body:some View {
         #if os(iOS)
-        ScrollView {LazyVStack(alignment:.leading,spacing:18){content}.padding(.horizontal,18).padding(.top,JACTheme.pageTopSpacing).padding(.bottom,18).frame(maxWidth:1160).frame(maxWidth:.infinity)}
+        ScrollView {LazyVStack(alignment:.leading,spacing:compact ? 14 : 18){content}.padding(.horizontal,compact ? 20 : 18).padding(.top,JACTheme.pageTopSpacing).padding(.bottom,18).frame(maxWidth:1160).frame(maxWidth:.infinity)}
         #else
         List {content}
         #endif

@@ -63,7 +63,9 @@ struct ManagementView: View {
                     if store.hasOperationStatus {
                         VStack(alignment:.leading,spacing:12) { OperationStatusSection() }.padding(18).background(JACTheme.card,in:RoundedRectangle(cornerRadius:20))
                     }
+                    #if os(macOS)
                     JACFeatureBanner(eyebrow:"JAC · Tu equipo",title:"Todo en su lugar.",subtitle:"Herramientas para lo que pasa antes y después del show.",symbol:"slider.horizontal.3",tone:.violet)
+                    #endif
                     Button {destination = .account} label:{HStack(spacing:14) {JACIcon(symbol:"person.crop.circle",tone:.blue);VStack(alignment:.leading,spacing:4) {Text("Mi cuenta").font(.headline);Text(user.displayName).font(.subheadline).foregroundStyle(.secondary)};Spacer();Image(systemName:"chevron.right").font(.caption.weight(.semibold))}.foregroundStyle(JACTheme.ink).padding(16).contentShape(Rectangle()).background(JACTheme.card,in:RoundedRectangle(cornerRadius:20))}.buttonStyle(.plain).accessibilityIdentifier("management.account")
                     if user.hasSection(.itineraries) || user.hasSection(.alerts) {Text("Tu día a día").font(.system(.headline,design:.rounded));cards((user.hasSection(.itineraries) ? [.expenses] : []) + (user.hasSection(.alerts) ? [.alerts] : []))}
                     if !administration.isEmpty {
@@ -80,7 +82,7 @@ struct ManagementView: View {
                         }
                     }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))}
                 }.padding(.horizontal,18).padding(.top,JACTheme.pageTopSpacing).padding(.bottom,18).frame(maxWidth: JACDevice.isPad ? 1050 : .infinity).frame(maxWidth: .infinity)
-            }.jacSurface().navigationTitle("Gestión").jacInlineTitle()
+            }.jacSurface().jacWorkspaceTitle("Gestión")
                 .navigationDestination(item:$destination) { target in
                     switch target {
                     case .account:AccountView(user:user)

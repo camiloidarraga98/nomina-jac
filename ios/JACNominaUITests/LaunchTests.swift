@@ -78,6 +78,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["music.section.warmup"].waitForExistence(timeout:20))
         for section in ["tracks","demos","studio"] {XCTAssertTrue(app.buttons["music.section."+section].exists)}
         XCTAssertFalse(app.buttons["music.import"].exists)
+        attachScreen(app,name:"redesign-musica-lectura-sin-subida")
         app.swipeDown();let search=app.searchFields.firstMatch;XCTAssertTrue(search.waitForExistence(timeout:5));search.tap();search.typeText("arbol")
         XCTAssertTrue(app.buttons["music.track.00000000-0000-4000-8000-000000000001"].waitForExistence(timeout:5))
         XCTAssertFalse(app.buttons["music.track.00000000-0000-4000-8000-000000000000"].exists)
@@ -635,19 +636,22 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary() {
-        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm");tap(app,"crm.add");tap(app,"Crear show")
+        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm")
+        XCTAssertTrue(app.textFields["crm.search"].waitForExistence(timeout:10))
+        attachScreen(app,name:"redesign-crm-shows-y-cobros")
+        tap(app,"crm.add");tap(app,"Nuevo show")
         fill(app,"crm.create.title","PEREIRA · Nuevo ficticio");fill(app,"crm.amount.Valor de venta (COP)","140000000")
         fill(app,"crm.entrepreneur","jose");attachScreen(app,name:"crm-autocompletar-legible");tap(app,"crm.suggestion.88888888-8888-4888-8888-888888888888")
         let first=app.switches["crm.firstPayment"];for _ in 0..<5{if first.exists && first.isHittable{break};app.swipeUp()};XCTAssertTrue(first.exists);first.coordinate(withNormalizedOffset:CGVector(dx:0.9,dy:0.5)).tap();XCTAssertEqual(first.value as? String,"1")
         fill(app,"crm.amount.Valor del abono (COP)","50000000");tap(app,"travel.fixture");tap(app,"crm.editor.save")
         XCTAssertTrue(app.textFields["crm.search"].waitForExistence(timeout:10));fill(app,"crm.search","Nuevo ficticio")
         XCTAssertTrue(app.staticTexts["PEREIRA · Nuevo ficticio"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","90.000.000")).firstMatch.exists)
-        tap(app,"Semana");XCTAssertTrue(app.staticTexts["Resumen semanal"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["Gastos por fecha de registro"].exists);XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","50.000.000")).firstMatch.exists);attachScreen(app,name:"crm-resumen-semanal-nativo")
+        tap(app,"crm.moreSections");tap(app,"Resumen semanal");XCTAssertTrue(app.staticTexts["Resumen semanal"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["Gastos por fecha de registro"].exists);XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","50.000.000")).firstMatch.exists);attachScreen(app,name:"crm-resumen-semanal-nativo")
     }
 
     @MainActor func testDeleteArchivedContractRequiresConfirmationAndKeepsShow() {
         let app=fixture(["--uitest-contract-archive"]),id="11111111-1234-4234-8234-111111111111"
-        openSection(app, "Gestión");tap(app,"management.crm");tap(app,"Contratos")
+        openSection(app, "Gestión");tap(app,"management.crm");tap(app,"crm.moreSections");tap(app,"Contratos")
         tap(app,"contracts.delete."+id);XCTAssertTrue(app.alerts["Eliminar contrato"].waitForExistence(timeout:10))
         attachScreen(app,name:"contrato-eliminar-confirmacion-ficticia");tap(app,"contracts.delete.cancel")
         XCTAssertTrue(app.buttons["contracts.open."+id].exists)
@@ -656,11 +660,11 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["contracts.open."+id].waitForNonExistence(timeout:10))
         XCTAssertTrue(app.staticTexts["Aquí aparecerán los contratos que generes a partir de ahora."].exists)
         tap(app,"Shows");XCTAssertTrue(app.buttons["crm.show.77777777-7777-4777-8777-777777777777"].waitForExistence(timeout:10))
-        tap(app,"Contratos");XCTAssertFalse(app.buttons["contracts.open."+id].exists)
+        tap(app,"crm.moreSections");tap(app,"Contratos");XCTAssertFalse(app.buttons["contracts.open."+id].exists)
     }
 
     @MainActor func testCRMContractsRUTEditableFieldsManualEntryAndPDFPreview() {
-        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm");tap(app,"Contratos");tap(app,"contracts.create")
+        let app=fixture();openSection(app, "Gestión");tap(app,"management.crm");tap(app,"crm.moreSections");tap(app,"Contratos");tap(app,"contracts.create")
         XCTAssertTrue(app.buttons["contracts.rut.upload"].waitForExistence(timeout:10))
         XCTAssertTrue(app.textFields["contracts.company"].exists,"Los campos manuales deben existir sin cargar RUT")
         tap(app,"contracts.rut.fixture")
@@ -787,8 +791,10 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testCreatePeriodAndManageItsActivitiesWithNativeForms() {
         let app = fixture()
+        attachScreen(app, name: "redesign-quincenas-lista")
         tap(app, "period.create"); tap(app, "editor.save")
         XCTAssertTrue(app.staticTexts["Neto en preparación"].waitForExistence(timeout: 15))
+        attachScreen(app, name: "redesign-quincena-resumen")
         tap(app, "Actividad"); tap(app, "activity.shows"); tap(app, "activity.add")
         fill(app, "editor.name", "Show simulado iPhone"); tap(app, "editor.save")
         XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label ==[c] %@", "Show simulado iPhone")).firstMatch.waitForExistence(timeout: 15), app.debugDescription)
@@ -1333,6 +1339,9 @@ final class LaunchTests: XCTestCase {
     @MainActor func testPromotionalShowAndLinkedExpenseCanBeCreatedWithoutAddingPayrollPayment() {
         let app=fixture(["--uitest-commission"])
         tap(app,"period.fixture-period")
+        // iPhone opens the activity overview; the existing calculation remains
+        // in Pagos and must still be reviewed explicitly before adding a show.
+        tap(app,"Pagos")
         XCTAssertTrue(app.staticTexts["Comisión de Camilo · 5%"].waitForExistence(timeout:10))
         tap(app,"Actividad");tap(app,"activity.shows");tap(app,"activity.add")
         fill(app,"editor.name","Show promocional ficticio")

@@ -28,26 +28,26 @@ struct PeriodDetailView: View {
     let periodID: String
     let user: PayrollUser
     @StateObject private var period = PeriodWorkspace()
-    @State private var section = "pagos"
+    @State private var section = PeriodDetailView.initialSection
     @State private var search = ""
     @State private var category = ""
     @State private var action: String?
     @State private var editor: PayrollEditorSession?
     @State private var selectedActivity: ActivityKind?
+    private static var initialSection: String {
+        #if os(iOS)
+        JACDevice.isPad ? "pagos" : "actividad"
+        #else
+        "pagos"
+        #endif
+    }
     var body: some View {
         List {
             if store.hasOperationStatus { OperationStatusSection() }
             if let error = period.error { Section { InlineError(message: error); Button("Volver a intentar") { Task { await load() } } } }
             if let d = period.detail {
                 Section {
-                    VStack(alignment:.leading,spacing:16) {
-                        HStack { Label("JAC · NÓMINA",systemImage:"waveform").font(.caption2.weight(.bold)).tracking(1.5);Spacer();Image(systemName:d.period.isClosed ? "lock.shield":"wallet.pass").font(.title3) }.foregroundStyle(JACTheme.highlight)
-                        Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(.white.opacity(0.8))
-                        Text(PayrollFormat.money(d.calculation.total)).font(.system(.largeTitle,design:.rounded,weight:.bold)).minimumScaleFactor(0.6).lineLimit(1).monospacedDigit()
-                        Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta",systemImage:d.period.isClosed ? "lock.fill":"pencil").font(.caption.weight(.semibold))
-                            .padding(.horizontal,12).padding(.vertical,7).background(.white.opacity(0.12),in:Capsule())
-                    }.padding(24).foregroundStyle(.white).frame(maxWidth:.infinity,alignment:.leading)
-                        .background(LinearGradient(colors:[JACTheme.navy,JACTone.blue.deep],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:24))
+                    periodSummary(d)
                 }.jacStandaloneRow()
                 if d.record["ownerOnly"].flag || d.calculation.closedAt != nil || !d.record["revisions"].elements.isEmpty || !d.record["snapshot"]["closedBy"].text.isEmpty {
                     Section("Datos del cierre") {
@@ -64,14 +64,7 @@ struct PeriodDetailView: View {
                 }.listRowBackground(Color.clear).listRowInsets(EdgeInsets(top: 4, leading: 0, bottom: 4, trailing: 0))
                 if section == "pagos" { payments(d) }
                 else if section == "actividad" {
-                    Section {
-                        LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:12),count:typeSize.isAccessibilitySize ? 1:2),spacing:12) {
-                            ForEach(ActivityKind.allCases) { kind in
-                                Button { selectedActivity = kind } label:{ JACAccessCard(title:kind.title,subtitle:"Consultar y gestionar",symbol:kind.symbol,tone:kind == .shows ? .blue:.teal) }
-                                    .accessibilityIdentifier("activity.\(kind.rawValue)")
-                            }
-                        }.buttonStyle(.plain)
-                    }.jacStandaloneRow()
+                    activitySections(d)
                 } else { DocumentsSection(detail: d, user: user) }
                 operations(d)
             } else if period.loading { Section { ProgressView("Consultando quincena…") } }
@@ -89,6 +82,106 @@ struct PeriodDetailView: View {
                     }
                 }
             } message: { Text(confirmationMessage) }
+    }
+    @ViewBuilder private func periodSummary(_ d: PeriodDetail) -> some View {
+        #if os(iOS)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación")
+                    .font(.caption).foregroundStyle(JACTheme.muted)
+                Spacer(minLength: 0)
+                Text(d.period.isClosed ? "Cerrada" : "En curso")
+                    .font(.caption2.weight(.semibold)).foregroundStyle(JACTheme.action)
+                    .padding(.horizontal, 9).padding(.vertical, 6)
+                    .background(JACTheme.action.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+            }
+            Text(PayrollFormat.money(d.calculation.total))
+                .font(.system(.largeTitle, weight: .semibold)).monospacedDigit()
+                .minimumScaleFactor(0.65).lineLimit(1)
+                .accessibilityIdentifier("period.net")
+            Divider()
+            ViewThatFits(in: .horizontal) {
+                HStack {
+                    Text("\(Set(d.calculation.rows.map(\.employeeId)).count) personas")
+                    Spacer(minLength: 10)
+                    Text("\(d.period.shows.count) shows · COP")
+                }
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("\(Set(d.calculation.rows.map(\.employeeId)).count) personas")
+                    Text("\(d.period.shows.count) shows · COP")
+                }
+            }.font(.caption).foregroundStyle(JACTheme.muted)
+        }.padding(18).frame(maxWidth: .infinity, alignment: .leading)
+            .background(JACTheme.card, in: RoundedRectangle(cornerRadius: 20))
+            .overlay(RoundedRectangle(cornerRadius: 20).stroke(JACTheme.border, lineWidth: 1).allowsHitTesting(false))
+        #else
+        VStack(alignment:.leading,spacing:16) {
+            HStack { Label("JAC · NÓMINA",systemImage:"waveform").font(.caption2.weight(.bold)).tracking(1.5);Spacer();Image(systemName:d.period.isClosed ? "lock.shield":"wallet.pass").font(.title3) }.foregroundStyle(JACTheme.highlight)
+            Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(.white.opacity(0.8))
+            Text(PayrollFormat.money(d.calculation.total)).font(.system(.largeTitle,design:.rounded,weight:.bold)).minimumScaleFactor(0.6).lineLimit(1).monospacedDigit()
+            Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta",systemImage:d.period.isClosed ? "lock.fill":"pencil").font(.caption.weight(.semibold))
+                .padding(.horizontal,12).padding(.vertical,7).background(.white.opacity(0.12),in:Capsule())
+        }.padding(24).foregroundStyle(.white).frame(maxWidth:.infinity,alignment:.leading)
+            .background(LinearGradient(colors:[JACTheme.navy,JACTone.blue.deep],startPoint:.topLeading,endPoint:.bottomTrailing),in:RoundedRectangle(cornerRadius:24))
+        #endif
+    }
+    @ViewBuilder private func activitySections(_ d: PeriodDetail) -> some View {
+        #if os(iOS)
+        Section("Actividad del periodo") {
+            ForEach([ActivityKind.shows, .movements, .routes, .expenses, .hours]) { kind in
+                Button { selectedActivity = kind } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: kind.symbol).font(.system(size: 18)).foregroundStyle(JACTheme.muted)
+                            .frame(width: 23).accessibilityHidden(true)
+                        Text(activityTitle(kind)).font(.subheadline.weight(.medium)).foregroundStyle(JACTheme.ink)
+                        Spacer(minLength: 8)
+                        if let count = activityCount(kind, detail: d) {
+                            Text(count.formatted()).font(.caption).foregroundStyle(JACTheme.muted)
+                        }
+                        Image(systemName: "chevron.right").font(.caption2.weight(.semibold))
+                            .foregroundStyle(JACTheme.muted).accessibilityHidden(true)
+                    }.frame(minHeight: 44).contentShape(Rectangle())
+                }.buttonStyle(.plain).accessibilityIdentifier("activity.\(kind.rawValue)")
+            }
+        }
+        if !JACDevice.isPad {
+            Section {
+                Button { section = "pagos" } label: {
+                    HStack(spacing: 8) {
+                        Text("Ver liquidación")
+                        Image(systemName: "arrow.right").accessibilityHidden(true)
+                    }.frame(maxWidth: .infinity, minHeight: 22)
+                }.buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("period.liquidation")
+            }.jacStandaloneRow()
+        }
+        #else
+        Section {
+            LazyVGrid(columns:Array(repeating:GridItem(.flexible(),spacing:12),count:typeSize.isAccessibilitySize ? 1:2),spacing:12) {
+                ForEach(ActivityKind.allCases) { kind in
+                    Button { selectedActivity = kind } label:{ JACAccessCard(title:kind.title,subtitle:"Consultar y gestionar",symbol:kind.symbol,tone:kind == .shows ? .blue:.teal) }
+                        .accessibilityIdentifier("activity.\(kind.rawValue)")
+                }
+            }.buttonStyle(.plain)
+        }.jacStandaloneRow()
+        #endif
+    }
+    private func activityTitle(_ kind: ActivityKind) -> String {
+        switch kind {
+        case .shows: "Shows"
+        case .movements: "Novedades"
+        case .routes: "Recorridos"
+        case .expenses: "Gastos"
+        case .hours: "Horas y salarios"
+        }
+    }
+    private func activityCount(_ kind: ActivityKind, detail: PeriodDetail) -> Int? {
+        switch kind {
+        case .shows: detail.period.shows.count
+        case .movements: detail.period.movements.count
+        case .routes: detail.period.routes.count
+        case .expenses: detail.record["showExpenses"].elements.count
+        case .hours: nil
+        }
     }
     private var confirmationTitle: String { action == "close" ? "¿Cerrar esta quincena?" : action == "reopen" ? "¿Reabrir este cierre?" : "¿Eliminar esta quincena y todos sus registros de correo?" }
     private var confirmationMessage: String {
