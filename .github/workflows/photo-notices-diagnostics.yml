@@ -1,0 +1,62 @@
+name: JAC photo notification diagnostics
+
+on:
+  push:
+    branches: [main]
+    paths: [.github/workflows/photo-notices-diagnostics.yml]
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  inspect:
+    if: ${{ github.event.repository.private == false && contains(github.event.head_commit.message, '[photo-notices-diagnostics]') }}
+    runs-on: macos-15
+    timeout-minutes: 10
+    steps:
+      - name: Download the existing result without running tests
+        uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          # Artifact 12585245634, containing the already completed iPad test.
+          run-id: 40156252989
+          name: JAC-Apple-9c9928e73268ef1c5f4eaee7083470768f6374ed
+          path: native-result
+      - name: Export the existing iPad failure
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p native-inspection
+          xcrun xcresulttool version | tee native-inspection/xcresulttool-version.log
+          result=native-result/ipad.xcresult
+          if [ ! -d "$result" ]; then
+            echo 'The selected artifact does not contain an iPad result.' >&2
+            exit 1
+          fi
+          xcrun xcresulttool get test-results summary --path "$result" > native-inspection/summary.json
+          xcrun xcresulttool get test-results tests --path "$result" > native-inspection/tests.json
+          xcrun xcresulttool get object --legacy --format json --path "$result" > native-inspection/result.json
+          xcrun xcresulttool export attachments --path "$result" --output-path native-inspection/attachments --only-failures
+          cat native-inspection/summary.json
+          python3 - <<'PY'
+          from pathlib import Path
+          for path in Path('native-inspection').rglob('*'):
+              if path.is_file():
+                  print(path, path.stat().st_size)
+          PY
+      - name: Save compact failure diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: JAC-iPad-Inspection-40156252989
+          retention-days: 7
+          path: |
+            native-inspection/*.json
+            native-inspection/*.log
+            native-inspection/attachments/**/*.json
+            native-inspection/attachments/**/*.txt
+            native-inspection/attachments/**/*.png
+            native-inspection/attachments/**/*.jpg
+            native-inspection/attachments/**/*.jpeg
+            native-inspection/attachments/**/*.heic
