@@ -832,19 +832,22 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(field.waitForExistence(timeout: 10))
         let old = (field.value as? String) ?? ""
-        let emptyPlainText=["editor.name", "editor.concept", "crm.create.title", "crm.entrepreneur", "crm.search"].contains(id)
-            && (old.isEmpty || old == field.placeholderValue)
-        // Right-aligned numbers end at the trailing inset. A tap farther left
-        // puts the cursor before the number, where backspace cannot clear it.
-        // An empty text row has no trailing value: its far-right padding may
-        // not focus the actual editor, so tap its measured center instead.
-        print("Redesign text input \(id): frame=\(field.frame), emptyPlainText=\(emptyPlainText), old=\(old)")
-        field.coordinate(withNormalizedOffset: CGVector(dx: emptyPlainText ? 0.5:0.99, dy: 0.5)).tap()
+        let plainTextRow=["editor.name", "editor.concept", "crm.create.title", "crm.entrepreneur", "crm.search"].contains(id)
+        let paddedFormRow=plainTextRow || id.hasPrefix("crm.amount.")
+        let empty=old.isEmpty || old == field.placeholderValue
+        // These plain Form AX rows include trailing padding. Focus their center
+        // when empty, or the interior trailing area after existing fixture text.
+        // Rounded RecordNumberField editors expose their real bounds instead;
+        // keep their far-right insertion point and the original full deletion.
+        let focusX:CGFloat=paddedFormRow ? (empty ? 0.5:0.90):0.99
+        let bounds=field.frame,point=CGPoint(x:field.frame.minX+field.frame.width*focusX,y:field.frame.midY)
+        print("Redesign text input \(id): frame=\(bounds), paddedFormRow=\(paddedFormRow), normalizedX=\(focusX), touchPoint=\(point), old=\(old)")
+        field.coordinate(withNormalizedOffset: CGVector(dx:focusX,dy:0.5)).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "El campo debe recibir el foco del teclado.")
         let count = old == field.placeholderValue ? 0 : old.count
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + value)
-        if emptyPlainText {
-            XCTAssertEqual(field.value as? String,value,"El campo de texto vacío debe conservar exactamente lo escrito.")
+        if plainTextRow {
+            XCTAssertEqual(field.value as? String,value,"El campo de texto debe reemplazar todo el valor y conservar exactamente lo escrito.")
         }
         if ["editor.km", "editor.hourDivisor", "editor.counts.0"].contains(id) {
             XCTAssertEqual(field.value as? String, value, "El importe debe conservar el valor escrito.")
