@@ -1224,7 +1224,7 @@ final class LaunchTests: XCTestCase {
         let seat=app.staticTexts["boarding.card.seat."+suffix]
         let departure=app.staticTexts["boarding.card.departure."+suffix]
         let boarding=app.staticTexts["boarding.card.boarding."+suffix]
-        let airline=app.descendants(matching:.any).matching(identifier:"boarding.card.airline."+suffix).firstMatch
+        let airline=app.staticTexts["boarding.card.airline."+suffix]
         XCTAssertTrue(seat.waitForExistence(timeout:20))
         XCTAssertTrue(waitFor(seat,predicate:NSPredicate(format:"label == %@","14C"),timeout:20))
         XCTAssertEqual(departure.label,"18:45")
