@@ -172,7 +172,11 @@ jobs:
             )
           elif [ "$JAC_NAVIGATION" = true ]; then
             if [ "$JAC_NAVIGATION_DRAWER_ONLY" = true ]; then
-              checks=(-only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed)
+              checks=(
+                -only-testing:JACNominaTests/PayrollClientTests/testModernSectionsAreExactAndLegacyRestrictionsRemainDefensive
+                -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
+                -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
+              )
             else
               checks=(
                 -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground

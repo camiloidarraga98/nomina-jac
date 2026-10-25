@@ -33,6 +33,7 @@ struct PayrollUser: Codable, Equatable {
     var onlyMedia: Bool { canReadMedia && !JACSection.allCases.contains { $0 != .media && $0 != .mediaUpload && hasSection($0) } }
     func permitsNotice(_ kind: String) -> Bool { kind == "boarding_pass" ? hasSection(.boarding) : kind == "itinerary" ? hasSection(.itineraries) : kind == "alert" && hasSection(.alerts) }
     var firstDestination: String { hasSection(.payroll) ? "payroll" : hasSection(.calendar) ? "agenda" : hasSection(.itineraries) || hasSection(.boarding) ? "itineraries" : hasSection(.alerts) ? "alerts" : canReadMedia ? "media" : canReadMusic ? "music" : "management" }
+    var initialMobileDestination: String { hasSection(.calendar) ? "agenda" : firstDestination }
     func can(_ permission: String) -> Bool { hasSection(.payroll) && (isOwner || permissions.contains(permission)) }
 }
 

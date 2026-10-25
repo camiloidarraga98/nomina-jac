@@ -1,4 +1,98 @@
 import SwiftUI
+#if os(iOS)
+import UIKit
+
+struct PhoneSidebarMenu {
+    let open: () -> Void
+    let focus: AccessibilityFocusState<Bool>.Binding
+}
+private struct PhoneSidebarMenuKey: EnvironmentKey {
+    static let defaultValue: PhoneSidebarMenu? = nil
+}
+extension EnvironmentValues {
+    var phoneSidebarMenu: PhoneSidebarMenu? {
+        get { self[PhoneSidebarMenuKey.self] }
+        set { self[PhoneSidebarMenuKey.self] = newValue }
+    }
+}
+struct PhoneSidebarToolbar: ViewModifier {
+    @Environment(\.phoneSidebarMenu) private var menu
+    @Environment(\.isPresented) private var isPresented
+    func body(content: Content) -> some View {
+        content.toolbar {
+            if let menu, !isPresented, !JACDevice.isPad {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button(action: menu.open) {
+                        Image(systemName: "line.3.horizontal")
+                            .font(.system(size: 18, weight: .semibold))
+                            .frame(width: 44, height: 44)
+                            .background(JACTheme.action.opacity(0.08), in: RoundedRectangle(cornerRadius: 14))
+                    }.buttonStyle(.plain).foregroundStyle(JACTheme.action)
+                        .accessibilityLabel("Abrir menú").accessibilityHint("También puedes deslizar desde el borde izquierdo.")
+                        .accessibilityIdentifier("phone.menu.open").accessibilityFocused(menu.focus)
+                }
+            }
+        }
+    }
+}
+
+// A screen-edge recognizer leaves ordinary horizontal controls and vertical
+// scrolling alone. A pushed navigation destination keeps the system back swipe.
+private struct PhoneSidebarEdgeGesture: UIViewRepresentable {
+    let enabled: Bool
+    let open: () -> Void
+    func makeUIView(context: Context) -> PhoneSidebarGestureAnchor { PhoneSidebarGestureAnchor() }
+    func updateUIView(_ view: PhoneSidebarGestureAnchor, context: Context) {
+        view.enabled = enabled; view.open = open
+    }
+    static func dismantleUIView(_ view: PhoneSidebarGestureAnchor, coordinator: ()) { view.detach() }
+}
+private final class PhoneSidebarGestureAnchor: UIView, UIGestureRecognizerDelegate {
+    var enabled = false
+    var open: (() -> Void)?
+    private weak var gestureWindow: UIWindow?
+    private lazy var edge: UIScreenEdgePanGestureRecognizer = {
+        let value = UIScreenEdgePanGestureRecognizer(target: self, action: #selector(swiped(_:)))
+        value.edges = .left; value.delegate = self
+        value.cancelsTouchesInView = false; value.delaysTouchesBegan = false
+        return value
+    }()
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        detach()
+        guard let window else { return }
+        isUserInteractionEnabled = false
+        gestureWindow = window; window.addGestureRecognizer(edge)
+    }
+    func detach() { gestureWindow?.removeGestureRecognizer(edge); gestureWindow = nil }
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard enabled, let window = gestureWindow, let root = window.rootViewController,
+              bounds.contains(convert(gestureRecognizer.location(in: window), from: window)) else { return false }
+        let velocity = edge.velocity(in: window)
+        guard velocity.x > 0, velocity.x > abs(velocity.y) * 1.3 else { return false }
+        guard root.presentedViewController == nil else { return false }
+        // Hit-test the visible content instead of traversing all mounted stacks:
+        // an inactive section can still retain a pushed destination.
+        let point = convert(CGPoint(x: bounds.midX, y: bounds.midY), to: window)
+        guard let navigation = Self.navigationController(from: window.hitTest(point, with: nil)) else { return false }
+        return navigation.viewControllers.count == 1 && navigation.transitionCoordinator == nil && navigation.presentedViewController == nil
+    }
+    private static func navigationController(from view: UIView?) -> UINavigationController? {
+        var responder: UIResponder? = view
+        while let current = responder {
+            if let navigation = current as? UINavigationController { return navigation }
+            if let controller = current as? UIViewController, let navigation = controller.navigationController { return navigation }
+            responder = current.next
+        }
+        return nil
+    }
+    @objc private func swiped(_ gesture: UIScreenEdgePanGestureRecognizer) {
+        guard enabled, gesture.state == .ended else { return }
+        let distance = gesture.translation(in: gestureWindow)
+        if distance.x >= 60 && distance.x > abs(distance.y) * 1.3 { open?() }
+    }
+}
+#endif
 
 struct PayrollHomeView: View {
     let overview: PayrollOverview
@@ -7,7 +101,7 @@ struct PayrollHomeView: View {
     @ObservedObject private var push = JACNotifications.shared
     @State private var selected: String
     init(overview: PayrollOverview, agendaOnly: Bool = false) {
-        self.overview = overview; _selected = State(initialValue: agendaOnly && overview.user.hasSection(.calendar) ? "agenda" : overview.user.firstDestination)
+        self.overview = overview; _selected = State(initialValue: overview.user.initialMobileDestination)
     }
     private var user: PayrollUser { overview.user }
     private var showsMediaTab: Bool { user.canReadMedia }
@@ -25,7 +119,7 @@ struct PayrollHomeView: View {
             .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.canReceiveNotifications { await push.bind(store.client) } }
             .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.canReceiveNotifications { Task { await push.bind(store.client) } } }
             .onChange(of: user) { _, value in
-                selected = value.firstDestination
+                selected = value.initialMobileDestination
                 #if os(iOS)
                 phoneVisited = []; phoneMenuOpen = false
                 #endif
@@ -112,30 +206,17 @@ struct PayrollHomeView: View {
     private var phoneWorkspace: some View {
         // Keep only visited sections mounted, preserving their routes, calendar
         // selection and gallery scroll without loading every module at launch.
-        VStack(spacing: 0) {
-            phoneMenuBar.zIndex(1)
-            ZStack {
-                ForEach(phoneDestinations.filter { $0.id == selected || phoneVisited.contains($0.id) }, id: \.id) { item in
-                    phoneContent(item.id)
-                        .opacity(selected == item.id ? 1 : 0)
-                        .allowsHitTesting(selected == item.id && !phoneMenuOpen)
-                        .accessibilityHidden(selected != item.id || phoneMenuOpen)
-                }
-            }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped().animation(nil, value: selected)
-        }
+        ZStack {
+            ForEach(phoneDestinations.filter { $0.id == selected || phoneVisited.contains($0.id) }, id: \.id) { item in
+                phoneContent(item.id)
+                    .opacity(selected == item.id ? 1 : 0)
+                    .allowsHitTesting(selected == item.id && !phoneMenuOpen)
+                    .accessibilityHidden(selected != item.id || phoneMenuOpen)
+            }
+        }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped().animation(nil, value: selected)
+        .environment(\.phoneSidebarMenu, PhoneSidebarMenu(open: { setPhoneMenu(true) }, focus: $menuOpenFocused))
+        .background(PhoneSidebarEdgeGesture(enabled: !phoneMenuOpen) { setPhoneMenu(true) })
         .onChange(of: selected) { old, new in phoneVisited.insert(old); phoneVisited.insert(new) }
-    }
-    private var phoneMenuBar: some View {
-        HStack(spacing: 8) {
-            Button { setPhoneMenu(true) } label: { Image(systemName: "line.3.horizontal").font(.title3.weight(.semibold)).frame(width: 44, height: 44) }
-                .buttonStyle(.plain).frame(width: 44, height: 44).contentShape(Rectangle())
-                .accessibilityLabel("Abrir menú").accessibilityIdentifier("phone.menu.open").accessibilityFocused($menuOpenFocused)
-            Text(phoneDestinations.first(where: { $0.id == selected })?.title ?? "JAC Music").font(.subheadline.weight(.semibold)).lineLimit(1)
-            Spacer(minLength: 8)
-            Text("JAC Music").font(.caption.weight(.medium)).foregroundStyle(.secondary).padding(.trailing, 16)
-        }.foregroundStyle(JACTheme.ink).background(JACTheme.card)
-            .overlay(alignment: .bottom) { Divider() }
-            .accessibilityHidden(phoneMenuOpen)
     }
     @ViewBuilder private func phoneContent(_ destination: String) -> some View {
         switch destination {
@@ -272,7 +353,7 @@ private struct ConnectionRequiredView: View {
         VStack(spacing: 20) {
             ContentUnavailableView("Necesitas conexión", systemImage: "wifi.slash", description: Text("La última agenda descargada está disponible en Agenda. Conéctate para consultar las demás secciones."))
             Button("Volver a conectar") { Task { loading = true; defer { loading = false }; try? await store.refresh() } }.disabled(loading)
-        }.padding().jacSurface().navigationTitle(title)
+        }.padding().jacSurface().navigationTitle(title).jacInlineTitle()
     }
 }
 struct PeriodsView: View {

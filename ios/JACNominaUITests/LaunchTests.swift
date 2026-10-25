@@ -19,8 +19,20 @@ final class LaunchTests: XCTestCase {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: timeout) == .completed
     }
     @MainActor func testPhoneSidebarShowsAllModulesAndCanBeDismissed() {
-        let app=fixture()
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll"];app.launch()
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20))
+        XCTAssertTrue(app.navigationBars["Agenda"].exists)
+        XCTAssertFalse(app.buttons["period.fixture-period"].isHittable)
         XCTAssertEqual(app.tabBars.count, 0)
+        attachScreen(app,name:"iphone-inicio-calendario-cabecera-unica")
+        swipeFromLeftEdge(app)
+        XCTAssertTrue(waitForMenu(app,visible:true), "El gesto de borde debe abrir el menú")
+        app.buttons["phone.menu.close"].tap()
+        XCTAssertTrue(waitForMenu(app,visible:false))
+        tap(app,"agenda.create")
+        XCTAssertTrue(app.navigationBars["Crear evento"].waitForExistence(timeout:10))
+        XCTAssertFalse(app.buttons["phone.menu.open"].isHittable, "El editor conserva su cierre sin abrir el menú detrás")
+        tap(app,"Cancelar")
         XCTAssertEqual(Set(navigationSections(app)), Set(["crm","payroll","agenda","itineraries","alerts","boarding","media","music","management"].map {"phone.section."+$0}))
         XCTAssertTrue(showMenu(app));attachScreen(app, name:"iphone-menu-lateral")
         app.coordinate(withNormalizedOffset:CGVector(dx:0.96,dy:0.5)).tap()
@@ -37,6 +49,16 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["music.download.section"].waitForExistence(timeout:10))
         openSection(app,"Gestión");tap(app,"management.account")
         XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout:10))
+        XCTAssertTrue(app.buttons["phone.menu.open"].isHittable)
+        attachScreen(app,name:"iphone-menu-integrado-en-detalle")
+        swipeFromLeftEdge(app)
+        XCTAssertTrue(app.buttons["management.account"].waitForExistence(timeout:10), "El gesto de detalle conserva Volver")
+        XCTAssertFalse(menuVisible(app), "Volver no debe abrir también el menú")
+        tap(app,"management.account")
+        XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout:10))
+        openSection(app,"Agenda");swipeFromLeftEdge(app)
+        XCTAssertTrue(waitForMenu(app,visible:true), "Un detalle conservado en Gestión no bloquea el gesto de Agenda")
+        app.buttons["phone.menu.close"].tap()
         openSection(app,"Música");XCTAssertTrue(app.buttons["music.download.section"].waitForExistence(timeout:5))
         openSection(app,"Fotografía");XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout:15))
         openSection(app,"Gestión");XCTAssertTrue(app.buttons["Cambiar contraseña"].waitForExistence(timeout:5))
@@ -713,8 +735,14 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor private func fixture(_ arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"] + arguments; app.launch()
+        XCTAssertTrue(app.navigationBars["Agenda"].waitForExistence(timeout: 20))
+        openSection(app,"Quincena")
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 20))
         return app
+    }
+    @MainActor private func swipeFromLeftEdge(_ app:XCUIApplication) {
+        app.coordinate(withNormalizedOffset:CGVector(dx:0.005,dy:0.45))
+            .press(forDuration:0.1,thenDragTo:app.coordinate(withNormalizedOffset:CGVector(dx:0.8,dy:0.45)))
     }
     @MainActor private func openAccount(_ app:XCUIApplication) {
         openSection(app, "Gestión");tap(app,"management.account")
@@ -793,6 +821,7 @@ final class LaunchTests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--uitest-payroll", "--uitest-offline-content", "--uitest-offline"]
         app.launch()
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:5)); openSection(app,"Quincena")
         XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 5))
         XCTAssertFalse(app.textFields["login.username"].exists)
         XCTAssertFalse(app.buttons["period.create"].isEnabled)
@@ -840,7 +869,9 @@ final class LaunchTests: XCTestCase {
         app.terminate()
         app.launchArguments = ["--uitest-payroll", "--uitest-offline-content", "--uitest-slow-content"]
         app.launch()
-        XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout: 3), "El arranque debe mostrar la copia antes de que termine la red lenta")
+        XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:3), "El arranque debe mostrar la agenda guardada antes de que termine la red lenta")
+        openSection(app,"Quincena")
+        XCTAssertTrue(app.buttons["period.fixture-period"].waitForExistence(timeout:3))
         XCTAssertFalse(app.textFields["login.username"].exists)
         XCTAssertFalse(app.buttons["period.create"].isEnabled)
         XCTAssertFalse(app.descendants(matching:.any)["offline.copy"].exists)

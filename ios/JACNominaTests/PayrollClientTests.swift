@@ -1028,8 +1028,13 @@ final class PayrollClientTests: XCTestCase {
         user.sections=["media","crm"];XCTAssertFalse(user.hasSection(.crm))
         user.sections=["media","unknown"];XCTAssertTrue(JACSection.allCases.allSatisfy{!user.hasSection($0)})
         user.sections=[];XCTAssertEqual(user.firstDestination,"management")
+        for (sections,destination) in [(["payroll","calendar"],"agenda"),(["calendar"],"agenda"),(["payroll"],"payroll"),(["media"],"media"),(["music"],"music"),(["alerts"],"alerts"),([],"management"),(["calendar","unknown"],"management")] {
+            user.sections=sections
+            XCTAssertEqual(user.initialMobileDestination,destination)
+        }
         let administrator=PayrollUser(id:"admin",email:"admin@example.invalid",username:"admin",displayName:"Administrador ficticio",isOwner:true,permissions:[],sections:[])
         XCTAssertTrue(JACSection.allCases.allSatisfy{administrator.hasSection($0)});XCTAssertTrue(administrator.canUploadMedia)
+        XCTAssertEqual(administrator.initialMobileDestination,"agenda")
         let legacy=PayrollUser(id:"legacy",email:"legacy@example.invalid",username:"legacy",displayName:"Legado",isOwner:false,permissions:[],itinerariesOnly:true)
         XCTAssertTrue(legacy.hasSection(.calendar));XCTAssertTrue(legacy.hasSection(.boarding));XCTAssertFalse(legacy.hasSection(.payroll));XCTAssertFalse(legacy.canReadMedia)
     }

@@ -501,6 +501,9 @@ private struct MediaLibraryFile: Transferable {
 }
 
 struct MediaGalleryView: View {
+    #if os(iOS)
+    @Environment(\.phoneSidebarMenu) private var phoneMenu
+    #endif
     let user: PayrollUser
     private let notificationFolderID: String?
     init(user: PayrollUser, notificationFolder: MediaFeed? = nil) {
@@ -660,9 +663,9 @@ struct MediaGalleryView: View {
         }
     }
     private var galleryNavigation: some View {
-        galleryContent.jacSurface().navigationTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : compactGallery ? "" : "Fotografía").jacInlineTitle()
+        galleryContent.jacSurface().navigationTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : "Fotografía").jacInlineTitle()
             #if os(iOS)
-            .toolbar(compactGallery && notificationFolderID == nil ? .hidden : .automatic,for:.navigationBar)
+            .toolbar(compactGallery && notificationFolderID == nil && phoneMenu == nil ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }
             .onChange(of: try? store.client.mediaAccessStamp()) { _, _ in
                 sharingFolder = nil

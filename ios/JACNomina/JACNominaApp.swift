@@ -408,7 +408,7 @@ extension View {
 
     @ViewBuilder func jacInlineTitle() -> some View {
         #if os(iOS)
-        navigationBarTitleDisplayMode(.inline)
+        navigationBarTitleDisplayMode(.inline).modifier(PhoneSidebarToolbar())
         #else
         self
         #endif
