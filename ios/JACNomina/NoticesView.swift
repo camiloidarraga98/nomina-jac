@@ -311,29 +311,29 @@ struct NoticesView: View {
             ForEach(Array(item.files.enumerated()),id:\.element.id) { index,file in
                 VStack(alignment:.leading,spacing:0) {
                     VStack(alignment:.leading,spacing:16) {
-                        let info=BoardingClock.filenameDetails(file.filename)
-                        HStack { Label("PASE DE ABORDAR",systemImage:"airplane").font(.caption2.weight(.bold)).tracking(1);Spacer();if openingFile == file.id {ProgressView()};JACBadge(title:file.mimeType == "application/pdf" ? "PDF":"Imagen",tone:.teal) }.foregroundStyle(JACTone.teal.color)
-                        if let info {
-                            Text(info.origin + " → " + info.destination).font(.system(.title3,design:.rounded,weight:.bold)).fixedSize(horizontal:false,vertical:true)
-                            Text(info.passenger).font(.subheadline.weight(.medium))
-                        } else { Text("Pase de abordar").font(.system(.headline,design:.rounded)) }
-                        HStack(alignment:.center,spacing:14) {
-                            Label(BoardingClock.label(item.travelDate ?? ""),systemImage:"calendar").font(.caption).foregroundStyle(.secondary)
+                        HStack {
+                            Label("PASE DE ABORDAR",systemImage:"airplane").font(.caption2.weight(.bold)).tracking(1).allowsHitTesting(false)
                             Spacer(minLength:0)
-                        }
-                    }.padding(18).allowsHitTesting(false)
-                    BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id)
-                        .padding(.horizontal,18).padding(.bottom,16).allowsHitTesting(false)
-                    HStack(spacing:16) {
-                        Button { boardingCode=BoardingCodeSelection(item:item,file:file) } label: {
-                            Label("Mostrar código",systemImage:"qrcode.viewfinder").font(.subheadline.weight(.semibold)).padding(.horizontal,12).frame(minHeight:44)
-                                .background(JACTone.teal.color.opacity(0.09),in:RoundedRectangle(cornerRadius:12))
-                        }.buttonStyle(.plain).accessibilityIdentifier("boarding.code.\(file.id)")
-                        Spacer(minLength:0)
-                        Menu { boardingMenuActions(item,file:file) } label: {
-                            Image(systemName:"ellipsis.circle").font(.title3).frame(width:44,height:44).contentShape(Rectangle())
-                        }.buttonStyle(.borderless).accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
-                    }.foregroundStyle(JACTone.teal.color).padding(.horizontal,18).padding(.bottom,14).disabled(openingFile != nil || deleting)
+                            if openingFile == file.id {ProgressView().allowsHitTesting(false)}
+                            Menu { boardingMenuActions(item,file:file) } label: {
+                                Image(systemName:"ellipsis.circle").font(.title3).frame(width:44,height:44).contentShape(Rectangle())
+                            }.buttonStyle(.borderless).accessibilityLabel("Opciones del pase").accessibilityIdentifier("boarding.menu.\(file.id)")
+                                .disabled(openingFile != nil || deleting)
+                        }.foregroundStyle(JACTone.teal.color)
+                        VStack(alignment:.leading,spacing:16) {
+                            if let info=BoardingClock.filenameDetails(file.filename) {
+                                Text(info.origin + " → " + info.destination).font(.system(.title3,design:.rounded,weight:.bold)).fixedSize(horizontal:false,vertical:true)
+                                Text(info.passenger).font(.subheadline.weight(.medium))
+                            } else { Text("Pase de abordar").font(.system(.headline,design:.rounded)) }
+                            HStack(alignment:.center,spacing:14) {
+                                Label(BoardingClock.label(item.travelDate ?? ""),systemImage:"calendar").font(.caption).foregroundStyle(.secondary)
+                                Spacer(minLength:0)
+                            }
+                        }.allowsHitTesting(false)
+                    }.padding(18)
+                    BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id, controlsDisabled: openingFile != nil || deleting) {
+                        boardingCode=BoardingCodeSelection(item:item,file:file)
+                    }.padding(.horizontal,18).padding(.bottom,18)
                 }.background {
                     Button { Task { await openBoarding(item,file:file) } } label: {
                         RoundedRectangle(cornerRadius:22).fill(JACTheme.card)
@@ -409,7 +409,10 @@ struct NoticesView: View {
 private struct BoardingCardFlightInfo: View {
     let entry: BoardingCardDetailsStore.Entry
     let fileID: String
+    let controlsDisabled: Bool
+    let showCode: () -> Void
     @Environment(\.dynamicTypeSize) private var typeSize
+    @ScaledMetric(relativeTo:.subheadline) private var codeValueHeight: CGFloat = 20
     private var details: BoardingCardDetails {
         if case .ready(let result) = entry { return result }
         return BoardingCardDetails()
@@ -420,18 +423,25 @@ private struct BoardingCardFlightInfo: View {
                 VStack(alignment: .leading, spacing: 14) { fields }
             } else { HStack(alignment: .top, spacing: 12) { fields } }
             if entry == .loading {
-                HStack(spacing:6) { ProgressView().controlSize(.mini); Text("Leyendo datos del vuelo…").font(.caption2).foregroundStyle(.secondary) }
+                HStack(spacing:6) { ProgressView().controlSize(.mini); Text("Leyendo datos del vuelo…").font(.caption2).foregroundStyle(.secondary) }.allowsHitTesting(false)
             }
         }.padding(12).frame(maxWidth:.infinity,alignment:.leading)
-            .background(JACTone.teal.color.opacity(0.06),in:RoundedRectangle(cornerRadius:14))
+            .background { RoundedRectangle(cornerRadius:14).fill(JACTone.teal.color.opacity(0.06)).allowsHitTesting(false) }
     }
     @ViewBuilder private var fields: some View {
-        field("Silla",value:details.seat,id:"seat")
-        field("Salida",value:details.departureTime,id:"departure")
+        field("Silla",value:details.seat,id:"seat").allowsHitTesting(false)
+        field("Salida",value:details.departureTime,id:"departure").allowsHitTesting(false)
         VStack(alignment:.leading,spacing:4) {
             field("En sala",value:details.boardingTime,id:"boarding")
             if details.boardingPreviousDay { Text("Día anterior").font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("boarding.card.previousDay.\(fileID)") }
-        }.frame(maxWidth:.infinity,alignment:.leading)
+        }.frame(maxWidth:.infinity,alignment:.leading).allowsHitTesting(false)
+        Button(action: showCode) {
+            VStack(alignment:.leading,spacing:6) {
+                Text("Código").font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+                Image(systemName:"qrcode.viewfinder").font(.subheadline.weight(.semibold)).frame(height:codeValueHeight,alignment:.leading)
+            }.frame(minWidth:44,maxWidth:.infinity,minHeight:44,alignment:.topLeading).contentShape(Rectangle())
+        }.buttonStyle(.plain).foregroundStyle(JACTone.teal.color).disabled(controlsDisabled)
+            .accessibilityLabel("Mostrar código").accessibilityIdentifier("boarding.code.\(fileID)")
     }
     private func field(_ title:String,value:String,id:String) -> some View {
         VStack(alignment:.leading,spacing:6) {
