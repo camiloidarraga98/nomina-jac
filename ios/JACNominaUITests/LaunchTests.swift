@@ -637,6 +637,7 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary() {
         let app=fixture();openSection(app, "Gestión");tap(app,"management.crm")
+        XCTAssertTrue(app.navigationBars["CRM"].waitForExistence(timeout:10), "La tarjeta de Gestión debe abrir CRM, nunca Archivo")
         XCTAssertTrue(app.textFields["crm.search"].waitForExistence(timeout:10))
         attachScreen(app,name:"redesign-crm-shows-y-cobros")
         tap(app,"crm.add");tap(app,"Nuevo show")
@@ -769,9 +770,58 @@ final class LaunchTests: XCTestCase {
     @MainActor private func tap(_ app: XCUIApplication, _ label: String) {
         if !label.hasPrefix("crm.suggestion."),label != "crm.keyboard.done",app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
         let button = app.buttons[label].firstMatch
+        if ["period.create", "crm.add", "management.crm"].contains(label) {
+            XCTAssertTrue(button.waitForExistence(timeout:10), "Debe existir el botón real \(label)")
+            XCTAssertTrue(waitFor(button,predicate:NSPredicate(format:"enabled == true"),timeout:5), "Debe estar autorizado y habilitado \(label)")
+            if tapMeasuredRedesignControl(app,button:button,identifier:label) { return }
+        }
         for _ in 0..<8 { if button.exists && button.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(button.waitForExistence(timeout: 10), "Debe existir el botón \(label)")
         XCTAssertTrue(button.isHittable, "Debe poderse tocar \(label)"); button.tap()
+    }
+    @MainActor private func tapMeasuredRedesignControl(_ app:XCUIApplication,button:XCUIElement,identifier:String) -> Bool {
+        // The native toolbar's identified wrapper follows the closed drawer,
+        // while XCTest retains its child's former translated AX rectangle.
+        // Use only measured visible geometry; the real control and the original
+        // form/navigation postconditions must still exist and succeed.
+        guard button.exists,button.isEnabled else { return false }
+        let viewport=app.windows.firstMatch.frame,reported=button.frame
+        if ["period.create", "crm.add"].contains(identifier), !viewport.contains(reported) {
+            let wrapper=app.navigationBars.descendants(matching:.other).matching(identifier:identifier).firstMatch
+            if wrapper.exists {
+                let visible=wrapper.frame
+                if visible.width >= 44,visible.height >= 44,viewport.contains(visible) {
+                    print("Redesign AX toolbar \(identifier): child=\(reported), nativeWrapper=\(visible), viewport=\(viewport)")
+                    attachScreen(app,name:"redesign-before-measured-\(identifier)")
+                    wrapper.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
+                    if identifier == "period.create" {
+                        XCTAssertTrue(app.buttons["editor.save"].waitForExistence(timeout:10), "El toque visible debe abrir el formulario real de nueva quincena")
+                    } else {
+                        XCTAssertTrue(app.buttons["Nuevo show"].waitForExistence(timeout:10), "El toque visible debe abrir el menú real de CRM")
+                    }
+                    return true
+                }
+            }
+        }
+        if identifier == "management.crm" {
+            attachScreen(app,name:"redesign-before-management-crm")
+            let hierarchy=XCTAttachment(string:app.debugDescription)
+            hierarchy.name="redesign-management-crm-before-touch-hierarchy";hierarchy.lifetime = .keepAlways;add(hierarchy)
+            let sidebar=app.scrollViews["phone.sidebar.scroll"]
+            let drawerWidth=sidebar.exists ? sidebar.frame.width:0
+            let corrected=reported.offsetBy(dx:-drawerWidth,dy:0)
+            print("Redesign AX management.crm: child=\(reported), measuredDrawerWidth=\(drawerWidth), corrected=\(corrected), viewport=\(viewport)")
+            if reported.maxX > viewport.maxX,drawerWidth > 0,drawerWidth < viewport.width,
+               reported.width > 0,reported.height > 0,viewport.contains(corrected) {
+                let origin=app.frame.origin
+                app.coordinate(withNormalizedOffset:CGVector(dx:0,dy:0))
+                    .withOffset(CGVector(dx:corrected.midX-origin.x,dy:corrected.midY-origin.y)).tap()
+                XCTAssertTrue(app.navigationBars["CRM"].waitForExistence(timeout:10), "El toque corregido debe abrir CRM y no una tarjeta vecina")
+                XCTAssertTrue(app.textFields["crm.search"].waitForExistence(timeout:10), "CRM debe mostrar su buscador real antes de continuar el mismo show/abono")
+                return true
+            }
+        }
+        return false
     }
     @MainActor private func fill(_ app: XCUIApplication, _ id: String, _ value: String) {
         if id.hasPrefix("crm.") || id.hasPrefix("contracts."),app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
