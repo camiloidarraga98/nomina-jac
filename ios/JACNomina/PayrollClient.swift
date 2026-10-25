@@ -281,7 +281,7 @@ final class PayrollClient: ObservableObject {
         return parts.url!
     }
     private func resourceKey(_ url: URL, revision: Int = 0) -> String { url.absoluteString + "\nrevision=\(revision)" }
-    private func allowsResource(_ path: String, query: [URLQueryItem]) -> Bool {
+    private func allowsResource(_ path: String, query: [URLQueryItem], body: JSONValue? = nil) -> Bool {
         guard let user=permissionUser else {return true}
         if path == "api/mobile/payroll" {return query.contains{$0.name == "workspace"} || user.hasSection(.payroll)}
         if path.hasPrefix("api/payroll/") || path == "api/mobile/gmail" {return user.hasSection(.payroll)}
@@ -292,6 +292,7 @@ final class PayrollClient: ObservableObject {
         if path.hasPrefix("api/media") {return user.canReadMedia}
         if path == "api/notices/recipients" {return user.isOwner && user.hasSection(.crm)}
         if path == "api/notices/wallet" {return user.hasSection(.boarding)}
+        if path == "api/notices", let body, ["register", "unregister"].contains(body["action"].text) { return user.canReceiveNotifications }
         if path.hasPrefix("api/notices") {return query.contains{$0.name == "boarding"} ? user.hasSection(.boarding) : user.hasNotices}
         return true
     }
@@ -352,7 +353,7 @@ final class PayrollClient: ObservableObject {
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false) async throws -> (Data, HTTPURLResponse) {
         let mediaThumbnailRead = path == "api/media/file" && query.contains { $0.name == "thumbnail" && $0.value == "1" }
         let mediaPreviewRead = path == "api/media/file" && query.contains { $0.name == "preview" && $0.value == "1" }
-        guard allowsResource(path,query:query) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
+        guard allowsResource(path,query:query,body:body) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
         let scope = try offlineScope(), generation = cacheGeneration, crmReadGeneration = crmGeneration

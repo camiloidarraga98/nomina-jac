@@ -6,6 +6,7 @@ export class NoticeFailure extends Error {constructor(message:string,public stat
 export type NoticeAttachment={id:string;filename:string;mimeType:string;size:number};
 export type Notice={revision?:number;updatedAt?:string;changeSummary?:string;confirmed?:boolean;receipts?:{userId:string;name:string;confirmed:boolean;confirmedAt:string}[];id:string;kind:'itinerary'|'alert'|'boarding_pass';travelDate?:string;title:string;body:string;filename:string;size:number;createdAt:string;read:boolean;attachments?:NoticeAttachment[]};
 export type PushContent={title:string;body:string};
+export type PushTarget={kind:'media_folder';folderId:string};
 export function noticePushContent(notice:Pick<Notice,'kind'|'title'|'body'|'revision'|'changeSummary'>):PushContent{
  if(notice.kind==='boarding_pass')return {title:'JAC · Pase de abordar',body:'Ya está disponible tu pase de abordar. Abre JAC para consultarlo.'};
  if(notice.kind==='itinerary'&&(notice.revision??1)>1)return {title:'JAC · Itinerario actualizado',body:notice.changeSummary||'Consulta la nueva versión de tu itinerario.'};
@@ -64,11 +65,11 @@ async function appleAuthorization(credentials:NonNullable<PushCredentials['apns'
  }
  return cached.token;
 }
-export async function applePushRequest(token:string,environment:string,credentials:NonNullable<PushCredentials['apns']>,id:string,content:PushContent={title:'JAC',body:'Tienes un aviso nuevo. Abre JAC para consultarlo.'}){
+export async function applePushRequest(token:string,environment:string,credentials:NonNullable<PushCredentials['apns']>,id:string,content:PushContent={title:'JAC',body:'Tienes un aviso nuevo. Abre JAC para consultarlo.'},target?:PushTarget){
  if(!/^[a-f0-9]{64,200}$/.test(token)||!['sandbox','production'].includes(environment))throw new NoticeFailure('El registro del iPhone no es válido.');
  const authorization=await appleAuthorization(credentials);
  const url='https://'+(environment==='sandbox'?'api.sandbox.push.apple.com':'api.push.apple.com')+'/3/device/'+token;
- return {url,options:{method:'POST',headers:{Authorization:'bearer '+authorization,'Content-Type':'application/json','apns-topic':APP_TOPIC,'apns-push-type':'alert','apns-priority':'10','apns-id':id,'apns-collapse-id':id,'apns-expiration':String(Math.floor(Date.now()/1000)+86400)},body:JSON.stringify({aps:{alert:content,sound:'default'},noticeId:id}),redirect:'manual',signal:AbortSignal.timeout(8000)} satisfies RequestInit};
+ return {url,options:{method:'POST',headers:{Authorization:'bearer '+authorization,'Content-Type':'application/json','apns-topic':APP_TOPIC,'apns-push-type':'alert','apns-priority':'10','apns-id':id,'apns-collapse-id':id,'apns-expiration':String(Math.floor(Date.now()/1000)+86400)},body:JSON.stringify({aps:{alert:content,sound:'default'},noticeId:id,...target}),redirect:'manual',signal:AbortSignal.timeout(8000)} satisfies RequestInit};
 }
 export async function verifySlack(raw:string,timestamp:string,signature:string,secret:string){
  if(!/^\d{10}$/.test(timestamp)||Math.abs(Date.now()/1000-Number(timestamp))>300||!/^v0=[a-f0-9]{64}$/.test(signature))return false;

@@ -41,6 +41,7 @@ final class PayrollStore: ObservableObject {
         }
         client.onSessionInvalidated = { [weak self] in
             guard let self else { return }
+            JACNotifications.shared.stop()
             self.musicPlayer?.stop()
             self.incomingAudio?.files.forEach { $0.remove() }; self.incomingAudio = nil
             self.cancelAutomaticReads()

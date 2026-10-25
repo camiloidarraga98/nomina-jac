@@ -1,33 +1,35 @@
 import {waitUntil} from 'cloudflare:workers';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {sessionToken} from '@/lib/payroll-auth-crypto';
-import {anyNoticeSection,confirmNotice,boardingFeed,configureBoardingChannels,noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,deleteBoardingPass,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
+import {anyNoticeSection,anyPushSection,pushSettings,confirmNotice,boardingFeed,configureBoardingChannels,noticeFeed,noticeItem,noticeOwner,saveManualNotice,deleteManualNotice,deleteItinerary,deleteBoardingPass,registerDevice,unregisterDevice,configureNotices,markNoticeRead,dispatchPush,importSlackFiles,retryImports,purgeNoticeAttachments} from '@/lib/notifications';
 import {NoticeFailure} from '@/lib/notifications-core';
 export const dynamic='force-dynamic';
 const reply=(body:unknown,status=200)=>Response.json(body,{status,headers:payrollHeaders});
 const failure=(e:unknown)=>reply({error:e instanceof NoticeFailure?e.message:'No pudimos completar la operación. Conserva tus datos e intenta de nuevo.'},e instanceof NoticeFailure?e.status:502);
 export async function GET(req:Request){
- const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!anyNoticeSection(u))return reply({error:'Tu cuenta no tiene acceso a alertas, itinerarios o pases.'},403);
+ const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);const pushOnly=new URL(req.url).searchParams.get('push')==='1';if(!(pushOnly?anyPushSection(u):anyNoticeSection(u)))return reply({error:'Tu cuenta no tiene acceso a estas notificaciones.'},403);
  const identity=JSON.stringify(u);
  try{
   const query=new URL(req.url).searchParams,boarding=query.has('boarding'),item=query.has('item');
-  const data=boarding?await boardingFeed(u,query.get('boarding')==='history',query.get('cursor')??''):item?{item:await noticeItem(u,query.get('item')??'')}:await noticeFeed(u,query.get('cursor')??'');
+  const data=pushOnly?{settings:await pushSettings()}:boarding?await boardingFeed(u,query.get('boarding')==='history',query.get('cursor')??''):item?{item:await noticeItem(u,query.get('item')??'')}:await noticeFeed(u,query.get('cursor')??'');
   // Attachments, settings and receipts can yield after the authorised SELECT.
   // Do not serialize its data if the session or section changed in that time.
   const current=await payrollUser();if(!current||current.legacy||JSON.stringify(current)!==identity)return reply({error:'Tu sesión o permiso cambió. Inicia sesión de nuevo.'},403);
-  if(!boarding&&!item)waitUntil(Promise.all([importSlackFiles(),purgeNoticeAttachments()]).catch(()=>{}));
+  if(!pushOnly&&!boarding&&!item)waitUntil(Promise.all([importSlackFiles(),purgeNoticeAttachments()]).catch(()=>{}));
   return reply(data);
  }catch(e){return failure(e);}
 }
 export async function POST(req:Request){
- const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!anyNoticeSection(u))return reply({error:'Tu cuenta no tiene acceso a alertas, itinerarios o pases.'},403);
+ const u=await payrollUser();if(!u||u.legacy)return reply({error:'Inicia sesión con tu cuenta de JAC.'},401);if(!anyPushSection(u))return reply({error:'Tu cuenta no tiene acceso a notificaciones.'},403);
  if(req.headers.get('origin')!==new URL(req.url).origin)return reply({error:'Origen no autorizado.'},403);
  try{
   const text=await req.text();if(text.length>16000)return reply({error:'Solicitud demasiado grande.'},413);const b=JSON.parse(text) as Record<string,unknown>;
   if(!b||Array.isArray(b)||typeof b!=='object')throw new NoticeFailure('Solicitud no válida.');
-  const ownSession=async()=>{const actor=await payrollUser();return !!actor&&!actor.legacy&&anyNoticeSection(actor)&&actor.id===u.id;};
-  if(b.action==='register'){await registerDevice(u,b,sessionToken(req.headers.get('cookie')??'',!/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname)),ownSession);return reply({ok:true});}
+  const pushSession=async()=>{const actor=await payrollUser();return !!actor&&!actor.legacy&&anyPushSection(actor)&&actor.id===u.id;};
+  if(b.action==='register'){await registerDevice(u,b,sessionToken(req.headers.get('cookie')??'',!/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname)),pushSession);return reply({ok:true});}
   if(b.action==='unregister'){await unregisterDevice(u,b.id);return reply({ok:true});}
+  if(!anyNoticeSection(u))return reply({error:'Tu cuenta no tiene acceso a alertas, itinerarios o pases.'},403);
+  const ownSession=async()=>{const actor=await payrollUser();return !!actor&&!actor.legacy&&anyNoticeSection(actor)&&actor.id===u.id;};
   if(b.action==='confirm')return reply({item:await confirmNotice(u,b.id,b.revision,ownSession)});
   if(b.action==='read'&&typeof b.id==='string'){await markNoticeRead(u,b.id);return reply({ok:true});}
   if(!noticeOwner(u))return reply({error:'Solo un administrador puede gestionar alertas, eliminar itinerarios y configurar la integración.'},403);

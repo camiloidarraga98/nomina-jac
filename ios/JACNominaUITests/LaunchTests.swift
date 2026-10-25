@@ -2,6 +2,19 @@ import XCTest
 import UIKit
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testMediaFolderNotificationOpensTheExactFolderForAMediaOnlyAccount() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-notification", "--uitest-reset-content", "--uitest-reset-media"]
+        app.launch()
+        let photo = app.buttons["media.item.notification-photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 20)); XCTAssertTrue(photo.isHittable)
+        XCTAssertFalse(app.buttons["media.item.media-photo"].isHittable)
+        tap(app, "Listo")
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 10))
+        openSection(app, "Gestión")
+        XCTAssertTrue(app.buttons["management.notifications"].waitForExistence(timeout: 10))
+        XCTAssertFalse(hasSection(app, "Itinerarios")); XCTAssertFalse(hasSection(app, "Alertas"))
+    }
     @MainActor private func waitFor(_ element: XCUIElement, predicate: NSPredicate, timeout: TimeInterval) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: timeout) == .completed
     }
@@ -1319,6 +1332,16 @@ final class LaunchTests: XCTestCase {
 // Tablet-specific flows use the same intercepted backend and account contracts.
 // Existing iPhone checks remain unchanged; these run only on a real iPad idiom.
 final class IPadTests: XCTestCase {
+    @MainActor func testTabletMediaFolderNotificationOpensTheExactFolder() {
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-notification", "--uitest-reset-content", "--uitest-reset-media"]
+        app.launch()
+        let photo = app.buttons["media.item.notification-photo"]
+        XCTAssertTrue(photo.waitForExistence(timeout: 20)); XCTAssertTrue(photo.isHittable)
+        XCTAssertFalse(app.buttons["media.item.media-photo"].isHittable)
+        app.buttons["Listo"].tap()
+        XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 10))
+    }
     @MainActor func testAdministratorCanCancelThenDeleteFolderFromItsMenu() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll"];app.launch()
         tap(app,"ipad.section.media")

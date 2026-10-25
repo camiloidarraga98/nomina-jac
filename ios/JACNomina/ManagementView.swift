@@ -51,7 +51,7 @@ struct ManagementView: View {
         return items
     }
     private var preferences:[Destination] {
-        var items:[Destination]=user.hasNotices ? [.notifications] : []
+        var items:[Destination]=user.canReceiveNotifications ? [.notifications] : []
         if user.canUploadMedia {items.append(.imageQuality)}
         if user.hasSection(.payroll) { items.append(.concepts) };if user.isOwner && user.hasSection(.crm) {items.append(.users)}
         return items
@@ -92,7 +92,7 @@ struct ManagementView: View {
                     case .employees:if user.hasSection(.payroll),let overview=store.overview {EmployeesView(overview:overview,embedded:true)}
                     case .mail:if user.hasSection(.payroll) {MailView(user:user)}
                     case .imageQuality:if user.canUploadMedia {MediaImageQualitySettings()}
-                    case .notifications:if user.hasNotices {NotificationSettingsView()}
+                    case .notifications:if user.canReceiveNotifications {NotificationSettingsView()}
                     case .concepts:if user.hasSection(.payroll) {ConceptsRulesView(user:user)}
                     case .users:if user.hasSection(.crm) {UsersView()}
                     }

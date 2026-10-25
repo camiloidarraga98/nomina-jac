@@ -22,16 +22,23 @@ struct PayrollHomeView: View {
             #endif
         }.tint(JACTheme.action)
             .sheet(item: $store.incomingAudio) { incoming in MusicImportView(incoming: incoming, initialSection: .warmup).environmentObject(store) }
-            .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.hasNotices { await push.bind(store.client) } }
-            .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.hasNotices { Task { await push.bind(store.client) } } }
+            .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.canReceiveNotifications { await push.bind(store.client) } }
+            .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.canReceiveNotifications { Task { await push.bind(store.client) } } }
             .onChange(of: user) { _, value in
                 selected = value.firstDestination
                 #if os(iOS)
                 phoneVisited = []; phoneMenuOpen = false
                 #endif
-                if !value.hasNotices { push.stop() }
+                if !value.canReceiveNotifications { push.stop() }
+                else if !store.isAgendaOnly { Task { await push.bind(store.client) } }
             }
             .sheet(isPresented: Binding(get: { user.hasNotices && push.noticeID != nil }, set: { if !$0 { push.noticeID = nil } })) { NavigationStack { NoticesView(user: user, kind: user.hasSection(.itineraries) ? "itinerary" : user.hasSection(.alerts) ? "alert" : "boarding_pass", initialNotice: push.noticeID).id(push.noticeID).toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { push.noticeID = nil } } } } }
+            .modifier(MediaNotificationPresenter(opened: {
+                selected = "media"
+                #if os(iOS)
+                phoneMenuOpen = false; compactColumn = .detail
+                #endif
+            }))
     }
     private var phoneTabs: some View {
         TabView(selection: $selected) {

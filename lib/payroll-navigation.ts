@@ -25,7 +25,7 @@ export function canViewSection(user:AccessUser,view:string):boolean {
  if(view==='fotografia')return hasSection(user,'media');
  if(view==='crm')return user.isOwner&&hasSection(user,'crm');
  if(view==='gastos')return hasSection(user,'itineraries');
- if(view==='notificaciones')return ['itineraries','alerts','boarding'].some(k=>hasSection(user,k as 'itineraries'|'alerts'|'boarding'));
+ if(view==='notificaciones')return ['itineraries','alerts','boarding','media'].some(k=>hasSection(user,k as 'itineraries'|'alerts'|'boarding'|'media'));
  if(['usuarios','conexiones'].includes(view))return user.isOwner;
  if(view==='configuracion')return ['gastos','notificaciones','alertas','personal','reglas','archivo','correos','usuarios','conexiones'].some(v=>canViewSection(user,v));
  return ['quincena','personal','reglas','archivo','correos'].includes(view)&&hasSection(user,'payroll');

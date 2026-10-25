@@ -502,6 +502,14 @@ private struct MediaLibraryFile: Transferable {
 
 struct MediaGalleryView: View {
     let user: PayrollUser
+    private let notificationFolderID: String?
+    init(user: PayrollUser, notificationFolder: MediaFeed? = nil) {
+        self.user = user
+        notificationFolderID = notificationFolder?.folder?.id
+        _folderID = State(initialValue: notificationFolder?.folder?.id ?? "")
+        _feed = State(initialValue: notificationFolder)
+        _items = State(initialValue: MediaGalleryOrder.sorted(notificationFolder?.items ?? []))
+    }
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var phase
     @StateObject private var folderTransfer = MediaFolderTransfer()
@@ -652,9 +660,9 @@ struct MediaGalleryView: View {
         }
     }
     private var galleryNavigation: some View {
-        galleryContent.jacSurface().navigationTitle(compactGallery ? "" : "Fotografía").jacInlineTitle()
+        galleryContent.jacSurface().navigationTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : compactGallery ? "" : "Fotografía").jacInlineTitle()
             #if os(iOS)
-            .toolbar(compactGallery ? .hidden : .automatic,for:.navigationBar)
+            .toolbar(compactGallery && notificationFolderID == nil ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }
             .onChange(of: try? store.client.mediaAccessStamp()) { _, _ in
                 sharingFolder = nil
@@ -1142,7 +1150,11 @@ struct MediaGalleryView: View {
             }
             if let message = store.reportReadFailure(error) { self.error = message }
             if case APIError.forbidden = error { items = []; feed = nil; expandedFolders=[];uploadComposition=nil;clearPreview() }
-            if error is MediaFolderRemoved {clearPreview();expandedFolders=[];navigate(to:"")}
+            if error is MediaFolderRemoved {
+                clearPreview(); expandedFolders=[]
+                if notificationFolderID != nil { items=[]; feed=nil }
+                else { navigate(to:"") }
+            }
         }
     }
     private func open(_ item: MediaItem,in context:MediaFeed?=nil) {

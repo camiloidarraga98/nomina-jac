@@ -67,7 +67,7 @@ enum MacSettingsRoute: String, CaseIterable, Identifiable {
         case .account: true
         case .expenses: user.hasSection(.itineraries)
         case .alerts: user.hasSection(.alerts)
-        case .notifications: user.hasNotices
+        case .notifications: user.canReceiveNotifications
         case .connections, .users: user.hasSection(.crm)
         default: user.hasSection(.payroll)
         }

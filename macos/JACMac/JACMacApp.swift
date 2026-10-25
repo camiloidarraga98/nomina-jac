@@ -56,7 +56,7 @@ import AppKit
         Settings {
             Group {
                 if let user = store.overview?.user {
-                    if !user.hasNotices { AccountView(user: user) }
+                    if !user.canReceiveNotifications { AccountView(user: user) }
                     else { NotificationSettingsView() }
                 } else { ContentUnavailableView("Inicia sesión en JAC", systemImage: "person.crop.circle") }
             }.environmentObject(store).frame(width:680,height:500).background(MacPrivacyShield())
@@ -161,6 +161,7 @@ private struct MacWorkspace:View {
         }.safeAreaInset(edge:.bottom,spacing:0){MusicMiniPlayer(player:store.music)}
             .sheet(item:$store.incomingAudio){incoming in MusicImportView(incoming:incoming,initialSection:.warmup).environmentObject(store)}
             .onOpenURL{url in store.receiveAudio(url)}
+            .modifier(MediaNotificationPresenter(opened: { section = .media }))
             .onAppear{if !section.allowed(overview.user){section = MacSection(rawValue: overview.user.firstDestination) ?? .account}}.onChange(of:overview.user){_,user in if !section.allowed(user){section=MacSection(rawValue:user.firstDestination) ?? .account}}
     }
     private func sidebarRow(_ item:MacSection)->some View {

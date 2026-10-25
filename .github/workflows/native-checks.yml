@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, ios-bundle]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, ios-bundle]
         default: full
 
 permissions:
@@ -69,6 +69,7 @@ jobs:
           JAC_APPLE_PUSH: ${{ inputs.scope == 'apple-push' || inputs.scope == 'apple-push-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-apple-push]')) }}
           JAC_APPLE_PUSH_UI_ONLY: ${{ inputs.scope == 'apple-push-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[push-ui-only]')) }}
           JAC_PHOTO_PREVIEW: ${{ inputs.scope == 'photo-preview' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-preview]')) }}
+          JAC_PHOTO_NOTICES: ${{ inputs.scope == 'photo-notices' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-notices]')) }}
           JAC_AUDIT: ${{ inputs.scope == 'audit' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-audit]')) }}
           JAC_LAYOUT_ONLY: ${{ inputs.scope == 'layout' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-layout]')) }}
           JAC_NAVIGATION_DRAWER_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[navigation-drawer-only]') }}
@@ -95,6 +96,18 @@ jobs:
           if [ "$JAC_LAYOUT_ONLY" = true ]; then
             checks=()
             build_action=build-for-testing
+          elif [ "$JAC_PHOTO_NOTICES" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaFolderPushRoutesOnlyTheExactAuthorizedFolderAfterSessionRestoration
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaOnlyNotificationRegistrationDoesNotGrantNoticeFeedAccess
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaFolderPushRejectsRevokedDeletedAndMismatchedFolders
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaFolderPushDiscardsAResponseAfterTheSessionChanges
+              -only-testing:JACNominaTests/PayrollClientTests/testNotificationPermissionIsRequestedAfterSessionAndDenialIsRespected
+              -only-testing:JACNominaTests/PayrollClientTests/testNotificationsDisablePersistsAndLateTokenCannotRegisterUntilExplicitEnable
+              -only-testing:JACNominaTests/PayrollClientTests/testSuspendedPushCannotRequestPermissionRegisterOrChangeUserPreference
+              -only-testing:JACNominaTests/PayrollClientTests/testPushRoutingValidatesIdentifiersAndLogoutNamesOnlyThisDevice
+              -only-testing:JACNominaUITests/LaunchTests/testMediaFolderNotificationOpensTheExactFolderForAMediaOnlyAccount
+            )
           elif [ "$JAC_WALLET_DETAILS" = true ]; then
             if [ "$JAC_WALLET_DETAILS_UI_ONLY" = true ]; then
               checks=(-only-testing:JACNominaUITests/LaunchTests/testBoardingWalletMenuOpensEditableFlightDetailsWithoutShowingTheCode)
@@ -294,9 +307,11 @@ jobs:
             ${checks[@]+"${checks[@]}"} \
             ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
             "$build_action" 2>&1 | tee native-ci/iphone-tests.log
-      - name: Verify iPad selection and video deletion using the compiled app
-        if: ${{ !cancelled() && (inputs.scope == 'media-light' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-media-light]'))) }}
+      - name: Verify the affected iPad flow using the compiled app
+        if: ${{ !cancelled() && (inputs.scope == 'media-light' || inputs.scope == 'photo-notices' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-photo-notices]')))) }}
         shell: bash
+        env:
+          JAC_PHOTO_NOTICES: ${{ inputs.scope == 'photo-notices' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-notices]')) }}
         run: |
           set -euo pipefail
           python3 - <<'PYCODE'
@@ -321,10 +336,15 @@ jobs:
           PYCODE
           JAC_CI_IPAD_SIMULATOR_ID=$(sed -n '1p' native-ci/ipad-test-env)
           JAC_CI_IPAD_XCTESTRUN=$(sed -n '2p' native-ci/ipad-test-env)
+          if [ "$JAC_PHOTO_NOTICES" = true ]; then
+            ipad_check=-only-testing:JACNominaUITests/IPadTests/testTabletMediaFolderNotificationOpensTheExactFolder
+          else
+            ipad_check=-only-testing:JACNominaUITests/IPadTests/testTabletPhotographyLongPressSelectsAndVideosHaveDeleteAction
+          fi
           xcodebuild test-without-building -xctestrun "$JAC_CI_IPAD_XCTESTRUN" \
             -destination "platform=iOS Simulator,id=$JAC_CI_IPAD_SIMULATOR_ID" \
             -resultBundlePath native-ci/ipad.xcresult -parallel-testing-enabled NO \
-            -only-testing:JACNominaUITests/IPadTests/testTabletPhotographyLongPressSelectsAndVideosHaveDeleteAction \
+            "$ipad_check" \
             2>&1 | tee native-ci/ipad-tests.log
       - name: Export compact test diagnostics
         if: always()

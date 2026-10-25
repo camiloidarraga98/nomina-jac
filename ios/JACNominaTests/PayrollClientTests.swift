@@ -2645,6 +2645,19 @@ final class PayrollClientTests: XCTestCase {
         let hub = JACNotifications(pushAvailable: true, registerRemote: {}, unregisterRemote: {})
         hub.received("https://untrusted.example.invalid"); XCTAssertNil(hub.noticeID)
         let id = UUID().uuidString; hub.received(id); XCTAssertEqual(hub.noticeID, id.lowercased()); hub.noticeID = nil
+        for folder in ["https://untrusted.example.invalid", "r2_not-a-folder", "r2_" + id + "/child", "r2_" + id + "\n"] {
+            hub.received(noticeID: id, kind: "media_folder", folderID: folder)
+            XCTAssertNil(hub.noticeID); XCTAssertNil(hub.pendingMedia)
+        }
+        hub.received(noticeID: "invalid", kind: "media_folder", folderID: "r2_" + id)
+        XCTAssertNil(hub.pendingMedia)
+        hub.received(noticeID: id, kind: "unknown", folderID: "r2_" + id)
+        XCTAssertNil(hub.noticeID); XCTAssertNil(hub.pendingMedia)
+        hub.received(noticeID: id, kind: nil, folderID: nil)
+        XCTAssertEqual(hub.noticeID, id.lowercased())
+        hub.received(noticeID: id, kind: "media_folder", folderID: "r2_" + id)
+        XCTAssertNil(hub.noticeID); XCTAssertEqual(hub.pendingMedia?.folderID, "r2_" + id.lowercased())
+        hub.stop(); XCTAssertNil(hub.pendingMedia); XCTAssertNil(hub.mediaDestination)
         let vault = MemorySession(); vault.token = token
         MockProtocol.handler = { request in
             let body = try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request))
@@ -2652,6 +2665,113 @@ final class PayrollClientTests: XCTestCase {
             return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{}".utf8))
         }
         try await makeClient(vault).logout(); XCTAssertNil(vault.token)
+    }
+
+    private func photoNotificationWorkspace(sections: [String] = ["media"]) throws -> Data {
+        try JSONEncoder().encode(JSONValue.object([
+            "version": .number(0), "company": .string("Prueba"), "periods": .array([]), "employees": .array([]),
+            "user": .object(["id": .string("photo-fixture"), "username": .string("fotografia"), "email": .string("photo@example.invalid"), "displayName": .string("Fotografía ficticia"), "isOwner": .bool(false), "permissions": .array([]), "mediaOnly": .bool(true), "sections": .array(sections.map(JSONValue.string))]),
+            "data": .object(["employees": .array([]), "periods": .array([]), "concepts": .array([]), "settings": .object(["company": .string("Prueba")])])
+        ]))
+    }
+    private func photoNotificationFeed(_ folderID: String) throws -> Data {
+        try JSONEncoder().encode(JSONValue.object([
+            "connected": .bool(true), "canRead": .bool(true), "canUpload": .bool(false), "canConnect": .bool(false),
+            "root": .object(["id": .string("jac_r2_root"), "name": .string("Fotografía")]),
+            "folder": .object(["id": .string(folderID), "name": .string("Carpeta de prueba")]), "breadcrumbs": .array([]), "items": .array([]), "nextPageToken": .string(""), "provider": .string("r2"), "collectionID": .string("fixture-collection")
+        ]))
+    }
+    @MainActor private func photoNotificationClient(_ vault: MemorySession, root: URL) -> PayrollClient {
+        let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
+        return PayrollClient(baseURL: base, vault: vault, configuration: configuration, offlineCache: OfflineResponseCache(root: root.appendingPathComponent("content")), mediaOffline: MediaOfflineCache(root: root.appendingPathComponent("media")), automaticallyDownloadOffline: false)
+    }
+    @MainActor func testMediaFolderPushRoutesOnlyTheExactAuthorizedFolderAfterSessionRestoration() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = MemorySession(), client = photoNotificationClient(vault, root: root), store = PayrollStore(client: client)
+        let hub = JACNotifications(pushAvailable: true, registerRemote: {}, unregisterRemote: {})
+        let folder = "r2_" + UUID().uuidString.lowercased(), workspace = try photoNotificationWorkspace(), feed = try photoNotificationFeed(folder)
+        var paths: [String] = []
+        MockProtocol.handler = { request in
+            paths.append(request.url!.path)
+            if request.url!.path == "/api/media" {
+                XCTAssertEqual(URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first(where: { $0.name == "folder" })?.value, folder)
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, request.url!.path == "/api/media" ? feed : workspace)
+        }
+        hub.received(noticeID: UUID().uuidString, kind: "media_folder", folderID: folder)
+        await hub.openPendingMedia(using: store)
+        XCTAssertNotNil(hub.pendingMedia); XCTAssertNil(hub.mediaDestination); XCTAssertTrue(paths.isEmpty)
+        vault.token = token
+        await hub.openPendingMedia(using: store)
+        XCTAssertEqual(paths, ["/api/mobile/payroll", "/api/media"])
+        XCTAssertFalse(try XCTUnwrap(store.overview).user.hasNotices)
+        XCTAssertEqual(hub.mediaDestination?.feed.folder?.id, folder)
+        XCTAssertEqual(hub.mediaDestination?.stamp, try client.mediaAccessStamp())
+        XCTAssertNil(hub.pendingMedia); XCTAssertNil(hub.noticeID)
+        hub.stop()
+    }
+    @MainActor func testMediaOnlyNotificationRegistrationDoesNotGrantNoticeFeedAccess() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), suite = "photo-push-" + UUID().uuidString
+        let defaults = UserDefaults(suiteName: suite)!
+        defer { try? FileManager.default.removeItem(at: root); defaults.removePersistentDomain(forName: suite) }
+        let vault = MemorySession(); vault.token = token
+        let client = photoNotificationClient(vault, root: root), workspace = try photoNotificationWorkspace(), permission = FakeNotificationPermission()
+        var commands: [String] = [], remoteRequests = 0
+        MockProtocol.handler = { request in
+            if request.httpMethod == "POST" {
+                commands.append(try JSONDecoder().decode(JSONValue.self, from: MockProtocol.requestBody(request))["action"].text)
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, Data("{}".utf8))
+            }
+            XCTAssertEqual(request.url?.path, "/api/mobile/payroll")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, workspace)
+        }
+        _ = try await client.workspace(forceNetwork: true)
+        XCTAssertTrue(try XCTUnwrap(client.accessUser).canReceiveNotifications)
+        let hub = JACNotifications(defaults: defaults, permission: permission, allowsFixture: true, pushAvailable: true, registerRemote: { remoteRequests += 1 }, unregisterRemote: {})
+        await hub.bind(client); await hub.register(String(repeating: "ab", count: 32))
+        XCTAssertEqual(permission.requests, 1); XCTAssertEqual(remoteRequests, 1)
+        do { _ = try await client.notices(); XCTFail("Fotografía no concede el feed de avisos") } catch APIError.forbidden { }
+        do { try await client.noticeCommand(.object(["action": .string("read"), "id": .string(UUID().uuidString)])); XCTFail("Fotografía no concede lectura de avisos") } catch APIError.forbidden { }
+        await hub.disable(client)
+        XCTAssertEqual(commands, ["register", "unregister"]); XCTAssertFalse(hub.enabled)
+    }
+    @MainActor func testMediaFolderPushRejectsRevokedDeletedAndMismatchedFolders() async throws {
+        for rejection in ["revoked", "deleted", "mismatched"] {
+            let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+            defer { try? FileManager.default.removeItem(at: root) }
+            let vault = MemorySession(); vault.token = token
+            let client = photoNotificationClient(vault, root: root), store = PayrollStore(client: client), hub = JACNotifications(pushAvailable: true, registerRemote: {}, unregisterRemote: {})
+            let folder = "r2_" + UUID().uuidString.lowercased(), original = try photoNotificationWorkspace(), revoked = try photoNotificationWorkspace(sections: []), wrong = try photoNotificationFeed("r2_" + UUID().uuidString.lowercased())
+            client.rememberWorkspace(try JSONDecoder().decode(PayrollWorkspace.self, from: original))
+            var mediaReads = 0
+            MockProtocol.handler = { request in
+                let media = request.url?.path == "/api/media"
+                if media { mediaReads += 1 }
+                return (HTTPURLResponse(url: request.url!, statusCode: media && rejection == "deleted" ? 410 : 200, httpVersion: nil, headerFields: nil)!, media ? rejection == "deleted" ? Data("{\"error\":\"Carpeta eliminada\"}".utf8) : wrong : rejection == "revoked" ? revoked : original)
+            }
+            hub.received(noticeID: UUID().uuidString, kind: "media_folder", folderID: folder)
+            await hub.openPendingMedia(using: store)
+            XCTAssertNil(hub.mediaDestination); XCTAssertNil(hub.noticeID); XCTAssertNil(hub.pendingMedia)
+            XCTAssertNotNil(hub.routingError); XCTAssertEqual(mediaReads, rejection == "revoked" ? 0 : 1)
+            hub.stop()
+        }
+    }
+    @MainActor func testMediaFolderPushDiscardsAResponseAfterTheSessionChanges() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let vault = MemorySession(); vault.token = token
+        let client = photoNotificationClient(vault, root: root), store = PayrollStore(client: client), hub = JACNotifications(pushAvailable: true, registerRemote: {}, unregisterRemote: {})
+        let folder = "r2_" + UUID().uuidString.lowercased(), workspace = try photoNotificationWorkspace(), feed = try photoNotificationFeed(folder)
+        MockProtocol.handler = { request in
+            let media = request.url?.path == "/api/media"
+            if media { vault.token = String(repeating: "b", count: 43) }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, media ? feed : workspace)
+        }
+        hub.received(noticeID: UUID().uuidString, kind: "media_folder", folderID: folder)
+        await hub.openPendingMedia(using: store)
+        XCTAssertNil(hub.mediaDestination); XCTAssertNil(hub.noticeID); XCTAssertNil(hub.pendingMedia)
+        hub.stop(); XCTAssertNil(hub.pendingMedia)
     }
 
     func testNoticeTimestampsUseColombiaDayAndTimeIncludingFractionalSeconds() {

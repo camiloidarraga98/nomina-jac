@@ -253,6 +253,13 @@
       "when": 1792677944803,
       "tag": "0035_crm_prospects",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "6",
+      "when": 1792886400036,
+      "tag": "0036_media_folder_notifications",
+      "breakpoints": true
     }
   ]
 }

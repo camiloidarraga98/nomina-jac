@@ -28,3 +28,20 @@ test('service worker conserva compatibilidad con envíos antiguos y valida el te
  assert.equal(f.notices[2].options.body,'Ya llegó tu itinerario para el día de hoy');
  f.listeners.push({data:{json:()=>{throw new Error('invalid json');}},waitUntil:()=>assert.fail('No push without data')});assert.equal(f.notices.length,3);
 });
+
+test('fotografía abre la carpeta exacta en JAC, reutiliza la ventana y no confía en URLs del payload',async()=>{
+ const f=fixture(),folderId='r2_77777777-7777-4777-8777-777777777777';let task,closed=0;
+ f.listeners.push({data:{json:()=>({id,kind:'media_folder',folderId,title:'¡Nuevas fotos disponibles!',body:'Ya está disponible la carpeta «Evento».',url:'https://untrusted.example.invalid'})},waitUntil:p=>task=p});await task;
+ const notice=f.notices[0];assert.equal(notice.title,'¡Nuevas fotos disponibles!');assert.equal(notice.options.body,'Ya está disponible la carpeta «Evento».');assert.equal(notice.options.data.folderId,folderId);assert.equal(notice.options.data.kind,'media_folder');assert.ok(!JSON.stringify(notice).includes('untrusted'));
+ const click=()=>f.listeners.notificationclick({notification:{data:notice.options.data,close:()=>closed++},waitUntil:p=>task=p});click();await task;
+ assert.deepEqual(f.opened,['https://fixture.example.invalid/fotografia?carpeta='+folderId]);assert.equal(closed,1);
+ let navigated,focused=false;f.setWindows([{url:'https://fixture.example.invalid/agenda',navigate:async url=>navigated=url,focus:async()=>focused=true}]);click();await task;
+ assert.equal(navigated,f.opened[0]);assert.equal(focused,true);assert.equal(f.opened.length,1);
+});
+
+test('fotografía rechaza destinos malformados tanto al mostrar como al tocar el aviso',()=>{
+ const f=fixture();for(const folderId of [undefined,'jac_r2_root','../archivo','https://untrusted.example.invalid','r2_not-a-uuid',['r2_77777777-7777-4777-8777-777777777777']]){
+  f.listeners.push({data:{json:()=>({id,kind:'media_folder',folderId})},waitUntil:()=>assert.fail('No mostrar destinos no válidos')});
+  f.listeners.notificationclick({notification:{data:{id,kind:'media_folder',folderId},close:()=>{}},waitUntil:()=>assert.fail('No navegar a destinos no válidos')});
+ }assert.equal(f.notices.length,0);assert.equal(f.opened.length,0);
+});

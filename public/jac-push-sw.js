@@ -9,10 +9,14 @@ self.addEventListener('push',event=>{
  if(!data||!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(data.id))return;
  const title=typeof data.title==='string'&&data.title.trim()&&data.title.length<=120?data.title:'JAC';
  const body=typeof data.body==='string'&&data.body.trim()&&data.body.length<=2001?data.body:'Tienes un aviso nuevo. Abre JAC para consultarlo.';
- event.waitUntil(self.registration.showNotification(title,{body,icon:'/jac-app-icon.png',badge:'/jac-app-icon.png',tag:'jac-'+data.id,renotify:false,data:{id:data.id}}));
+ const media=data.kind==='media_folder';
+ if(media&&(typeof data.folderId!=='string'||!/^r2_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(data.folderId)))return;
+ event.waitUntil(self.registration.showNotification(title,{body,icon:'/jac-app-icon.png',badge:'/jac-app-icon.png',tag:'jac-'+data.id,renotify:false,data:{id:data.id,...(media?{kind:'media_folder',folderId:data.folderId}:{})}}));
 });
 self.addEventListener('notificationclick',event=>{
  event.notification.close();const id=event.notification.data?.id;if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id??''))return;
- const url=new URL('/?jac-notice='+encodeURIComponent(id),self.location.origin).href;
+ const data=event.notification.data,media=data.kind==='media_folder';
+ if(media&&(typeof data.folderId!=='string'||!/^r2_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(data.folderId)))return;
+ const url=new URL(media?'/fotografia?carpeta='+encodeURIComponent(data.folderId):'/?jac-notice='+encodeURIComponent(id),self.location.origin).href;
  event.waitUntil((async()=>{const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});const existing=windows.find(w=>new URL(w.url).origin===self.location.origin);if(existing){await existing.navigate(url);await existing.focus();}else await self.clients.openWindow(url);})());
 });

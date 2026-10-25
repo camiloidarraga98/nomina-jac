@@ -17,7 +17,7 @@ export default function NotificationSettings({userID,owner,view,enabled=true,sto
   const revision=generation.current;if(!current(revision))throw new DOMException('Consulta cancelada.','AbortError');
   const controller=new AbortController();pending.current.add(controller);
   try{
-   const r=await fetch('/api/notices',{cache:'no-store',signal:controller.signal});
+   const r=await fetch(owner?'/api/notices':'/api/notices?push=1',{cache:'no-store',signal:controller.signal});
    if(!current(revision))throw new DOMException('Consulta cancelada.','AbortError');
    if(r.status===401||r.status===403){revoke();throw new DOMException('Acceso retirado.','AbortError');}
    const data=await r.json() as Feed&{error?:string};if(!r.ok)throw new Error(data.error||'No se pudo consultar la configuración.');
@@ -36,7 +36,7 @@ export default function NotificationSettings({userID,owner,view,enabled=true,sto
   }catch(e){await report(e,revision,'No se pudo preparar los avisos.',bindingDevice);}finally{binding=false;}}
   void prepare();document.addEventListener('visibilitychange',prepare);window.addEventListener('online',prepare);
   return()=>{cancelled=true;mounted.current=false;generation.current++;cancelPending();instance?.stop();if(client.current===instance)client.current=null;document.removeEventListener('visibilitychange',prepare);window.removeEventListener('online',prepare);};
- },[userID,enabled]);
+ },[userID,enabled,owner]);
  function dismiss(){sessionStorage.setItem('jac.push.dismissed.'+userID,'1');setConsent(false);}
  async function enable(){if(!client.current||!feed?.settings.webPublicKey||busy||revoked.current)return;const revision=generation.current,instance=client.current;setBusy(true);setError('');try{
   const success=await instance.enable(feed.settings.webPublicKey);if(!current(revision))return;setActive(success);dismiss();setMessage(success?'Notificaciones activadas en este navegador.':'Puedes permitir las notificaciones de JAC desde los ajustes del navegador.');
@@ -44,7 +44,7 @@ export default function NotificationSettings({userID,owner,view,enabled=true,sto
  async function disable(){if(!client.current||busy||revoked.current)return;const revision=generation.current,instance=client.current;setBusy(true);setError('');setActive(false);dismiss();try{await instance.disable();if(current(revision))setMessage('Notificaciones desactivadas en este navegador.');}catch(e){await report(e,revision,'No se pudieron desactivar los avisos.',true);}finally{if(current(revision))setBusy(false);}}
  return <>
  {view==='notificaciones'&&<section className="panel notices-panel"><div className="panel-title"><h2><Bell size={20}/> Notificaciones</h2></div>
-  <p>Recibe los itinerarios nuevos y las alertas dirigidas a ti. Las alertas muestran su título y mensaje.</p>
+  <p>Recibe avisos de nuevas carpetas de Fotografía, itinerarios y alertas según tus accesos.</p>
   {error&&<p className="message error" role="alert">{error}</p>}{message&&<p className="message success" role="status">{message}</p>}
   {!enabled?<p>Activa primero tu acceso propio para recibir notificaciones.</p>:denied?null:!supported?<p>Este navegador no admite estos avisos. En iPhone puedes utilizar la app JAC o añadir el webapp a la pantalla de inicio.</p>:<>
    <p className="muted">{active?'Activadas en este navegador.':client.current?.disabled?'Desactivadas en este navegador.':Notification.permission==='denied'?'Permiso bloqueado en el navegador. Cámbialo en los ajustes del sitio.':'Pendientes de autorización o registro.'}</p>
@@ -53,6 +53,6 @@ export default function NotificationSettings({userID,owner,view,enabled=true,sto
   </>}
  </section>}
  {view==='conexiones'&&owner&&<section className="panel notices-panel connections-panel"><header className="connections-panel-heading"><div><h2>Conexiones</h2><p>Elige qué quieres configurar.</p></div><span className="connections-access">Solo Camilo</span></header>{error&&<p className="message error" role="alert">{error}</p>}{!enabled?<p>Activa tu acceso propio para configurar estos servicios.</p>:denied?null:feed?<NoticeSettings settings={feed.settings} failures={feed.failures} boardingFeed={feed} storage={storage} onBusy={setBusy} onSaved={async()=>{await refresh();}}/>:<p>Consultando…</p>}</section>}
- <Dialog open={consent} onOpenChange={open=>{if(!open&&!busy)dismiss();}}><DialogContent className="payroll-dialog" showCloseButton={!busy} onInteractOutside={e=>{if(busy)e.preventDefault();}}><DialogTitle>Recibe tus avisos de JAC</DialogTitle><DialogDescription>Te avisaremos cuando llegue un itinerario o una alerta para ti. Confirma el permiso que mostrará tu navegador. Puedes desactivar los avisos en Configuración general → Notificaciones.</DialogDescription>{error&&<p className="message error" role="alert">{error}</p>}<div className="notice-actions"><Button className="primary" disabled={busy} onClick={()=>void enable()}>Permitir notificaciones</Button><Button variant="outline" disabled={busy} onClick={dismiss}>Ahora no</Button></div></DialogContent></Dialog>
+ <Dialog open={consent} onOpenChange={open=>{if(!open&&!busy)dismiss();}}><DialogContent className="payroll-dialog" showCloseButton={!busy} onInteractOutside={e=>{if(busy)e.preventDefault();}}><DialogTitle>Recibe tus avisos de JAC</DialogTitle><DialogDescription>Te avisaremos de nuevas fotos y de los avisos dirigidos a ti, según tus accesos. Confirma el permiso que mostrará tu navegador. Puedes desactivar los avisos en Configuración general → Notificaciones.</DialogDescription>{error&&<p className="message error" role="alert">{error}</p>}<div className="notice-actions"><Button className="primary" disabled={busy} onClick={()=>void enable()}>Permitir notificaciones</Button><Button variant="outline" disabled={busy} onClick={dismiss}>Ahora no</Button></div></DialogContent></Dialog>
  </>;
 }
