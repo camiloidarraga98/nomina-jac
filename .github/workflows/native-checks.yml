@@ -69,6 +69,7 @@ jobs:
         env:
           JAC_REDESIGN: ${{ inputs.scope == 'redesign' || inputs.scope == 'redesign-followup' || inputs.scope == 'redesign-forms-ui-only' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-redesign]') || contains(github.event.head_commit.message, '[redesign-followup]') || contains(github.event.head_commit.message, '[redesign-forms-ui-only]'))) }}
           JAC_REDESIGN_FORMS_UI_ONLY: ${{ inputs.scope == 'redesign-forms-ui-only' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) }}
+          JAC_REDESIGN_CRM_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-crm-only]') }}
           JAC_REDESIGN_FOLLOWUP: ${{ inputs.scope == 'redesign-followup' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-followup]')) }}
           JAC_WALLET_DETAILS: ${{ inputs.scope == 'wallet-details' || inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wallet-details]')) }}
           JAC_WALLET_DETAILS_UI_ONLY: ${{ inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[wallet-ui-only]')) }}
@@ -113,10 +114,14 @@ jobs:
             if [ "$JAC_REDESIGN_FORMS_UI_ONLY" = true ]; then
             # Production sources are unchanged: repeat only the two blocked
             # native forms after correcting measured XCTest AX coordinates.
+            if [ "$JAC_REDESIGN_CRM_ONLY" = true ]; then
+            checks=(-only-testing:JACNominaUITests/LaunchTests/testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary)
+            else
             checks=(
               -only-testing:JACNominaUITests/LaunchTests/testCreatePeriodAndManageItsActivitiesWithNativeForms
               -only-testing:JACNominaUITests/LaunchTests/testCRMCreateSingleDayShowFirstPaymentAndWeeklySummary
             )
+            fi
             elif [ "$JAC_REDESIGN_FOLLOWUP" = true ]; then
             # Recheck the three failures and the two navigation journeys after
             # changing drawer layout. Reuse the earlier media/permission results.

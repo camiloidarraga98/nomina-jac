@@ -647,7 +647,7 @@ final class LaunchTests: XCTestCase {
         fill(app,"crm.amount.Valor del abono (COP)","50000000");tap(app,"travel.fixture");tap(app,"crm.editor.save")
         XCTAssertTrue(app.textFields["crm.search"].waitForExistence(timeout:10));fill(app,"crm.search","Nuevo ficticio")
         XCTAssertTrue(app.staticTexts["PEREIRA · Nuevo ficticio"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","90.000.000")).firstMatch.exists)
-        tap(app,"crm.moreSections");tap(app,"Resumen semanal");XCTAssertTrue(app.staticTexts["Resumen semanal"].waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["Gastos por fecha de registro"].exists);XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","50.000.000")).firstMatch.exists);attachScreen(app,name:"crm-resumen-semanal-nativo")
+        tap(app,"crm.moreSections");tap(app,"Resumen semanal");XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label ==[c] %@","Resumen semanal")).firstMatch.waitForExistence(timeout:10));XCTAssertTrue(app.staticTexts["Gastos por fecha de registro"].exists);XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","50.000.000")).firstMatch.exists);attachScreen(app,name:"crm-resumen-semanal-nativo")
     }
 
     @MainActor func testDeleteArchivedContractRequiresConfirmationAndKeepsShow() {
