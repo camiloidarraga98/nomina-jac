@@ -210,6 +210,12 @@ Las miniaturas quedan a imagen completa, sin nombre visible, barra blanca ni tex
 - Visor iPhone a pantalla completa, pasar deslizando, zoom y precarga acotada. Si la siguiente foto aún no está, mostrar su pantalla con círculo de progreso. Mantener caché privada para no volver a bajar una foto visitada al retroceder.
 - Web/Mac mantienen botones/teclado; videos con reproductor. Las páginas de archivos de una carpeta forman un recorrido, no un slideshow limitado a la primera página.
 
+### Aviso automático de carpeta nueva ·25 de octubre de2026
+
+JAC prepara **¡Nuevas fotos disponibles!** con el nombre de cada carpeta creada después de aplicar la migración0036. Solo un evento por carpeta, sin anunciar las anteriores ni repetir al añadir archivos después. Espera al menos120s de quietud desde el último archivo publicado, con originales validados/listos y sin subidas pendientes vigentes ni reservas activas dentro de la carpeta/subcarpetas. Esa quietud permite compatibilidad con clientes antiguos; no demuestra el final de un lote que aún se prepara localmente.
+
+Reciben el aviso los dispositivos registrados y habilitados de cuentas activadas/activas con Fotografía, sesión válida y permiso de notificaciones, sin exigir Alertas. Tocar abre la carpeta completa; web conserva el destino al iniciar sesión y la app revalida por red. Revocación, cierre de sesión o borrado bloquean entregas pendientes y acceso. La app necesita **0.30.0(44)** o posterior para abrir este destino; las anteriores conservan las subidas. APNs nativo de Mac no cambia. Web/API y migración0036 publicados; las pruebas locales, unitarias nativas, UI de iPhone y ambas compilaciones están aprobadas. La apertura de carpeta en iPad tiene captura/jerarquía confirmadas y una limitación de automatización por timeout de accesibilidad del simulador; no declarar aprobado ese recorrido completo. Ver [alcance, publicación y resultados de verificación](../docs/PHOTOGRAPHY_FOLDER_NOTIFICATIONS.md).
+
 ### Subida y calidad
 
 Subir desde la raíz ofrece **nombre de nueva carpeta + selección de fotos/videos en el mismo menú**; desde una carpeta se conserva ese destino. Formatos de trabajo: JPEG/HEIC y MP4/MOV. No se pidió un flujo RAW.

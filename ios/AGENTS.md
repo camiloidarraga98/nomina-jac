@@ -1,3 +1,7 @@
+## Avisos de carpetas nuevas de Fotografía ·25 de octubre de2026
+
+Camilo pidió notificación automática de cada carpeta nueva de fotos y apertura directa al tocar. App iOS0.30.0(44) admite payload `kind:media_folder`/`folderId:r2_<UUID>` y cuentas solo Fotografía en registro/ajustes push; no concede acceso al feed de Alertas/Itinerarios. Validar sesión y permisos vigentes y consultar por red la carpeta exacta antes de abrir la galería; conservar borradores/subidas y descartar respuestas de otra sesión. No cambiar entitlements Sandbox/Producción ni activar APNs nativo del Mac. Publicación, pruebas reales y límites en `../docs/PHOTOGRAPHY_FOLDER_NOTIFICATIONS.md`; no inferir instalación/recepción física del resultado de CI.
+
 ## APNs: producción confirmada ·22 de octubre de2026 (Colombia)
 
 Camilo confirmó recepción desde TestFlight y fallo solo desde Xcode; su clave Apple es `Team scoped (All topics) [Production]`. La instalación Debug de Xcode usa Sandbox, coherente con sus entitlements. Pidió añadir otra conexión/credencial Sandbox en el servidor; ya está publicada y confirmó ambas conexiones configuradas tras guardar la segunda clave en el formulario privado. Conservar la separación y la conexión de producción; no cambiar Debug a producción ni sobrescribir la clave vigente. La nueva selección del servidor usa el entorno que la app ya registra y no requiere cambios nativos. Ver `../docs/ITINERARIES_PUSH_SETUP.md` para publicación y guardado privado de la clave.

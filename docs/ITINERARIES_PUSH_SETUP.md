@@ -1,3 +1,13 @@
+## Avisos automáticos de Fotografía ·25 de octubre de2026
+
+Las carpetas creadas después de aplicar la migración0036 pueden enviar **¡Nuevas fotos disponibles!** y **Ya está disponible la carpeta «nombre de la carpeta».** Un evento por carpeta, sin avisos históricos ni repetición por añadidos posteriores. El servidor espera al menos120s de quietud desde el último archivo publicado, con originales validados/listos y sin subidas pendientes vigentes ni reservas activas en la carpeta/subcarpetas. Es una regla del servidor compatible con clientes existentes, no una confirmación del final del lote local.
+
+Son elegibles los dispositivos registrados/habilitados de cuentas activadas y activas con Fotografía, sesión válida y permiso de notificaciones. También las cuentas que solo tienen Fotografía pueden abrir **Notificaciones** y registrar su navegador/app; no reciben por ello Alertas ni Itinerarios. Se reutilizan las conexiones Web Push/APNs y sus entornos; APNs nativo de Mac no cambia.
+
+Tocar abre la carpeta completa. Web conserva `/fotografia?carpeta=…` durante el inicio de sesión; la app requiere **0.30.0(44)** o posterior para resolver este destino y lo valida por red. Cierre de sesión, permisos revocados o carpeta eliminada impiden nuevas consultas y entregas pendientes. Los avisos ya aceptados por el proveedor no se pueden retirar, y un resultado incierto no se reenvía automáticamente. El nombre puede verse en la pantalla bloqueada según los ajustes del dispositivo.
+
+Ver [PHOTOGRAPHY_FOLDER_NOTIFICATIONS.md](PHOTOGRAPHY_FOLDER_NOTIFICATIONS.md) para implementación, límites y resultados. Web/API y migración0036 publicados y verificados; pruebas locales, ocho unitarias nativas, UI de iPhone y ambas compilaciones aprobadas. Captura/jerarquía confirman la carpeta de iPad, cuyo recorrido automático final quedó limitado por un timeout del motor de accesibilidad del simulador. La recepción física y la instalación de44 siguen pendientes del Mac/TestFlight y dispositivos del usuario.
+
 ## Servicios conectados: una tarjeta por servicio ·22 de octubre de2026 (Colombia)
 
 Camilo pidió simplificar la sección web porque los formularios estaban mezclados. **Configuración general → Servicios conectados** abre ahora siete tarjetas en dos grupos:

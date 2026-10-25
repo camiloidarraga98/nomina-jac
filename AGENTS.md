@@ -1,3 +1,7 @@
+## Avisos de carpetas nuevas de Fotografía ·25 de octubre de2026
+
+Camilo pidió avisar automáticamente a todos los usuarios al subir una carpeta nueva: «¡Nuevas fotos disponibles!» y nombre de carpeta, con apertura directa al tocar. Se limita a cuentas activas con Fotografía y dispositivo/sesión autorizados; incluye perfiles solo Fotografía sin conceder Alertas u otros módulos. Un evento por carpeta futura, sin anunciar histórico, vacío ni cada archivo: esperar originales validados, ausencia de pendientes y120s de quietud. Conservar deduplicación, resultados inciertos sin reenvío, revocación y separación APNs Sandbox/Producción. La app0.30.0(44) agrega el destino exacto; binarios anteriores requieren actualización para abrirlo. Ver `docs/PHOTOGRAPHY_FOLDER_NOTIFICATIONS.md` para alcance, límites de lotes antiguos, publicación y comprobaciones; no probar avisos o subidas con archivos/cuentas reales.
+
 ## Conexiones web por servicio ·23 de octubre de2026
 
 Camilo pidió ordenar la interfaz web de Conexiones. La vista reúne siete tarjetas en Notificaciones (iPhone · TestFlight, iPhone · Xcode, Navegador) y Viajes y documentos (Slack · Itinerarios, Apple Wallet, Canales de pases, Fotografía). Abrir una tarjeta muestra solo su formulario y permite volver a servicios; mantener estados independientes, permisos, borradores privados y bloqueo mientras se guarda. Fotografía usa el componente y permiso existentes dentro de su tarjeta. Publicación y verificación en `docs/PROJECT_CONTEXT.md`; no repetir pruebas Apple por este cambio exclusivamente web.
