@@ -1,3 +1,7 @@
+## Alineación de datos de los pases · 25 de octubre de 2026
+
+Camilo pidió alinear Silla, Salida y En sala con sus valores. Fuente `580a203`, iOS0.32.1(47): títulos de texto con el mismo borde/altura, sin espacios reservados a iconos. Solo presentación; conservar la evidencia de cálculo/parser/caché/revocación y Mac anterior. CI40163521420 aprobó compilación iPhone y el único recorrido UI/captura; sin pruebas nuevas, repeticiones de unitarias/Mac ni despliegue del Worker. Ver `BOARDING_CARD_FLIGHT_INFO.md`.
+
 ## Tarjeta de pases: silla y horas · 25 de octubre de 2026
 
 Camilo pidió mostrar silla asignada, salida y hora en sala en la tarjeta, sin abrir el PDF. La hora en sala de esta tarjeta es siempre salida menos una hora por decisión expresa; si cruza medianoche, indicar «Día anterior». No inferir salida de llegada/puerta/embarque ni inventar silla; desconocidos «Sin indicar». Lectura local acotada del mismo adjunto privado, caché en memoria por sesión/aviso/archivo/revisión, revalidación canónica antes y después y dos trabajadores por lista. Conservar acceso exclusivo del destinatario, originales, código y Wallet; la preparación Wallet mantiene sus datos originales/editables. App iOS 0.32.0 (46), con navegación/calendario de45 incluidos. Ver `BOARDING_CARD_FLIGHT_INFO.md`; no pruebas con pases, cuentas o servicios reales.

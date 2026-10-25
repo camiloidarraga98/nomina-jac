@@ -27,3 +27,10 @@ Hay como máximo dos trabajadores por lista. Un trabajo cancelado sigue ocupando
 Fuente funcional preparada en `455c22c`. Se comprueba únicamente el alcance modificado: cinco casos de cálculo/parser, tres de caché/concurrencia/revocación y un recorrido UI de tarjeta/PDF/medianoche, con originales sintéticos y red interceptada; compilación Mac por las fuentes compartidas. La sintaxis YAML y sus ocho bloques shell se comprobaron localmente. La ejecución [40162583700](https://github.com/camiloidarraga98/nomina-jac/actions/runs/40162583700), sobre la misma fuente, aprobó ocho pruebas unitarias y un recorrido UI (25.008s), cero fallos y `TEST SUCCEEDED`. La compilación Release de Mac terminó con `BUILD SUCCEEDED`. Release de iPhone y suites de otros módulos se omitieron deliberadamente; no se repitió ningún caso. Esto no equivale a firma, subida a TestFlight o instalación física.
 
 Las fuentes web/Worker no cambian y no se repiten sus compilaciones, pruebas o despliegues. Firma, bundle, Team ID y separación APNs se conservan. Para instalar, hacer pull en el mismo Xcode; crear/subir un Archive 0.32.0 (46) y actualizar desde TestFlight, o instalar mediante Run. La firma/distribución física permanece en el Mac de Camilo.
+
+
+## Alineación de las tres columnas · 25 de octubre de 2026
+
+Camilo señaló que Silla, Salida y En sala no quedaban alineados con sus valores. El ajuste usa títulos de texto sin reserva para iconos: mismo borde izquierdo, fuente y separación vertical en cada columna. El aviso «Día anterior» permanece debajo de su hora y el tamaño de accesibilidad conserva la distribución vertical.
+
+Fuente `580a203`, iOS 0.32.1 (47). Se reutilizan los ocho casos unitarios y la compilación Mac de la funcionalidad anterior, porque lectura, cálculo, caché y permisos no cambian. La ejecución [40163521420](https://github.com/camiloidarraga98/nomina-jac/actions/runs/40163521420) aprobó la compilación iPhone y el único recorrido UI existente para obtener la captura actual. No se añaden pruebas para este ajuste visual ni se repiten web/API, Release o suites de otros módulos. La instalación física requiere actualizar desde Xcode/TestFlight a47.
