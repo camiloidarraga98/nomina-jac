@@ -531,7 +531,7 @@ struct NoticesView: View {
     }
     private func boardingAirline(_ item: JACNotice, file: NoticeAttachment) -> String? {
         guard let airline = item.singleFileBoardingDetails?.airline, !airline.isEmpty,
-              boardingDetails.key(item, file: file, client: store.client) != nil else { return nil }
+              boardingDetails.presentationKey(item, file: file, client: store.client) != nil else { return nil }
         return airline
     }
     @ViewBuilder private func boardingAirlineLabel(_ item: JACNotice, file: NoticeAttachment) -> some View {

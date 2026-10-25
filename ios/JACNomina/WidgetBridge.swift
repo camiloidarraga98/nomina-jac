@@ -3,6 +3,7 @@ import Foundation
 import CryptoKit
 import WidgetKit
 import BackgroundTasks
+import UIKit
 
 /// Orchestrates authenticated reads in the app. The shared actor performs all
 /// encoding and file I/O; neither a scroll render nor the extension fetches it.
@@ -11,6 +12,7 @@ final class JACWidgetBridge {
     static let shared = JACWidgetBridge()
     static let backgroundTaskIdentifier = "co.jacmusic.nomina.widget-refresh"
     private let snapshots: JACWidgetSnapshotStore
+    private let protectedDataAvailable: @MainActor () -> Bool
     private var owner: String?
     private weak var preparedClient: PayrollClient?
     private var preparedUser: PayrollUser?
@@ -24,7 +26,9 @@ final class JACWidgetBridge {
     private let refreshInterval: TimeInterval = 15 * 60
     private let renewalInterval: TimeInterval = 60 * 60
 
-    init(snapshots: JACWidgetSnapshotStore = JACWidgetSnapshotStore()) { self.snapshots = snapshots }
+    init(snapshots: JACWidgetSnapshotStore = JACWidgetSnapshotStore(), protectedDataAvailable: @escaping @MainActor () -> Bool = { UIApplication.shared.isProtectedDataAvailable }) {
+        self.snapshots = snapshots; self.protectedDataAvailable = protectedDataAvailable
+    }
 
     func scheduleBackgroundRefresh() {
         guard owner != nil else { return }
@@ -36,26 +40,34 @@ final class JACWidgetBridge {
     }
 
     func refreshInBackground(client: PayrollClient) async {
+        // The main session remains WhenUnlocked. An ordinary locked-phone
+        // opportunity must not query Keychain or erase a still-bounded widget.
+        guard !Task.isCancelled else { return }
+        guard protectedDataAvailable() else { scheduleBackgroundRefresh(); return }
         defer {
-            if (try? client.widgetSessionMarker()) != nil,
-               let user = client.accessUser, user.hasSection(.calendar) || user.canReadMedia {
+            if let user = client.accessUser, user.hasSection(.calendar) || user.canReadMedia {
                 scheduleBackgroundRefresh()
             } else {
                 BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: Self.backgroundTaskIdentifier)
             }
         }
-        guard !Task.isCancelled else { return }
-        let initialMarker = try? client.widgetSessionMarker()
+        var initialMarker: String?
         do {
-            _ = try client.widgetSessionMarker()
+            initialMarker = try client.widgetSessionMarker()
             let workspace = try await client.workspace(forceNetwork: true)
             try Task.checkCancellation()
-            guard !client.usingOfflineCopy else { return }
+            guard protectedDataAvailable(), !client.usingOfflineCopy else { return }
             await refresh(client: client, user: workspace.user, force: true)
         } catch {
-            let latestMarker = try? client.widgetSessionMarker()
-            if latestMarker == nil || (Self.denied(error) && latestMarker == initialMarker) { invalidate() }
-            // Transient network failures leave only the already bounded snapshot.
+            guard protectedDataAvailable(), !SessionStoreFailure.isProtectedDataUnavailable(error) else { return }
+            if Self.denied(error) {
+                var latestMarker: String?
+                do { latestMarker = try client.widgetSessionMarker() }
+                catch { if !protectedDataAvailable() || SessionStoreFailure.isProtectedDataUnavailable(error) { return } }
+                if latestMarker == nil || latestMarker == initialMarker { invalidate() }
+            }
+            // Transient network or protected-data failures retain only the
+            // existing snapshot, without extending its expiration.
         }
     }
 
@@ -212,9 +224,15 @@ final class JACWidgetBridge {
         lastCalendarSource = nil; lastCalendarContext = nil
     }
     private func prepare(client: PayrollClient, user: PayrollUser) async -> String? {
+        guard protectedDataAvailable() else { return nil }
         guard let activeUser = client.accessUser else { await clear(); return nil }
         guard activeUser == user else { return nil }
-        guard let marker = try? client.widgetSessionMarker() else { await clear(); return nil }
+        let marker: String
+        do { marker = try client.widgetSessionMarker() }
+        catch {
+            if protectedDataAvailable(), !SessionStoreFailure.isProtectedDataUnavailable(error) { await clear() }
+            return nil
+        }
         let value = SHA256.hash(data: Data(marker.utf8)).map { String(format: "%02x", $0) }.joined()
         if owner != value {
             generation += 1; owner = value; activeRequest = nil; lastRefresh = .distantPast
@@ -238,13 +256,17 @@ final class JACWidgetBridge {
         owner != nil && preparedClient === client && preparedUser == user && client.accessUser == user
     }
     private func current(_ client: PayrollClient, user: PayrollUser, owner expectedOwner: String, generation expectedGeneration: Int) -> Bool {
-        guard owner == expectedOwner, generation == expectedGeneration, client.accessUser == user,
+        guard protectedDataAvailable(), owner == expectedOwner, generation == expectedGeneration, client.accessUser == user,
               let marker = try? client.widgetSessionMarker() else { return false }
         let currentOwner = SHA256.hash(data: Data(marker.utf8)).map { String(format: "%02x", $0) }.joined()
         return currentOwner == expectedOwner
     }
     private func finishWrite(_ changed: Bool, client: PayrollClient, user: PayrollUser, owner expectedOwner: String, generation expectedGeneration: Int) async {
+        guard protectedDataAvailable() else { return }
         if !current(client, user: user, owner: expectedOwner, generation: expectedGeneration) {
+            guard protectedDataAvailable() else { return }
+            do { _ = try client.widgetSessionMarker() }
+            catch { if SessionStoreFailure.isProtectedDataUnavailable(error) { return } }
             await reloadIfChanged { await snapshots.clear(ifOwner: expectedOwner) }
         } else if changed { WidgetCenter.shared.reloadTimelines(ofKind: JACWidgetShared.kind) }
     }

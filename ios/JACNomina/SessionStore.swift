@@ -7,6 +7,15 @@ protocol SessionStoring: AnyObject {
     func clear() throws
 }
 
+enum SessionStoreFailure {
+    // This status is the precise WhenUnlocked/protected-data boundary. Missing
+    // items, revocation, other security errors and matching text are not locks.
+    static func isProtectedDataUnavailable(_ error: Error) -> Bool {
+        let error = error as NSError
+        return error.domain == NSOSStatusErrorDomain && error.code == Int(errSecInteractionNotAllowed)
+    }
+}
+
 final class KeychainSessionStore: SessionStoring {
     private let service = "co.jacmusic.nomina.session"
     private let account: String
@@ -23,7 +32,7 @@ final class KeychainSessionStore: SessionStoring {
         let status = SecItemCopyMatching(query as CFDictionary, &result)
         if status == errSecItemNotFound { return nil }
         guard status == errSecSuccess, let data = result as? Data, let value = String(data: data, encoding: .utf8) else {
-            throw APIError.message("No se pudo leer la sesión segura de este \(JACDevice.name).")
+            throw NSError(domain: NSOSStatusErrorDomain, code: Int(status), userInfo: [NSLocalizedDescriptionKey: "No se pudo leer la sesión segura de este \(JACDevice.name)."])
         }
         return value
     }

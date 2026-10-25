@@ -190,6 +190,7 @@ final class PayrollClient: ObservableObject {
     private var decodedResponses: [String: DecodedEntry] = [:]
     private var decodedOrder: [String] = []
     private var decodedMissing = Set<String>()
+    private var decodedResourceKeys: [String: String] = [:]
     private var canonicalNoticeKeys: [String: (generation: Int, key: String)] = [:]
     private var derivedMusicScope: (token: String, scope: AgendaCacheScope)?
     private var decodedBytes = 0
@@ -243,15 +244,19 @@ final class PayrollClient: ObservableObject {
         #endif
     }
     func hasSession() throws -> Bool { try checkedToken() != nil }
-    private func clearDecodedResponses() { decodedResponses.removeAll(keepingCapacity: true); decodedOrder.removeAll(keepingCapacity: true); decodedMissing.removeAll(keepingCapacity: true); canonicalNoticeKeys.removeAll(keepingCapacity: true); decodedBytes = 0 }
+    private func clearDecodedResponses() { decodedResponses.removeAll(keepingCapacity: true); decodedOrder.removeAll(keepingCapacity: true); decodedMissing.removeAll(keepingCapacity: true); decodedResourceKeys.removeAll(keepingCapacity: true); canonicalNoticeKeys.removeAll(keepingCapacity: true); decodedBytes = 0 }
     // Revalidated at startup, foreground and before/after asynchronous work.
     // Display accessors use these snapshots, never Keychain from a SwiftUI body.
     private func checkedToken() throws -> String? {
         JACPerformanceDiagnostics.record(.sessionRead)
         let token: String?
-        do { token = try vault.load() } catch { if derivedOfflineScope != nil { invalidateWidgetSnapshot() }; clearDecodedResponses(); rememberedAgenda = nil; derivedOfflineScope = nil; derivedAgendaScope = nil; derivedMediaScope = nil; derivedMusicScope = nil; throw error }
+        do { token = try vault.load() } catch { if !SessionStoreFailure.isProtectedDataUnavailable(error), derivedOfflineScope != nil || permissionUser != nil { invalidateWidgetSnapshot() }; clearDecodedResponses(); rememberedAgenda = nil; derivedOfflineScope = nil; derivedAgendaScope = nil; derivedMediaScope = nil; derivedMusicScope = nil; throw error }
+        // A newly created secondary client has no widget ownership. The
+        // primary lifecycle clears a missing cold-start session; a previously
+        // known user still invalidates here, even after a temporary lock.
+        if token == nil, derivedOfflineScope != nil || permissionUser != nil { invalidateWidgetSnapshot() }
         if derivedOfflineScope?.token != token {
-            if derivedOfflineScope != nil { invalidateWidgetSnapshot() }
+            if derivedOfflineScope != nil, token != nil { invalidateWidgetSnapshot() }
             clearDecodedResponses(); rememberedWorkspace = nil; rememberedAgenda = nil
             derivedOfflineScope = nil; derivedAgendaScope = nil; derivedMediaScope = nil; derivedMusicScope = nil
         }
@@ -260,23 +265,33 @@ final class PayrollClient: ObservableObject {
     var agendaPresentationScopeID: String? { derivedAgendaScope?.scope.id }
     var mediaPresentationStamp: String? { derivedMediaScope.map { $0.scope.id + ":" + String(cacheGeneration) } }
     private func validateDecodedEpoch(_ scope: AgendaCacheScope) {
-        let epoch = offlineCache.memoryRevision(scope)
-        if decodedEpoch?.scope != scope.id || decodedEpoch?.value != epoch {
-            clearDecodedResponses(); decodedEpoch = (scope.id, epoch)
+        let previous = decodedEpoch?.scope == scope.id ? decodedEpoch?.value : nil
+        let changes = offlineCache.memoryChanges(scope, since: previous)
+        if changes.invalidatesAll { clearDecodedResponses() }
+        else if !changes.keys.isEmpty {
+            let affected = Set(decodedResourceKeys.compactMap { changes.keys.contains($0.value) ? $0.key : nil })
+            for key in affected {
+                if let entry = decodedResponses.removeValue(forKey: key) { decodedBytes -= entry.cost }
+                decodedMissing.remove(key); decodedResourceKeys.removeValue(forKey: key)
+            }
+            decodedOrder.removeAll { affected.contains($0) }
+            canonicalNoticeKeys = canonicalNoticeKeys.filter { !affected.contains($0.value.key) }
         }
+        decodedEpoch = (scope.id, changes.revision)
     }
     private func memoryKey(_ type: Any.Type, key: String, scope: AgendaCacheScope) -> String { scope.id + ":" + String(cacheGeneration) + ":" + String(reflecting: type) + ":" + key }
     private func rememberDecoded<T>(_ value: T, key: String, scope: AgendaCacheScope, cost: Int) {
         validateDecodedEpoch(scope)
-        let key = memoryKey(T.self, key: key, scope: scope)
-        decodedMissing.remove(key)
+        let resource = key
+        let key = memoryKey(T.self, key: resource, scope: scope)
+        decodedMissing.remove(key); decodedResourceKeys.removeValue(forKey: key)
         if let previous = decodedResponses.removeValue(forKey: key) { decodedBytes -= previous.cost; decodedOrder.removeAll { $0 == key } }
         guard cost <= 8 * 1024 * 1024 else { return }
         while decodedOrder.count >= 256 || decodedBytes + cost > 32 * 1024 * 1024 {
             guard !decodedOrder.isEmpty else { break }
-            let oldest = decodedOrder.removeFirst(); if let previous = decodedResponses.removeValue(forKey: oldest) { decodedBytes -= previous.cost }
+            let oldest = decodedOrder.removeFirst(); decodedResourceKeys.removeValue(forKey: oldest); if let previous = decodedResponses.removeValue(forKey: oldest) { decodedBytes -= previous.cost }
         }
-        decodedResponses[key] = DecodedEntry(value: value, cost: cost); decodedOrder.append(key); decodedBytes += cost
+        decodedResponses[key] = DecodedEntry(value: value, cost: cost); decodedResourceKeys[key] = resource; decodedOrder.append(key); decodedBytes += cost
         if let wrapper = value as? CachedNoticeWrapper { canonicalNoticeKeys[wrapper.item.id] = (cacheGeneration, key) }
         if canonicalNoticeKeys.count > 256 { canonicalNoticeKeys = canonicalNoticeKeys.filter { decodedResponses[$0.value.key] != nil } }
     }
@@ -398,8 +413,11 @@ final class PayrollClient: ObservableObject {
         if let value = decodedResponses[memoKey]?.value as? T { return value }
         if decodedMissing.contains(memoKey) { return nil }
         guard let record = offlineCache.load(scope, key: key), let data = try? authorizedNoticeData(record.data, path: path) else {
-            if decodedMissing.count >= 256 { decodedMissing.removeAll(keepingCapacity: true) }
-            decodedMissing.insert(memoKey); return nil
+            if decodedMissing.count >= 256 {
+                for missing in decodedMissing { decodedResourceKeys.removeValue(forKey: missing) }
+                decodedMissing.removeAll(keepingCapacity: true)
+            }
+            decodedMissing.insert(memoKey); decodedResourceKeys[memoKey] = key; return nil
         }
         JACPerformanceDiagnostics.record(.jsonDecode)
         guard let value = try? decoder.decode(type, from: data) else { return nil }
@@ -421,9 +439,17 @@ final class PayrollClient: ObservableObject {
             if let boarding { items = items.filter { boarding == "history" ? ($0.travelDate ?? "") < BoardingClock.today() : ($0.travelDate ?? "") >= BoardingClock.today() } }
             next = ""
         }
-        var unique: [String: JACNotice] = [:]
-        for item in items { let latest = cachedNotice(item.id) ?? item; if (latest.revision ?? 1) >= (unique[item.id]?.revision ?? 0) { unique[item.id] = latest } }
-        let sorted = unique.values.sorted { boarding == nil ? $0.createdAt > $1.createdAt : (boarding == "history" ? ($0.travelDate ?? "") > ($1.travelDate ?? "") : ($0.travelDate ?? "") < ($1.travelDate ?? "")) }
+        var unique: [String: JACNotice] = [:], firstSeen: [String: Int] = [:]
+        for item in items {
+            if firstSeen[item.id] == nil { firstSeen[item.id] = firstSeen.count }
+            let latest = cachedNotice(item.id) ?? item
+            if (latest.revision ?? 1) >= (unique[item.id]?.revision ?? 0) { unique[item.id] = latest }
+        }
+        let sorted = unique.values.sorted { lhs, rhs in
+            let left = boarding == nil ? lhs.createdAt : lhs.travelDate ?? "", right = boarding == nil ? rhs.createdAt : rhs.travelDate ?? ""
+            if left == right { return firstSeen[lhs.id, default: .max] < firstSeen[rhs.id, default: .max] }
+            return boarding == nil || boarding == "history" ? left > right : left < right
+        }
         return NoticeFeed(notices: sorted, nextCursor: next, settings: first.settings, users: first.users, boardingUsers: first.boardingUsers, today: BoardingClock.today())
     }
     func cachedExpenses() -> TravelExpenseFeed? {
@@ -624,7 +650,7 @@ final class PayrollClient: ObservableObject {
         try Task.checkCancellation()
         guard generation == cacheGeneration, scope.id == (try offlineScope())?.id, epoch == cache.epoch(scope) else { throw CancellationError() }
         if result.calendarDisconnected { clearCachedAgenda() }
-        if result.changed { clearDecodedResponses() }
+        validateDecodedEpoch(scope)
         for notice in result.notices where permissionUser?.permitsNotice(notice.kind) != false {
             let itemKey = resourceKey(resourceURL(path: "api/notices", query: [URLQueryItem(name: "item", value: notice.id)]))
             rememberDecoded(CachedNoticeWrapper(item: notice), key: itemKey, scope: scope, cost: max(1024, data.count / max(1, result.notices.count)))
@@ -633,7 +659,6 @@ final class PayrollClient: ObservableObject {
     }
     private func removeCachedNotice(_ id: String, scope: AgendaCacheScope) {
         noticeInvalidations[id, default: 0] += 1
-        clearDecodedResponses()
         offlineCache.remove(scope) { entry in
             guard let parts = URLComponents(string: entry.url), parts.path.hasPrefix("/api/notices") else { return false }
             return parts.queryItems?.contains(where: { ["id", "item"].contains($0.name) && $0.value == id }) == true
@@ -643,6 +668,7 @@ final class PayrollClient: ObservableObject {
             json["notices"] = .array(json["notices"].elements.filter { $0["id"].text != id })
             if let bytes = try? JSONEncoder().encode(json) { _ = try? offlineCache.save(OfflineResponse(key: saved.key, url: saved.url, headers: saved.headers, data: bytes, receivedAt: Date(), revision: saved.revision), scope: scope) }
         }
+        validateDecodedEpoch(scope)
         cacheRevision += 1
     }
     func rememberWorkspace(_ workspace: PayrollWorkspace) {

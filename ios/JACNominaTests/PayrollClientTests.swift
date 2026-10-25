@@ -3,6 +3,7 @@ import UserNotifications
 import AVFoundation
 import ImageIO
 import CryptoKit
+import Security
 import PDFKit
 import CoreText
 import CoreImage
@@ -227,6 +228,15 @@ final class PayrollClientTests: XCTestCase {
         let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
         return try encoder.encode(JSONValue.object(["notices": .array(items), "nextCursor": .string(""), "users": .array([]), "settings": .object(["version": .number(1), "slackConnected": .bool(false), "appleConfigured": .bool(false), "webPublicKey": .string("")])]))
     }
+    func testSessionProtectionFailureClassificationDoesNotHideRevocation() {
+        XCTAssertTrue(SessionStoreFailure.isProtectedDataUnavailable(NSError(domain: NSOSStatusErrorDomain, code: Int(errSecInteractionNotAllowed))))
+        XCTAssertFalse(SessionStoreFailure.isProtectedDataUnavailable(NSError(domain: NSOSStatusErrorDomain, code: Int(errSecItemNotFound))))
+        XCTAssertFalse(SessionStoreFailure.isProtectedDataUnavailable(NSError(domain: NSOSStatusErrorDomain, code: Int(errSecAuthFailed))))
+        XCTAssertFalse(SessionStoreFailure.isProtectedDataUnavailable(NSError(domain: "fixture.invalid", code: Int(errSecInteractionNotAllowed))))
+        XCTAssertFalse(SessionStoreFailure.isProtectedDataUnavailable(APIError.unauthorized))
+        XCTAssertFalse(SessionStoreFailure.isProtectedDataUnavailable(APIError.forbidden("Acceso retirado")))
+        XCTAssertFalse(SessionStoreFailure.isProtectedDataUnavailable(APIError.message("Llavero bloqueado de prueba.")), "Never infer a protected-data exception from localized error text.")
+    }
     @MainActor func testWarmFortyBoardingCardsPerformNoMainThreadIOCryptoOrJSON() async throws {
         let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let (client, _) = relaunchFixture(cache), cards = BoardingCardDetailsStore()
@@ -257,6 +267,58 @@ final class PayrollClientTests: XCTestCase {
             XCTAssertEqual(sample.count(operation, mainThread: true), 0, "Warm card render performed \(operation)")
         }
         JACPerformanceDiagnostics.reportHotPath(since: baseline)
+    }
+    @MainActor func testUnrelatedCacheWritesKeepFortyWarmCardsOffMainThreadIO() async throws {
+        let workspace = try await UITestBackend.client(downloadOffline: false).workspace()
+        var workspaceValue = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))
+        workspaceValue["version"] = .number(Double(workspace.version + 1))
+        let workspaceBytes = try JSONEncoder().encode(workspaceValue), noticeBytes = try fortyBoardingCardsFixture()
+        let mediaBytes = try JSONEncoder().encode(MediaFeed(connected: true, canRead: true, canUpload: false, canConnect: false, root: nil, folder: nil, breadcrumbs: [], items: [], nextPageToken: nil))
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache), cards = BoardingCardDetailsStore()
+        defer { cards.cancelPending(); MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(workspace)
+        MockProtocol.handler = { request in
+            let bytes: Data
+            switch request.url?.path {
+            case "/api/notices": bytes = noticeBytes
+            case "/api/mobile/payroll": bytes = workspaceBytes
+            case "/api/media": bytes = mediaBytes
+            default: throw URLError(.unsupportedURL)
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, bytes)
+        }
+        let feed = try await client.notices(boarding: "current")
+        XCTAssertEqual(client.cachedNotices(boarding: "current")?.notices.map(\.id), feed.notices.map(\.id), "Equal-date cards preserve the server array order when restoring the cached feed.")
+        for item in feed.notices { cards.load(item, file: item.files[0], client: client) }
+        _ = try await client.workspace(forceNetwork: true) // New payroll revision, exactly the same permissions.
+        _ = try await client.media(forceNetwork: true) // Another module also commits an encrypted response.
+        let baseline = JACPerformanceDiagnostics.snapshot()
+        var ready = 0
+        for _ in 0..<500 {
+            for item in feed.notices {
+                if cards.presentationKey(item, file: item.files[0], client: client) != nil,
+                   case .ready = cards.entry(item, file: item.files[0], client: client) { ready += 1 }
+            }
+        }
+        XCTAssertEqual(ready, 20_000)
+        XCTAssertEqual(JACPerformanceDiagnostics.snapshot().delta(from: baseline).mainThreadExpensiveOperations, 0, "Unrelated writes must not evict canonical cards and move decryption/JSON back into their render path.")
+        XCTAssertEqual(client.cachedNotices(boarding: "current")?.notices.map(\.id), feed.notices.map(\.id))
+        let original = try XCTUnwrap(feed.notices.first)
+        var changed = boardingCardNoticeFixture(revision: 3, boardingDetails: .object(["seat": .string("22D"), "departureTime": .string("19:15"), "boardingTime": .string("18:15")]))
+        changed["id"] = .string(original.id)
+        let changedBytes = try JSONEncoder().encode(JSONValue.object(["item": changed]))
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, changedBytes) }
+        let updated = try await client.notice(id: original.id)
+        XCTAssertNil(cards.presentationKey(original, file: original.files[0], client: client))
+        cards.load(updated, file: updated.files[0], client: client)
+        XCTAssertEqual(cards.entry(updated, file: updated.files[0], client: client), .ready(BoardingCardDetails(seat: "22D", departureTime: "19:15", explicitBoardingTime: "18:15")))
+        let afterChange = JACPerformanceDiagnostics.snapshot()
+        for item in feed.notices.dropFirst() { XCTAssertNotNil(cards.presentationKey(item, file: item.files[0], client: client)) }
+        XCTAssertEqual(JACPerformanceDiagnostics.snapshot().delta(from: afterChange).mainThreadExpensiveOperations, 0, "Updating one card must retain the other 39 canonical records.")
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Acceso retirado\"}".utf8)) }
+        do { _ = try await client.notices(boarding: "current"); XCTFail("Revocation still must invalidate all private cards.") } catch APIError.forbidden { }
+        for item in feed.notices { XCTAssertNil(client.cachedNotice(item.id)); XCTAssertNil(cards.presentationKey(item, file: item.files[0], client: client)) }
     }
     @MainActor func testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish() async throws {
         let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
@@ -292,6 +354,11 @@ final class PayrollClientTests: XCTestCase {
         let reopened = OfflineResponseCache(root: root)
         XCTAssertEqual(reopened.entries(scope).count, 40)
         XCTAssertEqual(reopened.load(scope, key: records[0].key)?.data, records[0].data)
+        // A disconnected-calendar cleanup can match the very response that is
+        // being saved. An identical replacement still must retain its file.
+        try cache.saveBatch([records[0]], scope: scope, removing: { $0.key == records[0].key })
+        XCTAssertEqual(reopened.load(scope, key: records[0].key)?.data, records[0].data)
+        XCTAssertTrue(cache.entries(scope).contains { $0.key == records[0].key })
         let epoch = cache.epoch(scope)
         cache.clear(scope)
         XCTAssertThrowsError(try cache.saveBatch(records, scope: scope, expectedEpoch: epoch)) { XCTAssertTrue($0 is CancellationError) }
@@ -302,6 +369,16 @@ final class PayrollClientTests: XCTestCase {
         cache.remove(scope) { $0.key == records[0].key }
         XCTAssertThrowsError(try cache.saveBatch(records, scope: scope, expectedEpoch: protectedEpoch))
         XCTAssertNil(cache.load(scope, key: records[0].key))
+        let beforeOverflow = cache.memoryChanges(scope, since: nil).revision
+        for revision in 1...129 {
+            let record = OfflineResponse(key: "journal-key", url: "https://cache-budget.invalid/api/notices?item=journal", headers: [:], data: Data("{\"version\":\(revision)}".utf8), receivedAt: Date(), revision: revision)
+            try cache.save(record, scope: scope)
+        }
+        let overflow = cache.memoryChanges(scope, since: beforeOverflow)
+        XCTAssertTrue(overflow.invalidatesAll, "A client older than the bounded change history must discard its typed values instead of treating missing history as unchanged.")
+        let latest = cache.memoryChanges(scope, since: overflow.revision - 1)
+        XCTAssertFalse(latest.invalidatesAll); XCTAssertEqual(latest.keys, Set(["journal-key"]))
+        XCTAssertTrue(cache.memoryChanges(scope, since: overflow.revision).keys.isEmpty)
     }
     @MainActor func testOlderWorkspaceResponseCannotReplaceWarmNewerWorkspace() async throws {
         let fixture = try await UITestBackend.client(downloadOffline: false).workspace()

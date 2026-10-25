@@ -30,7 +30,7 @@ jobs:
     # Public standard runners are free; never use the exhausted private quota.
     if: ${{ github.event.repository.private == false && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) }}
     runs-on: macos-15
-    timeout-minutes: 25
+    timeout-minutes: ${{ (inputs.scope == 'scroll-widgets' || contains(github.event.head_commit.message, '[check-scroll-widgets]')) && 35 || 25 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -103,6 +103,7 @@ jobs:
         env:
           JAC_SCROLL_WIDGETS: ${{ inputs.scope == 'scroll-widgets' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-scroll-widgets]')) }}
           JAC_SCROLL_WIDGETS_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]') }}
+          JAC_SCROLL_WIDGETS_CACHE_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-cache-followup]') }}
           JAC_CALENDAR_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]') }}
           JAC_SLACK_BOARDING: ${{ inputs.scope == 'slack-boarding' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-slack-boarding]')) }}
           JAC_SLACK_BOARDING_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]') }}
@@ -150,12 +151,21 @@ jobs:
               -only-testing:JACNominaUITests/ScrollPerformanceTests/testWarmPhotoAndBoardingListsKeepResponsiveScrolling
               -only-testing:JACNominaUITests/ScrollPerformanceTests/testHiddenSectionsSuspendPollingAndPrefetchWhileSidebarScrolls
             )
-            if [ "$JAC_SCROLL_WIDGETS_UI_ONLY" != true ]; then
+            if [ "$JAC_SCROLL_WIDGETS_UI_ONLY" != true ] || [ "$JAC_SCROLL_WIDGETS_CACHE_FOLLOWUP" = true ]; then
+              # A cache-source followup reuses only the two legacy navigation
+              # UI after their unchanged inputs passed. WidgetSnapshot reruns
+              # with its separate physical-device protection check.
+              if [ "$JAC_SCROLL_WIDGETS_CACHE_FOLLOWUP" != true ]; then
+                checks+=(
+                  -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
+                  -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
+                )
+              fi
               checks+=(
-                -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
-                -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
                 -only-testing:JACNominaTests/WidgetSnapshotTests
                 -only-testing:JACNominaTests/PayrollClientTests/testWarmFortyBoardingCardsPerformNoMainThreadIOCryptoOrJSON
+                -only-testing:JACNominaTests/PayrollClientTests/testUnrelatedCacheWritesKeepFortyWarmCardsOffMainThreadIO
+                -only-testing:JACNominaTests/PayrollClientTests/testSessionProtectionFailureClassificationDoesNotHideRevocation
                 -only-testing:JACNominaTests/PayrollClientTests/testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish
                 -only-testing:JACNominaTests/PayrollClientTests/testOfflineBatchRejectsLateWritesAfterRevocationAndRemainsReadableOnRelaunch
                 -only-testing:JACNominaTests/PayrollClientTests/testWarmCalendarAndWorkspaceRenderDoNotReadSessionOrDecode
@@ -468,8 +478,11 @@ jobs:
           for ui_only in JAC_SCROLL_WIDGETS_UI_ONLY JAC_CALENDAR_UI_ONLY JAC_SLACK_BOARDING_UI_ONLY JAC_REDESIGN_FORMS_UI_ONLY JAC_WALLET_DETAILS_UI_ONLY JAC_BOARDING_CARD_UI_ONLY JAC_APPLE_PUSH_UI_ONLY JAC_GALLERY_STABILITY_UI_ONLY JAC_VIDEO_UI_ONLY; do
             if [ "${!ui_only}" = true ]; then include_render_guards=false; fi
           done
+          # Changed cache code always rechecks all operation-count budgets,
+          # even if an unrelated UI-only marker was accidentally retained.
+          if [ "$JAC_SCROLL_WIDGETS_CACHE_FOLLOWUP" = true ]; then include_render_guards=true; fi
           if [ "$build_action" = test ] && [ "$include_render_guards" = true ]; then
-            for guard_test in testWarmFortyBoardingCardsPerformNoMainThreadIOCryptoOrJSON testWarmCalendarAndWorkspaceRenderDoNotReadSessionOrDecode testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish; do
+            for guard_test in testWarmFortyBoardingCardsPerformNoMainThreadIOCryptoOrJSON testWarmCalendarAndWorkspaceRenderDoNotReadSessionOrDecode testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish testUnrelatedCacheWritesKeepFortyWarmCardsOffMainThreadIO; do
               guard_check="-only-testing:JACNominaTests/PayrollClientTests/$guard_test"
               already_selected=false
               for selected in ${checks[@]+"${checks[@]}"}; do
@@ -603,7 +616,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'boarding-card' && inputs.scope != 'boarding-card-ui' && inputs.scope != 'audit' && inputs.scope != 'photo-preview' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-boarding-card]') || contains(github.event.head_commit.message, '[check-audit]') || contains(github.event.head_commit.message, '[check-photo-preview]') || contains(github.event.head_commit.message, '[push-ui-only]') || (contains(github.event.head_commit.message, '[wallet-ui-only]') && !contains(github.event.head_commit.message, '[wallet-ui-product]')))) }}
+    if: ${{ github.event.repository.private == false && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-cache-followup]')) || (!(github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'boarding-card' && inputs.scope != 'boarding-card-ui' && inputs.scope != 'audit' && inputs.scope != 'photo-preview' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-boarding-card]') || contains(github.event.head_commit.message, '[check-audit]') || contains(github.event.head_commit.message, '[check-photo-preview]') || contains(github.event.head_commit.message, '[push-ui-only]') || (contains(github.event.head_commit.message, '[wallet-ui-only]') && !contains(github.event.head_commit.message, '[wallet-ui-product]')))))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -749,7 +762,7 @@ jobs:
             native-ci/widget-config.json
 
   mac:
-    if: ${{ github.event.repository.private == false && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'redesign-followup' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-followup]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && inputs.scope != 'boarding-card-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
+    if: ${{ github.event.repository.private == false && ((github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-cache-followup]')) || (!(github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'redesign-followup' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-followup]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && inputs.scope != 'boarding-card-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

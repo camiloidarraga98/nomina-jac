@@ -104,6 +104,25 @@ final class WidgetSnapshotTests: XCTestCase {
         XCTAssertNil(revoked, "The memory preflight must never publish after session removal.")
     }
 
+    @MainActor func testLockedBackgroundOpportunityDoesNotReadSessionOrEraseSnapshot() async throws {
+        let directory = try temporaryDirectory(), snapshots = JACWidgetSnapshotStore(directory: directory), value = snapshot()
+        let written = await snapshots.write(value)
+        XCTAssertTrue(written)
+        let client = UITestBackend.client(downloadOffline: false)
+        let bridge = JACWidgetBridge(snapshots: snapshots, protectedDataAvailable: { false })
+        let originalBytes = try Data(contentsOf: file(directory))
+        let baseline = JACPerformanceDiagnostics.snapshot()
+        await bridge.refreshInBackground(client: client)
+        let sample = JACPerformanceDiagnostics.snapshot().delta(from: baseline)
+        XCTAssertEqual(sample.count(.sessionRead), 0, "A locked-phone background opportunity must not query WhenUnlocked credentials.")
+        XCTAssertEqual(sample.mainThreadExpensiveOperations, 0)
+        XCTAssertEqual(try Data(contentsOf: file(directory)), originalBytes, "Locking does not renew, replace or erase a previously authorized snapshot.")
+        let retained = await snapshots.read(now: now)
+        XCTAssertEqual(retained, value)
+        let expired = await snapshots.read(now: now.addingTimeInterval(7200))
+        XCTAssertNil(expired?.calendar); XCTAssertNil(expired?.photography)
+    }
+
     func testWidgetLinksOnlyAcceptAuthorizedAppRoutesWithoutCredentials() throws {
         let calendar = JACWidgetRoute.calendar
         let photograph = JACWidgetRoute.photography(folderID: folderID)
@@ -134,9 +153,28 @@ final class WidgetSnapshotTests: XCTestCase {
         let json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: file(directory))) as? [String: Any])
         XCTAssertEqual(Set(json.keys), ["schema", "owner", "calendar", "photography"])
         XCTAssertNil(json["token"]); XCTAssertNil(json["cookie"]); XCTAssertNil(json["session"])
-        #if os(iOS)
+        XCTAssertEqual((attributes[.posixPermissions] as? NSNumber)?.intValue, 0o600)
+        let folder = directory.appendingPathComponent(JACWidgetShared.directoryName, isDirectory: true)
+        let directoryAttributes = try FileManager.default.attributesOfItem(atPath: folder.path)
+        XCTAssertEqual((directoryAttributes[.posixPermissions] as? NSNumber)?.intValue, 0o700)
+    }
+
+    func testSharedSnapshotDataProtectionOnPhysicaliPhone() async throws {
+        #if targetEnvironment(simulator)
+        throw XCTSkip("CoreSimulator no expone NSFileProtectionKey ni reproduce el cifrado del iPhone. Esta comprobación se conserva para un dispositivo físico.")
+        #elseif os(iOS)
+        let directory = try temporaryDirectory(), store = JACWidgetSnapshotStore(directory: directory)
+        let written = await store.write(snapshot())
+        XCTAssertTrue(written)
+        let attributes = try FileManager.default.attributesOfItem(atPath: file(directory).path)
         let protection = (attributes[.protectionKey] as? FileProtectionType)?.rawValue ?? attributes[.protectionKey] as? String
         XCTAssertEqual(protection, FileProtectionType.completeUntilFirstUserAuthentication.rawValue)
+        let folder = directory.appendingPathComponent(JACWidgetShared.directoryName, isDirectory: true)
+        let directoryAttributes = try FileManager.default.attributesOfItem(atPath: folder.path)
+        let directoryProtection = (directoryAttributes[.protectionKey] as? FileProtectionType)?.rawValue ?? directoryAttributes[.protectionKey] as? String
+        XCTAssertEqual(directoryProtection, FileProtectionType.completeUntilFirstUserAuthentication.rawValue)
+        #else
+        throw XCTSkip("La comprobación de Data Protection requiere un iPhone físico con iOS.")
         #endif
     }
 

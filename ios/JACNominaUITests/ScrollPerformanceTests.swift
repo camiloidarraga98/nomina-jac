@@ -20,7 +20,7 @@ final class ScrollPerformanceTests: XCTestCase {
         let firstPass = app.buttons["notices.item.boarding-scroll-0"]
         XCTAssertTrue(firstPass.waitForExistence(timeout: 15))
         XCTAssertEqual(app.staticTexts["boarding.card.seat.boarding-scroll-0-pdf"].label, "1A")
-        warmList(passes, first: firstPass, last: app.buttons["notices.item.boarding-scroll-39"])
+        warmBoardingList(passes, first: firstPass, app: app)
 
         var cleanPhotoWindows = 0, cleanPassWindows = 0
         let options = XCTMeasureOptions(); options.iterationCount = 4
@@ -67,6 +67,12 @@ final class ScrollPerformanceTests: XCTestCase {
         let agenda = app.buttons["phone.section.agenda"], management = app.buttons["phone.section.management"]
         XCTAssertGreaterThan(management.frame.maxY - agenda.frame.minY, sidebar.frame.height, "The large-text fixture must make the sidebar genuinely scrollable.")
         for batch in 0..<4 {
+            // Section navigation deliberately retains this scroll position.
+            // Opening Photography may therefore leave the drawer at its end.
+            // Start every measured upward drag from an actual top anchor.
+            for _ in 0..<6 { if agenda.isHittable && agenda.frame.minY >= sidebar.frame.minY { break }; sidebar.swipeDown() }
+            XCTAssertTrue(agenda.isHittable)
+            XCTAssertGreaterThanOrEqual(agenda.frame.minY, sidebar.frame.minY, "The Agenda anchor must be visible before a vertical batch.")
             let before = agenda.frame.minY
             sidebar.swipeUp()
             XCTAssertLessThan(agenda.frame.minY, before - 4, "Vertical sidebar batch \(batch + 1) must move content.")
@@ -130,6 +136,26 @@ final class ScrollPerformanceTests: XCTestCase {
         for _ in 0..<32 { if first.exists && first.isHittable { break }; scroll.swipeDown() }
         XCTAssertTrue(first.exists && first.isHittable)
     }
+    @MainActor private func warmBoardingList(_ scroll: XCUIElement, first: XCUIElement, app: XCUIApplication) {
+        let prefix = "boarding.card.seat.boarding-scroll-"
+        let expected = Set((0..<40).map { prefix + "\($0)-pdf" })
+        let readySeats = app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label MATCHES %@", prefix, "[1-9][0-9]*A"))
+        var warmed = Set<String>()
+        for _ in 0..<64 {
+            // One filtered accessibility query per viewport: the actual seat
+            // value appears only after this card's authorised load completes.
+            // An arbitrary final fixture ID does not prove all 40 were read.
+            warmed.formUnion(readySeats.allElementsBoundByIndex.map(\.identifier))
+            if warmed.isSuperset(of: expected) { break }
+            let start = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.8))
+            let end = scroll.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.4))
+            start.press(forDuration: 0.05, thenDragTo: end, withVelocity: XCUIGestureVelocity(rawValue: 500), thenHoldForDuration: 0.15)
+        }
+        print("JAC boarding warm-up ready card IDs: \(warmed.sorted())")
+        XCTAssertTrue(warmed.isSuperset(of: expected), "Every one of the 40 seat values must be ready before measuring warm rendering. Missing: \(expected.subtracting(warmed).sorted())")
+        for _ in 0..<32 { if first.exists && first.isHittable { break }; scroll.swipeDown() }
+        XCTAssertTrue(first.exists && first.isHittable)
+    }
     @MainActor private func snapshot(_ app: XCUIApplication) -> [String: Int] {
         let control = app.buttons["debug.scroll.snapshot"]
         XCTAssertTrue(control.waitForExistence(timeout: 10)); control.tap()
@@ -154,13 +180,13 @@ final class ScrollPerformanceTests: XCTestCase {
         // validation to rendering; the deterministic core tests cover all 40
         // warmed cards through 500 render loops without any network activity.
         let requests = after.filter { $0.key.hasPrefix("requests.") }.contains { $0.value != before[$0.key, default: 0] }
+        print("JAC scroll interval \(name): before=\(before) after=\(after) noNewRequests=\(!requests)")
         for operation in ["diskRead", "diskWrite", "keyDerivation", "jsonDecode", "jsonEncode"] {
             XCTAssertEqual(after["main." + operation, default: 0], before["main." + operation, default: 0], "\(name): warmed scrolling must not do \(operation) on the main thread.")
         }
         if !requests {
             XCTAssertEqual(after["main.expensive", default: 0], before["main.expensive", default: 0], "\(name): a warmed idle interval has a zero main-thread I/O budget.")
         }
-        print("JAC scroll interval \(name): before=\(before) after=\(after) noNewRequests=\(!requests)")
         return !requests
     }
     @MainActor private func attach(_ app: XCUIApplication, name: String) {

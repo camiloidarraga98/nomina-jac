@@ -2,7 +2,7 @@
 
 iOS0.35.0(53) en preparación: caché tipada RAM, persistencia cifrada agrupada fuera del hilo principal y pausa de consultas/prefetch de destinos ocultos, conservando navegación, reproducción y subidas. Presupuestos automáticos de I/O, guardas de sesión/revisión/época y recorridos con80fotos/40pases/menú desplazable. WidgetKit configurable Calendario/Fotografía,3tamaños, instantáneas protegidas sin credenciales/red en extensión y enlaces a destinos autorizados. AppGroup autorizado `group.co.jacmusic.nomina.widgets`, ambos AppIDs del equipo pagado AYHVYN8BJF; firma/provisión e instalación real aún requieren el Mac/Apple de Camilo. iOS decide el refresco.
 
-Servidor reciente de fotos:10pruebas focales, TypeScript/build correctos; migración0038 aplicada y versión Cloudflare `e6cc4409-fe05-43b5-86b8-697c88098faf` activa al100%,14bindings conservados. Compilación/pruebas Apple pendientes hasta registrar CI. Ver `IOS_SCROLL_PERFORMANCE.md` y `IPHONE_WIDGETS.md` para decisiones, límites y evidencia.
+Servidor reciente de fotos:10pruebas focales, TypeScript/build correctos; migración0038 aplicada y versión Cloudflare `e6cc4409-fe05-43b5-86b8-697c88098faf` activa al100%,14bindings conservados. Release final iPhone/widget correcto en40226060493 sobre006f22f y Mac correcto en40225259043 sobre010c3f6, Xcode26.3; identidad y AppGroup verificados sin firma física. Pruebas unitarias/UI Apple aún en curso. Ver `IOS_SCROLL_PERFORMANCE.md` y `IPHONE_WIDGETS.md` para decisiones, límites y evidencia.
 
 ## Datos del pase desde Slack · 25 de octubre de 2026
 

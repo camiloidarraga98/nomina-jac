@@ -215,6 +215,12 @@ final class OfflineResponseCache: @unchecked Sendable {
     private let epochLock = NSLock()
     private var epochs: [String: Int] = [:]
     private var revisions: [String: Int] = [:]
+    struct MemoryChanges: Sendable { let revision: Int; let invalidatesAll: Bool; let keys: Set<String> }
+    private struct MemoryChange { let revision: Int; let keys: Set<String>? }
+    private var changes: [String: [MemoryChange]] = [:]
+    private var changeScopes: [String] = []
+    private static let maximumChangeBatches = 128
+    private static let maximumChangeKeys = 4096
     init(root: URL? = nil, beforeBatch: (@Sendable () -> Void)? = nil) {
         self.beforeBatch = beforeBatch
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACOfflineContent", isDirectory: true)
@@ -225,9 +231,38 @@ final class OfflineResponseCache: @unchecked Sendable {
         folder(scope).appendingPathComponent(SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() + ".sealed")
     }
     func epoch(_ scope: AgendaCacheScope) -> Int { epochLock.lock(); defer { epochLock.unlock() }; return epochs[scope.id, default: 0] }
-    func memoryRevision(_ scope: AgendaCacheScope) -> Int { epochLock.lock(); defer { epochLock.unlock() }; return revisions[scope.id, default: 0] }
-    private func advanceRevision(_ id: String) { epochLock.lock(); defer { epochLock.unlock() }; revisions[id, default: 0] += 1 }
-    private func advanceEpoch(_ id: String) { epochLock.lock(); defer { epochLock.unlock() }; epochs[id, default: 0] += 1; revisions[id, default: 0] += 1 }
+    func memoryChanges(_ scope: AgendaCacheScope, since previous: Int?) -> MemoryChanges {
+        epochLock.lock(); defer { epochLock.unlock() }
+        let current = revisions[scope.id, default: 0]
+        guard let previous, previous <= current else { return MemoryChanges(revision: current, invalidatesAll: true, keys: []) }
+        guard previous != current else { return MemoryChanges(revision: current, invalidatesAll: false, keys: []) }
+        let journal = changes[scope.id] ?? []
+        guard let first = journal.first, previous >= first.revision - 1 else { return MemoryChanges(revision: current, invalidatesAll: true, keys: []) }
+        var keys = Set<String>()
+        for change in journal where change.revision > previous {
+            guard let affected = change.keys else { return MemoryChanges(revision: current, invalidatesAll: true, keys: []) }
+            keys.formUnion(affected)
+        }
+        return MemoryChanges(revision: current, invalidatesAll: false, keys: keys)
+    }
+    // Only changed resources invalidate typed RAM. A bounded journal lets each
+    // client catch up without retaining document bytes or unbounded tombstones.
+    // Falling behind its retained range invalidates everything, never stale data.
+    private func advanceRevision(_ id: String, keys: Set<String>?) {
+        epochLock.lock(); defer { epochLock.unlock() }
+        revisions[id, default: 0] += 1
+        let affected = keys.flatMap { $0.count <= Self.maximumChangeKeys ? $0 : nil }
+        var journal = changes[id, default: []]
+        journal.append(MemoryChange(revision: revisions[id]!, keys: affected))
+        var count = journal.reduce(0) { $0 + ($1.keys?.count ?? 0) }
+        while journal.count > Self.maximumChangeBatches || count > Self.maximumChangeKeys {
+            count -= journal.removeFirst().keys?.count ?? 0
+        }
+        changes[id] = journal
+        changeScopes.removeAll { $0 == id }; changeScopes.append(id)
+        while changeScopes.count > 4 { changes.removeValue(forKey: changeScopes.removeFirst()) }
+    }
+    private func advanceEpoch(_ id: String) { epochLock.lock(); defer { epochLock.unlock() }; epochs[id, default: 0] += 1 }
     private func read<T: Decodable>(_ type: T.Type, scope: AgendaCacheScope, key: String) -> T? {
         let path = file(scope, key: key)
         JACPerformanceDiagnostics.record(.diskRead)
@@ -270,7 +305,7 @@ final class OfflineResponseCache: @unchecked Sendable {
         // Validate limits and revision ordering before changing any files.
         for record in records {
             if let previous = load(scope, key: record.key) {
-                if previous.data == record.data && previous.headers == record.headers && previous.revision == record.revision {
+                if !removed.contains(where: { $0.key == record.key }), previous.data == record.data && previous.headers == record.headers && previous.revision == record.revision {
                     if !index.contains(where: { $0.key == record.key && $0.url == record.url && $0.size == record.data.count && $0.revision == record.revision }) {
                         index.removeAll { $0.key == record.key }
                         index.append(Entry(key: record.key, url: record.url, size: record.data.count, revision: record.revision)); changed = true
@@ -287,10 +322,11 @@ final class OfflineResponseCache: @unchecked Sendable {
             writes.append(record); changed = true
         }
         guard changed else { return false }
+        let affected = Set(writes.map(\.key) + removed.map(\.key))
+        defer { advanceRevision(scope.id, keys: affected) }
         for entry in removed { JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: file(scope, key: entry.key)) }
         for record in writes { try write(record, scope: scope, key: record.key) }
         try write(index, scope: scope, key: "index-v1")
-        advanceRevision(scope.id)
         return true
     }
     func remove(_ scope: AgendaCacheScope, matching: (Entry) -> Bool) {
@@ -298,11 +334,13 @@ final class OfflineResponseCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         let index = entries(scope), removed = index.filter(matching)
         guard !removed.isEmpty else { return }
+        defer { advanceRevision(scope.id, keys: Set(removed.map(\.key))) }
         for entry in removed { JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: file(scope, key: entry.key)) }
         try? write(index.filter { !matching($0) }, scope: scope, key: "index-v1")
     }
     func clear(_ scope: AgendaCacheScope) {
         advanceEpoch(scope.id)
+        advanceRevision(scope.id, keys: nil)
         lock.lock(); defer { lock.unlock() }
         JACPerformanceDiagnostics.record(.diskWrite)
         try? FileManager.default.removeItem(at: folder(scope))
@@ -311,7 +349,7 @@ final class OfflineResponseCache: @unchecked Sendable {
         lock.lock(); defer { lock.unlock() }
         JACPerformanceDiagnostics.record(.diskRead)
         for path in (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where path.lastPathComponent != scope.id {
-            advanceEpoch(path.lastPathComponent); JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: path)
+            advanceEpoch(path.lastPathComponent); advanceRevision(path.lastPathComponent, keys: nil); JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: path)
         }
     }
 }
