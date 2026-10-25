@@ -1336,14 +1336,15 @@ final class IPadTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-notification", "--uitest-reset-content", "--uitest-reset-media"]
         app.launch()
-        // iPad's grid/context menu can expose a photo as an accessibility
-        // container. Its exact item ID and opening action identify the target.
-        let photo = app.descendants(matching: .any)["media.item.notification-photo"]
-        let found = photo.waitForExistence(timeout: 20)
+        // A fresh tablet simulator can finish its first accessibility snapshot
+        // after the route is visible. Resolve one exact item and verify its
+        // current state after retaining the diagnostic snapshot.
+        let photo = app.descendants(matching: .any).matching(identifier: "media.item.notification-photo").firstMatch
+        _ = photo.waitForExistence(timeout: 60)
         capture("ipad-notificacion-carpeta-exacta")
         let hierarchy = XCTAttachment(string: app.debugDescription)
         hierarchy.name = "ipad-notificacion-jerarquia"; hierarchy.lifetime = .keepAlways; add(hierarchy)
-        XCTAssertTrue(found); XCTAssertTrue(photo.isHittable)
+        XCTAssertTrue(photo.exists); XCTAssertTrue(photo.isHittable)
         XCTAssertFalse(app.descendants(matching: .any)["media.item.media-photo"].isHittable)
         photo.tap()
         let preview = app.staticTexts["media.preview.name"]
