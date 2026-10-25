@@ -1336,9 +1336,19 @@ final class IPadTests: XCTestCase {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-notification", "--uitest-reset-content", "--uitest-reset-media"]
         app.launch()
-        let photo = app.buttons["media.item.notification-photo"]
-        XCTAssertTrue(photo.waitForExistence(timeout: 20)); XCTAssertTrue(photo.isHittable)
-        XCTAssertFalse(app.buttons["media.item.media-photo"].isHittable)
+        // iPad's grid/context menu can expose a photo as an accessibility
+        // container. Its exact item ID and opening action identify the target.
+        let photo = app.descendants(matching: .any)["media.item.notification-photo"]
+        let found = photo.waitForExistence(timeout: 20)
+        capture("ipad-notificacion-carpeta-exacta")
+        let hierarchy = XCTAttachment(string: app.debugDescription)
+        hierarchy.name = "ipad-notificacion-jerarquia"; hierarchy.lifetime = .keepAlways; add(hierarchy)
+        XCTAssertTrue(found); XCTAssertTrue(photo.isHittable)
+        XCTAssertFalse(app.descendants(matching: .any)["media.item.media-photo"].isHittable)
+        photo.tap()
+        let preview = app.staticTexts["media.preview.name"]
+        XCTAssertTrue(preview.waitForExistence(timeout: 15)); XCTAssertEqual(preview.label, "Foto de la notificación.png")
+        tap(app, "media.preview.close")
         app.buttons["Listo"].tap()
         XCTAssertTrue(app.buttons["media.item.media-day"].waitForExistence(timeout: 10))
     }

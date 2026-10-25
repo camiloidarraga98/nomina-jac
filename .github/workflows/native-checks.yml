@@ -379,6 +379,10 @@ jobs:
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
             fi
           fi
+          if [ -d native-ci/ipad.xcresult ]; then
+            xcrun xcresulttool get test-results summary --path native-ci/ipad.xcresult > native-ci/ipad-test-summary.json || true
+            xcrun xcresulttool export attachments --path native-ci/ipad.xcresult --output-path native-ci/ipad-attachments || true
+          fi
       - name: Save compact diagnostics separately
         if: always()
         uses: actions/upload-artifact@v4
@@ -389,6 +393,9 @@ jobs:
             native-ci/*.log
             native-ci/*.json
             native-ci/attachments/**/*.png
+            native-ci/ipad-attachments/**/*.png
+            native-ci/ipad-attachments/**/*.txt
+            native-ci/ipad-attachments/**/*.json
       - name: Save test results and build logs
         if: always()
         uses: actions/upload-artifact@v4
