@@ -1,6 +1,7 @@
 import {contentHash,stageTravelFiles,discardTravelFiles,uploadedGate,uploadedBindings} from './travel-files';
 import {env} from 'cloudflare:workers';
 import {boardingToday,boardingFilenameDate,boardingFilenameDetails,boardingPassengerKey,validBoardingDate,BOARDING_CHANNELS} from './boarding-passes';
+import {canonicalBoardingMessage,parseBoardingMessage} from './boarding-message';
 import {manualNoticeSchema,decodeNoticeFiles,fileMime} from './notice-files';
 import {z} from 'zod';
 import {database} from '@/db/raw';
@@ -25,14 +26,14 @@ export async function noticeConfig(){return await database().prepare('SELECT cre
 export async function pushCredentials(c?:Config):Promise<PushCredentials>{const config=c??await noticeConfig();return config.credentials?decryptMail(config.credentials,mailKey()):{};}
 export async function pushSettings(){return {webPublicKey:(await pushCredentials()).web?.publicKey??''};}
 async function settings(){const c=await noticeConfig(),keys=await pushCredentials(c);return {version:c.version,slackConnected:!!keys.slack,appleConfigured:!!keys.apns,appleSandboxConfigured:!!keys.apnsSandbox,webPublicKey:keys.web?.publicKey??'',channel:'#itinerarios-finales',webhook:'https://jhonalexcastano.com/api/notices/slack'};}
-function view(row:Row):Notice{return {revision:row.revision,updatedAt:row.updated_at,changeSummary:row.change_summary,confirmed:row.confirmed_revision===row.revision,id:row.id,kind:row.kind,title:row.title,body:row.body,filename:row.filename,size:row.size,createdAt:row.created_at,read:!!row.read_at,...(row.kind==='boarding_pass'?{travelDate:row.travel_date}:{})};}
+function view(row:Row):Notice{const boardingDetails=row.kind==='boarding_pass'?parseBoardingMessage(row.body):undefined;return {revision:row.revision,updatedAt:row.updated_at,changeSummary:row.change_summary,confirmed:row.confirmed_revision===row.revision,id:row.id,kind:row.kind,title:row.title,body:row.body,filename:row.filename,size:row.size,createdAt:row.created_at,read:!!row.read_at,...(row.kind==='boarding_pass'?{travelDate:row.travel_date,...(boardingDetails?{boardingDetails}:{})}:{})};}
 const accessSql="(n.kind='itinerary' OR EXISTS(SELECT 1 FROM jac_notice_recipients a WHERE a.notice_id=n.id AND a.user_id=?) OR (n.kind<>'boarding_pass' AND ?=1))";
 // Check both the authenticated view and the current row. A grant removed while
 // R2 is being read must not keep the old AccessUser object authorised.
 const noticeAccessSql=(u:AccessUser)=>`(${accessSql} AND ((n.kind='itinerary' AND ${Number(hasSection(u,'itineraries'))}) OR (n.kind='alert' AND ${Number(hasSection(u,'alerts'))}) OR (n.kind='boarding_pass' AND ${Number(hasSection(u,'boarding'))})) AND EXISTS(SELECT 1 FROM payroll_users notice_user WHERE notice_user.id=? AND notice_user.active=1 AND ${noticeSectionSql('notice_user')}))`;
 async function noticeViews(rows:Row[]){
  if(!rows.length)return [];const attachments=(await database().prepare(`SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments WHERE state='ready' AND notice_id IN (${rows.map(()=>'?').join(',')}) ORDER BY id`).bind(...rows.map(r=>r.id)).all<{id:string;notice_id:string;filename:string;mime_type:string;size:number}>()).results;
- return rows.map(row=>({...view(row),attachments:[...(row.file_key?[{id:row.id,filename:row.filename,mimeType:'application/pdf',size:row.size}]:[]),...attachments.filter(a=>a.notice_id===row.id).map(a=>({id:a.id,filename:a.filename,mimeType:a.mime_type,size:a.size}))]}));
+ return rows.map(row=>{const files=[...(row.file_key?[{id:row.id,filename:row.filename,mimeType:'application/pdf',size:row.size}]:[]),...attachments.filter(a=>a.notice_id===row.id).map(a=>({id:a.id,filename:a.filename,mimeType:a.mime_type,size:a.size}))],item=view(row);if(files.length!==1)delete item.boardingDetails;return {...item,attachments:files};});
 }
 export async function noticeRecipientRoster(u:AccessUser){
  if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede consultar destinatarios.',403);
@@ -179,10 +180,11 @@ export async function dispatchPush(){
  }));
 }
 async function slackGet(method:string,token:string,params:Record<string,string>={}){const url=new URL('https://slack.com/api/'+method);url.search=new URLSearchParams(params).toString();const response=await fetch(url,{headers:{Authorization:'Bearer '+token},redirect:'manual',signal:AbortSignal.timeout(8000)});const result=await response.json().catch(()=>({})) as Record<string,unknown>;if(!response.ok||!result.ok)throw new NoticeFailure('Slack no permitió acceder al canal o archivo. Revisa la app y sus permisos.',502);return result;}
-export async function queueSlackFiles(ids:string[],channel=ITINERARY_CHANNEL){
+export async function queueSlackFiles(ids:string[],channel=ITINERARY_CHANNEL,description:unknown=undefined){
  const mapping=channel===ITINERARY_CHANNEL?null:await database().prepare(`SELECT c.user_id,c.version FROM jac_boarding_channels c JOIN payroll_users u ON u.id=c.user_id WHERE c.id=? AND c.enabled=1 AND u.active=1 AND ${sectionSql('u','boarding')}`).bind(channel).first<{user_id:string;version:number}>();
  if(channel!==ITINERARY_CHANNEL&&!mapping)return;
- for(const id of ids)await database().prepare('INSERT OR IGNORE INTO jac_slack_files (id,created_at,channel_id,recipient_id,mapping_version) SELECT ?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE source=?)').bind(id,now(),channel,mapping?.user_id??'',mapping?.version??0,'slack:'+id).run();
+ const boardingMessage=channel!==ITINERARY_CHANNEL&&ids.length===1?canonicalBoardingMessage(description):'';
+ for(const id of ids)await database().prepare('INSERT OR IGNORE INTO jac_slack_files (id,created_at,channel_id,recipient_id,mapping_version,boarding_message) SELECT ?,?,?,?,?,? WHERE NOT EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE source=?)').bind(id,now(),channel,mapping?.user_id??'',mapping?.version??0,boardingMessage,'slack:'+id).run();
 }
 export async function boardingFeed(u:AccessUser,history=false,cursor=''){
  if(!hasSection(u,'boarding'))throw new NoticeFailure('Tu cuenta no tiene acceso a pases de abordar.',403);
@@ -210,12 +212,12 @@ export async function importSlackFiles(){
  await purgeDeletedItineraries();
  const keys=await pushCredentials();if(!keys.slack){await dispatchPush();return;}
  const slack=keys.slack;
- const rows=(await database().prepare("SELECT id,channel_id,recipient_id,mapping_version,created_at FROM jac_slack_files WHERE status='pending' OR (status='processing' AND started_at<?) ORDER BY created_at LIMIT 5").bind(new Date(Date.now()-60000).toISOString()).all<{id:string;channel_id:string;recipient_id:string;mapping_version:number;created_at:string}>()).results;
- await Promise.all(rows.map(async ({id,channel_id,recipient_id,mapping_version,created_at})=>{
+ const rows=(await database().prepare("SELECT id,channel_id,recipient_id,mapping_version,created_at,boarding_message FROM jac_slack_files WHERE status='pending' OR (status='processing' AND started_at<?) ORDER BY created_at LIMIT 5").bind(new Date(Date.now()-60000).toISOString()).all<{id:string;channel_id:string;recipient_id:string;mapping_version:number;created_at:string;boarding_message:string}>()).results;
+ await Promise.all(rows.map(async ({id,channel_id,recipient_id,mapping_version,created_at,boarding_message})=>{
   const claimed=await database().prepare("UPDATE jac_slack_files SET status='processing',started_at=? WHERE id=? AND (status='pending' OR (status='processing' AND started_at<?))").bind(now(),id,new Date(Date.now()-60000).toISOString()).run();if(claimed.meta.changes!==1)return;
   try{
    if(await database().prepare('SELECT id FROM jac_deleted_itineraries WHERE source=?').bind('slack:'+id).first()){await database().prepare("UPDATE jac_slack_files SET status='deleted',error='' WHERE id=?").bind(id).run();return;}
-   if(channel_id!==ITINERARY_CHANNEL){await importBoardingSlackFile({id,channel_id,recipient_id,mapping_version,created_at},slack.token);return;}
+   if(channel_id!==ITINERARY_CHANNEL){await importBoardingSlackFile({id,channel_id,recipient_id,mapping_version,created_at,boarding_message},slack.token);return;}
    const exists=await database().prepare('SELECT id FROM jac_notices WHERE source=?').bind('slack:'+id).first<{id:string}>();
    if(exists){await queuePush(exists.id);await database().prepare("UPDATE jac_slack_files SET status='ready',error='' WHERE id=? AND status<>'deleted'").bind(id).run();return;}
    const info=await slackGet('files.info',slack.token,{file:id}),f=info.file as {id:string;mimetype:string;size:number;name:string;url_private_download:string;channels?:string[];shares?:{public?:Record<string,unknown>}};
@@ -293,7 +295,7 @@ export async function noticeAttachment(u:AccessUser,id:string,file:string){
 }
 
 const boardingIdentityEmails:Record<string,string>={camilo:'camilo@mac2you.co','jhon-alex':'jhonalexcastano@gmail.com','alex-zuluaga':'alexzuluagaazp@gmail.com'};
-async function importBoardingSlackFile(row:{id:string;channel_id:string;recipient_id:string;mapping_version:number;created_at:string},token:string){
+async function importBoardingSlackFile(row:{id:string;channel_id:string;recipient_id:string;mapping_version:number;created_at:string;boarding_message:string},token:string){
  const db=database(),{id,channel_id,recipient_id,mapping_version}=row;
  const gate=`EXISTS(SELECT 1 FROM jac_boarding_channels c JOIN payroll_users u ON u.id=c.user_id WHERE c.id=? AND c.user_id=? AND c.version=? AND c.enabled=1 AND u.active=1 AND ${sectionSql('u','boarding')})`;
  const bindings=[channel_id,recipient_id,mapping_version];
@@ -313,7 +315,7 @@ async function importBoardingSlackFile(row:{id:string;channel_id:string;recipien
  try{
   await db.prepare('INSERT INTO jac_notice_attachments(id,file_key,filename,mime_type,size,expires_at) VALUES (?,?,?,?,?,?)').bind(attachment,key,filename,file.mimetype,size,new Date(Date.now()+3600000).toISOString()).run();await env.BUCKET.put(key,bytes,{httpMetadata:{contentType:file.mimetype}});
   const result=await db.batch([
-   db.prepare(`INSERT OR IGNORE INTO jac_notices(id,kind,title,source,created_at,travel_date) SELECT ?,'boarding_pass',?,?,?,? WHERE ${gate} AND EXISTS(SELECT 1 FROM jac_notice_attachments WHERE id=? AND state='staged') AND NOT EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE source=?)`).bind(nid,'Pase de abordar · '+travelDate,'slack:'+id,stamp,travelDate,...bindings,attachment,'slack:'+id),
+   db.prepare(`INSERT OR IGNORE INTO jac_notices(id,kind,title,source,created_at,travel_date,body) SELECT ?,'boarding_pass',?,?,?,?,? WHERE ${gate} AND EXISTS(SELECT 1 FROM jac_notice_attachments WHERE id=? AND state='staged') AND NOT EXISTS(SELECT 1 FROM jac_deleted_itineraries WHERE source=?)`).bind(nid,'Pase de abordar · '+travelDate,'slack:'+id,stamp,travelDate,canonicalBoardingMessage(row.boarding_message),...bindings,attachment,'slack:'+id),
    db.prepare("UPDATE jac_notice_attachments SET notice_id=?,state='ready' WHERE id=? AND state='staged' AND EXISTS(SELECT 1 FROM jac_notices WHERE id=?)").bind(nid,attachment,nid),
    db.prepare('INSERT OR IGNORE INTO jac_notice_recipients(id,notice_id,user_id) SELECT ?,?,? WHERE EXISTS(SELECT 1 FROM jac_notices WHERE id=?)').bind(nid+'|'+recipient_id,nid,recipient_id,nid)
   ]);committed=result[0].meta.changes===1;

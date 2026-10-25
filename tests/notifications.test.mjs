@@ -43,7 +43,7 @@ async function api(token,body,query=''){
  const r=await m.api[body?'POST':'GET'](req),result={status:r.status,body:await r.json(),headers:r.headers};await settle();return result;
 }
 async function configure(kind,extra={}){return api(ownerToken,{action:'configure',kind,version:(await m.noticeConfig()).version,...extra});}
-async function slack(body,{timestamp=String(Math.floor(Date.now()/1000)),bad=false}={}){const raw=JSON.stringify(body),signature='v0='+createHmac('sha256',slackSecret).update('v0:'+timestamp+':'+raw).digest('hex');const r=await m.slack.POST(new Request(base+'/api/notices/slack',{method:'POST',headers:{'x-slack-request-timestamp':timestamp,'x-slack-signature':bad?'v0='+('0'.repeat(64)):signature},body:raw}));await settle();return r;}
+async function slack(body,{timestamp=String(Math.floor(Date.now()/1000)),bad=false,drain=true}={}){const raw=JSON.stringify(body),signature='v0='+createHmac('sha256',slackSecret).update('v0:'+timestamp+':'+raw).digest('hex');const r=await m.slack.POST(new Request(base+'/api/notices/slack',{method:'POST',headers:{'x-slack-request-timestamp':timestamp,'x-slack-signature':bad?'v0='+('0'.repeat(64)):signature},body:raw}));if(drain)await settle();return r;}
 const event=(id='FTESTPDF001',channel=m.ITINERARY_CHANNEL)=>({type:'event_callback',team_id:m.ITINERARY_TEAM,event_id:'EV'+id,event:{type:'message',channel,text:'This Slack summary must never become itinerary content.',files:[{id,mimetype:'application/pdf'}]}});
 const alert=(recipients=[luisa])=>({id:crypto.randomUUID(),title:'Aviso de prueba',body:'Mensaje simulado',recipients});
 let applePublic;
@@ -335,6 +335,76 @@ test('Pases Slack: mapeo CAS, canales exactos, destinatario inmutable, archivos 
  const changed='FBOARDTEST03';fileMeta={...fileMeta,name:'Jhon 11 de octubre.pdf'};await m.queueSlackFiles([changed],'C0C8FAPHTCG');sql.prepare("UPDATE jac_boarding_channels SET version=version+1 WHERE id='C0C8FAPHTCG'").run();await m.importSlackFiles();assert.equal(sql.prepare('SELECT status FROM jac_slack_files WHERE id=?').get(changed).status,'failed');assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:'+changed),undefined);
  const alien='FBOARDTEST04';await m.queueSlackFiles([alien],'C_UNKNOWN');assert.equal(sql.prepare('SELECT id FROM jac_slack_files WHERE id=?').get(alien),undefined);hook=null;
 });
+test('Pases Slack: la descripción firmada queda guardada con su PDF antes de importar y no cambia con replays',async()=>{
+ const prior=fileMeta,id='FBDMESSAGE01',channel='C0C8FAPHTCG';
+ const text='*Silla:* 12A\nHora de salida: 6:45 PM\nHora en sala: 17:30\nAerolínea: Avianca',body='Silla: 12A\nHora de salida: 18:45\nHora en sala: 17:30\nAerolínea: Avianca';
+ const expected={seat:'12A',departureTime:'18:45',boardingTime:'17:30',airline:'Avianca'};
+ let release;const held=new Promise(resolve=>{release=resolve;});
+ fileMeta={...prior,name:'Jhon Alex 10 de octubre 2026 Bogota-Pereira.pdf',channels:[channel]};
+ hook=async url=>{if(url.pathname==='/api/files.info'&&url.searchParams.get('file')===id){await held;return Response.json({ok:true,file:{...fileMeta,id}});}return null;};
+ try{
+  const message=event(id,channel);message.event.text=text;
+  assert.equal((await slack(message,{drain:false})).status,200);
+  assert.equal(sql.prepare('SELECT boarding_message FROM jac_slack_files WHERE id=?').get(id).boarding_message,body,'La cola debe conservar el texto antes de que termine files.info/descarga.');
+  assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE source=?').get('slack:'+id),undefined);
+  const replay={...message,event:{...message.event,text:'Silla: 22C\nHora de salida: 21:10'}};
+  assert.equal((await slack(replay,{drain:false})).status,200);
+  assert.equal(sql.prepare('SELECT boarding_message FROM jac_slack_files WHERE id=?').get(id).boarding_message,body);
+  release();await settle();
+  const row=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:'+id),item=await m.noticeItem(actor(boardJhon),row.id);
+  assert.equal(row.body,body);assert.deepEqual(item.boardingDetails,expected);assert.equal(item.attachments.length,1);
+  await assert.rejects(()=>m.noticeItem(actor(owner),row.id),e=>e.status===404);
+  await assert.rejects(()=>m.noticeItem(actor(boardAlex),row.id),e=>e.status===404);
+  assert.equal(JSON.stringify(m.noticePushContent(item)).includes('12A'),false,'El push conserva texto genérico sin datos privados del vuelo.');
+  await slack({...replay,event:{...replay.event,subtype:'message_changed'}});
+  await slack(replay);
+  assert.equal(sql.prepare('SELECT count(*) n FROM jac_notices WHERE source=?').get('slack:'+id).n,1);
+  assert.deepEqual((await m.noticeItem(actor(boardJhon),row.id)).boardingDetails,expected);
+ }finally{release();await settle();hook=null;fileMeta=prior;}
+});
+
+test('Pases Slack: solo el texto del mismo mensaje con un archivo describe ese pase',async()=>{
+ const prior=fileMeta,channel='C0C8FAPHTCG',text='Silla: 12A\nHora de salida: 18:45\nHora en sala: 17:30\nAerolínea: Avianca';
+ fileMeta={...prior,name:'Jhon Alex 10 de octubre 2026 Bogota-Pereira.pdf',channels:[channel]};
+ try{
+  for(const [id,extra] of [['FBDMULTI001',{id:'FBDMULTI002',mimetype:'application/pdf'}],['FBDMULTI003',{id:'FBDTEXT0001',mimetype:'text/plain'}]]){
+   const message=event(id,channel);message.event.text=text;message.event.files.push(extra);await slack(message);
+   const row=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:'+id);
+   assert.equal(row.body,'');assert.equal(sql.prepare('SELECT boarding_message FROM jac_slack_files WHERE id=?').get(id).boarding_message,'');
+   assert.equal((await m.noticeItem(actor(boardJhon),row.id)).boardingDetails,undefined);
+  }
+  const before=sql.prepare('SELECT count(*) n FROM jac_slack_files').get().n;
+  await slack({type:'event_callback',team_id:m.ITINERARY_TEAM,event:{type:'message',channel,text,thread_ts:'1790000000.000001'}});
+  assert.equal(sql.prepare('SELECT count(*) n FROM jac_slack_files').get().n,before,'Un comentario separado nunca se asocia al último pase del canal o hilo.');
+  const ownReply=event('FBDREPLY001',channel);ownReply.event={...ownReply.event,text,thread_ts:'1790000000.000001'};await slack(ownReply);
+  const reply=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:FBDREPLY001');
+  assert.equal((await m.noticeItem(actor(boardJhon),reply.id)).boardingDetails.seat,'12A','Un reply con su propio archivo y descripción es autosuficiente.');
+  const wrong=event('FBDBADSIGN1',channel);wrong.event.text=text;assert.equal((await slack(wrong,{bad:true})).status,401);
+  assert.equal(sql.prepare('SELECT id FROM jac_slack_files WHERE id=?').get('FBDBADSIGN1'),undefined);
+  fileMeta={...fileMeta,name:'Itinerario_simulado.pdf',channels:[m.ITINERARY_CHANNEL]};
+  const itinerary=event('FBDITIN0001');itinerary.event.text=text;await slack(itinerary);
+  assert.equal(sql.prepare('SELECT body FROM jac_notices WHERE source=?').get('slack:FBDITIN0001').body,'');
+  assert.equal(sql.prepare('SELECT boarding_message FROM jac_slack_files WHERE id=?').get('FBDITIN0001').boarding_message,'');
+ }finally{fileMeta=prior;}
+});
+
+test('Pases: datos manuales y bloques inválidos preservan originales sin mezclar varios adjuntos',async()=>{
+ const text='Silla: Sin asignar\nHora de salida: 00:30\nHora en sala: 23:20\nAerolínea: LATAM';
+ const files=[{filename:'Jhon Alex 10 de octubre 2026 Bogota-Pereira.pdf',data:Buffer.from(pdfBytes).toString('base64')}];
+ const single={id:crypto.randomUUID(),kind:'boarding_pass',title:'Pase ficticio descrito',body:text,recipients:[boardJhon],files};
+ await m.publishManualNotice(actor(owner),single,async()=>true);
+ assert.deepEqual((await m.noticeItem(actor(boardJhon),single.id)).boardingDetails,{seat:'',departureTime:'00:30',boardingTime:'23:20',airline:'LATAM'});
+ const multiple={...single,id:crypto.randomUUID(),files:[...files,{...files[0],filename:'Jhon Alex 10 de octubre 2026 Pereira-Bogota.pdf'}]};
+ await m.publishManualNotice(actor(owner),multiple,async()=>true);
+ const multipleItem=await m.noticeItem(actor(boardJhon),multiple.id);assert.equal(multipleItem.attachments.length,2);assert.equal(multipleItem.boardingDetails,undefined);
+ const prior=fileMeta,id='FBDINVALID1',channel='C0C8FAPHTCG';fileMeta={...prior,name:'Jhon Alex 10 de octubre 2026 Bogota-Pereira.pdf',channels:[channel]};
+ try{
+  const invalid=event(id,channel);invalid.event.text='Silla: 12A\nHora de salida: 18:45\nSilla: 22C';await slack(invalid);
+  const row=sql.prepare('SELECT * FROM jac_notices WHERE source=?').get('slack:'+id),item=await m.noticeItem(actor(boardJhon),row.id);
+  assert.equal(row.body,'');assert.equal(item.boardingDetails,undefined);assert.equal(item.attachments.length,1);assert.ok(await m.noticeAttachment(actor(boardJhon),row.id,item.attachments[0].id));
+ }finally{fileMeta=prior;}
+});
+
 test('Pases: revocar destinatario durante subida impide guardar y limpia archivos tardíos',async()=>{
  const id=crypto.randomUUID();beforePut=async()=>{sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(boardAlex);};
  try{await assert.rejects(()=>m.publishManualNotice(actor(owner),{id,kind:'boarding_pass',title:'Privado',body:'',travelDate:'2026-10-10',recipients:[boardAlex],files:[{filename:'Foto.png',data:Buffer.from([137,80,78,71,13,10,26,10,0]).toString('base64')}]},async()=>true));assert.equal(sql.prepare('SELECT id FROM jac_notices WHERE id=?').get(id),undefined);assert.equal(sql.prepare("SELECT id FROM jac_notice_attachments WHERE state='ready' AND notice_id=?").get(id),undefined);}finally{beforePut=null;sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(boardAlex);}
@@ -542,9 +612,12 @@ test('quitar una sección durante R2 o confirmación bloquea el AccessUser anter
  assert.equal((await readAttachment(person.token,input.id,item.attachments[0].id)).status,403);
 });
 test('push se registra por secciones disponibles y revalida el tipo antes del proveedor simulado',async()=>{
- const person=await sectionFixture(['media','alerts']),photo=await sectionFixture(['media']),device=crypto.randomUUID();
+ const person=await sectionFixture(['media','alerts']),photo=await sectionFixture(['media']),calendar=await sectionFixture(['calendar']),device=crypto.randomUUID();
  assert.equal((await api(person.token,{action:'register',id:device,platform:'ios',token:'ab'.repeat(32),environment:'sandbox'})).status,200);
- assert.equal((await api(photo.token,{action:'register',id:crypto.randomUUID(),platform:'ios',token:'ab'.repeat(32),environment:'sandbox'})).status,403);
+ // Photo-only users now receive new-folder pushes. Their independent device
+ // must not reuse this alert recipient's token and silently replace it.
+ assert.equal((await api(photo.token,{action:'register',id:crypto.randomUUID(),platform:'ios',token:Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('hex'),environment:'sandbox'})).status,200);
+ assert.equal((await api(calendar.token,{action:'register',id:crypto.randomUUID(),platform:'ios',token:'ab'.repeat(32),environment:'sandbox'})).status,403);
  const travel=manualInput('itinerary',[upload()]);await m.publishManualNotice(await m.authenticatedSession(ownerToken),travel,async()=>true);
  assert.equal(sql.prepare('SELECT count(*) n FROM jac_push_deliveries WHERE notice_id=? AND device_id=?').get(travel.id,device).n,0);
  const input=alert([person.id]);await m.saveManualNotice(await m.authenticatedSession(ownerToken),input,async()=>true);

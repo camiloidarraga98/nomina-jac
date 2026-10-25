@@ -1,10 +1,12 @@
+import type {BoardingMessageDetails} from './boarding-message';
+
 export const ITINERARY_TEAM='T0C5NQZE8HL';
 export const ITINERARY_CHANNEL='C0C6V85SRL6';
 export const APP_TOPIC='co.jacmusic.nomina';
 export const MAX_PDF_BYTES=10*1024*1024;
 export class NoticeFailure extends Error {constructor(message:string,public status=400){super(message);}}
 export type NoticeAttachment={id:string;filename:string;mimeType:string;size:number};
-export type Notice={revision?:number;updatedAt?:string;changeSummary?:string;confirmed?:boolean;receipts?:{userId:string;name:string;confirmed:boolean;confirmedAt:string}[];id:string;kind:'itinerary'|'alert'|'boarding_pass';travelDate?:string;title:string;body:string;filename:string;size:number;createdAt:string;read:boolean;attachments?:NoticeAttachment[]};
+export type Notice={revision?:number;updatedAt?:string;changeSummary?:string;confirmed?:boolean;receipts?:{userId:string;name:string;confirmed:boolean;confirmedAt:string}[];id:string;kind:'itinerary'|'alert'|'boarding_pass';travelDate?:string;boardingDetails?:BoardingMessageDetails;title:string;body:string;filename:string;size:number;createdAt:string;read:boolean;attachments?:NoticeAttachment[]};
 export type PushContent={title:string;body:string};
 export type PushTarget={kind:'media_folder';folderId:string};
 export function noticePushContent(notice:Pick<Notice,'kind'|'title'|'body'|'revision'|'changeSummary'>):PushContent{

@@ -11,6 +11,9 @@ export async function POST(req:Request){
   if(body.type==='url_verification'&&typeof body.challenge==='string'&&body.challenge.length<=200)return Response.json({challenge:body.challenge});
   const e=body.event;if(body.type!=='event_callback'||body.team_id!==ITINERARY_TEAM||e?.type!=='message'||(e.channel!==ITINERARY_CHANNEL&&!BOARDING_CHANNELS.some(c=>c.id===e.channel))||e.subtype==='message_changed'||e.subtype==='message_deleted')return Response.json({ok:true});
   const ids=[...new Set((Array.isArray(e.files)?e.files:[]).filter((f:{id?:unknown;mimetype?:unknown})=>typeof f.id==='string'&&/^F[A-Z0-9]{6,30}$/.test(f.id)&&(f.mimetype==='application/pdf'||(e.channel!==ITINERARY_CHANNEL&&['image/jpeg','image/png'].includes(String(f.mimetype))))).map((f:{id:string})=>f.id))].slice(0,5) as string[];
-  await queueSlackFiles(ids,e.channel);if(ids.length)waitUntil(importSlackFiles().catch(()=>{}));return Response.json({ok:true});
+  // The same signed message must contain exactly one file. Never attach a
+  // separate comment, another thread's text, or one caption to multiple passes.
+  const description=Array.isArray(e.files)&&e.files.length===1&&ids.length===1?e.text:undefined;
+  await queueSlackFiles(ids,e.channel,description);if(ids.length)waitUntil(importSlackFiles().catch(()=>{}));return Response.json({ok:true});
  }catch{return new Response(null,{status:503});}
 }

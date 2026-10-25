@@ -4,12 +4,59 @@ import ImageIO
 import PDFKit
 import Vision
 
-/// Information shown on a private boarding card. The room time is JAC's
-/// requested reminder, one civil hour before departure, rather than a reading
-/// of the airline's boarding time or a conversion through the device timezone.
+/// Structured fields supplied with one private boarding attachment. Optional
+/// fields distinguish absent data from an explicitly unassigned seat ("").
+struct BoardingMessageDetails: Codable, Hashable, Sendable {
+    var seat: String? = nil
+    var departureTime: String? = nil
+    var boardingTime: String? = nil
+    var airline: String? = nil
+
+    var validated: BoardingMessageDetails {
+        let normalizedSeat: String? = seat.flatMap { value in
+            if value.isEmpty { return "" }
+            let value = value.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
+            guard value.range(of: "^[0-9]{1,3}[A-Z]?$", options: .regularExpression) != nil,
+                  value.range(of: "^0+[A-Z]?$", options: .regularExpression) == nil else { return nil }
+            return value.replacingOccurrences(of: "^0+(?=[0-9])", with: "", options: .regularExpression)
+        }
+        let normalizedAirline: String? = airline.flatMap { value in
+            let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !value.isEmpty, value.count <= 80,
+                  !value.unicodeScalars.contains(where: { $0.value < 32 || (0x202A...0x202E).contains($0.value) || (0x2066...0x2069).contains($0.value) }) else { return nil }
+            return value
+        }
+        return BoardingMessageDetails(seat: normalizedSeat,
+                                      departureTime: departureTime.flatMap(BoardingWalletDetailsExtractor.normalizedTime),
+                                      boardingTime: boardingTime.flatMap(BoardingWalletDetailsExtractor.normalizedTime),
+                                      airline: normalizedAirline)
+    }
+    var hasCardFields: Bool { seat != nil || departureTime != nil || boardingTime != nil || airline != nil }
+    var completesCard: Bool { seat != nil && departureTime != nil }
+    func applying(to original: BoardingCardDetails = BoardingCardDetails()) -> BoardingCardDetails {
+        let value = validated
+        return BoardingCardDetails(seat: value.seat ?? original.seat,
+                                   departureTime: value.departureTime ?? original.departureTime,
+                                   explicitBoardingTime: value.boardingTime ?? original.explicitBoardingTime,
+                                   airline: value.airline ?? original.airline)
+    }
+    func applying(to original: BoardingWalletDetails) -> BoardingWalletDetails {
+        let value = validated
+        var result = original
+        if let seat = value.seat { result.seat = seat }
+        if let departure = value.departureTime { result.departureTime = departure }
+        if let boarding = value.boardingTime { result.boardingTime = boarding }
+        return result
+    }
+}
+
+/// Slack's explicit room time takes priority. Without that field, preserve
+/// JAC's one-hour civil reminder; the PDF's boarding time remains unchanged.
 struct BoardingCardDetails: Equatable, Sendable {
     var seat: String = ""
     var departureTime: String = ""
+    var explicitBoardingTime: String? = nil
+    var airline: String = ""
     private var departureMinutes: Int? {
         guard let normalized = BoardingWalletDetailsExtractor.normalizedTime(departureTime) else { return nil }
         let parts = normalized.split(separator: ":").compactMap { Int($0) }
@@ -17,11 +64,19 @@ struct BoardingCardDetails: Equatable, Sendable {
         return parts[0] * 60 + parts[1]
     }
     var boardingTime: String {
+        if let explicitBoardingTime, let time = BoardingWalletDetailsExtractor.normalizedTime(explicitBoardingTime) { return time }
         guard let departureMinutes else { return "" }
         let minutes = (departureMinutes + 1440 - 60) % 1440
         return String(format: "%02d:%02d", minutes / 60, minutes % 60)
     }
-    var boardingPreviousDay: Bool { departureMinutes.map { $0 < 60 } ?? false }
+    var boardingPreviousDay: Bool {
+        guard let departureMinutes else { return false }
+        if explicitBoardingTime != nil, let time = BoardingWalletDetailsExtractor.normalizedTime(boardingTime) {
+            let parts = time.split(separator: ":").compactMap { Int($0) }
+            return parts.count == 2 && parts[0] * 60 + parts[1] > departureMinutes
+        }
+        return departureMinutes < 60
+    }
 }
 
 enum BoardingCardDetailsExtractor {

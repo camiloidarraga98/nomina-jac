@@ -1,3 +1,5 @@
+> **Pases desde Slack · 0.34.0(52):** silla, salida, hora en sala y aerolínea desde la descripción que acompaña a un único PDF. Los datos escritos tienen prioridad; lectura del archivo para completar ausencias. Actualizar con pull y Archive/Upload o Run en el mismo proyecto. [Formato y comprobaciones](../docs/BOARDING_SLACK_DETAILS.md).
+
 > **Agenda · 0.33.1(51):** expresiones SwiftUI separadas para evitar el timeout del compilador de Xcode en `CalendarView`, conservando el rediseño y las funciones. Actualizar con pull en el mismo proyecto; si Xcode conserva un diagnóstico anterior, usar Product → Clean Build Folder y compilar. [Corrección y comprobaciones](../docs/IPHONE_UX_REDESIGN.md).
 
 > **Rediseño aprobado · 0.33.0(50):** nueva interfaz de iPhone para Agenda, menú lateral, Pases, Música, CRM y Quincenas. Funciones, cálculos, permisos y conexiones conservados. Actualizar con pull y Archive/Upload en el mismo proyecto. [Alcance y verificación](../docs/IPHONE_UX_REDESIGN.md).

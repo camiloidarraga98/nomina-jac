@@ -1,3 +1,7 @@
+## Actualización: datos del pase desde Slack · 25 de octubre de 2026
+
+Cada pase nuevo puede llevar una descripción con Silla, Hora de salida, Hora en sala y Aerolínea en el mismo mensaje que su PDF. Prioridad por campo para esos valores; leer el documento para completar los ausentes. Respetar Hora en sala escrita, con salida menos una hora solo si falta. Un pase por mensaje y destinatario del canal vigente. No asociar texto de otra publicación ni importar historial. Ver [formato y alcance](../docs/BOARDING_SLACK_DETAILS.md).
+
 ## Rider técnico público · segunda versión · 20 de octubre de 2026
 
 `/rider` conserva el original. Camilo pidió `/rider2` como versión interactiva: montaje espacial con cantidades del inventario principal del PDF, posiciones editables, luces/pantallas y previsualización virtual de efectos. Sin checklist en rider2. Los planos tienen diferencias de inventario: usar páginas5–7 para cantidades y mostrar como propuestas las posiciones/alturas sin cotas. Montajes/cues locales exportables, sin control de equipos físicos ni cuentas/datos de JAC. Fuente y despliegue propio en [docs/RIDER2_SIMULATOR.md](../docs/RIDER2_SIMULATOR.md).

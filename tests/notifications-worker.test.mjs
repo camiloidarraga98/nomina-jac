@@ -216,3 +216,53 @@ test('Workerd: secciones de avisos independientes, híbridos de fotografía y re
   assert.equal((await db.prepare('SELECT confirmed_revision FROM jac_notice_recipients WHERE notice_id=? AND user_id=?').bind(alert.id,alerts).first()).confirmed_revision,0);assert.equal(outbound,0);
  }finally{await mf.dispose();}
 });
+
+test('Workerd/D1/R2 conserva la descripción del pase con su archivo y destinatario originales',async()=>{
+ const output=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
+  import {env} from 'cloudflare:workers';
+  import {queueSlackFiles,importSlackFiles,noticeItem} from './lib/notifications';
+  import {encryptMail} from './lib/payroll-mail-core';
+  const person={id:'77777777-7777-4777-8777-777777777777',email:'jhonalexcastano@gmail.com',username:'fixture',displayName:'Fixture',fullName:null,isOwner:false,permissions:[],sections:['boarding']};
+  export default {async fetch(req:Request){const b=await req.json();try{
+   if(b.action==='init'){
+    const credentials=await encryptMail({slack:{token:'xoxb-fixture-only',signingSecret:'fixture-only'}},env.PAYROLL_MAIL_KEY);
+    await env.DB.prepare("INSERT INTO jac_notice_settings(id,credentials) VALUES ('jac',?)").bind(credentials).run();return Response.json({ok:true});
+   }
+   if(b.action==='queue'){
+    await queueSlackFiles([b.file],'C0C8FAPHTCG',b.text);
+    return Response.json(await env.DB.prepare('SELECT boarding_message,status FROM jac_slack_files WHERE id=?').bind(b.file).first());
+   }
+   if(b.action==='import'){
+    await importSlackFiles();
+    return Response.json(await env.DB.prepare("SELECT id,body FROM jac_notices WHERE source=?").bind('slack:'+b.file).first());
+   }
+   return Response.json(await noticeItem(b.owner?{...person,id:'11111111-1111-4111-8111-111111111111',isOwner:true,sections:undefined}:person,b.id));
+  }catch(e){return Response.json({error:e.message},{status:e.status||502});}}};
+ `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*']});
+ const bytes='%PDF-1.4\n% Synthetic private boarding pass only\n%%EOF',file='FBDWORKER01',channel='C0C8FAPHTCG';
+ let outbound=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:output.outputFiles[0].text,d1Databases:{DB:'fixture-boarding-description'},r2Buckets:['BUCKET'],bindings:{PAYROLL_MAIL_KEY:Buffer.alloc(32,7).toString('base64url')},outboundService:async request=>{
+  outbound++;assert.equal(request.headers.get('authorization'),'Bearer xoxb-fixture-only');
+  if(request.url==='https://slack.com/api/files.info?file='+file)return Response.json({ok:true,file:{id:file,name:'Jhon Alex 10 de octubre 2090 Bogota-Pereira.pdf',mimetype:'application/pdf',size:bytes.length,url_private_download:'https://files.slack.com/fixture-private.pdf',channels:[channel]}});
+  if(request.url==='https://files.slack.com/fixture-private.pdf')return new Response(bytes,{headers:{'content-type':'application/pdf'}});
+  throw Error('Every external service, history lookup and real push is blocked.');
+ }});
+ const {readFile,readdir}=await import('node:fs/promises');
+ try{
+  const db=await mf.getD1Database('DB');
+  for(const name of(await readdir('drizzle')).filter(x=>x.endsWith('.sql')).sort())for(const statement of(await readFile('drizzle/'+name,'utf8')).split('--> statement-breakpoint').map(x=>x.trim()).filter(Boolean))await db.prepare(statement).run();
+  const person='77777777-7777-4777-8777-777777777777',owner='11111111-1111-4111-8111-111111111111';
+  for(const [id,email,sections] of [[person,'jhonalexcastano@gmail.com','["boarding"]'],[owner,'owner@example.invalid',null]])await db.prepare("INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,section_access,created_at,updated_at) VALUES (?,?,?,'Fixture','fixture','[]',?,'fixture','fixture')").bind(id,id,email,sections).run();
+  await db.prepare("INSERT INTO jac_boarding_channels(id,user_id,created_at) VALUES (?,?,'fixture')").bind(channel,person).run();
+  const run=body=>mf.dispatchFetch('https://boarding.example.invalid/message',{method:'POST',body:JSON.stringify(body)});
+  assert.equal((await run({action:'init'})).status,200);
+  const text='*Silla:* Sin asignar\nHora de salida: 00:30\nHora en sala: 23:20\nAerolínea: LATAM',canonical='Silla: Sin asignar\nHora de salida: 00:30\nHora en sala: 23:20\nAerolínea: LATAM';
+  const queued=await(await run({action:'queue',file,text})).json();assert.equal(queued.boarding_message,canonical);assert.equal(queued.status,'pending');assert.equal(outbound,0,'El snapshot se guarda antes de consultar o descargar el PDF.');
+  const replay=await(await run({action:'queue',file,text:'Silla: 22C\nHora de salida: 21:10'})).json();assert.equal(replay.boarding_message,canonical);
+  const imported=await(await run({action:'import',file})).json();assert.ok(imported.id);assert.equal(imported.body,canonical);assert.equal(outbound,2);
+  const item=await(await run({id:imported.id})).json();assert.deepEqual(item.boardingDetails,{seat:'',departureTime:'00:30',boardingTime:'23:20',airline:'LATAM'});assert.equal(item.attachments.length,1);
+  assert.equal((await run({id:imported.id,owner:true})).status,404);
+  await run({action:'import',file});assert.equal((await db.prepare('SELECT count(*) n FROM jac_notices WHERE source=?').bind('slack:'+file).first()).n,1);assert.equal(outbound,2);
+  await db.prepare("UPDATE payroll_users SET section_access='[\"media\"]' WHERE id=?").bind(person).run();assert.equal((await run({id:imported.id})).status,404,'La descripción queda retirada con el mismo permiso del pase.');
+ }finally{await mf.dispose();}
+});

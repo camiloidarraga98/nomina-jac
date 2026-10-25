@@ -1,3 +1,5 @@
+> **Actualización · 25 de octubre de 2026:** los datos explícitos enviados con el pase en Slack tienen prioridad por campo. Hora en sala conserva el valor escrito; salida menos60minutos se usa si ese campo falta. Esta decisión sustituye el cálculo obligatorio descrito abajo cuando existe una hora explícita. Ver [Datos de Slack](BOARDING_SLACK_DETAILS.md).
+
 # Datos del vuelo en la tarjeta de pases
 
 Camilo pidió mostrar la silla asignada, la hora de salida y la hora en sala junto a la ruta y el nombre que ya aparecen en la tarjeta nativa. La app iOS 0.32.0 (46) incorpora esta presentación compartida con iPad/Mac y conserva navegación, código original, PDF, menú y Apple Wallet.

@@ -130,6 +130,37 @@ final class BoardingWalletDetailsTests: XCTestCase {
         }
     }
 
+    func testMessageFieldsOverrideDocumentValuesWithoutChangingWalletIdentity() throws {
+        let provided = try JSONDecoder().decode(BoardingMessageDetails.self, from: Data("{\"seat\":\"14C\",\"departureTime\":\"18:45\",\"boardingTime\":\"18:05\",\"airline\":\"Aerolínea de prueba\"}".utf8))
+        let document = BoardingCardDetails(seat: "12A", departureTime: "19:30")
+        let card = provided.applying(to: document)
+        XCTAssertEqual(card.seat, "14C"); XCTAssertEqual(card.departureTime, "18:45")
+        XCTAssertEqual(card.boardingTime, "18:05", "A supplied room time is not replaced by the one-hour reminder.")
+        XCTAssertEqual(card.airline, "Aerolínea de prueba"); XCTAssertFalse(card.boardingPreviousDay)
+        let wallet = provided.applying(to: BoardingWalletDetails(passenger: "FIXTURE TRAVELLER", origin: "BOG", destination: "MDE", departureTime: "19:30", boardingTime: "18:50", seat: "12A"))
+        XCTAssertEqual(wallet.passenger, "FIXTURE TRAVELLER"); XCTAssertEqual(wallet.origin, "BOG"); XCTAssertEqual(wallet.destination, "MDE")
+        XCTAssertEqual(wallet.seat, "14C"); XCTAssertEqual(wallet.departureTime, "18:45"); XCTAssertEqual(wallet.boardingTime, "18:05")
+        let unassigned = BoardingMessageDetails(seat: "", departureTime: "00:30", boardingTime: "23:45")
+        let overnight = unassigned.applying(to: document)
+        XCTAssertTrue(overnight.seat.isEmpty, "An explicit unassigned seat must not reuse the PDF seat.")
+        XCTAssertEqual(overnight.boardingTime, "23:45"); XCTAssertTrue(overnight.boardingPreviousDay)
+        XCTAssertTrue(unassigned.applying(to: wallet).seat.isEmpty)
+        XCTAssertEqual(BoardingMessageDetails(seat: "14C", departureTime: "00:30").applying().boardingTime, "23:30", "An absent room time still uses the existing one-hour reminder.")
+        XCTAssertEqual(BoardingMessageDetails(boardingTime: "18:05").applying().boardingTime, "18:05", "An explicit room time is readable even while departure is unavailable.")
+    }
+
+    func testMessageFieldValidationPreservesAbsenceAndRejectsUnusableValues() throws {
+        let missing = try JSONDecoder().decode(BoardingMessageDetails.self, from: Data("{}".utf8))
+        XCTAssertFalse(missing.validated.hasCardFields); XCTAssertFalse(missing.validated.completesCard)
+        let invalid = BoardingMessageDetails(seat: "GATE 8", departureTime: "18:45 / 19:45", boardingTime: "24:00", airline: "Ficticia\u{202E}").validated
+        XCTAssertEqual(invalid, BoardingMessageDetails())
+        let known = BoardingMessageDetails(seat: "014c", departureTime: "6:45 PM", airline: " Aerolínea de prueba ").validated
+        XCTAssertEqual(known.seat, "14C"); XCTAssertEqual(known.departureTime, "18:45"); XCTAssertEqual(known.airline, "Aerolínea de prueba")
+        XCTAssertNil(known.boardingTime); XCTAssertTrue(known.completesCard)
+        XCTAssertEqual(BoardingMessageDetails(seat: "").validated.seat, "")
+        XCTAssertNil(BoardingMessageDetails(seat: "0A").validated.seat)
+    }
+
     func testBoardingCardReadsClearPDFWithoutABarcodeAndKeepsWalletBoardingTime() throws {
         let lines = ["PASAJERO: FIXTURE TRAVELLER", "ORIGEN: BOG", "DESTINO: MDE", "HORA DEL VUELO: 6:45 PM", "HORA EN SALA: 18:05", "SILLA: 012A"]
         let data = try pdf([lines])

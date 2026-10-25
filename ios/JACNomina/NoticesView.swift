@@ -15,8 +15,14 @@ struct JACNotice: Decodable, Identifiable {
     let id: String; let kind: String; let title: String; let body: String; let filename: String; let size: Int; let createdAt: String; let read: Bool
     var revision: Int? = nil; var updatedAt: String? = nil; var changeSummary: String? = nil; var confirmed: Bool? = nil; var receipts: [NoticeReceipt]? = nil
     var travelDate: String? = nil
+    var boardingDetails: BoardingMessageDetails? = nil
     var attachments: [NoticeAttachment]? = nil
     var files: [NoticeAttachment] { attachments ?? (filename.isEmpty ? [] : [NoticeAttachment(id: id, filename: filename, mimeType: "application/pdf", size: size)]) }
+    var singleFileBoardingDetails: BoardingMessageDetails? {
+        guard kind == "boarding_pass", files.count == 1 else { return nil }
+        guard let value = boardingDetails?.validated, value.hasCardFields else { return nil }
+        return value
+    }
     var createdLabel: String {
         guard let date = CalendarClock.instant(createdAt) else { return "Fecha no disponible" }
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "es_CO"); formatter.timeZone = CalendarClock.calendar.timeZone
@@ -35,6 +41,7 @@ struct NoticeAttachment: Decodable, Identifiable {
     struct Key: Hashable {
         let notice: String; let file: String; let stamp: String
         let filename: String; let mime: String; let size: Int
+        let boardingDetails: BoardingMessageDetails?
     }
     enum Entry: Equatable {
         case loading, ready(BoardingCardDetails), unavailable
@@ -60,9 +67,10 @@ struct NoticeAttachment: Decodable, Identifiable {
         // Requiring that record also prevents a 403 -> invalidation -> retry loop.
         guard item.kind == "boarding_pass", let current = client.cachedNotice(item.id), current.kind == item.kind,
               (current.revision ?? 1) == (item.revision ?? 1),
+              current.singleFileBoardingDetails == item.singleFileBoardingDetails,
               current.files.contains(where: { $0.id == file.id && $0.filename == file.filename && $0.mimeType == file.mimeType && $0.size == file.size }),
               let stamp = try? client.boardingCodeAccessStamp(item, file: file) else { return nil }
-        return Key(notice: item.id, file: file.id, stamp: stamp, filename: file.filename, mime: file.mimeType, size: file.size)
+        return Key(notice: item.id, file: file.id, stamp: stamp, filename: file.filename, mime: file.mimeType, size: file.size, boardingDetails: item.singleFileBoardingDetails)
     }
     func entry(_ item: JACNotice, file: NoticeAttachment, client: PayrollClient) -> Entry {
         guard let key = key(item, file: file, client: client) else { return .unavailable }
@@ -74,8 +82,15 @@ struct NoticeAttachment: Decodable, Identifiable {
         if active[key] != nil && requests[key] != nil { return }
         if !retry, entries[key] != nil { return }
         requests[key] = Request(key: key, item: item, file: file, client: client)
-        entries[key] = .loading
         order.removeAll { $0 == key }; order.append(key)
+        if let details = item.singleFileBoardingDetails, details.completesCard {
+            // A complete signed-message snapshot needs no PDF download/OCR.
+            // The canonical authorised notice and its session are still required.
+            entries[key] = .ready(details.applying())
+            trim()
+            return
+        }
+        entries[key] = .loading
         if !queue.contains(key) { queue.append(key) }
         trim(); startNext()
     }
@@ -129,9 +144,10 @@ struct NoticeAttachment: Decodable, Identifiable {
                     }
                     let result = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
                     try Task.checkCancellation()
-                    self?.finish(key, id: id, result: .ready(result))
+                    self?.finish(key, id: id, result: .ready(request.item.singleFileBoardingDetails?.applying(to: result) ?? result))
                 } catch {
-                    self?.finish(key, id: id, result: error is CancellationError ? nil : .unavailable)
+                    let fallback: Entry = request.item.singleFileBoardingDetails.map { .ready($0.applying()) } ?? .unavailable
+                    self?.finish(key, id: id, result: error is CancellationError ? nil : fallback)
                 }
             }
             active[key] = Active(id: id, task: task)
@@ -426,6 +442,7 @@ struct NoticesView: View {
                             } else {
                                 Text("Pase de abordar").font(.headline)
                             }
+                            boardingAirlineLabel(item, file: file)
                         }.frame(maxWidth: .infinity, alignment: .leading).allowsHitTesting(false)
                         Rectangle().fill(JACTheme.border).frame(height: 1).allowsHitTesting(false)
                         BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id, controlsDisabled: openingFile != nil || deleting) {
@@ -448,6 +465,7 @@ struct NoticesView: View {
                                 Text(info.origin + " → " + info.destination).font(.system(.title3,design:.rounded,weight:.bold)).fixedSize(horizontal:false,vertical:true)
                                 Text(info.passenger).font(.subheadline.weight(.medium))
                             } else { Text("Pase de abordar").font(.system(.headline,design:.rounded)) }
+                            boardingAirlineLabel(item, file: file)
                             HStack(alignment:.center,spacing:14) {
                                 Label(BoardingClock.label(item.travelDate ?? ""),systemImage:"calendar").font(.caption).foregroundStyle(.secondary)
                                 Spacer(minLength:0)
@@ -487,6 +505,24 @@ struct NoticesView: View {
         JACTheme.border
         #else
         JACTone.teal.color.opacity(0.18)
+        #endif
+    }
+    private func boardingAirline(_ item: JACNotice, file: NoticeAttachment) -> String? {
+        guard let airline = item.singleFileBoardingDetails?.airline, !airline.isEmpty,
+              boardingDetails.key(item, file: file, client: store.client) != nil else { return nil }
+        return airline
+    }
+    @ViewBuilder private func boardingAirlineLabel(_ item: JACNotice, file: NoticeAttachment) -> some View {
+        if let airline = boardingAirline(item, file: file) {
+            Label(airline, systemImage: "airplane").font(.caption).foregroundStyle(boardingAirlineColor)
+                .accessibilityIdentifier("boarding.card.airline.\(file.id)")
+        }
+    }
+    private var boardingAirlineColor: Color {
+        #if os(iOS)
+        JACTheme.muted
+        #else
+        .secondary
         #endif
     }
     @ViewBuilder private func boardingMenuActions(_ item:JACNotice,file:NoticeAttachment) -> some View {
@@ -864,6 +900,11 @@ private struct BoardingWalletPreparationView: View {
         guard let code=selectedCode,let count=Int(String(code.barcode.message.dropFirst().prefix(1))) else {return false}
         return count == 1 ? legIndex == 0:legs.count == count && legs.contains(where:{$0.index == legIndex})
     }
+    private var messageSuggestions: BoardingMessageDetails? {
+        guard codes.count == 1, let code = selectedCode, hasSelectedLeg,
+              BoardingWalletDetailsExtractor.declaredLegCount(barcode: code.barcode) == 1 else { return nil }
+        return selection.item.singleFileBoardingDetails
+    }
     private var canPrepare:Bool {
         !loading && !resolvingDetails && !preparingWallet && !revoked && !store.isOffline && walletStatus?.configured == true &&
         selectedCode != nil && hasSelectedLeg && details.validationMessage == nil && scenePhase == .active
@@ -930,7 +971,9 @@ private struct BoardingWalletPreparationView: View {
                     detailField("Hora en sala",text:$details.boardingTime,id:"boardingTime",clock:true)
                     detailField("Silla asignada",text:$details.seat,id:"seat")
                 } header:{Text("Datos del vuelo")} footer:{
-                    Text("Revisa estos datos con tu pase original. Puedes corregirlos o dejar vacíos los que no aparezcan. Las horas se muestran como figuran en el documento.")
+                    Text(messageSuggestions == nil
+                         ? "Revisa estos datos con tu pase original. Puedes corregirlos o dejar vacíos los que no aparezcan. Las horas se muestran como figuran en el documento."
+                         : "La descripción enviada con este pase aporta las sugerencias de silla y horarios. Revísalas con el documento original; puedes corregirlas o dejar vacíos los datos que no aparezcan.")
                 }.disabled(resolvingDetails || preparingWallet || !hasSelectedLeg)
                 if let message=details.validationMessage {Section {Text(message).foregroundStyle(.red).font(.footnote)}}
                 Section {
@@ -1013,6 +1056,7 @@ private struct BoardingWalletPreparationView: View {
         guard hasSelectedLeg else {resolvingDetails=false;detailsTask=nil;return}
         resolvingDetails=true
         let request=detailGeneration,sourceGeneration=generation,selectedLeg=legIndex,mime=selection.file.mimeType
+        let provided = messageSuggestions
         let worker=Task.detached(priority:.userInitiated) {
             try BoardingWalletDetailsExtractor.suggestions(data:data,mime:mime,barcode:code.barcode,page:code.page,legIndex:selectedLeg)
         }
@@ -1023,9 +1067,12 @@ private struct BoardingWalletPreparationView: View {
                 try Task.checkCancellation()
                 guard request == detailGeneration,sourceGeneration == generation,!revoked,scenePhase == .active,
                       selectedCode?.id == code.id,legIndex == selectedLeg,stamp == (try store.client.boardingCodeAccessStamp(selection.item,file:selection.file)) else {return}
-                details=found
+                details=provided?.applying(to: found) ?? found
             } catch {
                 guard request == detailGeneration,!Task.isCancelled else {return}
+                if let provided, stamp == (try? store.client.boardingCodeAccessStamp(selection.item, file: selection.file)) {
+                    details = provided.applying(to: legs.first?.details ?? BoardingWalletDetails())
+                }
                 self.error="No se pudieron leer todos los datos. Puedes completarlos con el documento original."
                 validateAccess()
             }

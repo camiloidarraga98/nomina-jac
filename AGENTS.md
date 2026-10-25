@@ -1,3 +1,7 @@
+## Pases con descripción de Slack · 25 de octubre de 2026
+
+Camilo pidió recibir Silla, Hora de salida, Hora en sala y Aerolínea junto al PDF en el mismo mensaje de Slack. Un solo pase por mensaje; conservar la descripción canónica del evento firmado en la cola durable y el aviso privado, sin consultar historial ni asociar mensajes separados. Datos explícitos tienen prioridad por campo sobre OCR; Hora en sala explícita sustituye la regla anterior de salida menos60minutos, que queda como alternativa si falta. No redirigir destinatarios por texto ni aplicar un bloque común a varios archivos. Preservar idempotencia por archivo, permisos, revisiones, cachés, original y código/Wallet. Ver `docs/BOARDING_SLACK_DETAILS.md` para formato, migración0037, alcance y comprobaciones. App0.34.0(52), misma firma/Team/bundle; no inferir instalación física desde publicación de código o CI.
+
 ## Compilación de Agenda · 25 de octubre de 2026
 
 Camilo reportó timeout de inferencia de tipos de Xcode en `CalendarView`. La corrección0.33.1(51) separa contenido, toolbar, observación, hojas y celdas en helpers con tipos concretos; conservar esta división y los estados originales, permisos y diseño. No reunir de nuevo toda la pantalla en una sola expresión SwiftUI ni usar `AnyView` como solución. El scope focal `calendar-compile` comprueba el compilador con el Xcode más reciente instalado, las fuentes compartidas de Mac y dos recorridos existentes de Agenda. Resultados y límites en `docs/IPHONE_UX_REDESIGN.md`; no inferir instalación o firma real desde CI.

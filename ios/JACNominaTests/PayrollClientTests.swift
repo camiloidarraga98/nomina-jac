@@ -91,6 +91,7 @@ private final class BoardingCardTestReader: @unchecked Sendable {
         if shouldWait, barrier.wait(timeout: .now() + 5) != .success { throw URLError(.timedOut) }
         guard mime == "application/pdf" else { throw URLError(.cannotDecodeContentData) }
         let value = String(decoding: bytes, as: UTF8.self)
+        if value.contains("BROKEN") { throw URLError(.cannotDecodeContentData) }
         if value.contains("SECOND") { return BoardingCardDetails(seat: "22B", departureTime: "00:30") }
         if value.contains("THIRD") { return BoardingCardDetails(seat: "33C", departureTime: "09:15") }
         return BoardingCardDetails(seat: "12A", departureTime: "18:45")
@@ -186,12 +187,14 @@ final class PayrollClientTests: XCTestCase {
     private var walletNoticeFixture: JSONValue {
         .object(["id":.string("wallet-private-fixture"),"kind":.string("boarding_pass"),"title":.string("Pase ficticio"),"body":.string(""),"filename":.string("Ficticio.pdf"),"size":.number(42),"createdAt":.string("2026-10-23T10:00:00Z"),"read":.bool(false),"revision":.number(2),"attachments":.array([.object(["id":.string("wallet-file"),"filename":.string("Ficticio.pdf"),"mimeType":.string("application/pdf"),"size":.number(42)])])])
     }
-    private func boardingCardNoticeFixture(revision: Int = 2, files: [String] = ["FIRST"]) -> JSONValue {
-        .object([
+    private func boardingCardNoticeFixture(revision: Int = 2, files: [String] = ["FIRST"], boardingDetails: JSONValue? = nil) -> JSONValue {
+        var fields: [String: JSONValue] = [
             "id": .string("card-private-fixture"), "kind": .string("boarding_pass"), "title": .string("Pases ficticios"), "body": .string(""),
             "filename": .string("Ficticio.pdf"), "size": .number(42), "createdAt": .string("2026-10-25T10:00:00Z"), "read": .bool(false), "revision": .number(Double(revision)),
             "attachments": .array(files.map { .object(["id": .string("card-" + $0), "filename": .string($0 + ".pdf"), "mimeType": .string("application/pdf"), "size": .number(42)]) })
-        ])
+        ]
+        if let boardingDetails { fields["boardingDetails"] = boardingDetails }
+        return .object(fields)
     }
     @MainActor private func waitForBoardingCard(_ condition: @MainActor () -> Bool) async -> Bool {
         let end = Date().addingTimeInterval(3)
@@ -200,6 +203,79 @@ final class PayrollClientTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         return condition()
+    }
+    @MainActor func testBoardingCardMessageMetadataDoesNotDownloadOriginalAndRevalidatesChanges() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache), reader = BoardingCardTestReader(); reader.release()
+        let store = BoardingCardDetailsStore(extract: { try reader.extract($0, $1) })
+        defer { store.cancelPending(); try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        var current = boardingCardNoticeFixture(boardingDetails: .object(["seat": .string("14C"), "departureTime": .string("18:45"), "boardingTime": .string("18:05"), "airline": .string("Aerolínea de prueba")]))
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "ui-fixture.example.invalid")
+            if request.url?.path == "/api/notices/file" {
+                reader.downloaded()
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/pdf"])!, Data("%PDF-1.4\nFIRST\n%%EOF".utf8))
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(JSONValue.object(["item": current])))
+        }
+        let original = try await client.notice(id: "card-private-fixture"), file = try XCTUnwrap(original.files.first)
+        let originalKey = try XCTUnwrap(store.key(original, file: file, client: client))
+        store.load(original, file: file, client: client)
+        XCTAssertEqual(store.entry(original, file: file, client: client), .ready(BoardingCardDetails(seat: "14C", departureTime: "18:45", explicitBoardingTime: "18:05", airline: "Aerolínea de prueba")))
+        XCTAssertEqual(reader.downloadCount, 0); XCTAssertEqual(reader.extractionCount, 0, "Known message fields must be usable without reading the PDF.")
+        current = boardingCardNoticeFixture(boardingDetails: .object(["seat": .string(""), "departureTime": .string("01:15"), "boardingTime": .string("00:10")]))
+        let updated = try await client.notice(id: original.id), updatedFile = try XCTUnwrap(updated.files.first)
+        store.revalidate()
+        XCTAssertNil(store.key(original, file: file, client: client)); XCTAssertThrowsError(try client.boardingCodeAccessStamp(original, file: file))
+        XCTAssertNotEqual(store.key(updated, file: updatedFile, client: client), originalKey, "Metadata changes must not reuse an old card, even if the document revision is unchanged.")
+        store.load(updated, file: updatedFile, client: client)
+        XCTAssertEqual(store.entry(updated, file: updatedFile, client: client), .ready(BoardingCardDetails(seat: "", departureTime: "01:15", explicitBoardingTime: "00:10")))
+        XCTAssertEqual(reader.downloadCount, 0); XCTAssertEqual(reader.extractionCount, 0)
+        try client.clearSession(); store.revalidate()
+        XCTAssertNil(store.key(updated, file: updatedFile, client: client))
+        XCTAssertEqual(store.entry(updated, file: updatedFile, client: client), .unavailable, "Structured data shares the original private notice's session and revocation boundary.")
+    }
+    @MainActor func testBoardingCardMessageMetadataKeepsPartialFieldsWhenExtractionFails() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache), reader = BoardingCardTestReader(); reader.release()
+        let store = BoardingCardDetailsStore(extract: { try reader.extract($0, $1) })
+        defer { store.cancelPending(); try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        let partial: JSONValue = .object(["seat": .string("14C"), "boardingTime": .string("18:05"), "airline": .string("Aerolínea de prueba")])
+        var current = boardingCardNoticeFixture(boardingDetails: partial), broken = true
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "ui-fixture.example.invalid")
+            if request.url?.path == "/api/notices/file" {
+                reader.downloaded()
+                let file = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "file" }?.value ?? ""
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/pdf"])!, Data(("%PDF-1.4\n" + (broken ? "BROKEN" : file) + "\n%%EOF").utf8))
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(JSONValue.object(["item": current])))
+        }
+        let initial = try await client.notice(id: "card-private-fixture"), file = try XCTUnwrap(initial.files.first)
+        store.load(initial, file: file, client: client)
+        let partialReady = await waitForBoardingCard { store.entry(initial, file: file, client: client) == .ready(BoardingCardDetails(seat: "14C", explicitBoardingTime: "18:05", airline: "Aerolínea de prueba")) }
+        XCTAssertTrue(partialReady, "A local PDF/OCR error must not hide validated message fields.")
+        XCTAssertEqual(reader.extractionCount, 1); XCTAssertEqual(reader.downloadCount, 1)
+        broken = false
+        current = boardingCardNoticeFixture(revision: 3, boardingDetails: .object(["seat": .string(""), "boardingTime": .string("18:05")]))
+        let updated = try await client.notice(id: initial.id), updatedFile = try XCTUnwrap(updated.files.first)
+        store.load(updated, file: updatedFile, client: client)
+        let merged = await waitForBoardingCard { store.entry(updated, file: updatedFile, client: client) == .ready(BoardingCardDetails(seat: "", departureTime: "18:45", explicitBoardingTime: "18:05")) }
+        XCTAssertTrue(merged, "The PDF supplies only absent values and cannot replace an explicit unassigned seat or room time.")
+        current = boardingCardNoticeFixture(revision: 4, files: ["FIRST", "SECOND"], boardingDetails: .object(["seat": .string("14C"), "departureTime": .string("18:45"), "boardingTime": .string("18:05")]))
+        let multiple = try await client.notice(id: initial.id)
+        XCTAssertNil(multiple.singleFileBoardingDetails, "One shared description cannot identify which of multiple attachments it describes.")
+        for attachment in multiple.files { store.load(multiple, file: attachment, client: client) }
+        let independentlyRead = await waitForBoardingCard {
+            multiple.files.allSatisfy { attachment in
+                let expected = attachment.id.hasSuffix("SECOND") ? BoardingCardDetails(seat: "22B", departureTime: "00:30") : BoardingCardDetails(seat: "12A", departureTime: "18:45")
+                return store.entry(multiple, file: attachment, client: client) == .ready(expected)
+            }
+        }
+        XCTAssertTrue(independentlyRead, "Per-file originals keep their own seat/time when a description cannot be assigned safely.")
+        XCTAssertEqual(reader.extractionCount, 4); XCTAssertEqual(reader.downloadCount, 4)
     }
     @MainActor func testBoardingCardMetadataCachesEachFileAndBoundsConcurrentReads() async throws {
         let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))

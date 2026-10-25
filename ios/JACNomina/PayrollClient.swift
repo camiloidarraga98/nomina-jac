@@ -691,7 +691,7 @@ final class PayrollClient: ObservableObject {
     func boardingCodeAccessStamp(_ item: JACNotice, file: NoticeAttachment) throws -> String {
         guard item.kind == "boarding_pass", permissionUser?.permitsNotice(item.kind) != false,
               item.files.contains(where: { $0.id == file.id }), let scope = try offlineScope() else { throw APIError.unauthorized }
-        if let latest = cachedNotice(item.id), (latest.revision ?? 1) != (item.revision ?? 1) || !latest.files.contains(where: { $0.id == file.id }) {
+        if let latest = cachedNotice(item.id), (latest.revision ?? 1) != (item.revision ?? 1) || latest.boardingDetails != item.boardingDetails || !latest.files.contains(where: { $0.id == file.id }) {
             throw APIError.invalid("El pase cambió. Abre la versión más reciente.")
         }
         return "\(scope.id):\(cacheGeneration):\(noticeInvalidations[item.id, default: 0]):\(item.revision ?? 1)"
