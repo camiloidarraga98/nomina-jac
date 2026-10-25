@@ -55,10 +55,19 @@ test('direct requests to team, files, financial, administrative and integration 
  for(const api of getApis)assert.equal((await call(api,null,{token:photoToken,get:true,path:'/api/test?id=00000000-0000-4000-8000-000000000000&file=00000000-0000-4000-8000-000000000001'})).status,403);
  for(const api of [m.usersApi,m.payrollApi,m.mailApi,m.mobileApi,m.gmailApi,m.mobileGmailApi,m.calendarApi,m.noticesApi,m.publishApi,m.expensesApi,m.crmApi])assert.equal((await call(api,{action:'anything'},{token:photoToken})).status,403);
  const user=await m.authenticatedSession(photoToken);
- for(const read of [()=>m.noticeFeed(user),()=>m.boardingFeed(user),()=>m.allowedNotice(user,crypto.randomUUID()),()=>m.expenseFeed(user),()=>m.allowedExpense(user,crypto.randomUUID()),()=>m.submitExpense(user,{},async()=>true),()=>m.registerDevice(user,{},'token',async()=>true)])await assert.rejects(read,e=>e.status===403);
+ for(const read of [()=>m.noticeFeed(user),()=>m.boardingFeed(user),()=>m.allowedNotice(user,crypto.randomUUID()),()=>m.expenseFeed(user),()=>m.allowedExpense(user,crypto.randomUUID()),()=>m.submitExpense(user,{},async()=>true)])await assert.rejects(read,e=>e.status===403);
+ // Folder notifications allow a photographer to register a device, but this
+ // invalid request must reach validation without creating devices or deliveries.
+ const devices=sql.prepare('SELECT count(*) n FROM jac_push_devices').get().n,deliveries=sql.prepare('SELECT count(*) n FROM jac_push_deliveries').get().n;
+ assert.equal((await call(m.noticesApi,{action:'register'},{token:photoToken,path:'/api/notices'})).status,400);
+ await assert.rejects(()=>m.registerDevice(user,{},'token',async()=>true),e=>e.status===400);
+ const calendarOnly={...user,mediaOnly:false,sections:['calendar']};
+ await assert.rejects(()=>m.registerDevice(calendarOnly,{},'token',async()=>true),e=>e.status===403);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jac_push_devices').get().n,devices);
+ assert.equal(sql.prepare('SELECT count(*) n FROM jac_push_deliveries').get().n,deliveries);
  assert.equal(externalCalls,0);
 });
-test('photographer is excluded from alert targets, boarding targets and push dispatch',async()=>{
+test('photographer is excluded from alert targets, boarding targets and itinerary push dispatch',async()=>{
  const owner=await m.authenticatedSession(ownerToken),feed=await m.noticeFeed(owner);
  assert.ok(!feed.users.some(u=>u.id===photoID));assert.ok(!feed.boardingUsers.some(u=>u.id===photoID));
  await assert.rejects(()=>m.saveManualNotice(owner,{id:crypto.randomUUID(),title:'Ficticio',body:'Solo prueba',recipients:[photoID]},async()=>true),e=>e.status===409);
