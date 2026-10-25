@@ -641,7 +641,7 @@ final class PayrollClient: ObservableObject {
         for entry in offlineCache.entries(scope) where URL(string: entry.url)?.path == "/api/notices" {
             guard let saved = offlineCache.load(scope, key: entry.key), var json = try? decoder.decode(JSONValue.self, from: saved.data), !json["notices"].elements.isEmpty else { continue }
             json["notices"] = .array(json["notices"].elements.filter { $0["id"].text != id })
-            if let bytes = try? JSONEncoder().encode(json) { try? offlineCache.save(OfflineResponse(key: saved.key, url: saved.url, headers: saved.headers, data: bytes, receivedAt: Date(), revision: saved.revision), scope: scope) }
+            if let bytes = try? JSONEncoder().encode(json) { _ = try? offlineCache.save(OfflineResponse(key: saved.key, url: saved.url, headers: saved.headers, data: bytes, receivedAt: Date(), revision: saved.revision), scope: scope) }
         }
         cacheRevision += 1
     }

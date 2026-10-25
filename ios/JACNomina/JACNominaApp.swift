@@ -106,7 +106,7 @@ struct JACNominaApp: App {
             .onChange(of: store.overview?.user.id) { _, _ in if !Self.isUnitTestHost { store.prefetchMediaRoot() } }
         }
         .backgroundTask(.appRefresh(JACWidgetBridge.backgroundTaskIdentifier)) {
-            guard Self.widgetIntegrationEnabled else { return }
+            guard await Self.widgetIntegrationEnabled else { return }
             await JACWidgetBridge.shared.refreshInBackground(client: store.client)
         }
     }
