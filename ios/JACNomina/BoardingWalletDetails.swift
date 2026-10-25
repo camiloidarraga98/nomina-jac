@@ -4,6 +4,32 @@ import ImageIO
 import PDFKit
 import Vision
 
+/// Information shown on a private boarding card. The room time is JAC's
+/// requested reminder, one civil hour before departure, rather than a reading
+/// of the airline's boarding time or a conversion through the device timezone.
+struct BoardingCardDetails: Equatable, Sendable {
+    var seat: String = ""
+    var departureTime: String = ""
+    private var departureMinutes: Int? {
+        guard let normalized = BoardingWalletDetailsExtractor.normalizedTime(departureTime) else { return nil }
+        let parts = normalized.split(separator: ":").compactMap { Int($0) }
+        guard parts.count == 2 else { return nil }
+        return parts[0] * 60 + parts[1]
+    }
+    var boardingTime: String {
+        guard let departureMinutes else { return "" }
+        let minutes = (departureMinutes + 1440 - 60) % 1440
+        return String(format: "%02d:%02d", minutes / 60, minutes % 60)
+    }
+    var boardingPreviousDay: Bool { departureMinutes.map { $0 < 60 } ?? false }
+}
+
+enum BoardingCardDetailsExtractor {
+    static func extract(_ data: Data, mime: String) throws -> BoardingCardDetails {
+        try BoardingWalletDetailsExtractor.cardDetails(data: data, mime: mime)
+    }
+}
+
 struct BoardingWalletDetails: Codable, Equatable, Sendable {
     var passenger: String = ""
     var origin: String = ""
@@ -118,6 +144,132 @@ enum BoardingWalletDetailsExtractor {
         details.boardingTime = unique(fields[.boardingTime], transform: normalizedTime) ?? ""
         if details.seat.isEmpty { details.seat = unique(fields[.seat], transform: normalizedSeat) ?? "" }
         return details
+    }
+
+    private struct CardReading {
+        let details: BoardingCardDetails
+        let ambiguous: Bool
+        let hasSeat: Bool
+        let hasDeparture: Bool
+        var fields: [Field: [String]] = [:]
+    }
+    /// A clear PDF does not need a compatible barcode for an informational
+    /// card. Unlike Wallet, the card never transfers or creates a barcode.
+    static func cardSuggestions(text: String, barcode: BoardingWalletBarcode? = nil, allowFollowingLine: Bool = true) -> BoardingCardDetails {
+        cardReading(text: text, barcode: barcode, allowFollowingLine: allowFollowingLine).details
+    }
+    private static func cardReading(text: String, barcode: BoardingWalletBarcode?, allowFollowingLine: Bool = true) -> CardReading {
+        var fields = collected(text, allowFollowingLine: allowFollowingLine)
+        // The document's boarding time is deliberately irrelevant to this card.
+        // Wallet's existing suggestions continue to retain that original value.
+        fields[.boardingTime] = nil
+        var base = BoardingWalletDetails()
+        if let barcode {
+            let choices = legs(barcode: barcode)
+            guard declaredLegCount(barcode: barcode) == 1, choices.count == 1 else {
+                return CardReading(details: BoardingCardDetails(), ambiguous: true, hasSeat: false, hasDeparture: false)
+            }
+            base = choices[0].details
+        }
+        let hasSeat = fields[.seat] != nil, hasDeparture = fields[.departureTime] != nil
+        let conflictingSeats = (fields[.seat]?.count ?? 0) > 1 && unique(fields[.seat], transform: normalizedSeat) == nil
+        guard text.count <= maximumText, !conflictingSeats, !ambiguousDocument(fields, base: base) else {
+            return CardReading(details: BoardingCardDetails(), ambiguous: true, hasSeat: hasSeat, hasDeparture: hasDeparture)
+        }
+        let seat = hasSeat ? unique(fields[.seat], transform: normalizedSeat) ?? "" : base.seat
+        return CardReading(details: BoardingCardDetails(seat: seat, departureTime: unique(fields[.departureTime], transform: normalizedTime) ?? ""), ambiguous: false, hasSeat: hasSeat, hasDeparture: hasDeparture, fields: fields)
+    }
+
+    static func cardDetails(data: Data, mime: String) throws -> BoardingCardDetails {
+        guard data.count <= maximumBytes else { throw APIError.invalid("El pase supera los 10 MB.") }
+        guard ["application/pdf", "image/jpeg", "image/png"].contains(mime) else { throw APIError.invalid("El archivo del pase no es compatible.") }
+        try Task.checkCancellation()
+        if mime == "application/pdf" {
+            guard let document = PDFDocument(data: data), !document.isEncrypted, (1...12).contains(document.pageCount) else {
+                throw APIError.invalid("No se pudo leer este PDF.")
+            }
+            let texts = (0..<document.pageCount).map { String((document.page(at: $0)?.string ?? "").prefix(maximumText + 1)) }
+            let combined = texts.joined(separator: "\n")
+            let whole = cardReading(text: combined, barcode: nil)
+            guard !whole.ambiguous else { return BoardingCardDetails() }
+            if document.pageCount == 1, !whole.details.seat.isEmpty, !whole.details.departureTime.isEmpty { return whole.details }
+            var found: [(page: Int, barcode: BoardingWalletBarcode)] = []
+            var detections = 0
+            for page in 1...document.pageCount {
+                try Task.checkCancellation()
+                let codes = try autoreleasepool { () throws -> [BoardingWalletBarcode] in
+                    guard let image = try pdfImage(data: data, page: page) else { return [] }
+                    return try cardBarcodes(image, detections: &detections)
+                }
+                found += codes.map { (page, $0) }
+            }
+            let messages = Set(found.map { $0.barcode.message })
+            guard messages.count <= 1 else { return BoardingCardDetails() }
+            if let code = found.first?.barcode {
+                guard declaredLegCount(barcode: code) == 1, legs(barcode: code).count == 1 else { return BoardingCardDetails() }
+            }
+            // Multiple pages can contain different passengers or flights. A
+            // fallback uses only the one page holding the one identified flight;
+            // it never combines a seat from one page with a time from another.
+            let page: Int
+            if document.pageCount == 1 { page = 1 }
+            else {
+                let pages = Set(found.map(\.page))
+                guard messages.count == 1, pages.count == 1, let selected = pages.first else { return BoardingCardDetails() }
+                page = selected
+            }
+            let reading = cardReading(text: texts[page - 1], barcode: found.first?.barcode)
+            guard !reading.ambiguous else { return BoardingCardDetails() }
+            if !reading.details.seat.isEmpty && !reading.details.departureTime.isEmpty { return reading.details }
+            guard let image = try pdfImage(data: data, page: page) else { return reading.details }
+            return try cardOCR(image, existing: reading, barcode: found.first?.barcode)
+        }
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil),
+              let image = CGImageSourceCreateThumbnailAtIndex(source, 0, [kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true, kCGImageSourceThumbnailMaxPixelSize: 1600] as CFDictionary),
+              image.width * image.height <= 4_000_000 else { throw APIError.invalid("No se pudo leer la imagen del pase.") }
+        var detections = 0
+        let codes = try cardBarcodes(image, detections: &detections)
+        guard Set(codes.map(\.message)).count <= 1 else { return BoardingCardDetails() }
+        let reading = cardReading(text: "", barcode: codes.first)
+        guard !reading.ambiguous else { return BoardingCardDetails() }
+        return try cardOCR(image, existing: reading, barcode: codes.first)
+    }
+    private static func cardBarcodes(_ image: CGImage, detections: inout Int) throws -> [BoardingWalletBarcode] {
+        try Task.checkCancellation()
+        let request = VNDetectBarcodesRequest()
+        try BoardingCodeExtractor.configure(request)
+        request.symbologies = [.qr, .pdf417, .aztec]
+        try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+        try Task.checkCancellation()
+        let observations = request.results ?? []
+        detections += observations.count
+        guard detections <= 24 else { throw APIError.invalid("Este documento contiene demasiados códigos.") }
+        return observations.compactMap { BoardingWalletBarcode.extracted($0.symbology, message: $0.payloadStringValue) }
+    }
+    private static func cardOCR(_ image: CGImage, existing: CardReading, barcode: BoardingWalletBarcode?) throws -> BoardingCardDetails {
+        try Task.checkCancellation()
+        do {
+            let request = VNRecognizeTextRequest()
+            request.recognitionLevel = .accurate; request.recognitionLanguages = ["es-ES", "en-US"]; request.usesLanguageCorrection = false; request.minimumTextHeight = 0.008
+            try BoardingCodeExtractor.configure(request)
+            try VNImageRequestHandler(cgImage: image, options: [:]).perform([request])
+            try Task.checkCancellation()
+            let observations = (request.results ?? []).sorted { a, b in abs(a.boundingBox.midY - b.boundingBox.midY) > 0.018 ? a.boundingBox.midY > b.boundingBox.midY : a.boundingBox.minX < b.boundingBox.minX }
+            let text = observations.prefix(256).compactMap { observation -> String? in
+                guard let candidate = observation.topCandidates(1).first, candidate.confidence >= 0.7 else { return nil }
+                return String(candidate.string.prefix(160))
+            }.joined(separator: "\n")
+            let reading = cardReading(text: text, barcode: barcode, allowFollowingLine: false)
+            guard !reading.ambiguous else { return BoardingCardDetails() }
+            var combined = existing.fields
+            for (field, values) in reading.fields { combined[field, default: []] += values }
+            let base = barcode.flatMap { legs(barcode: $0).first?.details } ?? BoardingWalletDetails()
+            let conflictingSeats = (combined[.seat]?.count ?? 0) > 1 && unique(combined[.seat], transform: normalizedSeat) == nil
+            guard !conflictingSeats, !ambiguousDocument(combined, base: base) else { return BoardingCardDetails() }
+            return BoardingCardDetails(seat: existing.hasSeat ? existing.details.seat : reading.details.seat.isEmpty ? existing.details.seat : reading.details.seat,
+                                       departureTime: existing.hasDeparture ? existing.details.departureTime : reading.details.departureTime)
+        } catch is CancellationError { throw CancellationError() }
+        catch { return existing.details }
     }
 
     static func normalizedTime(_ value: String) -> String? {

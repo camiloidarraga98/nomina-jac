@@ -26,7 +26,7 @@ enum UITestBackend {
     }
     // Generated locally for one Wallet-menu UI flow. No real passenger, flight,
     // airline credentials or provider request is included in this document.
-    static func boardingWalletPDF() throws -> Data {
+    static func boardingWalletPDF(departureTime: String = "18:45") throws -> Data {
         let passenger = "TRAVELLER/FIXTURE".padding(toLength:20,withPad:" ",startingAt:0)
         let message = "M1" + passenger + "E" + "DEMO123" + "BOG" + "MDE" + "ZZ " + "00123" + "123" + "Y" + "012A" + "00001" + "1" + "00"
         let bytes=NSMutableData(),consumer=CGDataConsumer(data:bytes)!
@@ -40,7 +40,7 @@ enum UITestBackend {
             NSAttributedString.Key(kCTFontAttributeName as String):CTFontCreateWithName("Helvetica" as CFString,16,nil),
             NSAttributedString.Key(kCTForegroundColorAttributeName as String):CGColor(gray:0,alpha:1),
         ]
-        let labels=["DOCUMENTO FICTICIO - SIN VALIDEZ", "PASAJERO: FIXTURE TRAVELLER", "ORIGEN: BOG", "DESTINO: MDE", "HORA DEL VUELO: 18:45", "HORA EN SALA: 18:05", "SILLA: 12A"]
+        let labels=["DOCUMENTO FICTICIO - SIN VALIDEZ", "PASAJERO: FIXTURE TRAVELLER", "ORIGEN: BOG", "DESTINO: MDE", "HORA DEL VUELO: " + departureTime, "HORA EN SALA: 18:05", "SILLA: 12A"]
         for (index,text) in labels.enumerated() {
             pdf.textMatrix = .identity;pdf.textPosition=CGPoint(x:50,y:740-CGFloat(index)*30)
             CTLineDraw(CTLineCreateWithAttributedString(NSAttributedString(string:text,attributes:attributes) as CFAttributedString),pdf)
@@ -212,7 +212,7 @@ private final class FixtureProtocol: URLProtocol {
                 let item=(Self.boardingFixtures+Self.alerts).first { $0["id"].text==notice }
                 guard item?["kind"].text != "boarding_pass" || item?["recipients"].elements.contains(.string(viewer)) == true else { throw URLError(.fileDoesNotExist) }
                 let codePDF:Data?
-                if ProcessInfo.processInfo.arguments.contains("--uitest-wallet-menu"),id.hasPrefix("boarding-fixture-") { codePDF=try UITestBackend.boardingWalletPDF() }
+                if ProcessInfo.processInfo.arguments.contains("--uitest-wallet-menu"),id.hasPrefix("boarding-fixture-") { codePDF=try UITestBackend.boardingWalletPDF(departureTime: ProcessInfo.processInfo.arguments.contains("--uitest-boarding-card-midnight") ? "00:30":"18:45") }
                 else { codePDF=ProcessInfo.processInfo.arguments.contains("--uitest-boarding-code") && id.hasPrefix("boarding-fixture-") ? try UITestBackend.boardingCodePDF():nil }
                 guard !Self.deletedNotices.contains(notice), let bytes = Self.attachments[id] ?? codePDF ?? (id.hasPrefix("boarding-fixture-") ? Data(base64Encoded:Self.pdf) : nil) else { throw URLError(.fileDoesNotExist) }
                 let reply = HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":try NoticeUpload.mime(bytes)])!; client?.urlProtocol(self,didReceive:reply,cacheStoragePolicy:.notAllowed); client?.urlProtocol(self,didLoad:bytes); client?.urlProtocolDidFinishLoading(self); return

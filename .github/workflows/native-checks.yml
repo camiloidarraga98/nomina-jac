@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, ios-bundle]
+        options: [full, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -65,6 +65,8 @@ jobs:
         env:
           JAC_WALLET_DETAILS: ${{ inputs.scope == 'wallet-details' || inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wallet-details]')) }}
           JAC_WALLET_DETAILS_UI_ONLY: ${{ inputs.scope == 'wallet-details-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[wallet-ui-only]')) }}
+          JAC_BOARDING_CARD: ${{ inputs.scope == 'boarding-card' || inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-boarding-card]')) }}
+          JAC_BOARDING_CARD_UI_ONLY: ${{ inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[boarding-card-ui-only]')) }}
           JAC_APPLE_WALLET: ${{ inputs.scope == 'apple-wallet' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-apple-wallet]')) }}
           JAC_APPLE_PUSH: ${{ inputs.scope == 'apple-push' || inputs.scope == 'apple-push-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-apple-push]')) }}
           JAC_APPLE_PUSH_UI_ONLY: ${{ inputs.scope == 'apple-push-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[push-ui-only]')) }}
@@ -98,6 +100,20 @@ jobs:
           if [ "$JAC_LAYOUT_ONLY" = true ]; then
             checks=()
             build_action=build-for-testing
+          elif [ "$JAC_BOARDING_CARD" = true ]; then
+            checks=(-only-testing:JACNominaUITests/LaunchTests/testBoardingCardShowsFlightDetailsBeforeOpeningTheOriginal)
+            if [ "$JAC_BOARDING_CARD_UI_ONLY" != true ]; then
+              checks+=(
+                -only-testing:JACNominaTests/BoardingWalletDetailsTests/testBoardingCardUsesOneHourReminderAndMarksThePreviousDay
+                -only-testing:JACNominaTests/BoardingWalletDetailsTests/testBoardingCardReadsClearPDFWithoutABarcodeAndKeepsWalletBoardingTime
+                -only-testing:JACNominaTests/BoardingWalletDetailsTests/testBoardingCardDoesNotMixAmbiguousFlightsSeatsOrArrivalTimes
+                -only-testing:JACNominaTests/BoardingWalletDetailsTests/testBoardingCardUsesOnlyASingleLegSeatWhenDocumentHasNoSeat
+                -only-testing:JACNominaTests/BoardingWalletDetailsTests/testBoardingCardRejectsUnsupportedAndOversizedInput
+                -only-testing:JACNominaTests/PayrollClientTests/testBoardingCardMetadataCachesEachFileAndBoundsConcurrentReads
+                -only-testing:JACNominaTests/PayrollClientTests/testBoardingCardMetadataRevocationAndNewRevisionNeverRestoreOldValues
+                -only-testing:JACNominaTests/PayrollClientTests/testBoardingCardMetadataDiscardsLateExtractionAfterLogout
+              )
+            fi
           elif [ "$JAC_PHOTO_NOTICES" = true ]; then
             if [ "$JAC_PHOTO_NOTICES_IPAD_ONLY" = true ]; then
               checks=(-only-testing:JACNominaUITests/IPadTests/testTabletMediaFolderNotificationOpensTheExactFolder)
@@ -375,12 +391,13 @@ jobs:
       - name: Export compact test diagnostics
         if: always()
         env:
+          JAC_BOARDING_CARD: ${{ inputs.scope == 'boarding-card' || inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-boarding-card]')) }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
         shell: bash
         run: |
           if [ -d native-ci/iphone.xcresult ]; then
             xcrun xcresulttool get test-results summary --path native-ci/iphone.xcresult > native-ci/test-summary.json || true
-            if [ "${JAC_NAVIGATION:-false}" = true ]; then
+            if [ "${JAC_NAVIGATION:-false}" = true ] || [ "${JAC_BOARDING_CARD:-false}" = true ]; then
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments || true
             else
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
@@ -426,7 +443,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'audit' && inputs.scope != 'photo-preview' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-audit]') || contains(github.event.head_commit.message, '[check-photo-preview]') || contains(github.event.head_commit.message, '[push-ui-only]') || (contains(github.event.head_commit.message, '[wallet-ui-only]') && !contains(github.event.head_commit.message, '[wallet-ui-product]')))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'boarding-card' && inputs.scope != 'boarding-card-ui' && inputs.scope != 'audit' && inputs.scope != 'photo-preview' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-boarding-card]') || contains(github.event.head_commit.message, '[check-audit]') || contains(github.event.head_commit.message, '[check-photo-preview]') || contains(github.event.head_commit.message, '[push-ui-only]') || (contains(github.event.head_commit.message, '[wallet-ui-only]') && !contains(github.event.head_commit.message, '[wallet-ui-product]')))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -475,7 +492,7 @@ jobs:
             native-ci/bundle-config.json
 
   mac:
-    if: ${{ github.event.repository.private == false && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
+    if: ${{ github.event.repository.private == false && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && inputs.scope != 'boarding-card-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:

@@ -73,6 +73,30 @@ private final class MockProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+private final class BoardingCardTestReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private let barrier = DispatchSemaphore(value: 0)
+    private var released = false
+    private var started = 0
+    private var downloads = 0
+    var extractionCount: Int { lock.lock(); defer { lock.unlock() }; return started }
+    var downloadCount: Int { lock.lock(); defer { lock.unlock() }; return downloads }
+    func downloaded() { lock.lock(); downloads += 1; lock.unlock() }
+    func release() {
+        lock.lock(); released = true; let waiting = started; lock.unlock()
+        for _ in 0..<waiting { barrier.signal() }
+    }
+    func extract(_ bytes: Data, _ mime: String) throws -> BoardingCardDetails {
+        lock.lock(); started += 1; let shouldWait = !released; lock.unlock()
+        if shouldWait, barrier.wait(timeout: .now() + 5) != .success { throw URLError(.timedOut) }
+        guard mime == "application/pdf" else { throw URLError(.cannotDecodeContentData) }
+        let value = String(decoding: bytes, as: UTF8.self)
+        if value.contains("SECOND") { return BoardingCardDetails(seat: "22B", departureTime: "00:30") }
+        if value.contains("THIRD") { return BoardingCardDetails(seat: "33C", departureTime: "09:15") }
+        return BoardingCardDetails(seat: "12A", departureTime: "18:45")
+    }
+}
+
 #if os(iOS)
 private final class RestartUploadProtocol: URLProtocol {
     static let lock=NSLock()
@@ -161,6 +185,115 @@ final class PayrollClientTests: XCTestCase {
     }
     private var walletNoticeFixture: JSONValue {
         .object(["id":.string("wallet-private-fixture"),"kind":.string("boarding_pass"),"title":.string("Pase ficticio"),"body":.string(""),"filename":.string("Ficticio.pdf"),"size":.number(42),"createdAt":.string("2026-10-23T10:00:00Z"),"read":.bool(false),"revision":.number(2),"attachments":.array([.object(["id":.string("wallet-file"),"filename":.string("Ficticio.pdf"),"mimeType":.string("application/pdf"),"size":.number(42)])])])
+    }
+    private func boardingCardNoticeFixture(revision: Int = 2, files: [String] = ["FIRST"]) -> JSONValue {
+        .object([
+            "id": .string("card-private-fixture"), "kind": .string("boarding_pass"), "title": .string("Pases ficticios"), "body": .string(""),
+            "filename": .string("Ficticio.pdf"), "size": .number(42), "createdAt": .string("2026-10-25T10:00:00Z"), "read": .bool(false), "revision": .number(Double(revision)),
+            "attachments": .array(files.map { .object(["id": .string("card-" + $0), "filename": .string($0 + ".pdf"), "mimeType": .string("application/pdf"), "size": .number(42)]) })
+        ])
+    }
+    @MainActor private func waitForBoardingCard(_ condition: @MainActor () -> Bool) async -> Bool {
+        let end = Date().addingTimeInterval(3)
+        while Date() < end {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+    @MainActor func testBoardingCardMetadataCachesEachFileAndBoundsConcurrentReads() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache), reader = BoardingCardTestReader()
+        let store = BoardingCardDetailsStore(extract: { try reader.extract($0, $1) })
+        defer { reader.release(); store.cancelPending(); try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        let json = boardingCardNoticeFixture(files: ["FIRST", "SECOND", "THIRD"])
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "ui-fixture.example.invalid")
+            if request.url?.path == "/api/notices/file" {
+                reader.downloaded()
+                let file = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.first { $0.name == "file" }?.value ?? ""
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/pdf"])!, Data(("%PDF-1.4\n" + file + "\n%%EOF").utf8))
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(JSONValue.object(["item": json])))
+        }
+        let item = try await client.notice(id: "card-private-fixture")
+        XCTAssertEqual(item.files.count, 3)
+        for file in item.files { store.load(item, file: file, client: client); store.load(item, file: file, client: client) }
+        let twoStarted = await waitForBoardingCard { reader.extractionCount == 2 }
+        XCTAssertTrue(twoStarted); XCTAssertEqual(reader.downloadCount, 2, "The third visible card must wait for one of the two active reads.")
+        reader.release()
+        let ready = await waitForBoardingCard { item.files.allSatisfy { if case .ready = store.entry(item, file: $0, client: client) { return true }; return false } }
+        XCTAssertTrue(ready); XCTAssertEqual(reader.downloadCount, 3)
+        for (file, details) in zip(item.files, [BoardingCardDetails(seat: "12A", departureTime: "18:45"), BoardingCardDetails(seat: "22B", departureTime: "00:30"), BoardingCardDetails(seat: "33C", departureTime: "09:15")]) {
+            XCTAssertEqual(store.entry(item, file: file, client: client), .ready(details), "Attachments sharing a revision must not share their extracted values.")
+        }
+        _ = try await client.notice(id: item.id) // The unchanged 30-second feed refresh does not create another extraction scope.
+        store.revalidate()
+        for file in item.files { store.load(item, file: file, client: client) }
+        await Task.yield()
+        XCTAssertEqual(reader.downloadCount, 3); XCTAssertEqual(reader.extractionCount, 3, "Scrolling or reopening a known card must reuse its result.")
+    }
+    @MainActor func testBoardingCardMetadataRevocationAndNewRevisionNeverRestoreOldValues() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache), reader = BoardingCardTestReader(); reader.release()
+        let store = BoardingCardDetailsStore(extract: { try reader.extract($0, $1) })
+        defer { store.cancelPending(); try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        var current = boardingCardNoticeFixture(), rejectFile = false, marker = "FIRST"
+        MockProtocol.handler = { request in
+            if request.url?.path == "/api/notices/file" {
+                reader.downloaded()
+                if rejectFile { return (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Pase retirado\"}".utf8)) }
+                return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/pdf"])!, Data(("%PDF-1.4\n" + marker + "\n%%EOF").utf8))
+            }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(JSONValue.object(["item": current])))
+        }
+        let original = try await client.notice(id: "card-private-fixture"), file = try XCTUnwrap(original.files.first)
+        store.load(original, file: file, client: client)
+        let firstReady = await waitForBoardingCard { store.entry(original, file: file, client: client) == .ready(BoardingCardDetails(seat: "12A", departureTime: "18:45")) }
+        XCTAssertTrue(firstReady)
+        rejectFile = true
+        store.load(original, file: file, client: client, retry: true)
+        let denied = await waitForBoardingCard { reader.downloadCount == 2 && client.cachedNotice(original.id) == nil }
+        XCTAssertTrue(denied); store.revalidate()
+        XCTAssertNil(store.key(original, file: file, client: client)); XCTAssertEqual(store.entry(original, file: file, client: client), .unavailable)
+        for _ in 0..<3 { store.load(original, file: file, client: client) }
+        await Task.yield(); XCTAssertEqual(reader.downloadCount, 2, "403 must not loop through invalidation and automatic retries or expose the saved document.")
+        rejectFile = false; marker = "SECOND"; current = boardingCardNoticeFixture(revision: 3)
+        let updated = try await client.notice(id: original.id), updatedFile = try XCTUnwrap(updated.files.first)
+        store.load(updated, file: updatedFile, client: client)
+        let newReady = await waitForBoardingCard { store.entry(updated, file: updatedFile, client: client) == .ready(BoardingCardDetails(seat: "22B", departureTime: "00:30")) }
+        XCTAssertTrue(newReady); XCTAssertEqual(reader.downloadCount, 3)
+        XCTAssertNil(store.key(original, file: file, client: client)); XCTAssertEqual(store.entry(original, file: file, client: client), .unavailable)
+    }
+    @MainActor func testBoardingCardMetadataDiscardsLateExtractionAfterLogout() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, vault) = relaunchFixture(cache), reader = BoardingCardTestReader()
+        let store = BoardingCardDetailsStore(extract: { try reader.extract($0, $1) })
+        defer { reader.release(); store.cancelPending(); try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        let workspace = try await UITestBackend.client(downloadOffline: false).workspace()
+        client.rememberWorkspace(workspace)
+        let json = boardingCardNoticeFixture()
+        MockProtocol.handler = { request in
+            let document = request.url?.path == "/api/notices/file"
+            if document { reader.downloaded() }
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": document ? "application/pdf" : "application/json"])!, document ? Data("%PDF-1.4\nFIRST\n%%EOF".utf8) : try JSONEncoder().encode(JSONValue.object(["item": json])))
+        }
+        let item = try await client.notice(id: "card-private-fixture"), file = try XCTUnwrap(item.files.first)
+        let oldKey = try XCTUnwrap(store.key(item, file: file, client: client))
+        store.load(item, file: file, client: client)
+        let entered = await waitForBoardingCard { reader.extractionCount == 1 }
+        XCTAssertTrue(entered)
+        try client.clearSession(); store.revalidate(); reader.release()
+        XCTAssertNil(store.key(item, file: file, client: client)); XCTAssertEqual(store.entry(item, file: file, client: client), .unavailable)
+        vault.token = String(repeating: "f", count: 43); client.rememberWorkspace(workspace)
+        let restored = try await client.notice(id: item.id), restoredFile = try XCTUnwrap(restored.files.first)
+        XCTAssertNotEqual(store.key(restored, file: restoredFile, client: client), oldKey)
+        XCTAssertEqual(store.entry(restored, file: restoredFile, client: client), .loading, "Even the same token and revision after logout cannot reuse a previous session's late result.")
+        store.load(restored, file: restoredFile, client: client)
+        let ready = await waitForBoardingCard { store.entry(restored, file: restoredFile, client: client) == .ready(BoardingCardDetails(seat: "12A", departureTime: "18:45")) }
+        XCTAssertTrue(ready); XCTAssertEqual(reader.downloadCount, 2); XCTAssertEqual(reader.extractionCount, 2)
     }
     func testBoardingWalletPreservesExactIATAPayloadAndOriginalCrop() throws {
         let payload=walletIATAFixture,filter=try XCTUnwrap(CIFilter(name:"CIQRCodeGenerator"))

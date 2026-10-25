@@ -28,6 +28,128 @@ struct NoticeReceipt: Decodable, Identifiable { let userId: String; let name: St
 struct NoticeAttachment: Decodable, Identifiable {
     let id: String; let filename: String; let mimeType: String; let size: Int
 }
+
+// Derived presentation only: private originals keep their existing encrypted
+// cache and authorization path. At most two visible-card reads run together.
+@MainActor final class BoardingCardDetailsStore: ObservableObject {
+    struct Key: Hashable {
+        let notice: String; let file: String; let stamp: String
+        let filename: String; let mime: String; let size: Int
+    }
+    enum Entry: Equatable {
+        case loading, ready(BoardingCardDetails), unavailable
+    }
+    private struct Request {
+        let key: Key; let item: JACNotice; let file: NoticeAttachment; let client: PayrollClient
+    }
+    private struct Active {
+        let id: UUID; let task: Task<Void, Never>
+    }
+    @Published private var entries: [Key: Entry] = [:]
+    private var requests: [Key: Request] = [:]
+    private var queue: [Key] = []
+    private var order: [Key] = []
+    private var active: [Key: Active] = [:]
+    private let extract: @Sendable (Data, String) throws -> BoardingCardDetails
+
+    init(extract: @escaping @Sendable (Data, String) throws -> BoardingCardDetails = { try BoardingCardDetailsExtractor.extract($0, mime: $1) }) {
+        self.extract = extract
+    }
+    func key(_ item: JACNotice, file: NoticeAttachment, client: PayrollClient) -> Key? {
+        // A denied/deleted notice is removed from this session's canonical cache.
+        // Requiring that record also prevents a 403 -> invalidation -> retry loop.
+        guard item.kind == "boarding_pass", let current = client.cachedNotice(item.id), current.kind == item.kind,
+              (current.revision ?? 1) == (item.revision ?? 1),
+              current.files.contains(where: { $0.id == file.id && $0.filename == file.filename && $0.mimeType == file.mimeType && $0.size == file.size }),
+              let stamp = try? client.boardingCodeAccessStamp(item, file: file) else { return nil }
+        return Key(notice: item.id, file: file.id, stamp: stamp, filename: file.filename, mime: file.mimeType, size: file.size)
+    }
+    func entry(_ item: JACNotice, file: NoticeAttachment, client: PayrollClient) -> Entry {
+        guard let key = key(item, file: file, client: client) else { return .unavailable }
+        return entries[key] ?? .loading
+    }
+    func load(_ item: JACNotice, file: NoticeAttachment, client: PayrollClient, retry: Bool = false) {
+        revalidate()
+        guard let key = key(item, file: file, client: client) else { return }
+        if active[key] != nil && requests[key] != nil { return }
+        if !retry, entries[key] != nil { return }
+        requests[key] = Request(key: key, item: item, file: file, client: client)
+        entries[key] = .loading
+        order.removeAll { $0 == key }; order.append(key)
+        if !queue.contains(key) { queue.append(key) }
+        trim(); startNext()
+    }
+    func revalidate() {
+        let stale = requests.values.filter { key($0.item, file: $0.file, client: $0.client) != $0.key }.map(\.key)
+        for key in stale { remove(key) }
+    }
+    func retryUnavailable() {
+        revalidate()
+        for key in order where entries[key] == .unavailable && requests[key] != nil {
+            entries[key] = .loading
+            if !queue.contains(key) { queue.append(key) }
+        }
+        startNext()
+    }
+    func cancelPending() {
+        let pending = Set(queue).union(active.keys)
+        for key in pending { remove(key) }
+    }
+    private func remove(_ key: Key) {
+        // Vision may finish its current synchronous request after cancellation.
+        // Keep that worker's slot until its completion, even after hiding its data.
+        active[key]?.task.cancel()
+        requests.removeValue(forKey: key); entries.removeValue(forKey: key)
+        queue.removeAll { $0 == key }; order.removeAll { $0 == key }
+    }
+    private func trim() {
+        while order.count > 64 {
+            guard let oldest = order.first(where: { active[$0] == nil }) else { break }
+            remove(oldest)
+        }
+    }
+    private func startNext() {
+        while active.count < 2, let index = queue.firstIndex(where: { active[$0] == nil }) {
+            let key = queue.remove(at: index)
+            guard let request = requests[key], self.key(request.item, file: request.file, client: request.client) == key else {
+                remove(key); continue
+            }
+            let id = UUID(), extract = extract
+            let task = Task { [weak self] in
+                do {
+                    let document = try await request.client.noticeFile(request.item, file: request.file)
+                    defer { TemporaryDocuments.remove(document) }
+                    try Task.checkCancellation()
+                    guard self?.key(request.item, file: request.file, client: request.client) == key else { throw CancellationError() }
+                    let url = document.url, mime = request.file.mimeType
+                    let worker = Task.detached(priority: .utility) {
+                        let bytes = try Data(contentsOf: url)
+                        try Task.checkCancellation()
+                        return try extract(bytes, mime)
+                    }
+                    let result = try await withTaskCancellationHandler { try await worker.value } onCancel: { worker.cancel() }
+                    try Task.checkCancellation()
+                    self?.finish(key, id: id, result: .ready(result))
+                } catch {
+                    self?.finish(key, id: id, result: error is CancellationError ? nil : .unavailable)
+                }
+            }
+            active[key] = Active(id: id, task: task)
+        }
+    }
+    private func finish(_ key: Key, id: UUID, result: Entry?) {
+        guard active[key]?.id == id else { return }
+        active.removeValue(forKey: key)
+        // A returning row may have queued a fresh read while its cancelled
+        // predecessor still occupied the slot. That old result stays discarded.
+        if queue.contains(key) { startNext(); return }
+        if let request = requests[key], self.key(request.item, file: request.file, client: request.client) == key, let result {
+            entries[key] = result
+        } else { remove(key) }
+        startNext()
+    }
+}
+
 struct NoticeUpload: Identifiable {
     let id = UUID(); let filename: String; let data: Data
     static func readLocalFiles(_ urls:[URL]) throws -> [NoticeUpload] {
@@ -99,6 +221,7 @@ struct NoticesView: View {
     @State private var pendingDelete: JACNotice?
     @State private var deleting = false
     @State private var deletedIDs = Set<String>()
+    @StateObject private var boardingDetails = BoardingCardDetailsStore()
     private var effectiveKind: String { incomingKind ?? kind }
     private var noticeList: some View {
         List {
@@ -142,9 +265,10 @@ struct NoticesView: View {
         }
     }
     private var noticeUpdates: some View {
-        noticeList.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().refreshable { await refresh() }
+        noticeList.jacSurface().navigationTitle(effectiveKind == "boarding_pass" ? "Pases de abordar" : effectiveKind == "itinerary" ? "Itinerarios" : "Alertas").jacInlineTitle().refreshable { boardingDetails.retryUnavailable(); await refresh() }
             .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
-            .onChange(of: store.cacheRevision) { _, _ in restoreCached() }
+            .onChange(of: store.cacheRevision) { _, _ in boardingDetails.revalidate(); restoreCached() }
+            .onChange(of: store.overview?.user) { _, _ in boardingDetails.revalidate() }
             .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }
             .onChange(of:historyOpen) { _,open in if open { Task { await loadHistory() } } }
             .onChange(of: scenePhase) { _, value in if value == .active { Task { await refresh() } } }
@@ -166,7 +290,7 @@ struct NoticesView: View {
                 Button("Cancelar",role:.cancel) { pendingDelete=nil }.accessibilityIdentifier("notices.list.delete.cancel")
                 Button("Eliminar",role:.destructive) { if let item=pendingDelete { Task { await remove(item) } } }.accessibilityIdentifier("notices.list.delete.confirm")
             } message: { Text(pendingDelete?.kind == "boarding_pass" ? "¿Estás seguro de que quieres eliminar este pase de abordar?" : "¿Estás seguro de que quieres eliminar este itinerario para todo el equipo?") }
-            .onDisappear { documentGeneration += 1; if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }
+            .onDisappear { boardingDetails.cancelPending(); documentGeneration += 1; if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }
             .sheet(item: $detail, onDismiss: { Task { await refresh() } }) { item in NoticeDetail(item: item, owner: user.isOwner) }
             .sheet(isPresented: $editor) { if let feed { NoticeComposer(users: feed.users, boardingUsers: feed.boardingUsers ?? feed.users) { savedKind in incomingKind = savedKind; notice = savedKind == "boarding_pass" ? "Pase publicado únicamente para la persona elegida." : savedKind == "itinerary" ? "Itinerario publicado para todo el equipo." : "Alerta guardada para los destinatarios elegidos."; await refresh() } } }
             #if os(iOS)
@@ -202,6 +326,8 @@ struct NoticesView: View {
                         }
                     }.padding(18).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(openingFile != nil || deleting).accessibilityIdentifier(index == 0 ? "notices.item.\(item.id)" : "notices.file.\(file.id)")
+                BoardingCardFlightInfo(entry: boardingDetails.entry(item, file: file, client: store.client), fileID: file.id)
+                    .padding(.horizontal,18).padding(.bottom,16)
                 HStack(spacing:16) {
                     Button { boardingCode=BoardingCodeSelection(item:item,file:file) } label: {
                         Label("Mostrar código",systemImage:"qrcode.viewfinder").font(.subheadline.weight(.semibold)).padding(.horizontal,12).frame(minHeight:44)
@@ -218,12 +344,18 @@ struct NoticesView: View {
                 }.background(JACTheme.card,in:RoundedRectangle(cornerRadius:22))
                     .overlay(RoundedRectangle(cornerRadius:22).stroke(JACTone.teal.color.opacity(0.18),lineWidth:1))
                     .contextMenu { boardingMenuActions(item,file:file) }
+                    .task(id: boardingDetails.key(item, file: file, client: store.client)) {
+                        boardingDetails.load(item, file: file, client: store.client)
+                    }
             }
         }.padding(.vertical,6).jacStandaloneRow()
             .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner { deleteButton(item,destructive:false).tint(.red) } }
         }
     }
     @ViewBuilder private func boardingMenuActions(_ item:JACNotice,file:NoticeAttachment) -> some View {
+        Button { boardingDetails.load(item, file: file, client: store.client, retry: true) } label: {
+            Label("Actualizar datos del vuelo", systemImage: "arrow.clockwise")
+        }.accessibilityIdentifier("boarding.details.refresh.\(file.id)")
         #if os(iOS)
         if UIDevice.current.userInterfaceIdiom == .phone {
             Button {boardingWallet=BoardingCodeSelection(item:item,file:file)} label:{Label("Añadir a Apple Wallet",systemImage:"wallet.pass")}
@@ -270,6 +402,44 @@ struct NoticesView: View {
             if effectiveKind == "itinerary" && user.hasSection(.boarding) { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
             if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
         } catch { self.error = store.reportReadFailure(error) }
+    }
+}
+
+private struct BoardingCardFlightInfo: View {
+    let entry: BoardingCardDetailsStore.Entry
+    let fileID: String
+    @Environment(\.dynamicTypeSize) private var typeSize
+    private var details: BoardingCardDetails {
+        if case .ready(let result) = entry { return result }
+        return BoardingCardDetails()
+    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            if typeSize.isAccessibilitySize {
+                VStack(alignment: .leading, spacing: 14) { fields }
+            } else { HStack(alignment: .top, spacing: 12) { fields } }
+            if entry == .loading {
+                HStack(spacing:6) { ProgressView().controlSize(.mini); Text("Leyendo datos del vuelo…").font(.caption2).foregroundStyle(.secondary) }
+            }
+        }.padding(12).frame(maxWidth:.infinity,alignment:.leading)
+            .background(JACTone.teal.color.opacity(0.06),in:RoundedRectangle(cornerRadius:14))
+    }
+    @ViewBuilder private var fields: some View {
+        field("Silla",symbol:"seat.airplane",value:details.seat,id:"seat")
+        field("Salida",symbol:"airplane.departure",value:details.departureTime,id:"departure")
+        VStack(alignment:.leading,spacing:4) {
+            field("En sala",symbol:"clock",value:details.boardingTime,id:"boarding")
+            if details.boardingPreviousDay { Text("Día anterior").font(.caption2).foregroundStyle(.secondary).accessibilityIdentifier("boarding.card.previousDay.\(fileID)") }
+        }.frame(maxWidth:.infinity,alignment:.leading)
+    }
+    private func field(_ title:String,symbol:String,value:String,id:String) -> some View {
+        VStack(alignment:.leading,spacing:6) {
+            Label(title,systemImage:symbol).font(.caption2).foregroundStyle(.secondary)
+            Text(value.isEmpty ? "Sin indicar":value).font(.subheadline.weight(.semibold)).monospacedDigit()
+                .foregroundStyle(value.isEmpty ? JACTheme.ink.opacity(0.55):JACTheme.ink)
+                .lineLimit(1).minimumScaleFactor(0.8)
+                .accessibilityIdentifier("boarding.card.\(id).\(fileID)")
+        }.frame(maxWidth:.infinity,alignment:.leading)
     }
 }
 

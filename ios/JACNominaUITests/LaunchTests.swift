@@ -1140,6 +1140,33 @@ final class LaunchTests: XCTestCase {
         return true
     }
 
+    @MainActor func testBoardingCardShowsFlightDetailsBeforeOpeningTheOriginal() {
+        let app=XCUIApplication()
+        let args=["--uitest-payroll","--uitest-sections=boarding","--uitest-wallet-menu"]
+        app.launchArguments=args;app.launch()
+        let suffix="boarding-fixture-0-pdf"
+        let seat=app.staticTexts["boarding.card.seat."+suffix]
+        let departure=app.staticTexts["boarding.card.departure."+suffix]
+        let boarding=app.staticTexts["boarding.card.boarding."+suffix]
+        XCTAssertTrue(seat.waitForExistence(timeout:20))
+        XCTAssertTrue(waitFor(seat,predicate:NSPredicate(format:"label == %@","12A"),timeout:20))
+        XCTAssertEqual(departure.label,"18:45")
+        XCTAssertEqual(boarding.label,"17:45", "La tarjeta usa una hora antes, aunque el PDF diga 18:05")
+        XCTAssertFalse(app.images["boarding.code.image"].exists)
+        XCTAssertFalse(app.navigationBars["Añadir a Apple Wallet"].exists)
+        attachScreen(app,name:"pase-con-silla-salida-y-hora-en-sala")
+        tap(app,"boarding.open."+suffix)
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout:15))
+        tap(app,"notices.pdf.close")
+        XCTAssertTrue(seat.waitForExistence(timeout:10));XCTAssertEqual(seat.label,"12A")
+        app.terminate();app.launchArguments=args+["--uitest-boarding-card-midnight"];app.launch()
+        XCTAssertTrue(boarding.waitForExistence(timeout:20))
+        XCTAssertTrue(waitFor(boarding,predicate:NSPredicate(format:"label == %@","23:30"),timeout:20))
+        XCTAssertEqual(departure.label,"00:30")
+        XCTAssertTrue(app.staticTexts["boarding.card.previousDay."+suffix].exists)
+        attachScreen(app,name:"pase-sala-dia-anterior")
+    }
+
     @MainActor func testBoardingWalletMenuOpensEditableFlightDetailsWithoutShowingTheCode() {
         let app=XCUIApplication()
         app.launchArguments=["--uitest-payroll","--uitest-sections=boarding","--uitest-wallet-menu"]

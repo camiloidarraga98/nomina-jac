@@ -118,6 +118,66 @@ final class BoardingWalletDetailsTests: XCTestCase {
         XCTAssertEqual(selected.departureTime, "21:10"); XCTAssertEqual(selected.boardingTime, "20:25"); XCTAssertEqual(selected.seat, "22C")
     }
 
+    func testBoardingCardUsesOneHourReminderAndMarksThePreviousDay() {
+        for (departure, expected, previous) in [("18:45", "17:45", false), ("00:30", "23:30", true), ("00:00", "23:00", true), ("01:00", "00:00", false), ("12:15 AM", "23:15", true)] {
+            let details = BoardingCardDetails(departureTime: departure)
+            XCTAssertEqual(details.boardingTime, expected)
+            XCTAssertEqual(details.boardingPreviousDay, previous)
+        }
+        for invalid in ["", "24:00", "Gate 8", "18:45 / 19:45"] {
+            let details = BoardingCardDetails(departureTime: invalid)
+            XCTAssertTrue(details.boardingTime.isEmpty); XCTAssertFalse(details.boardingPreviousDay)
+        }
+    }
+
+    func testBoardingCardReadsClearPDFWithoutABarcodeAndKeepsWalletBoardingTime() throws {
+        let lines = ["PASAJERO: FIXTURE TRAVELLER", "ORIGEN: BOG", "DESTINO: MDE", "HORA DEL VUELO: 6:45 PM", "HORA EN SALA: 18:05", "SILLA: 012A"]
+        let data = try pdf([lines])
+        let card = try BoardingCardDetailsExtractor.extract(data, mime: "application/pdf")
+        XCTAssertEqual(card, BoardingCardDetails(seat: "12A", departureTime: "18:45"))
+        XCTAssertEqual(card.boardingTime, "17:45")
+        XCTAssertFalse(card.boardingPreviousDay)
+        let code = try barcode([leg("BOG", "MDE", seat: "012A")])
+        let wallet = BoardingWalletDetailsExtractor.suggestions(text: lines.joined(separator: "\n"), barcode: code)
+        XCTAssertEqual(wallet.boardingTime, "18:05", "The card reminder must not change the original Wallet suggestions.")
+    }
+
+    func testBoardingCardDoesNotMixAmbiguousFlightsSeatsOrArrivalTimes() throws {
+        let incomplete = BoardingWalletDetailsExtractor.cardSuggestions(text: "SILLA: 012A\nARRIVAL: 19:30\nPUERTA DE SALIDA: 8\nBOARDING: 18:05")
+        XCTAssertEqual(incomplete.seat, "12A")
+        XCTAssertTrue(incomplete.departureTime.isEmpty); XCTAssertTrue(incomplete.boardingTime.isEmpty)
+        for text in [
+            "HORA DEL VUELO: 06:00\nHORA DEL VUELO: 18:45\nSILLA: 12A",
+            "HORA DEL VUELO: 18:45\nSILLA: 12A\nSILLA: 22C",
+            "PASAJERO: FIXTURE TRAVELLER\nPASAJERO: ANOTHER PERSON\nHORA DEL VUELO: 18:45\nSILLA: 12A",
+            "ORIGEN: BOG\nDESTINO: MDE\nORIGEN: MDE\nDESTINO: CLO\nHORA DEL VUELO: 18:45\nSILLA: 12A"
+        ] { XCTAssertEqual(BoardingWalletDetailsExtractor.cardSuggestions(text: text), BoardingCardDetails()) }
+        let twoFlights = try pdf([
+            ["PASAJERO: FIXTURE TRAVELLER", "ORIGEN: BOG", "DESTINO: MDE", "HORA DEL VUELO: 06:00", "SILLA: 12A"],
+            ["PASAJERO: FIXTURE TRAVELLER", "ORIGEN: MDE", "DESTINO: CLO", "HORA DEL VUELO: 18:45", "SILLA: 22C"]
+        ])
+        XCTAssertEqual(try BoardingCardDetailsExtractor.extract(twoFlights, mime: "application/pdf"), BoardingCardDetails())
+    }
+
+    func testBoardingCardUsesOnlyASingleLegSeatWhenDocumentHasNoSeat() throws {
+        let single = try barcode([leg("BOG", "MDE", seat: "012A")])
+        let absent = BoardingWalletDetailsExtractor.cardSuggestions(text: "HORA DEL VUELO: 18:45", barcode: single)
+        XCTAssertEqual(absent.seat, "12A"); XCTAssertEqual(absent.departureTime, "18:45")
+        let printed = BoardingWalletDetailsExtractor.cardSuggestions(text: "HORA DEL VUELO: 18:45\nSILLA: 7C", barcode: single)
+        XCTAssertEqual(printed.seat, "7C", "A printed assignment is not replaced by a barcode fallback.")
+        let unassigned = BoardingWalletDetailsExtractor.cardSuggestions(text: "HORA DEL VUELO: 18:45\nSILLA: SIN ASIGNAR", barcode: single)
+        XCTAssertTrue(unassigned.seat.isEmpty)
+        let mismatch = BoardingWalletDetailsExtractor.cardSuggestions(text: "ORIGEN: CLO\nDESTINO: BOG\nHORA DEL VUELO: 18:45", barcode: single)
+        XCTAssertEqual(mismatch, BoardingCardDetails())
+        let multiple = try barcode([leg("BOG", "MDE", seat: "012A"), leg("MDE", "CLO", seat: "022C")])
+        XCTAssertEqual(BoardingWalletDetailsExtractor.cardSuggestions(text: "HORA DEL VUELO: 18:45\nSILLA: 12A", barcode: multiple), BoardingCardDetails())
+    }
+
+    func testBoardingCardRejectsUnsupportedAndOversizedInput() {
+        XCTAssertThrowsError(try BoardingCardDetailsExtractor.extract(Data("not an image".utf8), mime: "text/plain"))
+        XCTAssertThrowsError(try BoardingCardDetailsExtractor.extract(Data(count: 10 * 1024 * 1024 + 1), mime: "application/pdf"))
+    }
+
     private func pdf(_ pages: [[String]]) throws -> Data {
         let data = NSMutableData(), consumer = try XCTUnwrap(CGDataConsumer(data: data as CFMutableData))
         var box = CGRect(x: 0, y: 0, width: 612, height: 792)
