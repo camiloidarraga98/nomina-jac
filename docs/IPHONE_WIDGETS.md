@@ -37,11 +37,11 @@ Comprobaciones observadas el 25 de octubre de 2026:
 
 | Alcance | Resultado |
 | --- | --- |
-| Release final iPhone y WidgetKit | [Ejecución40230506716](https://github.com/camiloidarraga98/nomina-jac/actions/runs/40230506716), fuente `3f58e71e3ad813c774ffd79743808fe9d32834ef`, job121281112257: correcta con Xcode26.3, build17C529. Incluye la protección del refresco con el iPhone bloqueado, compilación de la extensión y comprobaciones del bundle y del grupo compartido. |
-| Release Mac | Job121281112375 de la misma ejecución y fuente: correcto con Xcode26.3, build17C529, conservando las fuentes compartidas. |
+| Release final iPhone y WidgetKit | [Ejecución40230506716](https://github.com/camiloidarraga98/nomina-jac/actions/runs/40230506716), fuente `3f58e71e3ad813c774ffd79743808fe9d32834ef`, job121281112257: correcta con Xcode 26.3, build17C529. Incluye la protección del refresco con el iPhone bloqueado, compilación de la extensión y comprobaciones del bundle y del grupo compartido. |
+| Release Mac | Job121281112375 de la misma ejecución y fuente: correcto con Xcode 26.3, build17C529, conservando las fuentes compartidas. |
 | Snapshot y bridge del widget | [Ejecución40228053257](https://github.com/camiloidarraga98/nomina-jac/actions/runs/40228053257), fuente `f1213c8`: doce casos correctos y una omisión explícita de protección física en CoreSimulator. Incluye el teléfono bloqueado y la guardia de cero lecturas de sesión durante actualizaciones omitidas. Las fuentes del widget no cambiaron después; la ejecución final40230506716 conserva esta evidencia y no vuelve a ejecutar esos trece casos. |
 | API reciente de fotografías, local | Diez pruebas focales correctas entre Node y workerd, comprobación TypeScript y build correctos, con fixtures y servicios interceptados. |
-| API publicada | Migración aditiva0038 aplicada y versión Cloudflare `e6cc4409-fe05-43b5-86b8-697c88098faf` activa al100%; se conservan los14bindings existentes. |
+| API publicada | Migración aditiva0038 aplicada y versión Cloudflare `e6cc4409-fe05-43b5-86b8-697c88098faf` activa al 100 %; se conservan los14 bindings existentes. |
 
 El Release final contiene `JACNomina.app/PlugIns/JACWidgets.appex`, con bundle `co.jacmusic.nomina.widgets`. App y extensión coinciden en versión **0.35.0 (53)**, equipo **AYHVYN8BJF** y App Group **`group.co.jacmusic.nomina.widgets`**. Se verifican las tres familias declaradas y el punto de extensión `com.apple.widgetkit-extension`. Los ajustes efectivos de ambos targets y sus archivos de entitlements conservan el grupo. Este build sin firma no generó archivos `.xcent`: la comprobación no afirma que existan perfiles de distribución ni que Apple haya provisionado el grupo.
 
@@ -50,3 +50,9 @@ Los logs Release finales no contienen advertencias del compilador Swift, incluid
 `testProtectedSnapshotRoundTripsWithoutCredentialsAndDeduplicatesWrites` mantiene el round-trip, ausencia de credenciales, deduplicación y permisos Unix0600 del archivo/0700 del directorio, usando las mismas APIs de escritura protegida de producción. `testSharedSnapshotDataProtectionOnPhysicaliPhone` comprueba por separado el valor exacto de protección tanto del archivo como del directorio en un iPhone físico; se omite explícitamente con `XCTSkip` en CoreSimulator porque éste no expone ese atributo ni reproduce el cifrado del dispositivo. Un valor ausente en un iPhone físico continúa siendo un fallo. Este ajuste sólo cambia la prueba y no altera la protección del almacenamiento de la app.
 
 La provisión del grupo y de ambos App IDs en la cuenta Apple, el Archive firmado y la comprobación del widget instalado en un iPhone siguen pendientes de realizarse desde el Mac de Camilo. Compilar y publicar la API no equivale a confirmar esa instalación física.
+
+### Cierre de la entrega
+
+La fuente final del producto es `19b0170`; Release iPhone/widget correcto en40231517171, ambas identidades 0.35.0(53), Team/AppGroup verificados sin firma real. La última modificación de producto afecta exclusivamente código iOS de miniaturas; el Mac correcto de3f58e71/40230506716 se reutiliza. La UI de80 fotos/40 pases pasó en40230506716 y la lateral en40228053257. El alcance final de memoria aprobó8 unitarias; los12casos del widget y una omisión física se conservan como evidencia previa de su fuente sin cambios.
+
+No se instaló una app en el iPhone de Camilo ni se registró el AppGroup en Apple desde esta conexión. Completar la provisión de ambos AppIDs y Archive/Upload con su cuenta; después abrir JAC y añadir el widget. El refresco continúa sujeto a las oportunidades de iOS.
