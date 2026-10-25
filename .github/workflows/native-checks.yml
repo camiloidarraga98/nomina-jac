@@ -40,6 +40,10 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p native-ci
+          # Headless CI must present the software keyboard when a real field
+          # receives focus; tests still require that keyboard and typed values.
+          defaults write com.apple.iphonesimulator ConnectHardwareKeyboard -bool NO
+          defaults read com.apple.iphonesimulator ConnectHardwareKeyboard > native-ci/simulator-hardware-keyboard.log
           xcodebuild -version | tee native-ci/xcode-version.log
           python3 - <<'PY'
           import json, os, re, subprocess

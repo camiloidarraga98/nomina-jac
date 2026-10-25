@@ -786,11 +786,14 @@ final class LaunchTests: XCTestCase {
         // form/navigation postconditions must still exist and succeed.
         guard button.exists,button.isEnabled else { return false }
         let viewport=app.windows.firstMatch.frame,reported=button.frame
-        if ["period.create", "crm.add"].contains(identifier), !viewport.contains(reported) {
+        if ["period.create", "crm.add"].contains(identifier) {
             let wrapper=app.navigationBars.descendants(matching:.other).matching(identifier:identifier).firstMatch
+            let childHittable=button.isHittable
+            let wrapperDescription=wrapper.exists ? String(describing:wrapper.frame):"missing"
+            print("Redesign AX toolbar inspection \(identifier): child=\(reported), childHittable=\(childHittable), nativeWrapper=\(wrapperDescription), viewport=\(viewport)")
             if wrapper.exists {
                 let visible=wrapper.frame
-                if visible.width >= 44,visible.height >= 44,viewport.contains(visible) {
+                if (!childHittable || !viewport.contains(reported)),visible.width >= 44,visible.height >= 44,viewport.contains(visible) {
                     print("Redesign AX toolbar \(identifier): child=\(reported), nativeWrapper=\(visible), viewport=\(viewport)")
                     attachScreen(app,name:"redesign-before-measured-\(identifier)")
                     wrapper.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap()
@@ -828,13 +831,21 @@ final class LaunchTests: XCTestCase {
         let field = app.textFields[id].firstMatch
         for _ in 0..<8 { if field.exists && field.isHittable { break }; app.swipeUp() }
         XCTAssertTrue(field.waitForExistence(timeout: 10))
+        let old = (field.value as? String) ?? ""
+        let emptyPlainText=["editor.name", "editor.concept", "crm.create.title", "crm.entrepreneur", "crm.search"].contains(id)
+            && (old.isEmpty || old == field.placeholderValue)
         // Right-aligned numbers end at the trailing inset. A tap farther left
         // puts the cursor before the number, where backspace cannot clear it.
-        field.coordinate(withNormalizedOffset: CGVector(dx: 0.99, dy: 0.5)).tap()
+        // An empty text row has no trailing value: its far-right padding may
+        // not focus the actual editor, so tap its measured center instead.
+        print("Redesign text input \(id): frame=\(field.frame), emptyPlainText=\(emptyPlainText), old=\(old)")
+        field.coordinate(withNormalizedOffset: CGVector(dx: emptyPlainText ? 0.5:0.99, dy: 0.5)).tap()
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5), "El campo debe recibir el foco del teclado.")
-        let old = (field.value as? String) ?? ""
         let count = old == field.placeholderValue ? 0 : old.count
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: count) + value)
+        if emptyPlainText {
+            XCTAssertEqual(field.value as? String,value,"El campo de texto vacío debe conservar exactamente lo escrito.")
+        }
         if ["editor.km", "editor.hourDivisor", "editor.counts.0"].contains(id) {
             XCTAssertEqual(field.value as? String, value, "El importe debe conservar el valor escrito.")
         }
