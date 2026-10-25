@@ -268,6 +268,35 @@ final class PayrollClientTests: XCTestCase {
         }
         JACPerformanceDiagnostics.reportHotPath(since: baseline)
     }
+    @MainActor func testGalleryPinPresentationChecksEightyItemsWithoutMainThreadIOAndRejectsRevocation() async throws {
+        let workspace = try await UITestBackend.client(downloadOffline: false).workspace()
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), cache = MediaOfflineCache(root: root)
+        let vault = MemorySession(); vault.token = token
+        let config = URLSessionConfiguration.ephemeral; config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: base, vault: vault, configuration: config, mediaOffline: cache, automaticallyDownloadOffline: false)
+        client.rememberWorkspace(workspace)
+        let scope = try XCTUnwrap(client.mediaScope())
+        let items = (0..<80).map { MediaItem(id: "pin-presentation-\($0)", name: "Fixture-\($0).png", mimeType: "image/png", kind: "image", size: Int64(MediaFixture.photo.count), modifiedAt: "fixture", thumbnailAvailable: true) }
+        let source = try TemporaryDocuments.save(MediaFixture.photo, filename: "Fixture.png")
+        defer { TemporaryDocuments.remove(source); try? client.clearSession(); try? FileManager.default.removeItem(at: root) }
+        try cache.saveFile(source.url, item: items[0], scope: scope, preview: true)
+        try cache.pinFile(items[0], scope: scope)
+        try cache.saveFile(source.url, item: items[1], scope: scope, preview: true) // Available locally, but deliberately not pinned.
+        let reopened = PayrollClient(baseURL: base, vault: vault, configuration: config, agendaCache: client.agendaCache, offlineCache: client.offlineCache, mediaOffline: cache, automaticallyDownloadOffline: false)
+        let before = JACPerformanceDiagnostics.snapshot()
+        var pinned: [String] = []
+        for item in items { if await reopened.mediaPinnedForPresentation(item) { pinned.append(item.id) } }
+        let sample = JACPerformanceDiagnostics.snapshot().delta(from: before)
+        XCTAssertEqual(pinned, [items[0].id], "A cold offline client must read real pin status, including local-but-unpinned and unavailable items.")
+        XCTAssertEqual(sample.count(.sessionRead), 0)
+        XCTAssertEqual(sample.mainThreadExpensiveOperations, 0)
+        var revoked = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))
+        revoked["user"]["isOwner"] = .bool(false); revoked["user"]["sections"] = .array([.string("calendar")])
+        reopened.rememberWorkspace(try revoked.decoded(PayrollWorkspace.self))
+        let denied = await reopened.mediaPinnedForPresentation(items[0]); XCTAssertFalse(denied)
+        try client.clearSession()
+        let loggedOut = await client.mediaPinnedForPresentation(items[0]); XCTAssertFalse(loggedOut)
+    }
     @MainActor func testUnrelatedCacheWritesKeepFortyWarmCardsOffMainThreadIO() async throws {
         let workspace = try await UITestBackend.client(downloadOffline: false).workspace()
         var workspaceValue = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))

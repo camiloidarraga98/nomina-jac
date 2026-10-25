@@ -4,7 +4,7 @@ Camilo pidió recibir Silla, Hora de salida, Hora en sala y Aerolínea junto al 
 
 ## Fluidez y widgets de iPhone (2026-10-25)
 
-Camilo pidió corregir bloqueos al desplazar contenido y menú y evitar regresiones, además de un widget configurable Calendario/Fotografía. iOS0.35.0(53) usa modelos de presentación en RAM, caché cifrada con escrituras agrupadas fuera del hilo principal y pausa consultas/prefetch de secciones ocultas, conservando rutas, audio y subidas. No introducir Llavero, disco, HKDF o JSON en getters de dibujo; mantener las barreras de sesión/revisión antes y después del trabajo asíncrono y los cuatro presupuestos automáticos de CI. Ver `docs/IOS_SCROLL_PERFORMANCE.md`.
+Camilo pidió corregir bloqueos al desplazar contenido y menú y evitar regresiones, además de un widget configurable Calendario/Fotografía. iOS0.35.0(53) usa modelos de presentación en RAM, caché cifrada con escrituras agrupadas fuera del hilo principal y pausa consultas/prefetch de secciones ocultas, conservando rutas, audio y subidas. No introducir Llavero, disco, HKDF o JSON en getters de dibujo; mantener las barreras de sesión/revisión antes y después del trabajo asíncrono y los cinco presupuestos automáticos de CI. Ver `docs/IOS_SCROLL_PERFORMANCE.md`.
 
 El nuevo target JACWidgets usa AppGroup `group.co.jacmusic.nomina.widgets`, autorizado expresamente para este alcance, con ambos AppIDs del equipo pagado AYHVYN8BJF. Extensión sin credenciales/red: sólo instantáneas protegidas de eventos y miniaturas privadas, caducidad y limpieza por sesión. Enlaces abren destinos ya autorizados. iOS decide la actualización en segundo plano; no prometer datos instantáneos ni firma/instalación real desde CI. Ver `docs/IPHONE_WIDGETS.md`.
 

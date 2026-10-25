@@ -280,12 +280,9 @@ struct MediaPhotoMenu: View {
     private enum Action {case download,offline,delete}
     private func updatePinned(){
         pinTask?.cancel()
-        guard let scope=try? client.mediaScope(),let stamp=try? client.mediaAccessStamp() else{pinned=false;return}
-        let cache=client.mediaOffline
         pinTask=Task {
-            let worker=Task.detached(priority:.utility){!Task.isCancelled && cache.isPinned(item,scope:scope)}
-            let value=await withTaskCancellationHandler {await worker.value} onCancel:{worker.cancel()}
-            guard !Task.isCancelled,stamp == (try? client.mediaAccessStamp()) else{return}
+            let value=await client.mediaPinnedForPresentation(item)
+            guard !Task.isCancelled else{return}
             pinned=value
         }
     }

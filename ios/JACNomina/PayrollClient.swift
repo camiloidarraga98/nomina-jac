@@ -233,9 +233,12 @@ final class PayrollClient: ObservableObject {
         mediaConfiguration.timeoutIntervalForRequest = 120
         mediaConfiguration.timeoutIntervalForResource = 2 * 60 * 60
         mediaSession = URLSession(configuration: mediaConfiguration, delegate: NoRedirects(), delegateQueue: nil)
-        if let token = try? self.checkedToken(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { self.offlineCache.removeOtherSessions(OfflineResponseCache.scope(origin: baseURL.absoluteString, token: token)); self.mediaOffline.removeOtherSessions(AgendaCacheScope(origin: origin + "/media-offline-v1", token: token)) }
+        if let token = try? self.checkedToken(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { self.offlineCache.removeOtherSessions(OfflineResponseCache.scope(origin: baseURL.absoluteString, token: token)) }
         permissionUser = rawCachedWorkspace()?.user ?? cachedAgenda()?.user
         if let scope = try? musicScope() { musicOffline.removeOtherSessions(scope) }
+        // Prepare the checked presentation scope once during startup, including
+        // a cold offline restore. Cells never derive keys or read Keychain.
+        if let scope = try? mediaScope() { self.mediaOffline.removeOtherSessions(scope) }
     }
 
     private func invalidateWidgetSnapshot() {
@@ -1129,6 +1132,15 @@ final class PayrollClient: ObservableObject {
     }
     // Drive credentials stay on the server. Native transfers only use JAC's
     // authenticated origin, reject redirects and revalidate the session after I/O.
+    // Pin status is presentation metadata. Actual download/pin/delete paths
+    // retain their strict session checks before and after I/O.
+    func mediaPinnedForPresentation(_ item: MediaItem) async -> Bool {
+        guard !Task.isCancelled, permissionUser?.canReadMedia == true,
+              let scope = derivedMediaScope?.scope, let stamp = mediaPresentationStamp else { return false }
+        let cache = mediaOffline
+        let pinned = await Task.detached(priority: .utility) { cache.isPinned(item, scope: scope) }.value
+        return !Task.isCancelled && permissionUser?.canReadMedia == true && stamp == mediaPresentationStamp && pinned
+    }
     func cachedMedia(folder: String = "") -> MediaFeed? {
         guard permissionUser?.canReadMedia != false, let scope = try? mediaScope() else { return nil }
         return mediaOffline.loadFeed(folder, scope: scope)

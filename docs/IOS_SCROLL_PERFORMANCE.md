@@ -40,6 +40,7 @@ Tres métodos de `PayrollClientTests` actúan como guardias rápidas en los alca
 | `testWarmCalendarAndWorkspaceRenderDoNotReadSessionOrDecode` | Quinientos accesos calientes a workspace/Agenda del cliente y del store: cero operaciones costosas en el hilo principal; la copia deja de estar disponible tras cerrar sesión. |
 | `testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish` | Feed de cuarenta avisos: un índice, 42 escrituras totales (feed + cuarenta avisos canónicos + índice), ninguna lectura/escritura de disco en el hilo principal. Repetir exactamente la respuesta produce cero escrituras de datos/índice y conserva `cacheRevision`. |
 | `testUnrelatedCacheWritesKeepFortyWarmCardsOffMainThreadIO` | Tras actualizar workspace y Fotografía, cuarenta tarjetas conservan 20.000 accesos listos sin I/O, Llavero o JSON en el hilo principal. Cambiar una tarjeta retira sólo esa; denegar el feed retira todas. |
+| `testGalleryPinPresentationChecksEightyItemsWithoutMainThreadIOAndRejectsRevocation` | Ochenta estados de descarga desde una reapertura: una foto guardada, otra retirada y el resto ausentes; cero lecturas de sesión y cero I/O/JSON/derivación en el hilo principal. Revocación y cierre impiden consultar el estado. |
 
 La selección completa de `JACNominaTests` ya incluye esas guardias; el workflow evita agregarlas dos veces. Los seguimientos explícitos UI-only y las acciones `build-for-testing` reutilizan los resultados previos del Core en lugar de ejecutarlas otra vez.
 
@@ -112,3 +113,11 @@ Las dos UI nuevas detectaron una consulta estricta al Llavero desde el getter de
 El seguimiento `[scroll-widgets-cache-followup]` junto a `[check-scroll-widgets]` ejecuta20casos de cliente/caché, la clase de widget corregida y las dos UI nuevas, y recompila Release iPhone/Mac. Reutiliza las dos UI existentes ya correctas. Resultado del seguimiento pendiente de registrar; no considerar aprobadas las dos UI nuevas por el éxito de compilación.
 
 El refresco del widget conserva la copia vigente al bloquearse el teléfono: comprueba la disponibilidad de datos protegidos antes de leer Keychain y distingue el estado exacto `errSecInteractionNotAllowed` de una sesión ausente o revocada. No cambia WhenUnlocked ni comparte credenciales. El caso de bloqueo usa disponibilidad inyectada y exige cero lecturas de sesión; la protección de archivos real sigue siendo una comprobación física explícita.
+
+## Segundo resultado y cierre de Fotografía
+
+CI40228053257 sobre f1213c8:20unitarias de cliente correctas,12unitarias del widget correctas y una comprobación física de protección omitida explícitamente en simulador. La UI lateral pasó156.454s: cuatro desplazamientos efectivos y31s sin nuevos requests de secciones ocultas; conserva la carpeta abierta. Release iPhone/widget y Mac correctos, sin advertencias Swift.
+
+La UI caliente aún detectó24lecturas de sesión en Fotografía (tres por cada uno de ocho menús de foto recién visibles), con cero nuevas peticiones y sin disco/JSON/derivación en el hilo principal. La causa fue el indicador de descarga de `MediaPhotoMenu.updatePinned`, no el acceso a las imágenes. Se extrae `mediaPinnedForPresentation`: ámbitos y permisos de memoria, consulta de pin en utilidad y revalidación de memoria al terminar. La creación del cliente prepara el ámbito de Fotografía durante el arranque para conservar la reapertura sin conexión. Descargar, guardar o borrar mantienen sus validaciones estrictas.
+
+`[scroll-widgets-gallery-followup]` con `[check-scroll-widgets]` ejecuta la UI caliente completa, el nuevo caso de ochenta estados, dos regresiones de descarga/revocación y los cinco presupuestos obligatorios sin duplicarlos, más ambas Release. Reutiliza las pruebas del widget y la UI lateral ya correctas. Resultado final de esta comprobación aún pendiente.
