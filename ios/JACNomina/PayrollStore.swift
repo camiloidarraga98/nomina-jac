@@ -14,6 +14,7 @@ final class PayrollStore: ObservableObject {
     @Published private(set) var savedAgenda: AgendaOfflineRecord?
     @Published private(set) var agendaStorageWarning: String?
     private var savedAgendaScope: String?
+    private var agendaReservation = 0
     @Published private(set) var hasSavedSession = false
     private var clientChanges: AnyCancellable?
     private var offlineChanges: AnyCancellable?
@@ -49,7 +50,11 @@ final class PayrollStore: ObservableObject {
             self.forgetAgenda(); self.overview = nil; self.workspace = nil; self.pending = nil; self.notice = nil; self.hasSavedSession = false
         }
         offlineChanges = client.$usingOfflineCopy.removeDuplicates().sink { [weak self] value in self?.offlineMode = value }
-        clientChanges = client.objectWillChange.sink { [weak self] _ in self?.objectWillChange.send() }
+        // Forward only the state read by views, after it changes. Publishing
+        // each client's willChange used to invalidate all visited screens for
+        // every intermediate cache write and synchronization status update.
+        clientChanges = Publishers.CombineLatest3(client.$cacheRevision.removeDuplicates(), client.$syncingOffline.removeDuplicates(), client.$offlineSyncMessage.removeDuplicates())
+            .dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.objectWillChange.send() }
         if let record = client.cachedAgenda(), overview == nil || overview?.user.id == record.user.id {
             savedAgenda = record; savedAgendaScope = (try? client.agendaScope())?.id
             // Older installations may have only the calendar cache. Keep that
@@ -78,7 +83,7 @@ final class PayrollStore: ObservableObject {
     }
     var isAgendaOnly: Bool { overview != nil && workspace == nil }
     func cachedAgenda(month: String, userID: String) -> SavedAgenda? {
-        guard overview?.user.hasSection(.calendar) != false, savedAgenda?.user.id == userID, savedAgendaScope == (try? client.agendaScope())?.id else { return nil }
+        guard overview?.user.hasSection(.calendar) != false, savedAgenda?.user.id == userID, savedAgendaScope == client.agendaPresentationScopeID else { return nil }
         return savedAgenda?.month(month)
     }
     var preferredAgendaMonth: String {
@@ -86,11 +91,12 @@ final class PayrollStore: ObservableObject {
         return savedAgenda?.month(current) != nil ? current : savedAgenda?.latest?.data.month ?? current
     }
     func forgetAgenda() {
+        agendaReservation += 1
         client.clearCachedAgenda(); savedAgenda = nil; savedAgendaScope = nil; agendaStorageWarning = nil
     }
-    func rememberAgenda(_ data: AgendaData, userID: String, scope: AgendaCacheScope) throws {
+    private func prepareAgenda(_ data: AgendaData, userID: String, scope: AgendaCacheScope) throws -> AgendaOfflineRecord? {
         guard let user = overview?.user, user.id == userID, scope.id == (try client.agendaScope())?.id else { throw CancellationError() }
-        guard data.connection.connected, data.connection.selected != nil else { forgetAgenda(); return }
+        guard data.connection.connected, data.connection.selected != nil else { forgetAgenda(); return nil }
         var months = savedAgenda?.user.id == userID && savedAgendaScope == scope.id ? savedAgenda?.months ?? [] : []
         if let previous = savedAgenda?.latest?.data.connection, !months.isEmpty {
             guard data.connection.revision >= previous.revision else { throw CancellationError() }
@@ -105,9 +111,32 @@ final class PayrollStore: ObservableObject {
             guard try JSONEncoder().encode(record).count > AgendaOfflineCache.maximumBytes else { break }
             record.months.removeLast()
         }
+        return record
+    }
+    func rememberAgenda(_ data: AgendaData, userID: String, scope: AgendaCacheScope) throws {
+        guard let record = try prepareAgenda(data, userID: userID, scope: scope) else { return }
+        agendaReservation += 1
         savedAgenda = record; savedAgendaScope = scope.id
         do { try client.saveAgenda(record, scope: scope); agendaStorageWarning = nil }
         catch { agendaStorageWarning = "Puedes consultar esta agenda, pero no se pudo guardar su copia para la próxima apertura." }
+    }
+    func rememberAgendaInBackground(_ data: AgendaData, userID: String, scope: AgendaCacheScope) async throws {
+        guard let record = try prepareAgenda(data, userID: userID, scope: scope) else { return }
+        // Reserve the merged months before yielding. A concurrent request must
+        // validate its connection/update revision against this newer snapshot,
+        // and a later completion must never replace a newer reservation.
+        agendaReservation += 1
+        let reservation = agendaReservation
+        savedAgenda = record; savedAgendaScope = scope.id; agendaStorageWarning = nil
+        do {
+            try await client.saveAgendaInBackground(record, scope: scope)
+            guard overview?.user.id == userID, client.agendaPresentationScopeID == scope.id else { throw CancellationError() }
+            if reservation == agendaReservation { agendaStorageWarning = nil }
+        } catch is CancellationError { throw CancellationError() }
+        catch {
+            guard overview?.user.id == userID, client.agendaPresentationScopeID == scope.id else { throw CancellationError() }
+            if reservation == agendaReservation { agendaStorageWarning = "Puedes consultar esta agenda, pero no se pudo guardar su copia para la próxima apertura." }
+        }
     }
     func restore() async {
         defer { restoring = false }
@@ -151,7 +180,7 @@ final class PayrollStore: ObservableObject {
             guard sessionScope != nil, sessionScope == (try client.offlineScope())?.id else { throw CancellationError() }
             // A refresh already in flight can finish after a save or conflict.
             guard pending == nil else { return }
-            if install(result) { error = nil; client.synchronizeOfflineContent(result) }
+            if install(result, persist: false) { error = nil; client.synchronizeOfflineContent(result) }
         }
         catch {
             if !AgendaOfflineCache.isUnavailable(error) { reportReadFailure(error) }
@@ -193,7 +222,7 @@ final class PayrollStore: ObservableObject {
         #endif
     }
     #endif
-    @discardableResult private func install(_ result: PayrollWorkspace) -> Bool {
+    @discardableResult private func install(_ result: PayrollWorkspace, persist: Bool = true) -> Bool {
         // A restricted control workspace deliberately uses revision zero and
         // contains no payroll. Revoking that module must replace older private
         // in-memory data immediately; ordinary payroll still obeys revision CAS.
@@ -203,7 +232,8 @@ final class PayrollStore: ObservableObject {
         if let previous = overview?.user, previous != result.user { revokeMediaUploads() }
         if !result.user.canUploadMedia { revokeMediaUploads() }
         if !result.user.canReadMusic { musicPlayer?.stop() }
-        workspace = result; overview = result.overview; hasSavedSession = true; client.rememberWorkspace(result)
+        workspace = result; overview = result.overview; hasSavedSession = true
+        if persist { client.rememberWorkspace(result) }
         #if os(iOS)
         if !Self.isUnitTestHost { Task { await self.resumeMediaUploads() } }
         #endif

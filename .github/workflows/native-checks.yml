@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [full, calendar-compile, slack-boarding, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
+        options: [full, calendar-compile, slack-boarding, scroll-widgets, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -38,7 +38,7 @@ jobs:
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
-          JAC_LATEST_XCODE: ${{ inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]'))) }}
+          JAC_LATEST_XCODE: ${{ inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]'))) }}
         run: |
           set -euo pipefail
           mkdir -p native-ci
@@ -101,6 +101,9 @@ jobs:
       - name: Build and check the affected iPhone flows
         shell: bash
         env:
+          JAC_SCROLL_WIDGETS: ${{ inputs.scope == 'scroll-widgets' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-scroll-widgets]')) }}
+          JAC_SCROLL_WIDGETS_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]') }}
+          JAC_CALENDAR_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]') }}
           JAC_SLACK_BOARDING: ${{ inputs.scope == 'slack-boarding' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-slack-boarding]')) }}
           JAC_SLACK_BOARDING_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]') }}
           JAC_CALENDAR_COMPILE: ${{ inputs.scope == 'calendar-compile' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-calendar-compile]')) }}
@@ -142,7 +145,37 @@ jobs:
         run: |
           set -euo pipefail
           build_action=test
-          if [ "$JAC_SLACK_BOARDING" = true ]; then
+          if [ "$JAC_SCROLL_WIDGETS" = true ]; then
+            checks=(
+              -only-testing:JACNominaUITests/ScrollPerformanceTests/testWarmPhotoAndBoardingListsKeepResponsiveScrolling
+              -only-testing:JACNominaUITests/ScrollPerformanceTests/testHiddenSectionsSuspendPollingAndPrefetchWhileSidebarScrolls
+            )
+            if [ "$JAC_SCROLL_WIDGETS_UI_ONLY" != true ]; then
+              checks+=(
+                -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarKeepsMusicAndNestedAccountState
+                -only-testing:JACNominaUITests/LaunchTests/testAlexAgendaDatesRemainUsableAfterSwitchingMenusAndBackground
+                -only-testing:JACNominaTests/WidgetSnapshotTests
+                -only-testing:JACNominaTests/PayrollClientTests/testWarmFortyBoardingCardsPerformNoMainThreadIOCryptoOrJSON
+                -only-testing:JACNominaTests/PayrollClientTests/testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish
+                -only-testing:JACNominaTests/PayrollClientTests/testOfflineBatchRejectsLateWritesAfterRevocationAndRemainsReadableOnRelaunch
+                -only-testing:JACNominaTests/PayrollClientTests/testWarmCalendarAndWorkspaceRenderDoNotReadSessionOrDecode
+                -only-testing:JACNominaTests/PayrollClientTests/testPendingNoticePersistenceCannotReturnAfterLogout
+                -only-testing:JACNominaTests/PayrollClientTests/testNoticeFeedDenialInvalidatesWarmCanonicalCards
+                -only-testing:JACNominaTests/PayrollClientTests/testOlderWorkspaceResponseCannotReplaceWarmNewerWorkspace
+                -only-testing:JACNominaTests/PayrollClientTests/testConcurrentAgendaPersistenceMergesMonthsAndRejectsOlderPendingUpdate
+                -only-testing:JACNominaTests/PayrollClientTests/testBoardingCardMetadataCachesEachFileAndBoundsConcurrentReads
+                -only-testing:JACNominaTests/PayrollClientTests/testBoardingCardMetadataRevocationAndNewRevisionNeverRestoreOldValues
+                -only-testing:JACNominaTests/PayrollClientTests/testBoardingCardMetadataDiscardsLateExtractionAfterLogout
+                -only-testing:JACNominaTests/PayrollClientTests/testRejectedWorkspaceSaveCannotRestoreRevokedRoleOrOldAgendaIdentity
+                -only-testing:JACNominaTests/PayrollClientTests/testRevalidationRevocationPurgesFullCacheRatherThanUsingFallback
+                -only-testing:JACNominaTests/PayrollClientTests/testFullOfflineCopyIsEncryptedSessionBoundAndRejectsTampering
+                -only-testing:JACNominaTests/PayrollClientTests/testRevokedAgendaSessionAndForbiddenCalendarPurgeOfflineCopy
+                -only-testing:JACNominaTests/PayrollClientTests/testAgendaCacheDropsOldCalendarAndCannotRollbackConnectionOrRetainDisconnectedEvents
+                -only-testing:JACNominaTests/PayrollClientTests/testMusicPlaybackAuthorizationSurvivesLockAndIsRemovedWithSession
+                -only-testing:JACNominaTests/PayrollClientTests/testMusicOfflineAudioIsEncryptedRevisionBoundAndCanBeDownloadedAgain
+              )
+            fi
+          elif [ "$JAC_SLACK_BOARDING" = true ]; then
             checks=(-only-testing:JACNominaUITests/LaunchTests/testBoardingCardShowsFlightDetailsBeforeOpeningTheOriginal)
             if [ "$JAC_SLACK_BOARDING_UI_ONLY" != true ]; then
               checks+=(
@@ -428,6 +461,25 @@ jobs:
               -only-testing:JACNominaUITests/LaunchTests/testAdministratorCancelsThenDeletesOnlyTheSelectedPhotoAndVideo
             )
           fi
+          # Every real test scope retains cheap operation-count regressions.
+          # Explicit UI-only followups reuse the unchanged core results; full
+          # target/class selections already include these guards exactly once.
+          include_render_guards=true
+          for ui_only in JAC_SCROLL_WIDGETS_UI_ONLY JAC_CALENDAR_UI_ONLY JAC_SLACK_BOARDING_UI_ONLY JAC_REDESIGN_FORMS_UI_ONLY JAC_WALLET_DETAILS_UI_ONLY JAC_BOARDING_CARD_UI_ONLY JAC_APPLE_PUSH_UI_ONLY JAC_GALLERY_STABILITY_UI_ONLY JAC_VIDEO_UI_ONLY; do
+            if [ "${!ui_only}" = true ]; then include_render_guards=false; fi
+          done
+          if [ "$build_action" = test ] && [ "$include_render_guards" = true ]; then
+            for guard_test in testWarmFortyBoardingCardsPerformNoMainThreadIOCryptoOrJSON testWarmCalendarAndWorkspaceRenderDoNotReadSessionOrDecode testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish; do
+              guard_check="-only-testing:JACNominaTests/PayrollClientTests/$guard_test"
+              already_selected=false
+              for selected in ${checks[@]+"${checks[@]}"}; do
+                case "$selected" in
+                  -only-testing:JACNominaTests|-only-testing:JACNominaTests/PayrollClientTests|"$guard_check") already_selected=true ;;
+                esac
+              done
+              if [ "$already_selected" = false ]; then checks+=("$guard_check"); fi
+            done
+          fi
           xcodebuild -project ios/JACNomina.xcodeproj -scheme JACNomina \
             -destination "platform=iOS Simulator,id=$JAC_CI_SIMULATOR_ID" \
             -derivedDataPath native-ci/simulator -resultBundlePath native-ci/iphone.xcresult \
@@ -490,6 +542,7 @@ jobs:
       - name: Export compact test diagnostics
         if: always()
         env:
+          JAC_SCROLL_WIDGETS: ${{ inputs.scope == 'scroll-widgets' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-scroll-widgets]')) }}
           JAC_SLACK_BOARDING: ${{ inputs.scope == 'slack-boarding' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-slack-boarding]')) }}
           JAC_CALENDAR_COMPILE: ${{ inputs.scope == 'calendar-compile' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-calendar-compile]')) }}
           JAC_REDESIGN: ${{ inputs.scope == 'redesign' || inputs.scope == 'redesign-followup' || inputs.scope == 'redesign-forms-ui-only' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-redesign]') || contains(github.event.head_commit.message, '[redesign-followup]') || contains(github.event.head_commit.message, '[redesign-forms-ui-only]'))) }}
@@ -499,7 +552,10 @@ jobs:
         run: |
           if [ -d native-ci/iphone.xcresult ]; then
             xcrun xcresulttool get test-results summary --path native-ci/iphone.xcresult > native-ci/test-summary.json || true
-            if [ "${JAC_SLACK_BOARDING:-false}" = true ] || [ "${JAC_CALENDAR_COMPILE:-false}" = true ] || [ "${JAC_REDESIGN:-false}" = true ] || [ "${JAC_NAVIGATION:-false}" = true ] || [ "${JAC_BOARDING_CARD:-false}" = true ]; then
+            if [ "${JAC_SCROLL_WIDGETS:-false}" = true ]; then
+              xcrun xcresulttool get test-results metrics --path native-ci/iphone.xcresult > native-ci/test-metrics.json || true
+            fi
+            if [ "${JAC_SCROLL_WIDGETS:-false}" = true ] || [ "${JAC_SLACK_BOARDING:-false}" = true ] || [ "${JAC_CALENDAR_COMPILE:-false}" = true ] || [ "${JAC_REDESIGN:-false}" = true ] || [ "${JAC_NAVIGATION:-false}" = true ] || [ "${JAC_BOARDING_CARD:-false}" = true ]; then
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments || true
             else
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
@@ -547,7 +603,7 @@ jobs:
           fi
 
   iphone_release:
-    if: ${{ github.event.repository.private == false && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'boarding-card' && inputs.scope != 'boarding-card-ui' && inputs.scope != 'audit' && inputs.scope != 'photo-preview' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-boarding-card]') || contains(github.event.head_commit.message, '[check-audit]') || contains(github.event.head_commit.message, '[check-photo-preview]') || contains(github.event.head_commit.message, '[push-ui-only]') || (contains(github.event.head_commit.message, '[wallet-ui-only]') && !contains(github.event.head_commit.message, '[wallet-ui-product]')))) }}
+    if: ${{ github.event.repository.private == false && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'gallery-media' && inputs.scope != 'gallery-update' && inputs.scope != 'gallery-stability' && inputs.scope != 'gallery-prefetch' && inputs.scope != 'media-delete' && inputs.scope != 'media-light' && inputs.scope != 'music' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'boarding-card' && inputs.scope != 'boarding-card-ui' && inputs.scope != 'audit' && inputs.scope != 'photo-preview' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[check-gallery-media]') || contains(github.event.head_commit.message, '[check-gallery-update]') || contains(github.event.head_commit.message, '[check-gallery-stability]') || contains(github.event.head_commit.message, '[check-gallery-prefetch]') || contains(github.event.head_commit.message, '[check-media-delete]') || contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-music]') || contains(github.event.head_commit.message, '[check-navigation]') || contains(github.event.head_commit.message, '[check-layout]') || contains(github.event.head_commit.message, '[check-boarding-card]') || contains(github.event.head_commit.message, '[check-audit]') || contains(github.event.head_commit.message, '[check-photo-preview]') || contains(github.event.head_commit.message, '[push-ui-only]') || (contains(github.event.head_commit.message, '[wallet-ui-only]') && !contains(github.event.head_commit.message, '[wallet-ui-product]')))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -557,7 +613,7 @@ jobs:
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
-          JAC_LATEST_XCODE: ${{ inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]'))) }}
+          JAC_LATEST_XCODE: ${{ inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]'))) }}
         run: |
           set -euo pipefail
           mkdir -p native-ci
@@ -619,6 +675,68 @@ jobs:
           pathlib.Path('native-ci/bundle-config.json').write_text(json.dumps(result, indent=2) + '\n')
           print(json.dumps(result))
           PYCODE
+      - name: Verify the embedded WidgetKit extension and shared-group configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PYCODE'
+          import json, pathlib, plistlib, re, subprocess
+          repository = pathlib.Path.cwd()
+          app = repository / 'native-ci/device/Build/Products/Release-iphoneos/JACNomina.app'
+          widget = app / 'PlugIns/JACWidgets.appex'
+          def read_plist(path):
+              with path.open('rb') as source:
+                  return plistlib.load(source)
+          app_info, widget_info = read_plist(app / 'Info.plist'), read_plist(widget / 'Info.plist')
+          app_id, widget_id = 'co.jacmusic.nomina', 'co.jacmusic.nomina.widgets'
+          group, team = 'group.co.jacmusic.nomina.widgets', 'AYHVYN8BJF'
+          assert app_info.get('CFBundleIdentifier') == app_id, 'Unexpected app bundle for the widget'
+          assert widget_info.get('CFBundleIdentifier') == widget_id, 'The WidgetKit extension must be embedded under the expected bundle ID'
+          assert widget_info.get('NSExtension', {}).get('NSExtensionPointIdentifier') == 'com.apple.widgetkit-extension', 'The embedded product must be a WidgetKit extension'
+          for key in ['CFBundleVersion', 'CFBundleShortVersionString']:
+              assert widget_info.get(key) == app_info.get(key), 'App and widget versions must match: ' + key
+          def settings(target):
+              command = ['xcodebuild', '-project', 'ios/JACNomina.xcodeproj', '-target', target, '-configuration', 'Release', '-sdk', 'iphoneos', '-showBuildSettings', '-json', 'CODE_SIGNING_ALLOWED=NO']
+              records = json.loads(subprocess.check_output(command, text=True))
+              return next(record['buildSettings'] for record in records if record.get('target') == target)
+          evidence = {}
+          for target, bundle_id in [('JACNomina', app_id), ('JACWidgets', widget_id)]:
+              build = settings(target)
+              assert build.get('DEVELOPMENT_TEAM') == team, 'App and widget must preserve the same configured Apple team'
+              assert build.get('PRODUCT_BUNDLE_IDENTIFIER') == bundle_id, 'Unexpected effective target bundle identifier'
+              assert str(build.get('CURRENT_PROJECT_VERSION')) == str(app_info['CFBundleVersion']), 'Effective build number must match the embedded product'
+              assert build.get('MARKETING_VERSION') == app_info['CFBundleShortVersionString'], 'Effective marketing version must match the embedded product'
+              entitlements = build.get('CODE_SIGN_ENTITLEMENTS', '').strip('"')
+              assert entitlements, 'An explicit shared-group entitlement file is required'
+              root = pathlib.Path(build['SRCROOT'])
+              for variable in ['$(SRCROOT)', '${SRCROOT}', '$(PROJECT_DIR)', '${PROJECT_DIR}']:
+                  entitlements = entitlements.replace(variable, str(root))
+              source = pathlib.Path(entitlements)
+              if not source.is_absolute():
+                  source = root / source
+              values = read_plist(source)
+              assert group in values.get('com.apple.security.application-groups', []), 'Both targets must declare the same widget App Group'
+              evidence[target] = {'bundle': bundle_id, 'team': build['DEVELOPMENT_TEAM'], 'entitlementSource': str(source.relative_to(repository)), 'appGroups': values['com.apple.security.application-groups']}
+          # Unsigned Release builds may not emit .xcent files. Verify generated
+          # entitlements when present and always inspect the effective source.
+          xcent_files = []
+          for path in (repository / 'native-ci/device').rglob('*.xcent'):
+              if path.name not in ['JACNomina.app.xcent', 'JACWidgets.appex.xcent']:
+                  continue
+              values = read_plist(path)
+              assert group in values.get('com.apple.security.application-groups', []), 'Generated app/widget entitlements must retain the shared group'
+              generated_team = values.get('com.apple.developer.team-identifier')
+              if generated_team is not None:
+                  assert generated_team == team, 'Unexpected generated signing-team metadata'
+              xcent_files.append(str(path.relative_to(repository)))
+          widget_source = (repository / 'ios/JACWidgets/JACWidgets.swift').read_text()
+          declarations = re.findall(r'\.supportedFamilies\(\s*\[([^]]+)\]\s*\)', widget_source)
+          required_families = {'systemSmall', 'systemMedium', 'systemLarge'}
+          assert any(set(re.findall(r'\.(systemSmall|systemMedium|systemLarge)\b', declaration)) == required_families for declaration in declarations), 'The configurable widget must support small, medium and large families'
+          result = {'app': app_id, 'widget': widget_id, 'version': app_info['CFBundleShortVersionString'], 'build': app_info['CFBundleVersion'], 'familiesDeclared': sorted(required_families), 'targets': evidence, 'generatedEntitlementFiles': xcent_files, 'signingPerformed': False}
+          pathlib.Path('native-ci/widget-config.json').write_text(json.dumps(result, indent=2) + '\n')
+          print(json.dumps(result))
+          PYCODE
       - name: Save Release build logs
         if: always()
         uses: actions/upload-artifact@v4
@@ -628,9 +746,10 @@ jobs:
           path: |
             native-ci/*.log
             native-ci/bundle-config.json
+            native-ci/widget-config.json
 
   mac:
-    if: ${{ github.event.repository.private == false && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'redesign-followup' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-followup]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && inputs.scope != 'boarding-card-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
+    if: ${{ github.event.repository.private == false && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[scroll-widgets-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[slack-boarding-ui-only]')) && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[calendar-ui-only]')) && inputs.scope != 'redesign-forms-ui-only' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-forms-ui-only]')) && inputs.scope != 'redesign-followup' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[redesign-followup]')) && inputs.scope != 'photo-notices-ipad' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[photo-notices-ipad-only]')) && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) && inputs.scope != 'video-upload' && inputs.scope != 'video-quality' && inputs.scope != 'video-upload-ui' && inputs.scope != 'navigation' && inputs.scope != 'layout' && inputs.scope != 'apple-push' && inputs.scope != 'apple-push-ui' && inputs.scope != 'wallet-details-ui' && inputs.scope != 'boarding-card-ui' && !(github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-video-upload]') || contains(github.event.head_commit.message, '[iphone-only]') || contains(github.event.head_commit.message, '[check-layout]'))) }}
     runs-on: macos-15
     timeout-minutes: 20
     steps:
@@ -640,7 +759,7 @@ jobs:
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
-          JAC_LATEST_XCODE: ${{ inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]'))) }}
+          JAC_LATEST_XCODE: ${{ inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]'))) }}
         run: |
           set -euo pipefail
           mkdir -p native-ci

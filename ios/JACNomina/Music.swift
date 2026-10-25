@@ -317,6 +317,8 @@ struct MusicMiniPlayer: View {
 struct MusicLibraryView: View {
     let user: PayrollUser
     @EnvironmentObject private var store: PayrollStore
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
+    @Environment(\.scenePhase) private var phase
     @State private var library: MusicLibrary?
     @State private var section: MusicSection?
     @State private var search = ""
@@ -350,7 +352,11 @@ struct MusicLibraryView: View {
             .confirmationDialog("Eliminar audio",isPresented:Binding(get:{deleting != nil},set:{if !$0 {deleting=nil}}),titleVisibility:.visible) {
                 if let track=deleting {Button("Eliminar «\(track.title)»",role:.destructive){Task{await remove(track)}}}
             } message:{Text("Dejará de estar disponible para el equipo.")}
-            .task {library=store.client.cachedMusic();updateDownloads();await load()}
+            .task(id: isWorkspaceActive && phase == .active) {
+                guard isWorkspaceActive, phase == .active else { return }
+                if library == nil { library = store.client.cachedMusic() }
+                updateDownloads(); await load()
+            }
             .onDisappear {downloadTask?.cancel()}
     }
     @ViewBuilder private var titledContent: some View {
@@ -563,8 +569,8 @@ struct MusicLibraryView: View {
         do {let files=try await Task.detached(priority:.userInitiated){var files:[MusicImportFile]=[];do {for url in urls {files.append(try MusicImportFile.copy(url))};return files} catch {files.forEach{$0.remove()};throw error}}.value;importing=MusicIncomingAudio(files:files)} catch {self.error=error.localizedDescription}
     }
     private func load() async {
-        guard !loading else{return};loading=true;defer{loading=false};error=nil
-        do {let value=try await store.client.musicLibrary();library=value;store.music.reconcile(value);updateDownloads()} catch {if !AgendaOfflineCache.isUnavailable(error) {self.error=error.localizedDescription};if library==nil {library=store.client.cachedMusic()};updateDownloads()}
+        guard isWorkspaceActive, phase == .active, !Task.isCancelled, !loading else{return};loading=true;defer{loading=false};error=nil
+        do {let value=try await store.client.musicLibrary();try Task.checkCancellation();library=value;store.music.reconcile(value);updateDownloads()} catch {guard !Task.isCancelled else{return};if !AgendaOfflineCache.isUnavailable(error) {self.error=error.localizedDescription};if library==nil {library=store.client.cachedMusic()};updateDownloads()}
     }
     private func updateDownloads() {downloaded=Set((library?.tracks ?? []).filter{store.client.musicHasDownload($0)}.map(\.id))}
     private func download(_ tracks:[MusicTrack]) {

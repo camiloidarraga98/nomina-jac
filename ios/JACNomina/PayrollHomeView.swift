@@ -143,6 +143,9 @@ struct PayrollHomeView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var scenePhase
     @ObservedObject private var push = JACNotifications.shared
+    #if os(iOS)
+    @ObservedObject private var widgetNavigation = JACWidgetNavigation.shared
+    #endif
     @State private var selected: String
     init(overview: PayrollOverview, agendaOnly: Bool = false) {
         self.overview = overview; _selected = State(initialValue: overview.user.initialMobileDestination)
@@ -166,6 +169,7 @@ struct PayrollHomeView: View {
                 selected = value.initialMobileDestination
                 #if os(iOS)
                 phoneVisited = []; phoneMenuOpen = false
+                openPendingWidget()
                 #endif
                 if !value.canReceiveNotifications { push.stop() }
                 else if !store.isAgendaOnly { Task { await push.bind(store.client) } }
@@ -177,6 +181,10 @@ struct PayrollHomeView: View {
                 phoneMenuOpen = false; compactColumn = .detail
                 #endif
             }))
+            #if os(iOS)
+            .onAppear { openPendingWidget() }
+            .onChange(of: widgetNavigation.pending?.id) { _, _ in openPendingWidget() }
+            #endif
     }
     private var phoneTabs: some View {
         TabView(selection: $selected) {
@@ -193,6 +201,21 @@ struct PayrollHomeView: View {
         }
     }
     #if os(iOS)
+    private func openPendingWidget() {
+        guard let pending = widgetNavigation.pending else { return }
+        defer { widgetNavigation.finish(pending.id) }
+        switch pending.route {
+        case .calendar:
+            guard user.hasSection(.calendar) else { return }
+            selected = "agenda"
+        case .photography(let folderID):
+            guard user.canReadMedia else { return }
+            selected = "media"
+            if let folderID { push.openWidgetFolder(folderID) }
+        }
+        setPhoneMenu(false)
+        compactColumn = .detail
+    }
     @State private var phoneMenuOpen = false
     @State private var phoneVisited: Set<String> = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -255,6 +278,7 @@ struct PayrollHomeView: View {
         ZStack {
             ForEach(phoneDestinations.filter { $0.id == selected || phoneVisited.contains($0.id) }, id: \.id) { item in
                 phoneContent(item.id)
+                    .environment(\.isWorkspaceActive, selected == item.id && !phoneMenuOpen)
                     .zIndex(selected == item.id ? 1 : 0)
                     .opacity(selected == item.id ? 1 : 0)
                     .allowsHitTesting(selected == item.id && !phoneMenuOpen)

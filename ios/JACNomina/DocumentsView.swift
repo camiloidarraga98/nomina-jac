@@ -515,6 +515,7 @@ struct MediaGalleryView: View {
     }
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var phase
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     @StateObject private var folderTransfer = MediaFolderTransfer()
     @State private var transferReview: MediaTransferReview?
     @State private var confirmedTransfer: MediaTransferReview?
@@ -663,11 +664,11 @@ struct MediaGalleryView: View {
         }
     }
     private var galleryNavigation: some View {
-        galleryContent.jacSurface().jacWorkspaceTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : "Fotografía")
+        galleryContent.accessibilityIdentifier("media.gallery.scroll").jacSurface().jacWorkspaceTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : "Fotografía")
             #if os(iOS)
             .toolbar(compactGallery && notificationFolderID == nil && phoneMenu == nil ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }
-            .onChange(of: try? store.client.mediaAccessStamp()) { _, _ in
+            .onChange(of: store.client.mediaPresentationStamp) { _, _ in
                 sharingFolder = nil
                 selection.synchronize(client: store.client)
                 selectionDownloadChoices = false
@@ -703,15 +704,22 @@ struct MediaGalleryView: View {
             }
     }
     private var galleryUpdates: some View {
-        galleryNavigation.task(id: folderID) {
+        galleryNavigation.task(id: JACWorkspaceRefreshID(location: folderID, active: workspaceCanRefresh)) {
+                guard workspaceCanRefresh else { return }
                 await reload()
                 while !Task.isCancelled {
                     do { try await Task.sleep(for: .seconds(30)) } catch { return }
-                    if phase == .active && !uploading && preview == nil && fullscreenPhotos == nil && !choosingDestination && uploadComposition == nil && opening == nil { await reload() }
+                    guard workspaceCanRefresh else { return }
+                    if !uploading && preview == nil && fullscreenPhotos == nil && !choosingDestination && uploadComposition == nil && opening == nil { await reload() }
                 }
             }
-            .onChange(of: phase) { _, value in if value == .active && !uploading { Task { await reload() } } }
-            .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline { Task { await reload() } } }
+            .onChange(of: workspaceCanRefresh) { _, active in
+                if !active { generation = UUID(); loadingFolder = nil; loading = false }
+                #if os(iOS)
+                if active { refreshAfterUploads() } else { thumbnails.stop() }
+                #endif
+            }
+            .onChange(of: store.isOffline) { old, new in if old && !new && mediaIsOffline && workspaceCanRefresh { Task { await reload() } } }
             #if os(iOS)
             .onAppear { galleryVisible = true }
             .onChange(of: persistentUploads.revision) { _, _ in
@@ -721,6 +729,7 @@ struct MediaGalleryView: View {
             .onChange(of: persistentUploads.uploading) { _, running in if !running { refreshAfterUploads() } }
             #endif
             .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
+                guard workspaceCanRefresh else { return }
                 if let saved=store.client.cachedMedia(folder:folderID) {
                     let remaining = MediaGalleryOrder.applyingDeletions(to: items, from: saved)
                     if remaining != items { items = remaining }
@@ -1105,7 +1114,7 @@ struct MediaGalleryView: View {
         }.padding(18).background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18))
     }
     private func refreshAfterUploads() {
-        guard galleryVisible, uploadRefreshPending, !persistentUploads.uploading else { return }
+        guard galleryVisible, workspaceCanRefresh, uploadRefreshPending, !persistentUploads.uploading else { return }
         uploadRefreshPending = false
         Task { await reload() }
     }
@@ -1117,8 +1126,9 @@ struct MediaGalleryView: View {
         #endif
         queue.forEach { $0.remove() }; queue = []
     }
+    private var workspaceCanRefresh: Bool { isWorkspaceActive && phase == .active }
     private func reload() async {
-        guard !uploading, loadingFolder != folderID else { return }
+        guard workspaceCanRefresh, !Task.isCancelled, !uploading, loadingFolder != folderID else { return }
         let expected = UUID(), requestedFolder = folderID; generation = expected
         loading = true; loadingFolder=requestedFolder
         defer { if generation == expected { loading = false;loadingFolder=nil } }
@@ -1129,10 +1139,11 @@ struct MediaGalleryView: View {
         }
         do {
             let read = try await MediaGalleryListing.read(minimumPages: loadedPages, minimumItems: items.count) { cursor in
-                try await store.client.media(folder: requestedFolder, pageToken: cursor, forceNetwork: true)
+                guard expected == generation, workspaceCanRefresh, !Task.isCancelled else { throw CancellationError() }
+                return try await store.client.media(folder: requestedFolder, pageToken: cursor, forceNetwork: true)
             }
             let result = read.feed
-            guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
+            guard expected == generation, requestedFolder == folderID, workspaceCanRefresh, !Task.isCancelled else { return }
             if let previous=feed?.collectionID,previous != result.collectionID {expandedFolders=[];clearPreview()}
             loadedPages = read.pages; feed = result
             if items != result.items { items = result.items }
@@ -1146,7 +1157,7 @@ struct MediaGalleryView: View {
             // Join session revalidation before restoring write controls.
             if store.isOffline { try? await store.refreshAutomatically() }
         } catch {
-            guard expected == generation, requestedFolder == folderID, !Task.isCancelled else { return }
+            guard expected == generation, requestedFolder == folderID, workspaceCanRefresh, !Task.isCancelled else { return }
             if AgendaOfflineCache.isUnavailable(error), let saved = store.client.cachedMedia(folder: requestedFolder) {
                 if feed == nil { feed=saved;items=MediaGalleryOrder.sorted(saved.items) }
                 mediaIsOffline=true;self.error=nil;return
@@ -1309,6 +1320,8 @@ struct MediaTile: View {
     let epoch:UUID
     let denied:(Error)->Void
     var selectionValue: String? = nil
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
+    @Environment(\.scenePhase) private var phase
     #if os(iOS)
     @StateObject private var thumbnail = MediaTileThumbnail()
     private var image: UIImage? { thumbnail.image }
@@ -1316,10 +1329,11 @@ struct MediaTile: View {
         "\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.thumbnailAvailable)|\(item.mimeType)|\(client.mediaPresentationRevision)"
     }
     private func showThumbnail() {
-        let stamp = try? client.mediaAccessStamp()
+        guard isWorkspaceActive, phase == .active else { return }
+        let stamp = client.mediaPresentationStamp
         let cached = stamp.flatMap { MediaGridThumbnailLoader.shared.cachedImage(item, client: client, stamp: $0) }
         thumbnail.show(key: thumbnailKey, authorized: {
-            stamp != nil && stamp == (try? client.mediaAccessStamp()) && client.accessUser?.canReadMedia != false
+            stamp != nil && stamp == client.mediaPresentationStamp && client.accessUser?.canReadMedia != false
         }, cached: cached, load: { try await MediaGridThumbnailLoader.shared.image(item, client: client, networkAllowed: !offline) }, denied: denied)
     }
     #else
@@ -1348,6 +1362,9 @@ struct MediaTile: View {
             .accessibilityValue(selectionValue ?? (image != nil ? "Miniatura cargada" : item.thumbnailAvailable ? "Miniatura pendiente" : "Sin miniatura"))
             #if os(iOS)
             .onAppear { if item.kind != "folder" { showThumbnail() } }
+            .onChange(of: isWorkspaceActive && phase == .active) { _, active in
+                if active && item.kind != "folder" { showThumbnail() } else { thumbnail.pause() }
+            }
             .onChange(of: thumbnailKey) { _, _ in if thumbnail.visible { showThumbnail() } }
             .onChange(of: offline || client.usingOfflineCopy) { _, _ in if thumbnail.visible { showThumbnail() } }
             .onDisappear { thumbnail.hide() }

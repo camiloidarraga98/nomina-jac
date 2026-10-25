@@ -353,3 +353,9 @@ Camilo pidió quitar por completo el aviso «IA de OpenAI · Disponible 24 h · 
 En el resultado de fans, «Compartir mi foto» es la acción principal con icono grande y fondo vino; descargar queda como alternativa secundaria. Comparte el archivo por el menú nativo cuando el navegador lo admite y mantiene descarga donde no lo admite.
 
 «Crear otra foto» abre una nueva creación después de confirmar el archivo de la anterior en el servidor. La persona debe descargarla antes: ya no podrá recuperarla desde la página, aunque el resultado permanezca privado en Cloudflare. Se conserva la identidad anónima para cuotas y modo interno; no genera otra imagen ni reinicia límites al pulsarlo. El borrado explícito sigue retirando la creación actual, sin acceso a los archivos de sesiones anteriores.
+
+## Widget de pantalla de inicio y fluidez — 2026-10-25
+
+Camilo solicitó que un widget del iPhone permita elegir entre el calendario de JAC con próximos eventos y las últimas fotografías cargadas. Puede haber varios widgets con elecciones distintas. Se añade en Editar pantalla de inicio → Añadir widget → JAC y se configura manteniéndolo pulsado. Al tocar, abre Agenda o la carpeta de la foto con los permisos de la cuenta. La actualización depende de iOS y la app debe abrirse para sincronizar; no se comparten credenciales ni originales con la extensión. Activación Apple documentada en `docs/IPHONE_WIDGETS.md`.
+
+También pidió revisar los bloqueos al desplazar contenido y barra lateral. Se conserva el menú que empuja físicamente el contenido, las rutas/búsquedas/scroll al cambiar de sección, audio y subidas. Se elimina trabajo repetido de caché del dibujo y se suspenden consultas automáticas de secciones ocultas. Los controles de compilaciones futuras están en `docs/IOS_SCROLL_PERFORMANCE.md`; las pruebas de simulador no sustituyen la comprobación de fluidez del dispositivo real.

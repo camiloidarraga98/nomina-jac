@@ -72,3 +72,9 @@ Preferencia vigente: agrupar cambios y verificar al final solo lo modificado y l
 ## Nuevas opciones de Fotografía
 
 Camilo pidió descargas de carpeta solo fotos o fotos y videos, incluyendo subcarpetas, con revisión/permisos/progreso/cancelación. No confundir guardar en Fotos con Disponible sin conexión. Miniaturas360px/JPEG0.60 se guardan una vez en R2; un error de miniatura no completa el lote ni elimina el archivo local de la cola iOS. Reintentar solo la miniatura, sin duplicar el original. No afirmar reparados archivos históricos. Compartir carpeta genera capacidades revocables con7/30/90días, web sin cuenta y apertura iOS mediante el botón y esquema jacnomina, sin dar una sesión JAC. No requiere Associated Domains para el Personal Team; Team/bundles/pushNO permanecen. Ver ../docs/PHOTOGRAPHY_MEDIA_DELIVERY.md y ../docs/PHOTOGRAPHY_SHARES.md. La elección posterior de Cloudflare Stream y las vistas intermedias se documenta al inicio de estas instrucciones.
+
+## Fluidez y widgets autorizados
+
+Para iOS0.35.0(53), mantener presentación en RAM sin I/O/Keychain/cripto/JSON durante scroll, persistencia agrupada fuera de MainActor y pausa de consultas/prefetch de destinos ocultos conservando sus estados, audio y subidas. Los presupuestos de `docs/IOS_SCROLL_PERFORMANCE.md` forman parte de CI. No debilitar autorización o limpieza para hacerlos pasar.
+
+Camilo autorizó el widget Calendario/Fotografía: target JACWidgets, bundle co.jacmusic.nomina.widgets y AppGroup group.co.jacmusic.nomina.widgets junto a la app principal, equipo pagado AYHVYN8BJF. Esta decisión sustituye la prohibición histórica de AppGroups del Personal Team para este alcance. Extensión sólo con instantáneas mínimas protegidas, sin tokens/red, enlaces internos validados. Provisión real pendiente del propietario si Apple no la registra automáticamente. Detalles y límites de refresco en `docs/IPHONE_WIDGETS.md`.

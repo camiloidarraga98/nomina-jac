@@ -74,10 +74,11 @@ struct AgendaOfflineRecord: Codable {
     func month(_ month: String) -> SavedAgenda? { months.first { $0.data.month == month } }
 }
 
-struct AgendaCacheScope {
+struct AgendaCacheScope: @unchecked Sendable {
     let id: String
     let key: SymmetricKey
     init(origin: String, token: String) {
+        JACPerformanceDiagnostics.record(.keyDerivation)
         let salt = Data(("co.jacmusic.nomina.agenda.v1:" + origin).utf8)
         id = SHA256.hash(data: salt + Data(token.utf8)).map { String(format: "%02x", $0) }.joined()
         key = HKDF<SHA256>.deriveKey(inputKeyMaterial: SymmetricKey(data: Data(token.utf8)), salt: salt, info: Data("offline-agenda".utf8), outputByteCount: 32)
@@ -86,22 +87,35 @@ struct AgendaCacheScope {
 
 // Only calendar data and the minimal account identity are persisted. The key
 // derives from the session kept in Keychain and is never written to this file.
-final class AgendaOfflineCache {
+final class AgendaOfflineCache: @unchecked Sendable {
+    private let lock = NSRecursiveLock()
+    private let epochLock = NSLock()
+    private var epochs: [String: Int] = [:]
     let root: URL
+    private let beforeSave: (@Sendable () -> Void)?
     static let maximumBytes = 4 * 1024 * 1024
-    init(root: URL? = nil) {
+    init(root: URL? = nil, beforeSave: (@Sendable () -> Void)? = nil) {
+        self.beforeSave = beforeSave
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACAgendaOffline", isDirectory: true)
     }
     func file(_ scope: AgendaCacheScope) -> URL { root.appendingPathComponent(scope.id + ".sealed") }
+    func epoch(_ scope: AgendaCacheScope) -> Int { epochLock.lock(); defer { epochLock.unlock() }; return epochs[scope.id, default: 0] }
+    private func advanceEpoch(_ id: String) { epochLock.lock(); defer { epochLock.unlock() }; epochs[id, default: 0] += 1 }
+    func invalidatePendingWrites(_ scope: AgendaCacheScope) { advanceEpoch(scope.id) }
     func load(_ scope: AgendaCacheScope) -> AgendaOfflineRecord? {
+        lock.lock(); defer { lock.unlock() }; JACPerformanceDiagnostics.record(.diskRead)
         guard let bytes = try? Data(contentsOf: file(scope)), bytes.count <= Self.maximumBytes + 1024,
               let box = try? AES.GCM.SealedBox(combined: bytes),
-              let decoded = try? AES.GCM.open(box, using: scope.key),
-              let record = try? JSONDecoder().decode(AgendaOfflineRecord.self, from: decoded),
-              record.schema == 1, !record.months.isEmpty, record.months.count <= 6 else { return nil }
+              let decoded = try? AES.GCM.open(box, using: scope.key) else { return nil }
+        JACPerformanceDiagnostics.record(.jsonDecode)
+        guard let record = try? JSONDecoder().decode(AgendaOfflineRecord.self, from: decoded), record.schema == 1, !record.months.isEmpty, record.months.count <= 6 else { return nil }
         return record
     }
-    func save(_ record: AgendaOfflineRecord, scope: AgendaCacheScope) throws {
+    func save(_ record: AgendaOfflineRecord, scope: AgendaCacheScope, expectedEpoch: Int? = nil) throws {
+        beforeSave?()
+        lock.lock(); defer { lock.unlock() }
+        if let expectedEpoch, expectedEpoch != epoch(scope) { throw CancellationError() }
+        JACPerformanceDiagnostics.record(.jsonEncode)
         let bytes = try JSONEncoder().encode(record)
         guard bytes.count <= Self.maximumBytes else { throw APIError.message("La agenda supera el tamaño de la copia local.") }
         let sealed = try AES.GCM.seal(bytes, using: scope.key).combined!
@@ -111,10 +125,11 @@ final class AgendaOfflineCache {
         var folder = root, values = URLResourceValues(); values.isExcludedFromBackup = true
         try folder.setResourceValues(values)
         let target = file(scope)
+        JACPerformanceDiagnostics.record(.diskWrite)
         try sealed.write(to: target, options: JACFileSecurity.writeOptions)
         try manager.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath: target.path)
     }
-    func remove(_ scope: AgendaCacheScope) { try? FileManager.default.removeItem(at: file(scope)) }
+    func remove(_ scope: AgendaCacheScope) { advanceEpoch(scope.id); lock.lock(); defer { lock.unlock() }; JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: file(scope)) }
     static func isUnavailable(_ error: Error) -> Bool {
         guard let error = error as? URLError else { return false }
         return [.notConnectedToInternet, .timedOut, .cannotConnectToHost, .cannotFindHost, .dnsLookupFailed, .networkConnectionLost, .internationalRoamingOff, .dataNotAllowed].contains(error.code)
@@ -174,7 +189,7 @@ enum CalendarClock {
 
 // Shared read-only cache. Each response and the index are authenticated and
 // encrypted with a session-derived key; no password/token is stored on disk.
-struct OfflineResponse: Codable {
+struct OfflineResponse: Codable, Sendable {
     let key: String
     let url: String
     let headers: [String: String]
@@ -183,14 +198,25 @@ struct OfflineResponse: Codable {
     let revision: Int
     var response: HTTPURLResponse? { URL(string: url).flatMap { HTTPURLResponse(url: $0, statusCode: 200, httpVersion: nil, headerFields: headers.merging(["X-JAC-Offline": "1"]) { _, new in new }) } }
 }
-final class OfflineResponseCache {
-    struct Entry: Codable {
+final class OfflineResponseCache: @unchecked Sendable {
+    struct Entry: Codable, Sendable {
         let key: String; let url: String; let size: Int; let revision: Int
     }
     let root: URL
+    // Optional fixture I/O boundary for deterministic cancellation tests. The
+    // application never installs a hook; no callback runs while holding a lock.
+    private let beforeBatch: (@Sendable () -> Void)?
     static let maximumBytes = 512 * 1024 * 1024
     static let maximumEntryBytes = 16 * 1024 * 1024
-    init(root: URL? = nil) {
+    // A transaction holds one lock and writes the index once. Plain responses
+    // intentionally are not memoized here: explicit disk loads authenticate the
+    // current file, including after external corruption.
+    private let lock = NSRecursiveLock()
+    private let epochLock = NSLock()
+    private var epochs: [String: Int] = [:]
+    private var revisions: [String: Int] = [:]
+    init(root: URL? = nil, beforeBatch: (@Sendable () -> Void)? = nil) {
+        self.beforeBatch = beforeBatch
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACOfflineContent", isDirectory: true)
     }
     static func scope(origin: String, token: String) -> AgendaCacheScope { AgendaCacheScope(origin: origin + "/offline-content-v1", token: token) }
@@ -198,11 +224,17 @@ final class OfflineResponseCache {
     func file(_ scope: AgendaCacheScope, key: String) -> URL {
         folder(scope).appendingPathComponent(SHA256.hash(data: Data(key.utf8)).map { String(format: "%02x", $0) }.joined() + ".sealed")
     }
+    func epoch(_ scope: AgendaCacheScope) -> Int { epochLock.lock(); defer { epochLock.unlock() }; return epochs[scope.id, default: 0] }
+    func memoryRevision(_ scope: AgendaCacheScope) -> Int { epochLock.lock(); defer { epochLock.unlock() }; return revisions[scope.id, default: 0] }
+    private func advanceRevision(_ id: String) { epochLock.lock(); defer { epochLock.unlock() }; revisions[id, default: 0] += 1 }
+    private func advanceEpoch(_ id: String) { epochLock.lock(); defer { epochLock.unlock() }; epochs[id, default: 0] += 1; revisions[id, default: 0] += 1 }
     private func read<T: Decodable>(_ type: T.Type, scope: AgendaCacheScope, key: String) -> T? {
         let path = file(scope, key: key)
+        JACPerformanceDiagnostics.record(.diskRead)
         guard let size = try? path.resourceValues(forKeys: [.fileSizeKey]).fileSize, size <= Self.maximumEntryBytes * 2,
               let bytes = try? Data(contentsOf: path), let box = try? AES.GCM.SealedBox(combined: bytes),
               let plain = try? AES.GCM.open(box, using: scope.key, authenticating: Data(key.utf8)) else { return nil }
+        JACPerformanceDiagnostics.record(.jsonDecode)
         return try? JSONDecoder().decode(type, from: plain)
     }
     private func write<T: Encodable>(_ value: T, scope: AgendaCacheScope, key: String) throws {
@@ -211,34 +243,75 @@ final class OfflineResponseCache {
         try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: directory.path)
         try manager.setAttributes(JACFileSecurity.directoryAttributes, ofItemAtPath: root.path)
         var excluded = root, values = URLResourceValues(); values.isExcludedFromBackup = true; try excluded.setResourceValues(values)
+        JACPerformanceDiagnostics.record(.jsonEncode)
         let bytes = try AES.GCM.seal(JSONEncoder().encode(value), using: scope.key, authenticating: Data(key.utf8)).combined!
+        JACPerformanceDiagnostics.record(.diskWrite)
+        if key == "index-v1" { JACPerformanceDiagnostics.record(.indexWrite) }
         try bytes.write(to: file(scope, key: key), options: JACFileSecurity.writeOptions)
         try manager.setAttributes(JACFileSecurity.fileAttributes, ofItemAtPath:file(scope,key:key).path)
     }
-    func entries(_ scope: AgendaCacheScope) -> [Entry] { read([Entry].self, scope: scope, key: "index-v1") ?? [] }
+    func entries(_ scope: AgendaCacheScope) -> [Entry] { lock.lock(); defer { lock.unlock() }; return read([Entry].self, scope: scope, key: "index-v1") ?? [] }
     func load(_ scope: AgendaCacheScope, key: String) -> OfflineResponse? {
+        lock.lock(); defer { lock.unlock() }
         guard let record = read(OfflineResponse.self, scope: scope, key: key), record.key == key, record.data.count <= Self.maximumEntryBytes else { return nil }
         return record
     }
-    func save(_ record: OfflineResponse, scope: AgendaCacheScope) throws {
-        guard record.data.count <= Self.maximumEntryBytes else { throw APIError.message("Este archivo supera el tamaño de la copia sin conexión.") }
-        var index = entries(scope); index.removeAll { $0.key == record.key }
-        guard index.count < 4096, index.reduce(0, { $0 + $1.size }) + record.data.count <= Self.maximumBytes else { throw APIError.message("La copia sin conexión está llena. Algunos archivos necesitan internet.") }
-        if let previous = load(scope, key: record.key),
-           let old = try? JSONDecoder().decode(JSONValue.self, from: previous.data),
-           let new = try? JSONDecoder().decode(JSONValue.self, from: record.data), old["version"].number > new["version"].number { return }
-        try write(record, scope: scope, key: record.key)
-        index.append(Entry(key: record.key, url: record.url, size: record.data.count, revision: record.revision))
+    @discardableResult func save(_ record: OfflineResponse, scope: AgendaCacheScope) throws -> Bool { try saveBatch([record], scope: scope) }
+    // Ignoring receivedAt avoids rewriting identical polling results. Epochs
+    // ensure a queued background write cannot resurrect a revoked/deleted copy.
+    @discardableResult func saveBatch(_ records: [OfflineResponse], scope: AgendaCacheScope, expectedEpoch: Int? = nil, removing: ((Entry) -> Bool)? = nil) throws -> Bool {
+        beforeBatch?()
+        lock.lock(); defer { lock.unlock() }
+        if let expectedEpoch, expectedEpoch != epoch(scope) { throw CancellationError() }
+        guard records.allSatisfy({ $0.data.count <= Self.maximumEntryBytes }) else { throw APIError.message("Este archivo supera el tamaño de la copia sin conexión.") }
+        let original = entries(scope), removed = removing.map { original.filter($0) } ?? []
+        var index = original.filter { entry in !removed.contains(where: { $0.key == entry.key }) }
+        var writes: [OfflineResponse] = [], changed = !removed.isEmpty
+        // Validate limits and revision ordering before changing any files.
+        for record in records {
+            if let previous = load(scope, key: record.key) {
+                if previous.data == record.data && previous.headers == record.headers && previous.revision == record.revision {
+                    if !index.contains(where: { $0.key == record.key && $0.url == record.url && $0.size == record.data.count && $0.revision == record.revision }) {
+                        index.removeAll { $0.key == record.key }
+                        index.append(Entry(key: record.key, url: record.url, size: record.data.count, revision: record.revision)); changed = true
+                    }
+                    continue
+                }
+                if previous.revision > record.revision { continue }
+                JACPerformanceDiagnostics.record(.jsonDecode); JACPerformanceDiagnostics.record(.jsonDecode)
+                if let old = try? JSONDecoder().decode(JSONValue.self, from: previous.data), let new = try? JSONDecoder().decode(JSONValue.self, from: record.data), old["version"].number > new["version"].number { continue }
+            }
+            let remaining = index.filter { $0.key != record.key }
+            guard remaining.count < 4096, remaining.reduce(0, { $0 + $1.size }) + record.data.count <= Self.maximumBytes else { throw APIError.message("La copia sin conexión está llena. Algunos archivos necesitan internet.") }
+            index = remaining + [Entry(key: record.key, url: record.url, size: record.data.count, revision: record.revision)]
+            writes.append(record); changed = true
+        }
+        guard changed else { return false }
+        for entry in removed { JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: file(scope, key: entry.key)) }
+        for record in writes { try write(record, scope: scope, key: record.key) }
         try write(index, scope: scope, key: "index-v1")
+        advanceRevision(scope.id)
+        return true
     }
     func remove(_ scope: AgendaCacheScope, matching: (Entry) -> Bool) {
+        advanceEpoch(scope.id)
+        lock.lock(); defer { lock.unlock() }
         let index = entries(scope), removed = index.filter(matching)
         guard !removed.isEmpty else { return }
-        for entry in removed { try? FileManager.default.removeItem(at: file(scope, key: entry.key)) }
+        for entry in removed { JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: file(scope, key: entry.key)) }
         try? write(index.filter { !matching($0) }, scope: scope, key: "index-v1")
     }
-    func clear(_ scope: AgendaCacheScope) { try? FileManager.default.removeItem(at: folder(scope)) }
+    func clear(_ scope: AgendaCacheScope) {
+        advanceEpoch(scope.id)
+        lock.lock(); defer { lock.unlock() }
+        JACPerformanceDiagnostics.record(.diskWrite)
+        try? FileManager.default.removeItem(at: folder(scope))
+    }
     func removeOtherSessions(_ scope: AgendaCacheScope) {
-        for path in (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where path.lastPathComponent != scope.id { try? FileManager.default.removeItem(at: path) }
+        lock.lock(); defer { lock.unlock() }
+        JACPerformanceDiagnostics.record(.diskRead)
+        for path in (try? FileManager.default.contentsOfDirectory(at: root, includingPropertiesForKeys: nil)) ?? [] where path.lastPathComponent != scope.id {
+            advanceEpoch(path.lastPathComponent); JACPerformanceDiagnostics.record(.diskWrite); try? FileManager.default.removeItem(at: path)
+        }
     }
 }

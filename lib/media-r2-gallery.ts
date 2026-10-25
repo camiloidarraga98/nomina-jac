@@ -80,6 +80,45 @@ export async function r2Feed(g:MediaGuard,user:AccessUser,folder=R2_ROOT,pageTok
  const deletedFiles=await database().prepare("SELECT parent_id FROM jac_media_operations WHERE kind='r2-delete-file' AND connection_version=?").bind(c.config.version).all<{parent_id:string}>();const pendingFiles=canDeleteMedia(user)?await database().prepare("SELECT parent_id AS id,drive_id AS parentId,name,offset AS removed FROM jac_media_operations WHERE kind='r2-delete-file' AND connection_version=? AND status='pending' ORDER BY created_at LIMIT 100").bind(c.config.version).all():null;await live(c);
  return {deletedFiles:deletedFiles.results.map(x=>x.parent_id),pendingFileDeletions:pendingFiles?.results??[],canDelete:canDeleteMedia(user),deletedFolders:removed.results.map(x=>x.parent_id),pendingDeletions:pending?.results??[],connected:true,canRead:canReadMedia(user),canUpload:canUploadMedia(user),canConnect:canConnectMedia(user),provider:'r2',collectionID:R2_COLLECTION,root,folder:breadcrumbs.at(-1)!,breadcrumbs,items:listed.results.slice(0,100).filter(row=>!deletedFiles.results.some(d=>d.parent_id===row.id)&&!removed.results.some(d=>d.parent_id===row.id)).map(item),...(listed.results.length>100?{nextPageToken:next}:{})};
 }
+
+export type RecentMediaItem=MediaItem&{parentId:string};
+/** The eight latest completed photos across the current collection. This is
+ * metadata only: thumbnails keep their existing authenticated, revision-bound
+ * endpoint. A single indexed query checks each bounded ancestor chain in SQL;
+ * it never walks every folder or downloads an original to build this feed.
+ */
+export async function r2RecentPhotos(g:MediaGuard):Promise<{items:RecentMediaItem[];collectionID:string}>{
+ const c=await context(g);
+ const sql=`WITH authorized AS (
+  SELECT version FROM jac_media_r2_connection
+  WHERE id='jac' AND enabled=1 AND version=? AND credentials=? AND ${g.sql}
+ ), photos AS (
+  SELECT e.* FROM jac_media_r2_entries e INDEXED BY jac_media_r2_entries_recent CROSS JOIN authorized scope
+  WHERE e.mime_type IN ('image/jpeg','image/png','image/gif','image/webp','image/heic','image/heif','image/tiff') AND e.object_key<>''
+  AND EXISTS(SELECT 1 FROM jac_media_operations u INDEXED BY jac_media_operations_media_notify
+   WHERE u.connection_version=scope.version AND u.kind='r2-upload' AND u.parent_id=e.parent_id AND u.status='ready' AND u.drive_id=e.id
+   AND u.offset=u.size AND u.size=e.size AND u.mime_type=e.mime_type AND u.payload_hash=e.payload_hash
+   AND e.id='r2_'||lower(u.id) AND e.object_key='originals/'||lower(u.id))
+  AND EXISTS(WITH RECURSIVE ancestors(id,parent_id,mime_type,depth) AS (
+   SELECT e.id,e.parent_id,e.mime_type,0 UNION ALL
+   SELECT p.id,p.parent_id,p.mime_type,a.depth+1 FROM jac_media_r2_entries p JOIN ancestors a ON p.id=a.parent_id WHERE a.depth<22
+  ) SELECT 1 WHERE EXISTS(SELECT 1 FROM ancestors WHERE parent_id='${R2_ROOT}')
+   AND NOT EXISTS(SELECT 1 FROM ancestors WHERE (depth>0 AND mime_type<>'${MEDIA_FOLDER_MIME}')
+    OR length(id)<>39 OR substr(id,1,3)<>'r2_' OR substr(id,4) GLOB '*[^a-f0-9-]*')
+   AND NOT EXISTS(SELECT 1 FROM ancestors a JOIN jac_media_operations d ON d.id='r2-delete:'||a.id AND d.kind IN ('r2-delete-folder','r2-delete-file')))
+  ORDER BY e.created_at DESC,e.id DESC LIMIT 8
+ ) SELECT photos.* FROM authorized LEFT JOIN photos ON 1=1 ORDER BY photos.created_at DESC,photos.id DESC`;
+ const read=async()=>{
+  const rows=await database().prepare(sql).bind(c.config.version,c.config.credentials,...g.bindings).all<Entry>();
+  // No row means authorization changed. One NULL joined row means the
+  // authorized collection is empty; these states must never be conflated.
+  if(!rows.results.length)throw new MediaFailure('La sesión, los permisos o la galería cambiaron. Actualiza Fotografía.',403);
+  return rows.results.filter(row=>typeof row.id==='string');
+ };
+ await read();await live(c);
+ const current=await read();
+ return {items:current.map(row=>({...item(row),parentId:row.parent_id})),collectionID:R2_COLLECTION};
+}
 export async function r2Folder(g:MediaGuard,input:Record<string,unknown>){
  if(!validMediaRequestID(input.id)||typeof input.parentId!=='string')throw new MediaFailure('La solicitud de carpeta no es válida.');
  const c=await context(g),id='r2_'+input.id.toLowerCase(),parentID=rootID(input.parentId),name=mediaName(input.name),digest=hash([c.g.actorID,parentID,name]),now=new Date().toISOString();await parent(c,parentID);

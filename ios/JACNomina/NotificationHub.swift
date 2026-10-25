@@ -140,6 +140,15 @@ final class JACNotifications: ObservableObject {
     }
     func stop() { generation += 1; client = nil; token = nil; noticeID = nil; pendingMedia = nil; mediaDestination = nil; routingError = nil; if pushAvailable { unregisterRemote() } }
     func received(_ value: String?) { if pushAvailable, let value, UUID(uuidString: value) != nil { noticeID = value.lowercased() } }
+    #if os(iOS)
+    /// A local widget link is independent of APNs permission. The existing
+    /// resolver still checks the active session, module and exact live folder.
+    func openWidgetFolder(_ folderID: String) {
+        guard JACWidgetRoute.validFolder(folderID) else { return }
+        noticeID = nil; mediaDestination = nil; routingError = nil
+        pendingMedia = PendingMediaNotification(id: UUID(), folderID: folderID.lowercased(), sessionID: nil)
+    }
+    #endif
     func received(noticeID: String?, kind: String?, folderID: String?) {
         guard pushAvailable else { return }
         if kind == "media_folder" {

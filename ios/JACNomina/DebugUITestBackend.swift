@@ -8,6 +8,10 @@ import ImageIO
 // excluded from Release and never read or write the real payroll or Keychain.
 enum UITestBackend {
     static let base = URL(string: "https://ui-fixture.example.invalid")!
+    static func scrollRequestSnapshot() -> [String: Int] {
+        FixtureProtocol.lock.lock(); defer { FixtureProtocol.lock.unlock() }
+        return FixtureProtocol.scrollRequests
+    }
     // Synthetic codes; deliberately not a valid boarding pass or airline payload.
     static func boardingCodePDF() throws -> Data {
         let bytes=NSMutableData(),consumer=CGDataConsumer(data:bytes)!
@@ -92,7 +96,8 @@ private final class FixtureProtocol: URLProtocol {
     static var slowAgenda = false
     static var slowedWorkspace = false
     static var slowedMedia = false
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; contracts=ProcessInfo.processInfo.arguments.contains("--uitest-contract-archive") ? [.object(["id":.string("11111111-1234-4234-8234-111111111111"),"filename":.string("Contrato JAC - Pereira - 31 de octubre 2026.pdf"),"municipality":.string("Pereira"),"company":.string("EMPRESA FICTICIA JAC SAS"),"eventDate":.string("2026-10-31"),"price":.number(140000000),"showId":.null,"showTitle":.string(""),"version":.number(1)])]:[]; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static var scrollRequests: [String: Int] = [:]
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; scrollRequests = [:]; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; contracts=ProcessInfo.processInfo.arguments.contains("--uitest-contract-archive") ? [.object(["id":.string("11111111-1234-4234-8234-111111111111"),"filename":.string("Contrato JAC - Pereira - 31 de octubre 2026.pdf"),"municipality":.string("Pereira"),"company":.string("EMPRESA FICTICIA JAC SAS"),"eventDate":.string("2026-10-31"),"price":.number(140000000),"showId":.null,"showTitle":.string(""),"version":.number(1)])]:[]; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func seedOfflineContent() {
         lock.lock(); defer { lock.unlock() }
         var alert = itinerary
@@ -109,6 +114,27 @@ private final class FixtureProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance"), let url = request.url {
+            let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
+            let key: String
+            switch url.path {
+            case "/api/calendar": key = "calendar"
+            case "/api/media": key = "media"
+            case "/api/media/file": key = query.contains(where: { $0.name == "thumbnail" }) ? "thumbnails" : "media-file"
+            case "/api/notices": key = query.contains(where: { $0.name == "boarding" }) ? "boarding" : "notices"
+            case "/api/music": key = "music"
+            case "/api/mobile/payroll": key = "workspace"
+            default: key = "other"
+            }
+            Self.lock.lock(); Self.scrollRequests[key, default: 0] += 1; Self.lock.unlock()
+        }
+        if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-slow-thumbnails"),
+           request.url?.path == "/api/media/file",
+           URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems?.contains(where: { $0.name == "thumbnail" }) == true {
+            let work = DispatchWorkItem { [weak self] in self?.deliverResponse() }; delayedResponse = work
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 0.5, execute: work)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--uitest-async-slow-workspace"), request.url?.host == "ui-fixture.example.invalid", request.url?.path == "/api/mobile/payroll", request.url?.query?.contains("workspace=1") == true {
             Self.lock.lock();let delay = !Self.slowedWorkspace;Self.slowedWorkspace=true;Self.lock.unlock()
             if delay {
@@ -445,7 +471,21 @@ private final class FixtureProtocol: URLProtocol {
         return .object(["employees": .array([employee("music", name: "Música simulada", category: "musicos"), employee("driver-a", name: "Conductor uno", category: "conductores", rate: 1000), employee("driver-b", name: "Conductor dos", category: "conductores", rate: 1250), employee("salary", name: "Dependiente simulado", category: "administracion", salary: 1500000)]), "settings": .object(["company": .string("Empresa simulada"), "nit": .string("PRUEBA"), "hourDivisor": .number(210), "hourFactors": .array([0.35,0.9,1.25,1.25,1.75,2.15,2.65].map { .number($0) })]), "concepts": .array([.object(["id": .string("test-concept"), "name": .string("Ensayo simulado"), "amount": .number(80000), "kind": .string("servicio")])]), "periods": .array([.object(["id": .string("fixture-period"), "start": .string("2025-09-16"), "end": .string("2025-09-30"), "status": .string("abierta"), "shows": .array([]), "movements": .array([]), "hours": .array([]), "routes": .array([]), "excludedEmployees": .array([])])])])
     }
     static let pdf = "JVBERi0xLjcKJYGBgYEKCjYgMCBvYmoKPDwKL0ZpbHRlciAvRmxhdGVEZWNvZGUKL0xlbmd0aCAxMTQKPj4Kc3RyZWFtCnicHYoxCgJBEATzfsXEgri7N9ezA2Kg3mFgIswHRE5RNFDE97tKUxQU/cQ6kOS31wWL3XT/TO/r6Ti35FVrsupSksQZRSX2yP9rlo6i2voDS3VTOgf2VpgbzrEk65q31nPDTOW4krghZhgCB3wBQnsaAAplbmRzdHJlYW0KZW5kb2JqCgo3IDAgb2JqCjw8Ci9GaWx0ZXIgL0ZsYXRlRGVjb2RlCi9UeXBlIC9PYmpTdG0KL04gNQovRmlyc3QgMjYKL0xlbmd0aCAzNjAKPj4Kc3RyZWFtCnic1VJRS8MwEH7Pr7hHfZCkade0Mgbb2irIUDZBUXzI2jAqI5E2lfnvvWs7xx7EZykfzd19l3zJfQEIkBBFEIJKIIJJKGECKghgOmX88evDAH/QO9MyfldXLbwiR8Aa3hhfus56CNhsxk7cpfZ673ZsaIKAyEfGQ+OqrjQNTIu8KIRQQog4QsRCyAz/S0SKkBhjTSa4RqhoBOZUKEQ4x1oxIFZDD9V77mTsz/GP3Jg42cCNkiH+OZfOyoc95F960hnjK1dl2hu4yK6lkHHQt0ShjF8u8Tkao737v5fr9dfO/nrDsznTeGnIjSEP9FPma9O6rilx7MQrHFZocWv2n8bXpb5SIk1Qp0pS9NhoDP58v303ZU+lMD/4m40nDUOCcitT1XrhDug+gV8YC8CXIA/OrXWeXNn70XpUQ1E8evRMMglifNNtfR9SMmB8oVvTSz3pRBG2dFVtd8Cfaju3bX1M0I7fConF1QplbmRzdHJlYW0KZW5kb2JqCgo4IDAgb2JqCjw8Ci9TaXplIDkKL1Jvb3QgMiAwIFIKL0luZm8gMyAwIFIKL0ZpbHRlciAvRmxhdGVEZWNvZGUKL1R5cGUgL1hSZWYKL0xlbmd0aCA0MAovVyBbIDEgMiAyIF0KL0luZGV4IFsgMCA5IF0KPj4Kc3RyZWFtCnicFcSxEQAgDAOxt8MdLeszE0MlWIWAbrMhKTlVWuKAeD9fGGHFA68KZW5kc3RyZWFtCmVuZG9iagoKc3RhcnR4cmVmCjY2NQolJUVPRg=="
-    static var boardingFixtures: [JSONValue] { let dates=[BoardingClock.today(),BoardingClock.today(),BoardingClock.nextDay(BoardingClock.today()),"2020-10-10","2090-10-10"]
+    static var boardingFixtures: [JSONValue] {
+        if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance") {
+            return (0..<40).map { index in
+                .object([
+                    "id": .string("boarding-scroll-\(index)"), "kind": .string("boarding_pass"),
+                    "title": .string("Pase ficticio \(index)"), "body": .string("Sin viaje real"),
+                    "filename": .string(""), "size": .number(100), "createdAt": .string("2026-10-25T12:00:00Z"),
+                    "travelDate": .string(BoardingClock.today()), "read": .bool(false),
+                    "recipients": .array([.string("11111111-1111-4111-8111-111111111111")]),
+                    "boardingDetails": .object(["seat": .string("\(index + 1)A"), "departureTime": .string("18:45"), "boardingTime": .string("18:05"), "airline": .string("Aerolínea ficticia \(index)")]),
+                    "attachments": .array([.object(["id": .string("boarding-scroll-\(index)-pdf"), "filename": .string("Camilo 25 de octubre 2026 Bogotá-Pereira.pdf"), "mimeType": .string("application/pdf"), "size": .number(100)])]),
+                ])
+            }
+        }
+        let dates=[BoardingClock.today(),BoardingClock.today(),BoardingClock.nextDay(BoardingClock.today()),"2020-10-10","2090-10-10"]
         return dates.enumerated().map { index,date in
             var item: JSONValue = .object(["id":.string("boarding-fixture-\(index)"),"kind":.string("boarding_pass"),"title":.string(index==3 ? "Pase anterior ficticio" : index==2 ? "Pase de mañana ficticio" : index==4 ? "Pase futuro ficticio" : "Pase de hoy ficticio \(index+1)"),"body":.string("Documento ficticio, sin viaje real"),"filename":.string(""),"size":.number(100),"createdAt":.string("2026-10-07T12:00:00Z"),"travelDate":.string(date),"read":.bool(false),"recipients":.array([.string("11111111-1111-4111-8111-111111111111")]),"attachments":.array([.object(["id":.string("boarding-fixture-\(index)-pdf"),"filename":.string("Camilo 16 de octubre Pereira-Bogota.pdf"),"mimeType":.string("application/pdf"),"size":.number(100)])])])
             if index == 0,
@@ -559,7 +599,7 @@ enum MediaFixture {
             items[notificationFolderID] = [item(id: "notification-photo", name: "Foto de la notificación.png", mime: "image/png", kind: "image", size: photo.count)]
             files["notification-photo"] = photo
         }
-        if ProcessInfo.processInfo.arguments.contains("--uitest-media-scroll") || stabilityFixture {
+        if ProcessInfo.processInfo.arguments.contains("--uitest-media-scroll") || ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance") || stabilityFixture {
             items["media-day"] = (0..<(stabilityFixture ? 24 : 80)).map { index in
                 let id = "media-scroll-\(index)"
                 files[id] = photo

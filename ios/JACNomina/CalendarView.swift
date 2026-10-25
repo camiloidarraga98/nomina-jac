@@ -3,6 +3,7 @@ import SwiftUI
 struct CalendarView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var phase
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
     let user: PayrollUser
     @StateObject private var connectivity = AgendaConnectivity()
@@ -38,6 +39,7 @@ struct CalendarView: View {
     }
     private var visible: AgendaData? { (feed?.month == month ? feed : nil) ?? store.cachedAgenda(month: month, userID: user.id)?.data ?? store.client.cached(AgendaData.self, path: "api/calendar", query: [URLQueryItem(name: "month", value: month)]) }
     private var live: Bool { liveMonth == month && !store.isAgendaOnly && connectivity.connected != false && !store.isOffline }
+    private var workspaceCanRefresh: Bool { isWorkspaceActive && phase == .active }
     private var eventsByDay: [String: [AgendaEvent]] {
         guard let visible else { return [:] }
         return CalendarClock.eventsByDay(visible.events, days: visible.days)
@@ -54,9 +56,11 @@ struct CalendarView: View {
     }
     private var observedAgendaPage: some View {
         agendaPage
-            .task(id: month) { await monitorAgenda() }
-            .onChange(of: phase) { _, value in if value == .active { Task { await refresh() } } }
-            .onChange(of: connectivity.connected) { old, new in if old == false && new == true { Task { await refresh() } } }
+            .task(id: JACWorkspaceRefreshID(location: month, active: workspaceCanRefresh)) {
+                guard workspaceCanRefresh else { return }
+                await monitorAgenda()
+            }
+            .onChange(of: connectivity.connected) { old, new in if old == false && new == true && workspaceCanRefresh { Task { await refresh() } } }
     }
     private var agendaPage: some View {
         AgendaPage(compact: compactPhone) {
@@ -202,10 +206,12 @@ struct CalendarView: View {
         }
     }
     private func monitorAgenda() async {
+        guard workspaceCanRefresh, !Task.isCancelled else { return }
         await refresh()
         while !Task.isCancelled {
             do { try await Task.sleep(for: .seconds(30)) } catch { return }
-            if phase == .active && connectivity.connected != false { await refresh() }
+            guard workspaceCanRefresh else { return }
+            if connectivity.connected != false { await refresh() }
         }
     }
     @ViewBuilder private func phoneAgenda(_ visible: AgendaData, byDay: [String: [AgendaEvent]]) -> some View {
@@ -362,6 +368,7 @@ struct CalendarView: View {
         if let next = CalendarClock.shift(month, by: offset) { month = next; day = next + "-01" }
     }
     private func refresh() async {
+        guard workspaceCanRefresh, !Task.isCancelled else { return }
         let id = UUID(); requestID = id; let currentMonth = month
         loading = true; error = nil; offlineMessage = nil
         defer { if requestID == id { loading = false } }
@@ -369,11 +376,12 @@ struct CalendarView: View {
             if store.isAgendaOnly { try await store.refreshAutomatically() }
             guard let scope = try store.client.agendaScope() else { throw APIError.unauthorized }
             let result = try await store.client.agenda(month: currentMonth)
-            guard requestID == id, month == currentMonth else { return }
-            try store.rememberAgenda(result, userID: user.id, scope: scope)
+            guard requestID == id, month == currentMonth, workspaceCanRefresh, !Task.isCancelled else { return }
+            try await store.rememberAgendaInBackground(result, userID: user.id, scope: scope)
+            guard requestID == id, month == currentMonth, workspaceCanRefresh, !Task.isCancelled else { return }
             feed = result; liveMonth = currentMonth; refreshedAt = Date()
         } catch {
-            guard requestID == id else { return }
+            guard requestID == id, workspaceCanRefresh, !Task.isCancelled else { return }
             liveMonth = nil
             if let api = error as? APIError {
                 switch api {

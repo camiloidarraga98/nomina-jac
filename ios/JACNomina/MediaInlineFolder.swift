@@ -185,6 +185,11 @@ final class MediaTileThumbnail: ObservableObject {
         }
     }
     func hide() { visible = false; cancel() }
+    func pause() {
+        // A retained section may be hidden by the drawer without leaving the
+        // viewport. Cancel the read, retaining the decoded image and identity.
+        visible = false; generation = UUID(); task?.cancel(); task = nil
+    }
     private func cancel() {
         generation = UUID(); task?.cancel(); task = nil; key = nil; image = nil
     }
@@ -439,6 +444,8 @@ struct MediaInlineFolder: View {
     var ancestry: Set<String> = []
 
     @EnvironmentObject private var store: PayrollStore
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
+    @Environment(\.scenePhase) private var phase
     @State private var feed: MediaFeed?
     @State private var items: [MediaItem] = []
     @State private var loading = false
@@ -450,7 +457,8 @@ struct MediaInlineFolder: View {
     @StateObject private var thumbnails = MediaFolderThumbnailPrefetch()
 
     private var isExpanded: Bool { expanded.contains(folder.id) }
-    private var accessStamp: String? { isExpanded ? (try? store.client.mediaAccessStamp()) : nil }
+    private var accessStamp: String? { isExpanded ? store.client.mediaPresentationStamp : nil }
+    private var workspaceCanRefresh: Bool { isWorkspaceActive && phase == .active }
     private var validPath: Bool { !ancestry.contains(folder.id) && ancestry.count < 64 }
     private var descendants: Set<String> { ancestry.union([folder.id]) }
     private var folders: [MediaItem] { items.filter { $0.kind == "folder" && !descendants.contains($0.id) } }
@@ -561,6 +569,10 @@ struct MediaInlineFolder: View {
         .background(JACTheme.card, in: RoundedRectangle(cornerRadius: 18))
         .overlay { RoundedRectangle(cornerRadius: 18).strokeBorder(JACTheme.action.opacity(0.07), lineWidth: 1) }
         .onAppear { if isExpanded { startRead() } }
+        .onChange(of: workspaceCanRefresh) { _, active in
+            if active && isExpanded { startRead() }
+            else { stopRead(); thumbnails.stop() }
+        }
         .onChange(of: isExpanded) { _, value in
             if value { startRead() }
             else { stopRead(); clearContent(); loadedPages = 1 }
@@ -581,7 +593,7 @@ struct MediaInlineFolder: View {
             if stamp != nil && isExpanded { startRead() }
         }
         .onReceive(store.client.$cacheRevision.dropFirst()) {_ in
-            guard isExpanded else { return }
+            guard isExpanded, workspaceCanRefresh else { return }
             if let saved=store.client.cachedMedia(folder:folder.id) {
                 let remaining = MediaGalleryOrder.applyingDeletions(to: items, from: saved)
                 if remaining != items { items = remaining }
@@ -631,7 +643,7 @@ struct MediaInlineFolder: View {
     }
 
     private func startRead() {
-        guard isExpanded, validPath, !loading else { return }
+        guard workspaceCanRefresh, isExpanded, validPath, !loading else { return }
         stopRead()
         let expected = generation, pages = max(1, loadedPages)
         loading = true

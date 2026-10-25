@@ -1,5 +1,21 @@
 import SwiftUI
 
+private struct WorkspaceActiveKey: EnvironmentKey {
+    static let defaultValue = true
+}
+extension EnvironmentValues {
+    /// A mounted phone destination may retain its navigation and scroll state
+    /// while another section, or the physical drawer, is visible.
+    var isWorkspaceActive: Bool {
+        get { self[WorkspaceActiveKey.self] }
+        set { self[WorkspaceActiveKey.self] = newValue }
+    }
+}
+struct JACWorkspaceRefreshID: Equatable {
+    var location = ""
+    var active: Bool
+}
+
 // Keep the iPhone's system picker; Mac dates open from a complete button.
 #if os(macOS)
 typealias JACDatePicker = MacDatePicker
@@ -41,7 +57,22 @@ struct JACNominaApp: App {
                 }
             }
             .background(WindowPrivacyShield())
-            .onOpenURL { url in if url.isFileURL { store.receiveAudio(url); return }; if let share = MediaIncomingShare.parse(url) { incomingShare = share } }
+            .modifier(JACWidgetLifecycle(store: store, enabled: Self.widgetIntegrationEnabled))
+            #if DEBUG
+            .overlay(alignment: .bottomTrailing) {
+                if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance") {
+                    JACScrollDiagnosticsProbe().padding(.trailing, 6).padding(.bottom, 3)
+                }
+            }
+            .transformEnvironment(\.dynamicTypeSize) { size in
+                if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-sidebar") { size = .accessibility5 }
+            }
+            #endif
+            .onOpenURL { url in
+                if url.isFileURL { store.receiveAudio(url); return }
+                if JACWidgetNavigation.shared.receive(url) { return }
+                if let share = MediaIncomingShare.parse(url) { incomingShare = share }
+            }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
                 if let url = activity.webpageURL, let share = MediaIncomingShare.parse(url) { incomingShare = share }
             }
@@ -74,6 +105,17 @@ struct JACNominaApp: App {
             .onChange(of: store.isOffline) { old, new in if old && !new && !Self.isUnitTestHost { store.prefetchMediaRoot() } }
             .onChange(of: store.overview?.user.id) { _, _ in if !Self.isUnitTestHost { store.prefetchMediaRoot() } }
         }
+        .backgroundTask(.appRefresh(JACWidgetBridge.backgroundTaskIdentifier)) {
+            guard Self.widgetIntegrationEnabled else { return }
+            await JACWidgetBridge.shared.refreshInBackground(client: store.client)
+        }
+    }
+    private static var widgetIntegrationEnabled: Bool {
+        #if DEBUG
+        return !Self.isUnitTestHost && !ProcessInfo.processInfo.arguments.contains("--uitest-payroll")
+        #else
+        return true
+        #endif
     }
     private static var isUnitTestHost: Bool {
         #if DEBUG
@@ -90,6 +132,30 @@ struct JACNominaApp: App {
         return PayrollStore()
     }
 }
+
+#if DEBUG
+private struct JACScrollDiagnosticsProbe: View {
+    @State private var sample = 0
+    @State private var value = "{}"
+    var body: some View {
+        Button {
+            sample += 1
+            let snapshot = JACPerformanceDiagnostics.snapshot()
+            var fields = UITestBackend.scrollRequestSnapshot().reduce(into: [String: Int]()) { $0["requests." + $1.key] = $1.value }
+            fields["sample"] = sample
+            fields["main.expensive"] = snapshot.mainThreadExpensiveOperations
+            for (name, operation) in [("diskRead", JACPerformanceDiagnostics.Operation.diskRead), ("diskWrite", .diskWrite), ("keyDerivation", .keyDerivation), ("jsonDecode", .jsonDecode), ("jsonEncode", .jsonEncode), ("sessionRead", .sessionRead)] {
+                fields["main." + name] = snapshot.count(operation, mainThread: true)
+            }
+            if let bytes = try? JSONSerialization.data(withJSONObject: fields, options: [.sortedKeys]), let encoded = String(data: bytes, encoding: .utf8) { value = encoded }
+        } label: {
+            Image(systemName: "speedometer").font(.body).frame(width: 44, height: 44)
+                .foregroundStyle(.white).background(.indigo, in: Circle())
+        }.buttonStyle(.plain).accessibilityLabel("Capturar métricas de prueba")
+            .accessibilityIdentifier("debug.scroll.snapshot").accessibilityValue(value)
+    }
+}
+#endif
 
 // A scene's window also contains presented sheets. The SwiftUI root cover sits
 // below those sheets, so cover the window before the system takes its snapshot.

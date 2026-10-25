@@ -4,7 +4,8 @@
 <key>NSCameraUsageDescription</key><string>Fotografiar comprobantes de gastos de viaje para enviarlos a revisión en JAC.</string>
 <key>NSPhotoLibraryAddUsageDescription</key><string>Guardar en Fotos las fotos y videos de las carpetas de JAC que tú selecciones.</string>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
-<key>UIBackgroundModes</key><array><string>audio</string></array>
+<key>UIBackgroundModes</key><array><string>audio</string><string>fetch</string></array>
+<key>BGTaskSchedulerPermittedIdentifiers</key><array><string>co.jacmusic.nomina.widget-refresh</string></array>
 <key>LSSupportsOpeningDocumentsInPlace</key><true/>
 <key>CFBundleDocumentTypes</key><array><dict><key>CFBundleTypeName</key><string>Audio para Música JAC</string><key>CFBundleTypeRole</key><string>Editor</string><key>LSHandlerRank</key><string>Alternate</string><key>LSItemContentTypes</key><array><string>public.audio</string><string>public.mp3</string><string>public.mpeg-4-audio</string><string>com.microsoft.waveform-audio</string></array></dict></array>
 <key>JACPushEnabled</key><string>$(JAC_PUSH_ENABLED)</string>

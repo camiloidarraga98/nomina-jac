@@ -73,6 +73,21 @@ private final class MockProtocol: URLProtocol {
     override func stopLoading() {}
 }
 
+private final class OfflinePersistenceGate: @unchecked Sendable {
+    private let lock = NSLock(), releaseSignal = DispatchSemaphore(value: 0)
+    private var enabled = false
+    private var began = false
+    private var remaining: Int
+    init(maximumWaits: Int = .max) { remaining = maximumWaits }
+    func enable() { lock.lock(); enabled = true; lock.unlock() }
+    var entered: Bool { lock.lock(); defer { lock.unlock() }; return began }
+    func waitBeforeWrite() {
+        lock.lock(); let shouldWait = enabled && remaining > 0; if shouldWait { began = true; remaining -= 1 }; lock.unlock()
+        if shouldWait { _ = releaseSignal.wait(timeout: .now() + 5) }
+    }
+    func release() { releaseSignal.signal() }
+}
+
 private final class BoardingCardTestReader: @unchecked Sendable {
     private let lock = NSLock()
     private let barrier = DispatchSemaphore(value: 0)
@@ -203,6 +218,200 @@ final class PayrollClientTests: XCTestCase {
             try? await Task.sleep(for: .milliseconds(10))
         }
         return condition()
+    }
+    private func fortyBoardingCardsFixture() throws -> Data {
+        let items = (0..<40).map { index -> JSONValue in
+            var value = boardingCardNoticeFixture(boardingDetails: .object(["seat": .string("14C"), "departureTime": .string("18:45"), "boardingTime": .string("17:45"), "airline": .string("Aerolínea ficticia")]))
+            value["id"] = .string("scroll-card-\(index)"); return value
+        }
+        let encoder = JSONEncoder(); encoder.outputFormatting = .sortedKeys
+        return try encoder.encode(JSONValue.object(["notices": .array(items), "nextCursor": .string(""), "users": .array([]), "settings": .object(["version": .number(1), "slackConnected": .bool(false), "appleConfigured": .bool(false), "webPublicKey": .string("")])]))
+    }
+    @MainActor func testWarmFortyBoardingCardsPerformNoMainThreadIOCryptoOrJSON() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache), cards = BoardingCardDetailsStore()
+        defer { cards.cancelPending(); MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        let bytes = try fortyBoardingCardsFixture()
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.host, "ui-fixture.example.invalid"); XCTAssertEqual(request.url?.path, "/api/notices")
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, bytes)
+        }
+        let feed = try await client.notices(boarding: "current")
+        XCTAssertEqual(feed.notices.count, 40)
+        for item in feed.notices { cards.load(item, file: try XCTUnwrap(item.files.first), client: client) }
+        let baseline = JACPerformanceDiagnostics.snapshot()
+        var ready = 0
+        // Exercise the actual presentation path used by each visible card,
+        // including its task key, canonical revision check and ready details.
+        for _ in 0..<500 {
+            for item in feed.notices {
+                let file = item.files[0]
+                if cards.presentationKey(item, file: file, client: client) != nil,
+                   case .ready = cards.entry(item, file: file, client: client) { ready += 1 }
+            }
+        }
+        let sample = JACPerformanceDiagnostics.snapshot().delta(from: baseline)
+        XCTAssertEqual(ready, 20_000)
+        for operation in [JACPerformanceDiagnostics.Operation.diskRead, .diskWrite, .keyDerivation, .jsonDecode, .jsonEncode, .sessionRead] {
+            XCTAssertEqual(sample.count(operation, mainThread: true), 0, "Warm card render performed \(operation)")
+        }
+        JACPerformanceDiagnostics.reportHotPath(since: baseline)
+    }
+    @MainActor func testNoticeBatchPersistsOneIndexAndUnchangedPollDoesNotWriteOrPublish() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache)
+        defer { MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        let bytes = try fortyBoardingCardsFixture()
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, bytes) }
+        let baseline = JACPerformanceDiagnostics.snapshot()
+        _ = try await client.notices(boarding: "current")
+        let first = JACPerformanceDiagnostics.snapshot().delta(from: baseline)
+        XCTAssertEqual(first.count(.indexWrite), 1, "A 40-card feed must commit its index once, rather than once per item.")
+        XCTAssertEqual(first.count(.diskWrite), 42) // feed + 40 canonical notices + index
+        XCTAssertEqual(first.count(.diskWrite, mainThread: true), 0)
+        XCTAssertEqual(first.count(.diskRead, mainThread: true), 0)
+        let revision = client.cacheRevision, beforeRepeat = JACPerformanceDiagnostics.snapshot()
+        _ = try await client.notices(boarding: "current")
+        let repeated = JACPerformanceDiagnostics.snapshot().delta(from: beforeRepeat)
+        XCTAssertEqual(repeated.count(.diskWrite), 0, "An unchanged poll must retain the authenticated bytes/nonce already on disk.")
+        XCTAssertEqual(repeated.count(.indexWrite), 0)
+        XCTAssertEqual(client.cacheRevision, revision, "An unchanged response must not invalidate every visited workspace.")
+        let reopened = OfflineResponseCache(root: cache.root), scope = try XCTUnwrap(client.offlineScope())
+        XCTAssertEqual(reopened.entries(scope).filter { $0.url.contains("item=scroll-card-") }.count, 40)
+    }
+    func testOfflineBatchRejectsLateWritesAfterRevocationAndRemainsReadableOnRelaunch() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString), cache = OfflineResponseCache(root: root)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let scope = OfflineResponseCache.scope(origin: "https://cache-budget.invalid", token: String(repeating: "x", count: 43))
+        let records = (0..<40).map { OfflineResponse(key: "entry-\($0)", url: "https://cache-budget.invalid/api/notices?item=\($0)", headers: ["Content-Type": "application/json"], data: Data("{\"version\":2}".utf8), receivedAt: Date(), revision: 2) }
+        let before = JACPerformanceDiagnostics.snapshot()
+        XCTAssertTrue(try cache.saveBatch(records, scope: scope))
+        XCTAssertEqual(JACPerformanceDiagnostics.snapshot().delta(from: before).count(.indexWrite), 1)
+        let reopened = OfflineResponseCache(root: root)
+        XCTAssertEqual(reopened.entries(scope).count, 40)
+        XCTAssertEqual(reopened.load(scope, key: records[0].key)?.data, records[0].data)
+        let epoch = cache.epoch(scope)
+        cache.clear(scope)
+        XCTAssertThrowsError(try cache.saveBatch(records, scope: scope, expectedEpoch: epoch)) { XCTAssertTrue($0 is CancellationError) }
+        XCTAssertTrue(cache.entries(scope).isEmpty)
+        XCTAssertNil(reopened.load(scope, key: records[0].key), "A previously opened cache cannot keep serving a deleted private response.")
+        XCTAssertTrue(try cache.saveBatch(records, scope: scope, expectedEpoch: cache.epoch(scope)), "A newly authorized operation can create a fresh copy.")
+        let protectedEpoch = cache.epoch(scope)
+        cache.remove(scope) { $0.key == records[0].key }
+        XCTAssertThrowsError(try cache.saveBatch(records, scope: scope, expectedEpoch: protectedEpoch))
+        XCTAssertNil(cache.load(scope, key: records[0].key))
+    }
+    @MainActor func testOlderWorkspaceResponseCannotReplaceWarmNewerWorkspace() async throws {
+        let fixture = try await UITestBackend.client(downloadOffline: false).workspace()
+        var current = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(fixture)); current["version"] = .number(14)
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)), (client, _) = relaunchFixture(cache)
+        defer { MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, try JSONEncoder().encode(current)) }
+        _ = try await client.workspace(forceNetwork: true)
+        XCTAssertEqual(client.cachedWorkspace()?.version, 14)
+        current["version"] = .number(13)
+        do { _ = try await client.workspace(forceNetwork: true); XCTFail("A delayed older response must not replace a newer authorized workspace in RAM.") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertEqual(client.cachedWorkspace()?.version, 14)
+        let scope = try XCTUnwrap(client.offlineScope()), entry = try XCTUnwrap(cache.entries(scope).first { $0.url.contains("workspace=1") })
+        XCTAssertEqual(cache.load(scope, key: entry.key)?.revision, 14)
+    }
+    @MainActor func testNoticeFeedDenialInvalidatesWarmCanonicalCards() async throws {
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache), cards = BoardingCardDetailsStore()
+        defer { cards.cancelPending(); MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        let bytes = try fortyBoardingCardsFixture()
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, bytes) }
+        let feed = try await client.notices(boarding: "current")
+        for item in feed.notices { XCTAssertNotNil(client.cachedNotice(item.id)) }
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 403, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"Acceso retirado\"}".utf8)) }
+        do { _ = try await client.notices(boarding: "current"); XCTFail("A denied feed must not use the warmed copy.") } catch APIError.forbidden { }
+        for item in feed.notices {
+            XCTAssertNil(client.cachedNotice(item.id))
+            XCTAssertNil(cards.presentationKey(item, file: item.files[0], client: client))
+        }
+        let scope = try XCTUnwrap(client.offlineScope())
+        XCTAssertFalse(cache.entries(scope).contains { $0.url.contains("/api/notices") })
+    }
+    @MainActor func testPendingNoticePersistenceCannotReturnAfterLogout() async throws {
+        let gate = OfflinePersistenceGate(), root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = OfflineResponseCache(root: root, beforeBatch: { gate.waitBeforeWrite() }), (client, _) = relaunchFixture(cache)
+        defer { gate.release(); MockProtocol.handler = nil; try? client.clearSession(); try? FileManager.default.removeItem(at: root) }
+        client.rememberWorkspace(try await UITestBackend.client(downloadOffline: false).workspace())
+        let bytes = try fortyBoardingCardsFixture(), scope = try XCTUnwrap(client.offlineScope())
+        MockProtocol.handler = { request in (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, bytes) }
+        gate.enable()
+        let pending = Task { try await client.notices(boarding: "current") }
+        let entered = await waitForBoardingCard { gate.entered }
+        XCTAssertTrue(entered, "Hold the real request after its network response and before durable cache commit.")
+        try client.clearSession(); gate.release()
+        do { _ = try await pending.value; XCTFail("A completed response must not escape after logout while persistence was suspended.") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        XCTAssertTrue(cache.entries(scope).isEmpty)
+        XCTAssertNil(client.cachedNotice("scroll-card-0")); XCTAssertNil(client.cachedWorkspace())
+    }
+    @MainActor func testConcurrentAgendaPersistenceMergesMonthsAndRejectsOlderPendingUpdate() async throws {
+        let fixture = UITestBackend.client(downloadOffline: false), workspace = try await fixture.workspace(), feed = try await fixture.agenda(month: CalendarClock.month(Date()))
+        let gate = OfflinePersistenceGate(maximumWaits: 1), root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let cache = AgendaOfflineCache(root: root, beforeSave: { gate.waitBeforeWrite() }), vault = MemorySession(); vault.token = token
+        let client = makeClient(vault, cache: cache)
+        client.rememberWorkspace(workspace)
+        let store = PayrollStore(client: client), scope = try XCTUnwrap(client.agendaScope())
+        defer { gate.release(); try? client.clearSession(); try? FileManager.default.removeItem(at: root) }
+        func data(_ month: String, updatedAt: String) throws -> AgendaData {
+            var value = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(feed))
+            value["month"] = .string(month); value["updatedAt"] = .string(updatedAt)
+            return try value.decoded(AgendaData.self)
+        }
+        let nextMonth = try XCTUnwrap(CalendarClock.shift(feed.month, by: 1))
+        let first = try data(feed.month, updatedAt: "2099-01-02T12:00:00.000Z")
+        let second = try data(nextMonth, updatedAt: "2099-01-03T12:00:00.000Z")
+        let older = try data(feed.month, updatedAt: "2099-01-01T12:00:00.000Z")
+        gate.enable()
+        let pendingFirst = Task { try await store.rememberAgendaInBackground(first, userID: workspace.user.id, scope: scope) }
+        let entered = await waitForBoardingCard { gate.entered }
+        XCTAssertTrue(entered, "Hold the first real encrypted write while another month arrives.")
+        let pendingSecond = Task { try await store.rememberAgendaInBackground(second, userID: workspace.user.id, scope: scope) }
+        let merged = await waitForBoardingCard { store.savedAgenda?.months.count == 2 }
+        XCTAssertTrue(merged, "A pending month must participate in the next reservation before either write completes.")
+        do { try await store.rememberAgendaInBackground(older, userID: workspace.user.id, scope: scope); XCTFail("An older same-month update must be rejected even while the newer update is awaiting persistence.") }
+        catch { XCTAssertTrue(error is CancellationError) }
+        gate.release()
+        try await pendingFirst.value; try await pendingSecond.value
+        XCTAssertEqual(Set(store.savedAgenda?.months.map { $0.data.month } ?? []), Set([feed.month, nextMonth]))
+        XCTAssertEqual(store.cachedAgenda(month: feed.month, userID: workspace.user.id)?.data.updatedAt, first.updatedAt)
+        XCTAssertEqual(store.cachedAgenda(month: nextMonth, userID: workspace.user.id)?.data.updatedAt, second.updatedAt)
+        let durable = try XCTUnwrap(cache.load(scope)), memory = try XCTUnwrap(client.cachedAgenda())
+        XCTAssertEqual(Set(durable.months.map { $0.data.month }), Set([feed.month, nextMonth]))
+        XCTAssertEqual(Set(memory.months.map { $0.data.month }), Set([feed.month, nextMonth]))
+        XCTAssertEqual(durable.month(feed.month)?.data.updatedAt, first.updatedAt)
+        XCTAssertEqual(memory.month(feed.month)?.data.updatedAt, first.updatedAt)
+        let reopened = PayrollStore(client: makeClient(vault, cache: cache))
+        XCTAssertNotNil(reopened.cachedAgenda(month: feed.month, userID: workspace.user.id))
+        XCTAssertNotNil(reopened.cachedAgenda(month: nextMonth, userID: workspace.user.id))
+    }
+    @MainActor func testWarmCalendarAndWorkspaceRenderDoNotReadSessionOrDecode() async throws {
+        let fixture = UITestBackend.client(downloadOffline: false), workspace = try await fixture.workspace(), data = try await fixture.agenda(month: CalendarClock.month(Date()))
+        let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let (client, _) = relaunchFixture(cache)
+        defer { try? client.clearSession(); try? FileManager.default.removeItem(at: cache.root) }
+        client.rememberWorkspace(workspace)
+        let store = PayrollStore(client: client), scope = try XCTUnwrap(client.agendaScope())
+        try await store.rememberAgendaInBackground(data, userID: workspace.user.id, scope: scope)
+        XCTAssertNotNil(client.cachedWorkspace()); XCTAssertNotNil(client.cachedAgenda())
+        let before = JACPerformanceDiagnostics.snapshot()
+        var visible = 0
+        for _ in 0..<500 {
+            if client.cachedWorkspace() != nil, client.cachedAgenda() != nil, store.cachedAgenda(month: data.month, userID: workspace.user.id) != nil { visible += 1 }
+        }
+        let sample = JACPerformanceDiagnostics.snapshot().delta(from: before)
+        XCTAssertEqual(visible, 500)
+        XCTAssertEqual(sample.mainThreadExpensiveOperations, 0)
+        try client.clearSession()
+        XCTAssertNil(client.cachedWorkspace()); XCTAssertNil(client.cachedAgenda()); XCTAssertNil(store.cachedAgenda(month: data.month, userID: workspace.user.id))
     }
     @MainActor func testBoardingCardMessageMetadataDoesNotDownloadOriginalAndRevalidatesChanges() async throws {
         let cache = OfflineResponseCache(root: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))

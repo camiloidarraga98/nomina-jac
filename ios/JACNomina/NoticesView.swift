@@ -72,12 +72,21 @@ struct NoticeAttachment: Decodable, Identifiable {
               let stamp = try? client.boardingCodeAccessStamp(item, file: file) else { return nil }
         return Key(notice: item.id, file: file.id, stamp: stamp, filename: file.filename, mime: file.mimeType, size: file.size, boardingDetails: item.singleFileBoardingDetails)
     }
+    func presentationKey(_ item: JACNotice, file: NoticeAttachment, client: PayrollClient) -> Key? {
+        guard item.kind == "boarding_pass", let current = client.cachedNotice(item.id), current.kind == item.kind,
+              (current.revision ?? 1) == (item.revision ?? 1),
+              current.singleFileBoardingDetails == item.singleFileBoardingDetails,
+              current.files.contains(where: { $0.id == file.id && $0.filename == file.filename && $0.mimeType == file.mimeType && $0.size == file.size }),
+              let stamp = client.boardingCodePresentationStamp(item, file: file) else { return nil }
+        return Key(notice: item.id, file: file.id, stamp: stamp, filename: file.filename, mime: file.mimeType, size: file.size, boardingDetails: item.singleFileBoardingDetails)
+    }
     func entry(_ item: JACNotice, file: NoticeAttachment, client: PayrollClient) -> Entry {
-        guard let key = key(item, file: file, client: client) else { return .unavailable }
+        guard let key = presentationKey(item, file: file, client: client) else { return .unavailable }
         return entries[key] ?? .loading
     }
     func load(_ item: JACNotice, file: NoticeAttachment, client: PayrollClient, retry: Bool = false) {
         revalidate()
+        if !retry, let cached = presentationKey(item, file: file, client: client), entries[cached] != nil { return }
         guard let key = key(item, file: file, client: client) else { return }
         if active[key] != nil && requests[key] != nil { return }
         if !retry, entries[key] != nil { return }
@@ -95,7 +104,7 @@ struct NoticeAttachment: Decodable, Identifiable {
         trim(); startNext()
     }
     func revalidate() {
-        let stale = requests.values.filter { key($0.item, file: $0.file, client: $0.client) != $0.key }.map(\.key)
+        let stale = requests.values.filter { presentationKey($0.item, file: $0.file, client: $0.client) != $0.key }.map(\.key)
         for key in stale { remove(key) }
     }
     func retryUnavailable() {
@@ -206,6 +215,7 @@ enum NoticeRecipientSelection {
 struct NoticesView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     let user: PayrollUser
     var kind = "itinerary"
     var initialNotice: String? = nil
@@ -216,6 +226,7 @@ struct NoticesView: View {
     @State private var detail: JACNotice?
     @State private var editor = false
     @State private var loading = false
+    @State private var refreshGeneration = UUID()
     @State private var handledInitial = false
     @State private var incomingKind: String?
     @State private var historyOpen = false
@@ -374,13 +385,23 @@ struct NoticesView: View {
         return effectiveKind == "itinerary" ? "Itinerarios" : "Alertas"
     }
     private var noticeUpdates: some View {
-        noticeList.jacSurface().jacWorkspaceTitle(noticeTitle).refreshable { boardingDetails.retryUnavailable(); await refresh() }
-            .task { restoreCached(); await refresh(); while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30)) } catch { break }; if scenePhase == .active { await refresh() } } }
-            .onChange(of: store.cacheRevision) { _, _ in boardingDetails.revalidate(); restoreCached() }
+        noticeList.accessibilityIdentifier("notices.list").jacSurface().jacWorkspaceTitle(noticeTitle).refreshable { boardingDetails.retryUnavailable(); await refresh() }
+            .task(id: JACWorkspaceRefreshID(location: effectiveKind, active: workspaceCanRefresh)) {
+                guard workspaceCanRefresh else { return }
+                restoreCached(); await refresh()
+                while !Task.isCancelled {
+                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                    guard workspaceCanRefresh else { return }
+                    await refresh()
+                }
+            }
+            .onChange(of: workspaceCanRefresh) { _, active in
+                if !active { refreshGeneration = UUID(); loading = false; boardingDetails.cancelPending() }
+            }
+            .onChange(of: store.cacheRevision) { _, _ in boardingDetails.revalidate(); if workspaceCanRefresh { restoreCached() } }
             .onChange(of: store.overview?.user) { _, _ in boardingDetails.revalidate() }
-            .onChange(of: store.isOffline) { _, offline in if !offline { Task { await refresh() } } }
-            .onChange(of:historyOpen) { _,open in if open { Task { await loadHistory() } } }
-            .onChange(of: scenePhase) { _, value in if value == .active { Task { await refresh() } } }
+            .onChange(of: store.isOffline) { _, offline in if !offline && workspaceCanRefresh { Task { await refresh() } } }
+            .onChange(of:historyOpen) { _,open in if open && workspaceCanRefresh { Task { await loadHistory() } } }
             #if os(iOS)
             .fullScreenCover(item:$boardingCode,onDismiss:openFullPassAfterCode) { selection in codeViewer(selection) }
             #else
@@ -492,7 +513,8 @@ struct NoticesView: View {
                     }
                     #endif
                     .contextMenu { boardingMenuActions(item,file:file) }
-                    .task(id: boardingDetails.key(item, file: file, client: store.client)) {
+                    .task(id: workspaceCanRefresh ? boardingDetails.presentationKey(item, file: file, client: store.client) : nil) {
+                        guard workspaceCanRefresh else { return }
                         boardingDetails.load(item, file: file, client: store.client)
                     }
             }
@@ -567,14 +589,43 @@ struct NoticesView: View {
         }
         if historyOpen, let saved = store.client.cachedNotices(boarding: "history") { history = saved; historyRecords = store.isOffline || historyRecords.isEmpty ? saved.notices.filter { !deletedIDs.contains($0.id) } : historyRecords.compactMap { deletedIDs.contains($0.id) ? nil : store.client.cachedNotice($0.id) ?? $0 } }
     }
-    private func loadHistory(_ cursor:String = "") async { restoreCached(); do { let result=try await store.client.notices(cursor:cursor,boarding:"history"); history=result; let items=(store.isOffline ? store.client.cachedNotices(boarding:"history")?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { historyRecords=items } else { historyRecords += items.filter { item in !historyRecords.contains { $0.id == item.id } } } } catch { self.error=store.reportReadFailure(error) } }
+    private var workspaceCanRefresh: Bool { isWorkspaceActive && scenePhase == .active }
+    private func loadHistory(_ cursor:String = "") async {
+        guard workspaceCanRefresh, !Task.isCancelled else { return }
+        let request = refreshGeneration
+        restoreCached()
+        do {
+            let result = try await store.client.notices(cursor: cursor, boarding: "history")
+            guard request == refreshGeneration, workspaceCanRefresh, !Task.isCancelled else { return }
+            history = result
+            let items = (store.isOffline ? store.client.cachedNotices(boarding: "history")?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }
+            if cursor.isEmpty { historyRecords = items }
+            else { historyRecords += items.filter { item in !historyRecords.contains { $0.id == item.id } } }
+        } catch {
+            guard request == refreshGeneration, workspaceCanRefresh, !Task.isCancelled else { return }
+            self.error = store.reportReadFailure(error)
+        }
+    }
     private func refresh(_ cursor: String = "") async {
         guard user.permitsNotice(effectiveKind) else {records=[];return}
-        guard !loading else { return }; loading = true; defer { loading = false }
-        do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil); feed = result; let items=(store.isOffline ? store.client.cachedNotices(cursor: cursor, boarding: effectiveKind == "boarding_pass" ? "current" : nil)?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { records = items } else { records += items.filter { item in !records.contains { $0.id == item.id } } }; error = nil
-            if effectiveKind == "itinerary" && user.hasSection(.boarding) { let passes = try await store.client.notices(boarding:"current"); boardingCount = passes.notices.filter { $0.travelDate == day }.count; tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count }; if historyOpen { await loadHistory() }
+        guard workspaceCanRefresh, !Task.isCancelled, !loading else { return }
+        let request = UUID(); refreshGeneration = request
+        loading = true; defer { if refreshGeneration == request { loading = false } }
+        do { day = BoardingClock.today(); let result = try await store.client.notices(cursor: cursor, boarding:effectiveKind == "boarding_pass" ? "current" : nil)
+            guard request == refreshGeneration, workspaceCanRefresh, !Task.isCancelled else { return }
+            feed = result; let items=(store.isOffline ? store.client.cachedNotices(cursor: cursor, boarding: effectiveKind == "boarding_pass" ? "current" : nil)?.notices ?? result.notices : result.notices).filter { !deletedIDs.contains($0.id) }; if cursor.isEmpty { records = items } else { records += items.filter { item in !records.contains { $0.id == item.id } } }; error = nil
+            if effectiveKind == "itinerary" && user.hasSection(.boarding) {
+                let passes = try await store.client.notices(boarding: "current")
+                guard request == refreshGeneration, workspaceCanRefresh, !Task.isCancelled else { return }
+                boardingCount = passes.notices.filter { $0.travelDate == day }.count
+                tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count
+            }
+            if historyOpen { await loadHistory() }
             if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
-        } catch { self.error = store.reportReadFailure(error) }
+        } catch {
+            guard request == refreshGeneration, workspaceCanRefresh, !Task.isCancelled else { return }
+            self.error = store.reportReadFailure(error)
+        }
     }
 }
 

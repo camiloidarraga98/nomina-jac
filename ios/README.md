@@ -350,3 +350,9 @@ Mismo proyecto: subidas directas a Drive con control final JAC, reproducción na
 ## Archivo de contratos · 17 de octubre de2026
 
 CRM → Contratos permite crear con RUT/manual, guardar automáticamente, abrir el archivo compartido y asignar a un show. PDF abierto disponible en la caché privada sin conexión; edición requiere red.137unitarias(136aprobadas,1condición física omitida) y recorrido UI completo aprobados, Release compilado. Se mantiene este proyecto/firma/bundle/push; instalar con Run. Ver docs/CONTRACTS.md.
+
+### Widget y desplazamiento (0.35.0, compilación53)
+
+JAC incluye un widget pequeño, mediano o grande con selector Calendario/Fotografía. Requiere AppGroup `group.co.jacmusic.nomina.widgets` asociado a la app y extensión del equipo AYHVYN8BJF antes de Archive/Upload. Abrir la nueva app antes de añadir el widget. Ver [activación y límites](../docs/IPHONE_WIDGETS.md). La frecuencia de actualización depende de iOS.
+
+La interfaz conserva modelos en RAM y suspende lecturas automáticas de pantallas ocultas. CI incorpora presupuestos de I/O y recorridos de scroll para detectar regresiones; ver [verificación de rendimiento](../docs/IOS_SCROLL_PERFORMANCE.md).
