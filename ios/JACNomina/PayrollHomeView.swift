@@ -65,7 +65,7 @@ private final class PhoneSidebarGestureAnchor: UIView, UIGestureRecognizerDelega
         gestureWindow = window; window.addGestureRecognizer(edge)
     }
     func detach() { gestureWindow?.removeGestureRecognizer(edge); gestureWindow = nil }
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard enabled, let window = gestureWindow, let root = window.rootViewController,
               bounds.contains(convert(gestureRecognizer.location(in: window), from: window)) else { return false }
         let velocity = edge.velocity(in: window)
