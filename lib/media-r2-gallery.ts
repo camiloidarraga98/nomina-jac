@@ -213,10 +213,41 @@ async function preparePhotoPreview(c:Context,row:Entry,previous:{bytes:Uint8Arra
   throw unavailable();
  }finally{clearTimeout(timer);await database().prepare("UPDATE jac_media_presentations SET claim='' WHERE file_id=? AND claim=?").bind(row.id,claim).run();}
 }
-export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false,background?:(work:Promise<unknown>)=>void){
+// Mobile first paint uses an actual full-screen JPEG, not the 360px grid cover.
+// Derive it from an already stored preview where possible, avoiding a second
+// original download or an unnecessary upgrade of an older 1600px upload.
+async function balancedPhotoPreview(c:Context,row:Entry,background?:(work:Promise<unknown>)=>void):Promise<Response>{
+ if(!row.mime_type.startsWith('image/'))throw new MediaFailure('Selecciona una fotografía.');
+ const previous=await storedPhotoPreview(c,row);
+ const source=previous?.bytes??await r2Bytes(await photoPreview(c,row,background),PHOTO_PREVIEW_LIMIT);
+ await currentPhoto(c,row);
+ const images=(env as unknown as {IMAGES?:PhotoImages}).IMAGES;
+ if(!images){
+  if(jpegThumbnail(source,1280,512*1024))return previewResponse(source,'mobile-1280-q78-v1');
+  throw new MediaPreviewFailure('preview_unavailable');
+ }
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ try{
+  for(const edge of [1280,1024]){
+   const output=await photoOutput(images.input(new Response(source).body!).transform({width:edge,height:edge,fit:'scale-down'}).output({format:'image/jpeg',quality:edge===1280?78:76}),controller.signal);
+   const response=output.response();await checked(response);
+   let bytes:Uint8Array<ArrayBuffer>;
+   try{bytes=await r2Bytes(response,512*1024);}catch(error){if(edge===1280&&error instanceof MediaFailure&&error.status===502)continue;throw error;}
+   if(!jpegThumbnail(bytes,edge,512*1024))throw new MediaPreviewFailure('preview_unavailable');
+   await currentPhoto(c,row);return previewResponse(bytes,'mobile-1280-q78-v1');
+  }
+  throw new MediaPreviewFailure('preview_unavailable');
+ }catch(error){
+  await currentPhoto(c,row);
+  if(error instanceof MediaFailure&&[401,403,409,410].includes(error.status))throw error;
+  throw new MediaPreviewFailure(controller.signal.aborted?'preview_timeout':'preview_unavailable');
+ }finally{clearTimeout(timer);}
+}
+export async function r2File(g:MediaGuard,id:string,thumbnail:boolean,range:string|null,revision?:string,preview=false,background?:(work:Promise<unknown>)=>void,quality?:string){
+ if(quality!==undefined&&(!preview||thumbnail||!['balanced','detail'].includes(quality)))throw new MediaFailure('La calidad de la vista previa no es válida.');
  const c=await context(g),rows=await chain(c,id),row=rows.at(-1);if(!row||row.mime_type===MEDIA_FOLDER_MIME)throw new MediaFailure('Selecciona una foto o video.');
  if(revision&&revision!==row.modified_at)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);const key=thumbnail?row.thumbnail_key:row.object_key;if(!preview&&!key)throw new MediaFailure('La miniatura todavía no está disponible.',404);
- const requested=thumbnail||preview?null:mediaRange(range),response=preview?await photoPreview(c,row,background):await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
+ const requested=thumbnail||preview?null:mediaRange(range),response=preview?await(quality==='balanced'?balancedPhotoPreview(c,row,background):photoPreview(c,row,background)):await call(c,'GET',key,{},requested?{Range:requested}:{});await checked(response);
  if(requested&&response.status!==206){await response.body?.cancel();throw new MediaFailure('R2 no confirmó el rango solicitado.',502);}
  try{await chain(c,id);const after=await entry(id);if(after?.modified_at!==row.modified_at||after.object_key!==row.object_key)throw new MediaFailure('El archivo cambió. Actualiza la carpeta.',409);await live(c);}catch(e){await response.body?.cancel();throw e;}
  const headers=new Headers({'content-type':thumbnail||preview?'image/jpeg':row.mime_type,'content-disposition':"inline; filename*=UTF-8''"+encodeURIComponent(preview?'vista-previa.jpg':thumbnail?'miniatura.jpg':row.name),'x-content-type-options':'nosniff','accept-ranges':thumbnail||preview?'none':'bytes'});

@@ -171,6 +171,7 @@ final class PayrollClient: ObservableObject {
     let offlineCache: OfflineResponseCache
     let mediaOffline: MediaOfflineCache
     let musicOffline: MediaOfflineCache
+    lazy var photoPreviews = MediaPhotoPreviewPipeline(monitorNetwork: baseURL.host?.hasSuffix(".invalid") != true)
     @Published private(set) var usingOfflineCopy = false
     @Published private(set) var cacheRevision = 0
     @Published private(set) var offlineSyncMessage: String?
@@ -1420,17 +1421,92 @@ final class PayrollClient: ObservableObject {
               parts.queryItems?.contains(where: { $0.name == "lease" && !($0.value ?? "").isEmpty }) == true else { throw APIError.message(info.message ?? "Preparando la reproducción adaptativa. Vuelve a abrir el video en unos momentos.") }
         return url
     }
-    func mediaPhotoPreview(_ item: MediaItem, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
-        if usingOfflineCopy { return try await mediaDocument(item, progress: progress) }
-        let stamp = try mediaAccessStamp()
+    func mediaPhotoPreview(_ item: MediaItem, quality: MediaPhotoPreviewQuality = .detail,
+                           priority: MediaPhotoPreviewPipeline.Priority = .visible,
+                           collectionID: String? = nil,
+                           progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
+        guard item.kind == "image", permissionUser?.canReadMedia != false, let scope = try mediaScope(),
+              let stamp = try mediaAccessStamp() else { throw APIError.unauthorized }
+        // Explicit offline downloads are useful even while the phone is online.
+        // Reading them must never wait for a metadata request or a remote JPEG.
+        let cache = mediaOffline, offline = usingOfflineCopy
+        let cached = await Task.detached(priority: .userInitiated) {
+            cache.photoPreviewSnapshot(item, quality: quality, allowBalanced: offline, scope: scope)
+        }.value
+        guard !Task.isCancelled, stamp == (try mediaAccessStamp()), cache.photoPreviewEpoch == cached.epoch,
+              collectionID == nil || cached.collectionID == collectionID else { throw CancellationError() }
+        if let bytes = cached.data {
+            progress(Int64(bytes.count), Int64(bytes.count))
+            return try TemporaryDocuments.save(bytes, filename: cached.quality.filename)
+        }
+        if let saved = try await restoredMediaDocument(item, scope: scope) {
+            progress(item.size, item.size); return saved
+        }
+        guard !usingOfflineCopy else { throw APIError.message("Esta foto todavía no está descargada en este dispositivo.") }
+        let bytes = try await photoPreviewBytes(item, quality: quality, priority: priority, scope: scope, stamp: stamp, collectionID: cached.collectionID)
+        guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+        progress(Int64(bytes.count), Int64(bytes.count))
+        return try TemporaryDocuments.save(bytes, filename: quality.filename)
+    }
+
+    func prefetchMediaPhotoPreview(_ item: MediaItem, collectionID: String? = nil) async throws {
+        guard !usingOfflineCopy, let scope = try mediaScope(), let stamp = try mediaAccessStamp(),
+              permissionUser?.canReadMedia != false else { throw CancellationError() }
+        let cache = mediaOffline
+        let saved = await Task.detached(priority: .utility) {
+            (cache.hasFile(item, scope: scope) || cache.loadPhotoPreview(item, quality: .detail, scope: scope) != nil
+                || cache.loadPhotoPreview(item, quality: .balanced, scope: scope) != nil, cache.photoPreviewCollection(scope: scope))
+        }.value
+        guard !Task.isCancelled, stamp == (try mediaAccessStamp()), collectionID == nil || saved.1 == collectionID else { throw CancellationError() }
+        if !saved.0 { _ = try await photoPreviewBytes(item, quality: .balanced, priority: .prefetch, scope: scope, stamp: stamp, collectionID: saved.1) }
+    }
+
+    func improveMediaPhotoPreview(_ item: MediaItem, current: ExportedDocument) async throws -> ExportedDocument? {
+        guard current.url.lastPathComponent == MediaPhotoPreviewQuality.balanced.filename,
+              photoPreviews.connection.improvesQuality, !usingOfflineCopy else { return nil }
+        return try await mediaPhotoPreview(item, quality: .detail)
+    }
+
+    private func photoPreviewBytes(_ item: MediaItem, quality: MediaPhotoPreviewQuality,
+                                   priority: MediaPhotoPreviewPipeline.Priority, scope: AgendaCacheScope, stamp: String, collectionID: String?) async throws -> Data {
+        let key = [stamp, collectionID ?? "", item.id, item.modifiedAt, String(item.size), item.mimeType, quality.rawValue].joined(separator: "|")
+        return try await photoPreviews.data(key: key, priority: priority, authorized: { [weak self] in
+            guard let self else { return false }
+            return self.mediaPresentationStamp == stamp && self.accessUser?.canReadMedia != false
+        }) { [self] in
+            let cache = mediaOffline
+            let state = await Task.detached(priority: .utility) {
+                (cache.loadPhotoPreview(item, quality: quality, scope: scope), cache.photoPreviewCollection(scope: scope))
+            }.value
+            guard !Task.isCancelled, stamp == (try mediaAccessStamp()), state.1 == collectionID else { throw CancellationError() }
+            if let bytes = state.0 { return bytes }
+            let started = ProcessInfo.processInfo.systemUptime
+            let bytes = try await downloadPhotoPreview(item, quality: quality, stamp: stamp)
+            photoPreviews.measured(bytes: bytes.count, seconds: ProcessInfo.processInfo.systemUptime - started)
+            let write = Task.detached(priority: .utility) {
+                try cache.savePhotoPreview(bytes, item: item, quality: quality, scope: scope, collectionID: state.1)
+            }
+            do { try await withTaskCancellationHandler { try await write.value } onCancel: { write.cancel() } }
+            catch {
+                guard !Task.isCancelled, stamp == (try mediaAccessStamp()), !cache.isDeleted(item.id, scope: scope),
+                      cache.photoPreviewCollection(scope: scope) == state.1 else { throw CancellationError() }
+                // Disk full is allowed to keep the currently authorized preview.
+            }
+            guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+            return bytes
+        }
+    }
+
+    private func downloadPhotoPreview(_ item: MediaItem, quality: MediaPhotoPreviewQuality, stamp: String) async throws -> Data {
         var retries = 0
         while true {
             do {
-                let (data, response) = try await request(path: "api/media/file", query: [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "preview", value: "1"), URLQueryItem(name: "revision", value: item.modifiedAt)], document: true, forceNetwork: true)
+                var query = [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "preview", value: "1"), URLQueryItem(name: "revision", value: item.modifiedAt)]
+                if quality == .balanced { query.append(URLQueryItem(name: "quality", value: "balanced")) }
+                let (data, response) = try await request(path: "api/media/file", query: query, document: true, forceNetwork: true)
                 guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
-                guard !data.isEmpty, data.count <= 2 * 1024 * 1024, response.mimeType == "image/jpeg" else { throw APIError.invalid("No se recibió una vista previa ligera.") }
-                progress(Int64(data.count), Int64(data.count))
-                return try TemporaryDocuments.save(data, filename: "vista-previa.jpg")
+                guard !data.isEmpty, data.count <= quality.maximumBytes, response.mimeType == "image/jpeg" else { throw APIError.invalid("No se recibió una vista previa ligera.") }
+                return data
             } catch let failure as MediaPreviewUnavailable {
                 guard failure.preparing, retries < 2 else { throw failure }
                 retries += 1

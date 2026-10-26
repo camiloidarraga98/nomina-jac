@@ -1827,6 +1827,8 @@ final class MediaOfflineCache: @unchecked Sendable {
         let index: Index
     }
     private var cachedIndex: CachedIndex?
+    private var previewEpoch: UInt64 = 0
+    var photoPreviewEpoch: UInt64 { lock.lock(); defer { lock.unlock() }; return previewEpoch }
     private static let chunkSize = 1024 * 1024
     init(root: URL? = nil) {
         self.root = root ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACMediaOffline", isDirectory: true)
@@ -1872,6 +1874,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         var index = readIndex(scope), result = feed
         if let previous = index.collectionID, feed.collectionID == nil, previous.hasPrefix("jac-r2-") { throw CancellationError() }
         if index.collectionID != feed.collectionID {
+            previewEpoch &+= 1
             // A new collection replaces only this account's encrypted gallery
             // cache. No Drive originals or other modules are touched.
             try? FileManager.default.removeItem(at: folder(scope))
@@ -2018,9 +2021,12 @@ final class MediaOfflineCache: @unchecked Sendable {
     private func thumbnailPrefix(_ id: String) -> String { SHA256.hash(data: Data(id.utf8)).map { String(format: "%02x", $0) }.joined() + "-" }
     private func removeThumbnails(_ ids: Set<String>, scope: AgendaCacheScope) {
         guard !ids.isEmpty else { return }
+        previewEpoch &+= 1
         let prefixes = Set(ids.map { thumbnailPrefix($0) })
-        let files = (try? FileManager.default.contentsOfDirectory(at: folder(scope).appendingPathComponent("thumbnails", isDirectory: true), includingPropertiesForKeys: nil)) ?? []
-        for file in files where prefixes.contains(String(file.lastPathComponent.prefix(65))) { try? FileManager.default.removeItem(at: file) }
+        for directory in ["thumbnails", "photo-previews"] {
+            let files = (try? FileManager.default.contentsOfDirectory(at: folder(scope).appendingPathComponent(directory, isDirectory: true), includingPropertiesForKeys: nil)) ?? []
+            for file in files where prefixes.contains(String(file.lastPathComponent.prefix(65))) { try? FileManager.default.removeItem(at: file) }
+        }
     }
     func loadThumbnail(_ item: MediaItem, scope: AgendaCacheScope, now: Date = Date()) -> Data? {
         lock.lock(); defer { lock.unlock() }
@@ -2058,6 +2064,71 @@ final class MediaOfflineCache: @unchecked Sendable {
             for file in saved.sorted(by: { $0.2 < $1.2 }) where bytes > 128 * 1024 * 1024 || count > 4096 {
                 try? FileManager.default.removeItem(at: file.0); bytes -= file.1; count -= 1
             }
+        }
+    }
+    func photoPreviewCollection(scope: AgendaCacheScope) -> String? {
+        lock.lock(); defer { lock.unlock() }; return readIndex(scope).collectionID
+    }
+    struct PhotoPreviewSnapshot: Sendable {
+        let data: Data?
+        let quality: MediaPhotoPreviewQuality
+        let collectionID: String?
+        let epoch: UInt64
+    }
+    func photoPreviewSnapshot(_ item: MediaItem, quality: MediaPhotoPreviewQuality, allowBalanced: Bool,
+                              scope: AgendaCacheScope) -> PhotoPreviewSnapshot {
+        lock.lock(); defer { lock.unlock() }
+        let collection = readIndex(scope).collectionID
+        if let data = loadPhotoPreview(item, quality: .detail, scope: scope) {
+            return PhotoPreviewSnapshot(data: data, quality: .detail, collectionID: collection, epoch: previewEpoch)
+        }
+        return PhotoPreviewSnapshot(data: quality == .balanced || allowBalanced ? loadPhotoPreview(item, quality: .balanced, scope: scope) : nil,
+                                    quality: .balanced, collectionID: collection, epoch: previewEpoch)
+    }
+    private func photoPreviewIdentity(_ item: MediaItem, quality: MediaPhotoPreviewQuality, scope: AgendaCacheScope) -> Data {
+        Data("jac-photo-preview-v1|\(scope.id)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(item.mimeType)|\(quality.rawValue)".utf8)
+    }
+    private func photoPreviewURL(_ item: MediaItem, quality: MediaPhotoPreviewQuality, scope: AgendaCacheScope) -> URL {
+        let digest = SHA256.hash(data: photoPreviewIdentity(item, quality: quality, scope: scope)).map { String(format: "%02x", $0) }.joined()
+        return folder(scope).appendingPathComponent("photo-previews", isDirectory: true).appendingPathComponent(thumbnailPrefix(item.id) + digest + ".sealed")
+    }
+    func loadPhotoPreview(_ item: MediaItem, quality: MediaPhotoPreviewQuality, scope: AgendaCacheScope, now: Date = Date()) -> Data? {
+        lock.lock(); defer { lock.unlock() }
+        guard !revoked.contains(scope.id), !(readIndex(scope).deletedFiles ?? []).contains(item.id) else { return nil }
+        let url = photoPreviewURL(item, quality: quality, scope: scope)
+        guard let values = try? url.resourceValues(forKeys: [.contentModificationDateKey, .fileSizeKey]),
+              let date = values.contentModificationDate, now.timeIntervalSince(date) < 48 * 3600,
+              let size = values.fileSize, size <= quality.maximumBytes + 64,
+              let bytes = try? Data(contentsOf: url), let sealed = try? AES.GCM.SealedBox(combined: bytes),
+              let data = try? AES.GCM.open(sealed, using: scope.key, authenticating: photoPreviewIdentity(item, quality: quality, scope: scope)),
+              !data.isEmpty, data.count <= quality.maximumBytes else { try? FileManager.default.removeItem(at: url); return nil }
+        if now.timeIntervalSince(date) >= 30 { try? FileManager.default.setAttributes([.modificationDate: now], ofItemAtPath: url.path) }
+        return data
+    }
+    func savePhotoPreview(_ data: Data, item: MediaItem, quality: MediaPhotoPreviewQuality, scope: AgendaCacheScope,
+                          collectionID: String?, now: Date = Date()) throws {
+        lock.lock(); defer { lock.unlock() }
+        try Task.checkCancellation()
+        let index = readIndex(scope)
+        guard !revoked.contains(scope.id), index.collectionID == collectionID,
+              !(index.deletedFiles ?? []).contains(item.id), !data.isEmpty, data.count <= quality.maximumBytes else { throw CancellationError() }
+        try prepare(scope)
+        let url = photoPreviewURL(item, quality: quality, scope: scope), directory = url.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
+        let bytes = try AES.GCM.seal(data, using: scope.key, authenticating: photoPreviewIdentity(item, quality: quality, scope: scope)).combined!
+        try bytes.write(to: url, options: JACFileSecurity.writeOptions)
+        try FileManager.default.setAttributes(JACFileSecurity.fileAttributes.merging([.modificationDate: now]) { _, new in new }, ofItemAtPath: url.path)
+        // A separate LRU budget never evicts a manually downloaded original.
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.fileSizeKey, .contentModificationDateKey])) ?? []
+        var kept: [(URL, Int, Date)] = []
+        for file in files {
+            guard let values = try? file.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey]), let date = values.contentModificationDate else { continue }
+            if now.timeIntervalSince(date) >= 48 * 3600 { try? FileManager.default.removeItem(at: file) }
+            else { kept.append((file, values.fileSize ?? 0, date)) }
+        }
+        var total = kept.reduce(0) { $0 + $1.1 }, count = kept.count
+        for file in kept.sorted(by: { $0.2 < $1.2 }) where total > 96 * 1024 * 1024 || count > 2048 {
+            try? FileManager.default.removeItem(at: file.0); total -= file.1; count -= 1
         }
     }
     private func associated(_ item: MediaItem, scope: AgendaCacheScope, block: Int) -> Data { Data("jac-media-v1|\(scope.id)|\(item.id)|\(item.modifiedAt)|\(item.size)|\(block)".utf8) }
@@ -2152,6 +2223,7 @@ final class MediaOfflineCache: @unchecked Sendable {
     }
     func clear(_ scope: AgendaCacheScope) {
         lock.lock(); defer { lock.unlock() }; revoked.insert(scope.id)
+        previewEpoch &+= 1
         if cachedIndex?.scopeID == scope.id { cachedIndex = nil }
         try? FileManager.default.removeItem(at: folder(scope))
     }

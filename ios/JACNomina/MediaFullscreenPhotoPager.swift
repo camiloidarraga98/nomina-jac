@@ -301,6 +301,7 @@ private final class MediaFullscreenPhotoPage: UIView, UIScrollViewDelegate {
     private let retryButton = UIButton(type: .system)
     private var viewport = CGSize.zero
     private var name = ""
+    private var representedID = ""
     private var remoteError: String?
     private var decodeFailed = false
     private var selected = false
@@ -384,11 +385,16 @@ private final class MediaFullscreenPhotoPage: UIView, UIScrollViewDelegate {
         if self.selected && !selected { resetZoom() }
         self.selected = selected
         if sourceURL != url || (error != nil && remoteError == nil) {
-            clearImage()
+            if representedID == item.id, sourceURL != nil, url != nil, error == nil, image.image != nil {
+                // A better JPEG replaces the same photo. Keep its current
+                // pixels until the serial decoder installs the new bitmap.
+                loadedEdge = 0
+            } else { clearImage() }
             sourceURL = url
             requestToken = UUID()
             decodeFailed = false
         }
+        representedID = item.id
         self.remoteError = error
         self.progress = progress.map { min(1, max(0, $0.isFinite ? $0 : 0)) }
         accessibilityElementsHidden = !selected

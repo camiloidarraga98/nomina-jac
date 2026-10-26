@@ -192,6 +192,45 @@ final class MediaFullscreenPhotoModelTests: XCTestCase {
         XCTAssertFalse(gate.calls.contains("nested"))
     }
 
+    func testQualityUpgradeKeepsVisiblePreviewAndDiscardsALateReplacementAfterMoving() async throws {
+        let first=photo("one"),second=photo("two"),files=PhotoModelDocuments()
+        let original=try files.make("one"),next=try files.make("two")
+        var reply:CheckedContinuation<ExportedDocument?,Error>?
+        let model=MediaFullscreenPhotoModel(selected:first,items:[first,second],token:"",folderID:"folder",collectionID:"r2-test",
+            load:{item,_ in item.id==first.id ? original:next},validate:{_ in},page:{_ in throw PhotoModelTestFailure.unexpectedPage},
+            isCurrent:{true},denied:{_ in XCTFail("No se retiró permiso")},improve:{item,_ in
+                if item.id != first.id {return nil}
+                return try await withCheckedThrowingContinuation {reply=$0}
+            })
+        defer {model.stop();reply?.resume(returning:nil);files.clear()}
+        model.start()
+        try await waitFor("La versión decente se muestra mientras se prepara más calidad") {reply != nil && model.documents[first.id] != nil}
+        XCTAssertEqual(model.documents[first.id]?.url,original.url)
+        model.select(second.id)
+        let late=try files.make("late-detail")
+        reply?.resume(returning:late);reply=nil
+        try await waitFor("Una mejora tardía no debe volver a mostrar otra foto") {!FileManager.default.fileExists(atPath:late.url.path)}
+        XCTAssertEqual(model.selectedID,second.id)
+        XCTAssertEqual(model.documents[first.id]?.url,original.url)
+    }
+
+    func testQualityUpgradeFailureKeepsTheDecentPreviewButDenialWithdrawsIt() async throws {
+        for revoked in [false,true] {
+            let first=photo("one"),files=PhotoModelDocuments(),original=try files.make("one")
+            var completed=false,denials=0
+            let model=MediaFullscreenPhotoModel(selected:first,items:[first],token:"",folderID:"folder",collectionID:"r2-test",
+                load:{_,_ in original},validate:{_ in},page:{_ in throw PhotoModelTestFailure.unexpectedPage},isCurrent:{true},denied:{_ in denials+=1},
+                improve:{_,_ in completed=true;if revoked {throw APIError.forbidden("Acceso retirado")};throw URLError(.timedOut)})
+            defer {model.stop();files.clear()}
+            model.start()
+            try await waitFor("Debe intentar la mejora") {completed}
+            if revoked {
+                try await waitFor("403 debe retirar incluso los píxeles previos") {denials==1}
+                XCTAssertTrue(model.documents.isEmpty);XCTAssertFalse(FileManager.default.fileExists(atPath:original.url.path))
+            } else {XCTAssertEqual(model.documents[first.id]?.url,original.url);XCTAssertTrue(model.errors.isEmpty)}
+        }
+    }
+
     func testPaginationRejectsDifferentFolderAndDifferentCollection() async throws {
         for mismatch in ["folder", "collection"] {
             let first = photo("one"), second = photo("private-foreign-photo")

@@ -9,11 +9,14 @@ struct MediaFullscreenPhotoView:View {
     private let client:PayrollClient
     private let stamp:String?
     private let canDelete:Bool
+    private let feed:MediaFeed
+    private let denied:(Error)->Void
+    @State private var prefetch=MediaFolderPhotoPrefetch()
 
     init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,denied:@escaping(Error)->Void) {
-        self.client=client;self.canDelete=feed.canDelete == true
+        self.client=client;self.canDelete=feed.canDelete == true;self.feed=feed;self.denied=denied
         let expected=try? client.mediaAccessStamp();stamp=expected
-        _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaPhotoPreview($0,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == (try? client.mediaAccessStamp())},denied:denied))
+        _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaPhotoPreview($0,quality:.balanced,collectionID:feed.collectionID,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == client.mediaPresentationStamp},denied:denied,improve:{try await client.improveMediaPhotoPreview($0,current:$1)}))
     }
     var body:some View {
         ZStack {
@@ -48,16 +51,23 @@ struct MediaFullscreenPhotoView:View {
         .statusBarHidden().privacySensitive().preferredColorScheme(.dark)
         .task {
             photos.start()
+            photos.refreshAuthorization()
+            prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)
             while !Task.isCancelled {
                 do {try await Task.sleep(for:.seconds(15))}catch{return}
                 if phase == .active {photos.refreshAuthorization()}
+                if phase == .active {prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)}
             }
         }
-        .onChange(of:phase) {_,value in if value == .active {photos.refreshAuthorization()}}
-        .onChange(of:try? client.mediaAccessStamp()) {_,value in if value != stamp {photos.stop();dismiss()}}
+        .onChange(of:phase) {_,value in
+            if value == .active {photos.refreshAuthorization();prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)}
+            else {prefetch.stop()}
+        }
+        .onChange(of:photos.selectedID) {_,value in if phase == .active {prefetch.start(feed,client:client,selectedID:value,denied:denied)}}
+        .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {photos.stop();prefetch.stop();dismiss()}}
         .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {photos.stop();dismiss()}}
         .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {photos.stop();dismiss()}}
-        .onDisappear {photos.stop()}
+        .onDisappear {prefetch.stop();photos.stop()}
     }
 }
 #endif

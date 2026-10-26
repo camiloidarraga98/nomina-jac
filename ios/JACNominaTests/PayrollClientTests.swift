@@ -1230,6 +1230,9 @@ final class PayrollClientTests: XCTestCase {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
         let cache = MediaOfflineCache(root: root)
         let client = PayrollClient(baseURL: URL(string: "https://prefetch.example.invalid")!, vault: vault, configuration: configuration, mediaOffline: cache, automaticallyDownloadOffline: false)
+        // This scope exercises grid covers. Low Data Mode suppresses the new
+        // full-screen bulk prefetch, which is verified separately on Wi-Fi.
+        client.photoPreviews.updateConnection(MediaPhotoConnection(constrained: true))
         let folder = MediaFolder(id: "opened", name: "Carpeta sintética")
         func item(_ id: String, kind: String = "image", available: Bool = true) -> MediaItem {
             MediaItem(id: id, name: id, mimeType: kind == "video" ? "video/mp4" : "image/png", kind: kind, size: 100, modifiedAt: "revision-1", thumbnailAvailable: available)
@@ -1375,6 +1378,183 @@ final class PayrollClientTests: XCTestCase {
         let url = try await client.mediaPlayback(video), stream = try MediaVideoStream(client: client, item: video, playbackURL: url)
         XCTAssertEqual(stream.asset.url, url); stream.cancel(); XCTAssertEqual(requests, 2)
     }
+    @MainActor func testDownloadedFolderPhotosOpenLocallyWhileOnlineAndOfflineWithoutAnyRequest() async throws {
+        let vault=MemorySession();vault.token=String(repeating:"a",count:43)
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let cache=MediaOfflineCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let client=PayrollClient(baseURL:URL(string:"https://pinned-preview.invalid")!,vault:vault,configuration:config,mediaOffline:cache,automaticallyDownloadOffline:false)
+        let scope=try XCTUnwrap(client.mediaScope()), folder=MediaFolder(id:"folder",name:"Carpeta descargada")
+        let items=(0..<3).map { MediaItem(id:"pinned-\($0)",name:"Foto\($0).png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"one",thumbnailAvailable:true) }
+        let feed=MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:items,nextPageToken:nil,provider:"r2",collectionID:"jac-r2-pinned")
+        try cache.saveFeed(feed,key:folder.id,append:false,scope:scope);try cache.pinFeed(feed,key:folder.id,scope:scope)
+        let source=try TemporaryDocuments.save(MediaFixture.photo,filename:"original.png")
+        defer {TemporaryDocuments.remove(source);MockProtocol.handler=nil;cache.clear(scope)}
+        for item in items {try cache.saveFile(source.url,item:item,scope:scope)}
+        var calls=0
+        MockProtocol.handler={_ in calls+=1;throw URLError(.notConnectedToInternet)}
+        for offline in [false,true] {
+            if offline {client.beginOfflineRestore()}
+            for item in items {
+                let document=try await client.mediaPhotoPreview(item,quality:.balanced)
+                XCTAssertEqual(try Data(contentsOf:document.url),MediaFixture.photo)
+                TemporaryDocuments.remove(document)
+            }
+        }
+        XCTAssertEqual(calls,0,"Ni el original ni una vista remota deben volver a descargarse para mostrar una carpeta guardada")
+    }
+
+    @MainActor func testPhotoPreviewCacheReopensAcrossClientsImprovesOnceAndNeverFallsBackAfterDenial() async throws {
+        let vault=MemorySession();vault.token=String(repeating:"b",count:43)
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),cache=MediaOfflineCache(root:root)
+        let base=URL(string:"https://preview-persistent.invalid")!
+        let client=PayrollClient(baseURL:base,vault:vault,configuration:config,mediaOffline:cache,automaticallyDownloadOffline:false)
+        let item=MediaItem(id:"photo",name:"Photo.heic",mimeType:"image/heic",kind:"image",size:8000000,modifiedAt:"one",thumbnailAvailable:true)
+        var calls:[String]=[],denied=false
+        MockProtocol.handler={ request in
+            let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems!
+            XCTAssertEqual(q.first{$0.name=="preview"}?.value,"1")
+            calls.append(q.first{$0.name=="quality"}?.value ?? "detail")
+            return (HTTPURLResponse(url:request.url!,statusCode:denied ? 403:200,httpVersion:nil,headerFields:["Content-Type":denied ? "application/json":"image/jpeg"])!,denied ? Data("{}".utf8):MediaFixture.photo)
+        }
+        defer {MockProtocol.handler=nil;try? FileManager.default.removeItem(at:root)}
+        let first=try await client.mediaPhotoPreview(item,quality:.balanced);TemporaryDocuments.remove(first)
+        let restored=PayrollClient(baseURL:base,vault:vault,configuration:config,mediaOffline:MediaOfflineCache(root:root),automaticallyDownloadOffline:false)
+        let second=try await restored.mediaPhotoPreview(item,quality:.balanced);defer{TemporaryDocuments.remove(second)}
+        XCTAssertEqual(try Data(contentsOf:second.url),MediaFixture.photo);XCTAssertEqual(calls,["balanced"])
+        restored.photoPreviews.updateConnection(MediaPhotoConnection(wifi:true))
+        let improvement=try await restored.improveMediaPhotoPreview(item,current:second)
+        let improved=try XCTUnwrap(improvement);TemporaryDocuments.remove(improved)
+        XCTAssertEqual(calls,["balanced","detail"])
+        let best=try await restored.mediaPhotoPreview(item,quality:.balanced)
+        XCTAssertEqual(best.url.lastPathComponent,MediaPhotoPreviewQuality.detail.filename);TemporaryDocuments.remove(best)
+        XCTAssertEqual(calls.count,2)
+        denied=true
+        let changed=MediaItem(id:item.id,name:item.name,mimeType:item.mimeType,kind:item.kind,size:item.size,modifiedAt:"two",thumbnailAvailable:true)
+        do {_ = try await restored.mediaPhotoPreview(changed,quality:.balanced);XCTFail("403 no admite fallback")}
+        catch APIError.forbidden {}
+        let scope=AgendaCacheScope(origin:base.absoluteString+"/media-offline-v1",token:String(repeating:"b",count:43))
+        XCTAssertNil(cache.loadPhotoPreview(item,quality:.balanced,scope:scope))
+    }
+
+    func testPhotoPreviewDiskCacheRejectsOtherRevisionQualitySessionExpiryDeletionAndLateCollectionWrites() throws {
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),cache=MediaOfflineCache(root:root)
+        defer{try? FileManager.default.removeItem(at:root)}
+        let scope=AgendaCacheScope(origin:"https://preview-cache.invalid/media-offline-v1",token:String(repeating:"c",count:43))
+        let item=MediaItem(id:"photo",name:"Photo.jpg",mimeType:"image/jpeg",kind:"image",size:10000000,modifiedAt:"one",thumbnailAvailable:true)
+        let now=Date(timeIntervalSince1970:1_800_000_000),data=Data(repeating:73,count:2000)
+        try cache.savePhotoPreview(data,item:item,quality:.balanced,scope:scope,collectionID:nil,now:now)
+        XCTAssertEqual(cache.loadPhotoPreview(item,quality:.balanced,scope:scope,now:now),data)
+        XCTAssertNil(cache.loadPhotoPreview(item,quality:.detail,scope:scope,now:now))
+        let encrypted=try FileManager.default.contentsOfDirectory(at:root.appendingPathComponent(scope.id).appendingPathComponent("photo-previews"),includingPropertiesForKeys:nil)
+        XCTAssertEqual(encrypted.count,1);XCTAssertNil(try Data(contentsOf:encrypted[0]).range(of:data))
+        let changed=MediaItem(id:item.id,name:item.name,mimeType:item.mimeType,kind:item.kind,size:item.size,modifiedAt:"two",thumbnailAvailable:true)
+        XCTAssertNil(cache.loadPhotoPreview(changed,quality:.balanced,scope:scope,now:now))
+        let other=AgendaCacheScope(origin:"https://preview-cache.invalid/media-offline-v1",token:String(repeating:"d",count:43))
+        XCTAssertNil(cache.loadPhotoPreview(item,quality:.balanced,scope:other,now:now))
+        XCTAssertNil(cache.loadPhotoPreview(item,quality:.balanced,scope:scope,now:now.addingTimeInterval(49*3600)))
+        try cache.savePhotoPreview(data,item:item,quality:.balanced,scope:scope,collectionID:nil,now:now)
+        try cache.removeFile(item,scope:scope)
+        XCTAssertNil(cache.loadPhotoPreview(item,quality:.balanced,scope:scope,now:now))
+        XCTAssertThrowsError(try cache.savePhotoPreview(data,item:item,quality:.balanced,scope:scope,collectionID:nil,now:now))
+        let folder=MediaFolder(id:"folder",name:"Nueva colección")
+        let feed=MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:[],nextPageToken:nil,provider:"r2",collectionID:"jac-r2-new")
+        try cache.saveFeed(feed,key:folder.id,append:false,scope:scope)
+        XCTAssertThrowsError(try cache.savePhotoPreview(data,item:changed,quality:.balanced,scope:scope,collectionID:nil,now:now))
+        cache.clear(scope)
+        XCTAssertThrowsError(try cache.savePhotoPreview(data,item:changed,quality:.balanced,scope:scope,collectionID:nil,now:now))
+    }
+
+    #if os(iOS)
+    @MainActor func testWholeFolderPreviewPrefetchTraversesPagesWarmsThirdPhotoAndSkipsDownloadedOriginals() async throws {
+        let vault=MemorySession();vault.token=String(repeating:"e",count:43)
+        let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
+        let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),cache=MediaOfflineCache(root:root)
+        let client=PayrollClient(baseURL:URL(string:"https://whole-folder-preview.invalid")!,vault:vault,configuration:config,mediaOffline:cache,automaticallyDownloadOffline:false)
+        client.photoPreviews.updateConnection(MediaPhotoConnection(wifi:true))
+        let folder=MediaFolder(id:"folder",name:"Carpeta de prueba")
+        let items=(0..<8).map {MediaItem(id:"photo-\($0)",name:"Foto\($0).png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"one",thumbnailAvailable:true)}
+        func feed(_ photos:[MediaItem],next:String?)->MediaFeed {MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:photos,nextPageToken:next,provider:"r2",collectionID:"jac-r2-prefetch")}
+        let first=feed(Array(items.prefix(4)),next:"next"),second=feed(Array(items.suffix(4)),next:nil)
+        let scope=try XCTUnwrap(client.mediaScope());try cache.saveFeed(first,key:folder.id,append:false,scope:scope)
+        let original=try TemporaryDocuments.save(MediaFixture.photo,filename:"saved.png")
+        try cache.saveFile(original.url,item:items[0],scope:scope);try cache.pinFile(items[0],scope:scope)
+        let lock=NSLock();var previews=Set<String>(),pageCalls=0
+        let pageData=try JSONEncoder().encode(second)
+        MockProtocol.handler={request in
+            lock.lock();defer{lock.unlock()}
+            let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems!
+            if request.url?.path=="/api/media" {pageCalls+=1;return(HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,pageData)}
+            XCTAssertEqual(q.first{$0.name=="preview"}?.value,"1");XCTAssertEqual(q.first{$0.name=="quality"}?.value,"balanced")
+            previews.insert(try XCTUnwrap(q.first{$0.name=="id"}?.value))
+            return(HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"image/jpeg"])!,MediaFixture.photo)
+        }
+        let prefetch=MediaFolderPhotoPrefetch()
+        defer{prefetch.stop();TemporaryDocuments.remove(original);MockProtocol.handler=nil;cache.clear(scope)}
+        prefetch.start(first,client:client,denied:{_ in XCTFail("No se retiró acceso")})
+        for _ in 0..<500 {
+            if cache.loadPhotoPreview(items[7],quality:.balanced,scope:scope) != nil {break}
+            try await Task.sleep(for:.milliseconds(10))
+        }
+        XCTAssertEqual(previews,Set(items.dropFirst().map(\.id)));XCTAssertEqual(pageCalls,1)
+        let before=previews
+        let third=try await client.mediaPhotoPreview(items[2],quality:.balanced);TemporaryDocuments.remove(third)
+        XCTAssertEqual(previews,before,"La tercera ya fue preparada sin tocarla")
+        XCTAssertTrue(cache.isPinned(items[0],scope:scope))
+    }
+    #endif
+
+    @MainActor func testPhotoPreviewQueueSharesReadersReservesCapacityAndPrioritizesVisibleRequests() async throws {
+        let pipeline=MediaPhotoPreviewPipeline(limit:1,monitorNetwork:false)
+        var pending:[String:CheckedContinuation<Data,Never>]=[:],calls:[String]=[]
+        func load(_ id:String) async -> Data {
+            calls.append(id);return await withCheckedContinuation {pending[id]=$0}
+        }
+        let first=Task {try await pipeline.data(key:"first",priority:.prefetch,authorized:{true}) {await load("first")}}
+        let shared=Task {try await pipeline.data(key:"first",priority:.visible,authorized:{true}) {XCTFail("Debe compartir la petición");return Data()}}
+        for _ in 0..<100 {if pending["first"] != nil {break};try await Task.sleep(for:.milliseconds(5))}
+        let background=Task {try await pipeline.data(key:"background",priority:.prefetch,authorized:{true}) {await load("background")}}
+        await Task.yield()
+        let visible=Task {try await pipeline.data(key:"visible",priority:.visible,authorized:{true}) {await load("visible")}}
+        defer {first.cancel();shared.cancel();background.cancel();visible.cancel();for reply in pending.values {reply.resume(returning:Data())}}
+        for _ in 0..<20 {await Task.yield()}
+        XCTAssertEqual(calls,["first"])
+        first.cancel()
+        for _ in 0..<20 {await Task.yield()}
+        pending.removeValue(forKey:"first")?.resume(returning:Data([1]))
+        let sharedValue=try await shared.value;XCTAssertEqual(sharedValue,Data([1]))
+        for _ in 0..<100 {if pending["visible"] != nil {break};try await Task.sleep(for:.milliseconds(5))}
+        XCTAssertEqual(calls,["first","visible"],"Una foto visible pasa antes que la cola de fondo")
+        pending.removeValue(forKey:"visible")?.resume(returning:Data([2]))
+        _ = try await visible.value
+        for _ in 0..<100 {if pending["background"] != nil {break};try await Task.sleep(for:.milliseconds(5))}
+        pending.removeValue(forKey:"background")?.resume(returning:Data([3]))
+        _ = try await background.value
+        XCTAssertEqual(calls,["first","visible","background"])
+    }
+
+    @MainActor func testPhotoPreviewQueueRejectsRevokedLateResultsAndConnectionPolicyAvoidsBulkOnLowData() async throws {
+        let pipeline=MediaPhotoPreviewPipeline(monitorNetwork:false)
+        var permitted=true,reply:CheckedContinuation<Data,Never>?
+        let read=Task {try await pipeline.data(key:"late",priority:.visible,authorized:{permitted}) {
+            await withCheckedContinuation {reply=$0}
+        }}
+        for _ in 0..<100 {if reply != nil {break};try await Task.sleep(for:.milliseconds(5))}
+        permitted=false;reply?.resume(returning:Data([1]));reply=nil
+        do {_ = try await read.value;XCTFail("Una respuesta tardía no restaura el acceso")}
+        catch is CancellationError {}
+        pipeline.updateConnection(MediaPhotoConnection(wifi:true))
+        XCTAssertTrue(pipeline.connection.improvesQuality);XCTAssertEqual(pipeline.connection.prefetchCount,Int.max)
+        pipeline.measured(bytes:32_000,seconds:2)
+        XCTAssertFalse(pipeline.connection.improvesQuality);XCTAssertEqual(pipeline.connection.prefetchCount,6)
+        pipeline.updateConnection(MediaPhotoConnection(expensive:true,wifi:false))
+        XCTAssertFalse(pipeline.connection.improvesQuality);XCTAssertEqual(pipeline.connection.prefetchCount,6)
+        pipeline.updateConnection(MediaPhotoConnection(constrained:true,wifi:true))
+        XCTAssertFalse(pipeline.connection.improvesQuality);XCTAssertEqual(pipeline.connection.prefetchCount,0)
+        pipeline.updateConnection(MediaPhotoConnection(available:false))
+        XCTAssertEqual(pipeline.connection.prefetchCount,0)
+    }
+
     @MainActor func testPendingPhotoPreviewRetriesOnlyTheLightVersionAndKeepsItsSession() async throws {
         let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]

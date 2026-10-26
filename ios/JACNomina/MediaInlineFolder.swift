@@ -207,12 +207,13 @@ final class MediaTileThumbnail: ObservableObject {
 @MainActor
 final class MediaFolderThumbnailPrefetch: ObservableObject {
     private let loader: MediaGridThumbnailLoader
+    private let photoPreviews = MediaFolderPhotoPrefetch()
     private var identity: String?
     private var generation = UUID()
     private(set) var task: Task<Void, Never>?
     init(loader: MediaGridThumbnailLoader? = nil) { self.loader = loader ?? .shared }
 
-    func stop() { generation = UUID(); task?.cancel(); task = nil; identity = nil }
+    func stop() { generation = UUID(); task?.cancel(); task = nil; identity = nil; photoPreviews.stop() }
 
     func start(_ feed: MediaFeed, client: PayrollClient, networkAllowed: Bool, denied: @escaping (Error) -> Void) {
         guard networkAllowed, !client.usingOfflineCopy, feed.connected, feed.canRead,
@@ -220,6 +221,7 @@ final class MediaFolderThumbnailPrefetch: ObservableObject {
         let signature = stamp + "|" + (feed.collectionID ?? "") + "|" + (feed.folder?.id ?? "") + "|" + (feed.nextPageToken ?? "") + "|" + feed.items.map { "\($0.id):\($0.modifiedAt):\($0.size):\($0.thumbnailAvailable)" }.joined(separator: "|")
         guard identity != signature else { return }
         stop(); identity = signature
+        photoPreviews.start(feed, client: client, denied: denied)
         let expected = generation
         task = Task(priority: .utility) {
             defer { if expected == generation { task = nil } }

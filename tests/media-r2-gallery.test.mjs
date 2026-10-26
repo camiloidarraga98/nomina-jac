@@ -475,6 +475,39 @@ function previewImages(output){
 async function photoPreviewFixture(){await activate();const parent=await folder(),upload=await start(jpeg,parent),done=await(await send(upload)).json();await m.uploads.PUT(req('/api/media/upload?thumbnail=1&id='+upload.data.id,jpeg,photoToken,'PUT'));return {upload,id:done.fileId,item:(await(await feed(parent)).json()).items[0]};}
 const photoPreview=(id,session=photoToken)=>m.files.GET(req('/api/media/file?id='+id+'&preview=1',undefined,session,'GET'));
 
+test('mobile balanced preview derives a decent JPEG from the stored upload without rereading the original',async()=>{
+ const {id,upload,item}=await photoPreviewFixture();
+ assert.equal((await m.uploads.PUT(req('/api/media/upload?preview=1&id='+upload.data.id,sizedJPEG(1600),photoToken,'PUT'))).status,200);
+ const transforms=previewImages(),before=calls.length;
+ const response=await m.files.GET(req('/api/media/file?id='+id+'&preview=1&quality=balanced&revision='+encodeURIComponent(item.modifiedAt),undefined,photoToken,'GET'));
+ assert.equal(response.status,200);assert.equal(response.headers.get('x-jac-preview-profile'),'mobile-1280-q78-v1');
+ assert.deepEqual(new Uint8Array(await response.arrayBuffer()),sizedJPEG(1280));
+ assert.deepEqual(transforms.map(t=>[t.options.width,t.encoding.quality]),[[1280,78]]);
+ assert.deepEqual(transforms[0].source,sizedJPEG(1600));
+ assert.equal(calls.slice(before).some(c=>c.method==='GET'&&String(c.url).includes('/originals/')),false);
+ assert.equal(objects.get('previews/'+id.slice(3)+'.jpg').profile,null,'The full-quality stored derivative is never overwritten by the mobile response');
+});
+
+test('mobile balanced preview reduces its edge to fit the byte budget and never substitutes the grid cover',async()=>{
+ const {id,upload}=await photoPreviewFixture();
+ await m.uploads.PUT(req('/api/media/upload?preview=1&id='+upload.data.id,sizedJPEG(1600),photoToken,'PUT'));
+ const transforms=previewImages(options=>options.width===1280?new Uint8Array(512*1024+1):sizedJPEG(1024));
+ const response=await m.files.GET(req('/api/media/file?id='+id+'&preview=1&quality=balanced',undefined,photoToken,'GET'));
+ assert.equal(response.status,200);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),sizedJPEG(1024));
+ assert.deepEqual(transforms.map(t=>[t.options.width,t.encoding.quality]),[[1280,78],[1024,76]]);
+});
+
+test('mobile balanced preview rejects revocation during relighting and unknown quality values',async()=>{
+ const {id,upload}=await photoPreviewFixture();
+ await m.uploads.PUT(req('/api/media/upload?preview=1&id='+upload.data.id,sizedJPEG(1600),photoToken,'PUT'));
+ previewImages(()=>{sql.prepare('UPDATE payroll_users SET active=0 WHERE id=?').run(photographer);return sizedJPEG(1280);});
+ assert.equal((await m.files.GET(req('/api/media/file?id='+id+'&preview=1&quality=balanced',undefined,photoToken,'GET'))).status,403);
+ sql.prepare('UPDATE payroll_users SET active=1 WHERE id=?').run(photographer);
+ assert.equal((await m.files.GET(req('/api/media/file?id='+id+'&preview=1&quality=huge',undefined,photoToken,'GET'))).status,400);
+ assert.equal((await m.files.GET(req('/api/media/file?id='+id+'&quality=balanced',undefined,photoToken,'GET'))).status,400);
+ assert.equal(objects.has('originals/'+id.slice(3)),true);
+});
+
 test('balanced photo preview is generated once from the original, keeps the grid cover and survives reopening',async()=>{
  const {id,item}=await photoPreviewFixture(),transforms=previewImages(),before=objects.get('originals/'+id.slice(3)).bytes.slice();
  for(let attempt=0;attempt<2;attempt++){const response=await photoPreview(id);assert.equal(response.status,200);assert.equal(response.headers.get('x-jac-preview-profile'),'balanced-2400-q84-v2');assert.deepEqual(new Uint8Array(await response.arrayBuffer()),sizedJPEG(2400));}

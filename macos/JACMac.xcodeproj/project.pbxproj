@@ -627,6 +627,7 @@
 				<string>F5CAF8DB58E2BF1BB5384D94</string>
 				<string>FDE45F33E4B2904C819717C6</string>
 				<string>75CB4FAF4932BF7A30B11AB0</string>
+				<string>C0AFA0540000000000000002</string>
 			</array>
 			<key>runOnlyForDeploymentPostprocessing</key>
 			<integer>0</integer>
@@ -1401,6 +1402,7 @@
 				<string>FE0391361237D5E0324B8667</string>
 				<string>CB537E7EB6A261454C7ECDD1</string>
 				<string>DE545FA9AE6801F18883232B</string>
+				<string>C0AFA0540000000000000001</string>
 			</array>
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
@@ -1593,6 +1595,24 @@
 			<string>PBXBuildFile</string>
 			<key>fileRef</key>
 			<string>DE545FA9AE6801F18883232B</string>
+		</dict>
+		<key>C0AFA0540000000000000001</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>path</key>
+			<string>../ios/JACNomina/MediaPhotoPreviewPipeline.swift</string>
+			<key>sourceTree</key>
+			<string>SOURCE_ROOT</string>
+		</dict>
+		<key>C0AFA0540000000000000002</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>C0AFA0540000000000000001</string>
 		</dict>
 	</dict>
 	<key>rootObject</key>

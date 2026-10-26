@@ -20,6 +20,10 @@ final class MediaFullscreenPhotoModel: ObservableObject {
     private let page:(String) async throws -> MediaFeed
     private let isCurrent:()->Bool
     private let denied:(Error)->Void
+    private let improve:((MediaItem,ExportedDocument) async throws -> ExportedDocument?)?
+    private var improvement:Task<Void,Never>?
+    private var improvementID:UUID?
+    private var improved=Set<String>()
     private var active=true
     private var started=false
     private var loads:[String:(id:UUID,task:Task<Void,Never>)]=[:]
@@ -28,12 +32,13 @@ final class MediaFullscreenPhotoModel: ObservableObject {
     private var seenTokens=Set<String>()
     private var accessOrder:[String]=[]
 
-    init(selected:MediaItem,items:[MediaItem],token:String,folderID:String,collectionID:String?,load:@escaping(MediaItem,@escaping(Int64,Int64)->Void) async throws -> ExportedDocument,validate:@escaping(MediaItem) async throws -> Void,page:@escaping(String) async throws -> MediaFeed,isCurrent:@escaping()->Bool,denied:@escaping(Error)->Void) {
+    init(selected:MediaItem,items:[MediaItem],token:String,folderID:String,collectionID:String?,load:@escaping(MediaItem,@escaping(Int64,Int64)->Void) async throws -> ExportedDocument,validate:@escaping(MediaItem) async throws -> Void,page:@escaping(String) async throws -> MediaFeed,isCurrent:@escaping()->Bool,denied:@escaping(Error)->Void,improve:((MediaItem,ExportedDocument) async throws -> ExportedDocument?)? = nil) {
         var seen=Set<String>()
         var photos=items.filter{$0.kind == "image" && seen.insert($0.id).inserted}
         if !photos.contains(where:{$0.id == selected.id}) {photos.insert(selected,at:0)}
         self.items=photos;self.selectedID=selected.id;self.token=token;self.folderID=folderID;self.collectionID=collectionID
         self.load=load;self.validate=validate;self.page=page;self.isCurrent=isCurrent;self.denied=denied
+        self.improve=improve
     }
     var index:Int {items.firstIndex{$0.id == selectedID} ?? 0}
     var selected:MediaItem? {items.first{$0.id == selectedID}}
@@ -49,9 +54,10 @@ final class MediaFullscreenPhotoModel: ObservableObject {
     func select(_ id:String) {
         guard active,isCurrent(),id != selectedID,items.contains(where:{$0.id == id}) else{return}
         selectedID=id;touch(id);validation?.cancel();validation=nil
+        improvement?.cancel();improvement=nil;improvementID=nil
         // Resident files were already authorized in this open viewer. Keep the
         // transition immediate, and revalidate their metadata on every revisit.
-        if documents[id] != nil,let item=selected {revalidate(item)}
+        if documents[id] != nil,let item=selected {revalidate(item);improveSelected()}
         schedule();prefetchMetadata()
     }
     func move(_ direction:Int) {
@@ -68,6 +74,7 @@ final class MediaFullscreenPhotoModel: ObservableObject {
     func refreshAuthorization() {
         guard active,isCurrent(),let item=selected else {stop();return}
         revalidate(item)
+        improveSelected()
     }
     func retryPage() {loadMore(advance:false)}
     private func revalidate(_ item:MediaItem) {
@@ -103,6 +110,7 @@ final class MediaFullscreenPhotoModel: ObservableObject {
                     }
                     if let old=self.documents[id] {TemporaryDocuments.remove(old)}
                     self.documents[id]=document;self.progress[id]=1;self.errors[id]=nil;self.touch(id);self.trimResidents()
+                    if id == self.selectedID { self.improveSelected() }
                 } catch {
                     guard self.active,!Task.isCancelled,self.loads[id]?.id==operation else{return}
                     self.handle(error,for:id)
@@ -117,6 +125,28 @@ final class MediaFullscreenPhotoModel: ObservableObject {
         while documents.count>5,let id=accessOrder.first(where:{!visible.contains($0) && documents[$0] != nil}) {
             if let old=documents.removeValue(forKey:id) {TemporaryDocuments.remove(old)}
             accessOrder.removeAll{$0==id};progress[id]=nil
+        }
+    }
+    private func improveSelected() {
+        guard active, isCurrent(), improvement == nil, let improve, let item=selected,
+              let current=documents[item.id], !improved.contains(item.id) else { return }
+        let operation=UUID();improvementID=operation
+        improvement=Task { [weak self] in
+            guard let self else { return }
+            defer { if self.improvementID==operation { self.improvement=nil;self.improvementID=nil } }
+            do {
+                guard let document=try await improve(item,current) else { return }
+                guard self.active,!Task.isCancelled,self.isCurrent(),self.selectedID==item.id,
+                      self.improvementID==operation,self.documents[item.id]?.url==current.url else {
+                    TemporaryDocuments.remove(document);return
+                }
+                self.documents[item.id]=document;self.improved.insert(item.id)
+                if document.url != current.url {TemporaryDocuments.remove(current)}
+            } catch {
+                guard self.active,!Task.isCancelled,self.improvementID==operation else{return}
+                if self.isAccessFailure(error) {self.handle(error,for:item.id)}
+                // Keep the already visible decent preview if extra detail fails.
+            }
         }
     }
     private func prefetchMetadata() {if index+2>=items.count,!token.isEmpty {loadMore(advance:false)}}
@@ -161,6 +191,7 @@ final class MediaFullscreenPhotoModel: ObservableObject {
     func stop() {
         guard active else{return};active=false
         loads.values.forEach{$0.task.cancel()};loads=[:];validation?.cancel();validation=nil;pagination?.cancel();pagination=nil
+        improvement?.cancel();improvement=nil;improvementID=nil;improved=[]
         documents.values.forEach{TemporaryDocuments.remove($0)};documents=[:];progress=[:];errors=[:];paging=false
     }
 }
