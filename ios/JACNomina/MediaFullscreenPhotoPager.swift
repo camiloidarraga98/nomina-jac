@@ -14,6 +14,8 @@ struct MediaFullscreenPhotoPager: UIViewRepresentable {
     let active: Bool
     let select: (String) -> Void
     let retry: (String) -> Void
+    var savePhoto: ((MediaItem) -> Void)? = nil
+    var dismissPhoto: (() -> Void)? = nil
 
     func makeUIView(context: Context) -> MediaFullscreenPhotoPagerView {
         MediaFullscreenPhotoPagerView()
@@ -22,7 +24,7 @@ struct MediaFullscreenPhotoPager: UIViewRepresentable {
     func updateUIView(_ view: MediaFullscreenPhotoPagerView, context: Context) {
         view.configure(items: items, selectedID: selectedID, documents: documents,
                        progress: progress, errors: errors, active: active,
-                       select: select, retry: retry)
+                       select: select, retry: retry, savePhoto: savePhoto, dismissPhoto: dismissPhoto)
     }
 
     static func dismantleUIView(_ view: MediaFullscreenPhotoPagerView, coordinator: ()) {
@@ -30,7 +32,7 @@ struct MediaFullscreenPhotoPager: UIViewRepresentable {
     }
 }
 
-final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate {
+final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate, UIContextMenuInteractionDelegate, UIGestureRecognizerDelegate {
     private let pager = UIScrollView()
     private var items: [MediaItem] = []
     private var documents: [String: URL] = [:]
@@ -45,6 +47,9 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate {
     private var epoch = UUID()
     private var select: ((String) -> Void)?
     private var retry: ((String) -> Void)?
+    private var savePhoto: ((MediaItem) -> Void)?
+    private var dismissPhoto: (() -> Void)?
+    private lazy var verticalPan = UIPanGestureRecognizer(target:self,action:#selector(dragToDismiss(_:)))
     private var decoding: Task<UIImage?, Never>?
     private var decodeCompletion: Task<Void, Never>?
     private var changingWindow = false
@@ -65,6 +70,10 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate {
         pager.panGestureRecognizer.maximumNumberOfTouches = 1
         pager.accessibilityIdentifier = "media.photo.pager"
         addSubview(pager)
+        addInteraction(UIContextMenuInteraction(delegate:self))
+        verticalPan.delegate=self;verticalPan.maximumNumberOfTouches=1
+        addGestureRecognizer(verticalPan)
+        pager.panGestureRecognizer.require(toFail:verticalPan)
         accessibilityIdentifier = "media.photo.viewer"
     }
 
@@ -77,11 +86,13 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate {
 
     func configure(items: [MediaItem], selectedID: String, documents: [String: URL],
                    progress: [String: Double], errors: [String: String], active: Bool,
-                   select: @escaping (String) -> Void, retry: @escaping (String) -> Void) {
+                   select: @escaping (String) -> Void, retry: @escaping (String) -> Void, savePhoto: ((MediaItem) -> Void)? = nil, dismissPhoto: (() -> Void)? = nil) {
         guard active else { stop(); return }
         if !enabled { enabled = true; epoch = UUID(); pager.isHidden = false }
         self.select = select
         self.retry = retry
+        self.savePhoto = savePhoto
+        self.dismissPhoto = dismissPhoto
         var seen = Set<String>()
         self.items = items.filter { $0.kind == "image" && seen.insert($0.id).inserted }
         self.documents = documents
@@ -111,6 +122,9 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate {
 
     func stop() {
         enabled = false
+        savePhoto = nil
+        dismissPhoto = nil
+        pager.transform = .identity;pager.alpha=1
         epoch = UUID()
         pager.isHidden = true
         pager.isScrollEnabled = false
@@ -129,6 +143,35 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate {
         lastInputSelection = ""
         select = nil
         retry = nil
+    }
+    func contextMenuInteraction(_ interaction: UIContextMenuInteraction, configurationForMenuAtLocation location: CGPoint) -> UIContextMenuConfiguration? {
+        guard enabled, let item=items.first(where:{$0.id==selectedID}), documents[item.id] != nil, let savePhoto else { return nil }
+        return UIContextMenuConfiguration(identifier:item.id as NSString,previewProvider:nil) { [weak self] _ in
+            UIMenu(children:[UIAction(title:"Guardar en Fotos",image:UIImage(systemName:"square.and.arrow.down")) { [weak self] _ in
+                guard let self,self.enabled,self.items.contains(where:{$0.id==item.id && $0.modifiedAt==item.modifiedAt}) else { return }
+                savePhoto(item)
+            }])
+        }
+    }
+    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+        guard gestureRecognizer === verticalPan else { return true }
+        let velocity=verticalPan.velocity(in:self)
+        return enabled && dismissPhoto != nil && !(pages[selectedID]?.isMagnified ?? false) && abs(velocity.y)>abs(velocity.x)*1.25
+    }
+    @objc private func dragToDismiss(_ gesture: UIPanGestureRecognizer) {
+        let translation=gesture.translation(in:self),distance=abs(translation.y)
+        switch gesture.state {
+        case .began,.changed:
+            let scale=max(0.75,1-distance/max(1,bounds.height)*0.35)
+            pager.transform=CGAffineTransform(translationX:translation.x*0.15,y:translation.y).scaledBy(x:scale,y:scale)
+            pager.alpha=max(0.3,1-distance/max(1,bounds.height))
+        case .ended:
+            if distance>90 || abs(gesture.velocity(in:self).y)>800 { dismissPhoto?() }
+            else { UIView.animate(withDuration:0.2) {self.pager.transform = .identity;self.pager.alpha=1} }
+        case .cancelled,.failed:
+            UIView.animate(withDuration:0.2) {self.pager.transform = .identity;self.pager.alpha=1}
+        default: break
+        }
     }
 
     private func endInteraction() {
@@ -231,6 +274,7 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate {
     override func accessibilityScroll(_ direction: UIAccessibilityScrollDirection) -> Bool {
         let delta: Int
         switch direction {
+        case .up,.down: guard enabled,let dismissPhoto else {return false};dismissPhoto();return true
         case .left, .next: delta = 1
         case .right, .previous: delta = -1
         default: return false

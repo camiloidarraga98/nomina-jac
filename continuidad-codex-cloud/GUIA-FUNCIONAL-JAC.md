@@ -1,3 +1,7 @@
+## Fotografía nativa ·26 de octubre de2026
+
+Videos originales sin compresión antes de subir (sustituye la elección anterior), eliminación sólo de la descarga local desde el menú de carpeta, guardado directo al carrete de una foto por pulsación prolongada o del grupo seleccionado y carpetas plegables durante descargas. Visor con nombre de carpeta arriba, tira de miniaturas abajo y arrastre vertical para regresar; conserva zoom/paginación/permisos. App/widget0.37.0(55); el teléfono aún requiere copiar o recuperar de iCloud un original no local y transferir sus bytes. Ver [alcance y comprobaciones](../docs/IPHONE_MEDIA_ACTIONS.md).
+
 ## Subidas web de Fotografía ·26 de octubre de2026
 
 Safari usa una transferencia compatible sin iframe oculto. Ante un error se consulta primero lo recibido; hasta dos reintentos automáticos del mismo archivo/parte antes de dejarlo pendiente. No confundir un error de envío o confirmación con una desconexión demostrada. Mostrar fase real y velocidad sólo si puede medirse. Reintentar dentro de la misma cola conserva el identificador; recargar pierde la selección local y requiere elegir sólo pendientes en la carpeta existente. Los avisos son una vez por carpeta nueva cuando termina la subida, no por cada archivo añadido posteriormente. Ver [alcance y verificación](../docs/PHOTOGRAPHY_WEB_UPLOADS.md).

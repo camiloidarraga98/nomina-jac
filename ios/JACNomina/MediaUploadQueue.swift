@@ -201,9 +201,6 @@ final class MediaUploadQueue: ObservableObject {
         do {
             var ids = Set(jobs.map(\.id))
             for file in files {
-                guard !file.mimeType.hasPrefix("video/") || file.videoPrepared else {
-                    throw APIError.invalid("El video debe terminar de comprimirse antes de subirlo. Vuelve a seleccionarlo.")
-                }
                 guard UUID(uuidString: file.id)?.uuidString.lowercased() == file.id,
                       ids.insert(file.id).inserted, file.url.isFileURL, file.size > 0, file.size <= MediaLocalFile.maximumSize else {
                     throw APIError.invalid("Uno de los archivos seleccionados no es válido.")

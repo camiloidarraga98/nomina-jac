@@ -1142,6 +1142,24 @@ final class PayrollClient: ObservableObject {
         let pinned = await Task.detached(priority: .utility) { cache.isPinned(item, scope: scope) }.value
         return !Task.isCancelled && permissionUser?.canReadMedia == true && stamp == mediaPresentationStamp && pinned
     }
+    func localMediaFoldersForPresentation() async -> Set<String> {
+        guard !Task.isCancelled, permissionUser?.canReadMedia == true,
+              let scope = derivedMediaScope?.scope, let stamp = mediaPresentationStamp else { return [] }
+        let cache = mediaOffline
+        let ids = await Task.detached(priority: .utility) { cache.localFolderIDs(scope: scope) }.value
+        guard !Task.isCancelled, stamp == mediaPresentationStamp, permissionUser?.canReadMedia == true else { return [] }
+        return ids
+    }
+    func removeLocalMediaFolder(_ id: String) async throws -> Int64 {
+        let stamp = try mediaAccessStamp()
+        guard permissionUser?.canReadMedia == true, let scope = try mediaScope() else { throw APIError.unauthorized }
+        let cache = mediaOffline
+        let work = Task.detached(priority: .userInitiated) { try cache.forgetLocalFolder(id, scope: scope) }
+        let bytes = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
+        guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
+        cacheRevision += 1
+        return bytes
+    }
     func cachedMedia(folder: String = "") -> MediaFeed? {
         guard permissionUser?.canReadMedia != false, let scope = try? mediaScope() else { return nil }
         return mediaOffline.loadFeed(folder, scope: scope)
@@ -1678,11 +1696,11 @@ final class PayrollClient: ObservableObject {
         guard permissionUser?.canReadMedia != false else {throw APIError.forbidden("Tu cuenta no tiene acceso a Fotografía.")}
         guard let scope = try mediaScope() else { throw APIError.unauthorized }
         if mediaOffline.hasFile(item, scope: scope) {if !usingOfflineCopy {try await validateMediaItem(item)};try mediaOffline.pinFile(item,scope:scope);cacheRevision += 1;return}
-        let generation = cacheGeneration
+        let generation = cacheGeneration, localEpoch = mediaOffline.localDownloadEpoch
         guard MediaStorageReview.freeBytes > item.size * 2 + 64 * 1024 * 1024 else { throw APIError.invalid("No hay espacio suficiente para descargar y cifrar este archivo. Libera espacio e inténtalo de nuevo.") }
         let document = try await downloadMediaDocument(item); defer { TemporaryDocuments.remove(document) }
         guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
-        let cache = mediaOffline, work = Task.detached(priority: .utility) { try cache.saveFile(document.url, item: item, scope: scope) }
+        let cache = mediaOffline, work = Task.detached(priority: .utility) { try cache.saveFile(document.url, item: item, scope: scope, expectedLocalEpoch: localEpoch) }
         do { try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() } }
         catch { if scope.id != (try mediaScope())?.id { cache.clear(scope) }; throw error }
         guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { cache.clear(scope); throw CancellationError() }

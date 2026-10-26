@@ -500,7 +500,7 @@ struct MediaInlineFolder: View {
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .disabled(disabled || !validPath)
+                .disabled(!validPath)
                 .accessibilityIdentifier("media.item." + folder.id)
                 .accessibilityValue(isExpanded ? "Abierta" : "Cerrada")
 

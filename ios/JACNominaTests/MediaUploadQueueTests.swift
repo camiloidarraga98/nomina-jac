@@ -35,20 +35,24 @@ final class MediaVideoPreparationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: result.file.url), MediaFixture.photo)
     }
 
-    func testSmallVideosAlwaysProduceACompressedMP4InsteadOfTheOriginal() async throws {
+    func testOriginalVideoKeepsItsURLUUIDNameFormatAndEveryByte() async throws {
         let file = try staged(); defer { file.remove() }
-        let result = try await MediaVideoPreparation.prepare(file); defer { result.file.remove() }
-        XCTAssertNotEqual(result.file.url, file.url)
-        XCTAssertEqual(result.file.mimeType, "video/mp4")
-        XCTAssertTrue(result.file.videoPrepared)
-        XCTAssertTrue(result.detail?.contains("MP4 para web") == true)
-        XCTAssertEqual(try Data(contentsOf: file.url), MediaFixture.video)
+        let before = try Data(contentsOf: file.url)
+        let result = try await MediaVideoPreparation.prepare(file)
+        XCTAssertEqual(result.file.url, file.url)
+        XCTAssertEqual(result.file.id, file.id)
+        XCTAssertEqual(result.file.name, "Video.mov")
+        XCTAssertEqual(result.file.mimeType, "video/quicktime")
+        XCTAssertEqual(result.file.size, Int64(before.count))
+        XCTAssertFalse(result.file.videoPrepared)
+        XCTAssertEqual(result.detail, "Video original · Sin compresión")
+        XCTAssertEqual(try Data(contentsOf: result.file.url), before)
     }
 
-    func testInvalidVideoIsRejectedWithoutOriginalFallback() async throws {
+    func testInvalidVideoIsRejectedWithoutChangingTheSource() async throws {
         let bytes = Data("Ficticio, sin contenido audiovisual".utf8)
         let file = try staged(bytes); defer { file.remove() }
-        do { _ = try await MediaVideoPreparation.prepare(file); XCTFail("No debe devolverse el original sin comprimir") }
+        do { _ = try await MediaVideoPreparation.prepare(file); XCTFail("No debe aceptar texto como video") }
         catch { XCTAssertFalse(error is CancellationError) }
         XCTAssertEqual(try Data(contentsOf: file.url), bytes)
     }
@@ -64,127 +68,49 @@ final class MediaVideoPreparationTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: file.url), MediaFixture.video)
     }
 
-    func testMP4ConversionPreservesPortraitAudioTimingAndUploadIdentity() async throws {
-        let input = try staged(); defer { input.remove() }
-        let asset = AVURLAsset(url: input.url)
-        let duration = try await asset.load(.duration)
-        let composition = AVMutableComposition()
-        let videoTracks = try await asset.loadTracks(withMediaType: .video)
-        let video = try XCTUnwrap(videoTracks.first)
-        let composedVideo = try XCTUnwrap(composition.addMutableTrack(withMediaType: .video, preferredTrackID: kCMPersistentTrackID_Invalid))
-        try composedVideo.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: video, at: .zero)
-        composedVideo.preferredTransform = CGAffineTransform(rotationAngle: .pi / 2)
-        // Audible, distinct stereo tones detect silence and a lost/swapped channel.
-        let samples = Int(ceil(duration.seconds * 44100))
-        var payload = Data()
-        for sample in 0..<samples {
-            for frequency in [440.0, 880.0] {
-                var value = Int16(sin(Double(sample) * frequency * 2 * .pi / 44100) * 16000).littleEndian
-                withUnsafeBytes(of: &value) { payload.append(contentsOf: $0) }
-            }
+    func testLargeOriginalNeedsOnlyABoundedHeaderAndNoSecondVideoFile() async throws {
+        let document = try TemporaryDocuments.save(Data([0,0,0,24]) + Data("ftypisom".utf8), filename: "Grande.mp4")
+        defer { TemporaryDocuments.remove(document) }
+        let handle = try FileHandle(forWritingTo: document.url)
+        let count: Int64 = 4 * 1024 * 1024 * 1024
+        try handle.truncate(atOffset: UInt64(count)); try handle.close()
+        let file = MediaLocalFile(id: UUID().uuidString.lowercased(), url: document.url, name: "Grande.mp4", mimeType: "video/mp4", size: count)
+        let before = try FileManager.default.contentsOfDirectory(atPath: document.url.deletingLastPathComponent().path)
+        let result = try await MediaVideoPreparation.prepare(file)
+        XCTAssertEqual(result.file.url, file.url); XCTAssertEqual(result.file.size, count)
+        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: document.url.deletingLastPathComponent().path), before)
+    }
+
+    func testChangedSizeAndMismatchedFormatAreRejectedBeforeUpload() async throws {
+        let file = try staged(); defer { file.remove() }
+        for candidate in [MediaLocalFile(id: file.id, url: file.url, name: file.name, mimeType: file.mimeType, size: file.size + 1),
+                          MediaLocalFile(id: file.id, url: file.url, name: file.name, mimeType: "video/webm", size: file.size)] {
+            do { _ = try await MediaVideoPreparation.prepare(candidate); XCTFail("Debe rechazar datos cambiados") } catch { }
         }
-        var wav = Data("RIFF".utf8)
-        func word<T: FixedWidthInteger>(_ value: T) { var little = value.littleEndian; withUnsafeBytes(of: &little) { wav.append(contentsOf: $0) } }
-        word(UInt32(36 + payload.count)); wav.append(Data("WAVEfmt ".utf8))
-        word(UInt32(16)); word(UInt16(1)); word(UInt16(2)); word(UInt32(44100)); word(UInt32(176400)); word(UInt16(4)); word(UInt16(16))
-        wav.append(Data("data".utf8)); word(UInt32(payload.count)); wav.append(payload)
-        let sound = try TemporaryDocuments.save(wav, filename: "Tonos ficticios.wav")
-        defer { TemporaryDocuments.remove(sound) }
-        let soundAsset = AVURLAsset(url: sound.url)
-        let audioTracks = try await soundAsset.loadTracks(withMediaType: .audio)
-        let soundTrack = try XCTUnwrap(audioTracks.first)
-        let composedAudio = try XCTUnwrap(composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid))
-        try composedAudio.insertTimeRange(CMTimeRange(start: .zero, duration: duration), of: soundTrack, at: .zero)
-        let sourceURL = input.url.deletingLastPathComponent().appendingPathComponent("Con audio.mov")
-        let session = try XCTUnwrap(AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetPassthrough))
-        session.outputURL = sourceURL; session.outputFileType = .mov
-        await session.export()
-        XCTAssertEqual(session.status, .completed, session.error?.localizedDescription ?? "")
-        let source = try MediaLocalFile.stage(sourceURL, quality: .original); defer { source.remove() }
+    }
+
+    func testMP4M4VAndWebMKeepTheirOriginalContainer() async throws {
+        for (name, bytes) in [("Original.mp4", MediaFixture.video), ("Original.m4v", MediaFixture.video),
+                              ("Original.webm", Data([0x1a,0x45,0xdf,0xa3,0,0,0,0]))] {
+            let source = try staged(bytes, name: name); defer { source.remove() }
+            let result = try await MediaVideoPreparation.prepare(source)
+            XCTAssertEqual(result.file.url, source.url); XCTAssertEqual(result.file.mimeType, source.mimeType)
+            XCTAssertEqual(result.file.name, name); XCTAssertEqual(try Data(contentsOf: result.file.url), bytes)
+        }
+    }
+
+    func testHDRVideoKeepsItsOriginalCodecColorAndBytes() async throws {
+        let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "SyntheticHDR", withExtension: "mp4"))
+        let source = try MediaLocalFile.stage(fixture, quality: .original); defer { source.remove() }
         let original = try Data(contentsOf: source.url)
         let result = try await MediaVideoPreparation.prepare(source)
-        defer { if result.file.url != source.url { result.file.remove() } }
-        XCTAssertNotEqual(result.file.url, source.url, result.detail ?? "")
-        XCTAssertEqual(result.file.id, source.id)
-        XCTAssertEqual(result.file.name, "Con audio.mp4")
-        XCTAssertEqual(result.file.mimeType, "video/mp4")
-        XCTAssertTrue(result.file.size < source.size)
-        XCTAssertTrue(result.detail?.contains("% menos") == true)
-        XCTAssertEqual(try Data(contentsOf: source.url), original)
-        let output = AVURLAsset(url: result.file.url)
-        let outputVideos = try await output.loadTracks(withMediaType: .video)
-        let outputAudio = try await output.loadTracks(withMediaType: .audio)
-        XCTAssertEqual(outputVideos.count, 1); XCTAssertEqual(outputAudio.count, 1)
-        let outVideo = try XCTUnwrap(outputVideos.first)
-        let outSize = try await outVideo.load(.naturalSize)
-        let outTransform = try await outVideo.load(.preferredTransform)
-        let inSize = try await video.load(.naturalSize)
-        let rect = CGRect(origin: .zero, size: outSize).applying(outTransform)
-        XCTAssertEqual(abs(rect.width / rect.height), inSize.height / inSize.width, accuracy: 0.02)
-        XCTAssertEqual(abs(rect.width), inSize.height, accuracy: 2)
-        XCTAssertEqual(abs(rect.height), inSize.width, accuracy: 2)
-        XCTAssertTrue(result.file.videoPrepared)
-        let outputDuration = try await output.load(.duration)
-        XCTAssertEqual(outputDuration.seconds, duration.seconds, accuracy: 0.1)
-        let formats = try await outVideo.load(.formatDescriptions)
-        XCTAssertEqual(formats.map { CMFormatDescriptionGetMediaSubType($0) }, [kCMVideoCodecType_H264])
-        let soundFormats = try await outputAudio[0].load(.formatDescriptions)
-        XCTAssertEqual(soundFormats.map { CMFormatDescriptionGetMediaSubType($0) }, [kAudioFormatMPEG4AAC])
-        let soundDescription = try XCTUnwrap(soundFormats.first)
-        XCTAssertEqual(try XCTUnwrap(CMAudioFormatDescriptionGetStreamBasicDescription(soundDescription)).pointee.mChannelsPerFrame, 2)
-        let sourceSound = try await decodedStereoAudio(AVURLAsset(url: source.url))
-        let outputSound = try await decodedStereoAudio(output)
-        // Include the full sample timeline, not just the AAC track's existence.
-        XCTAssertEqual(Double(outputSound.count) / 88200, Double(sourceSound.count) / 88200, accuracy: 0.06)
-        for channel in 0..<2 {
-            let before = rms(sourceSound, channel: channel), after = rms(outputSound, channel: channel)
-            XCTAssertGreaterThan(before, 0.2)
-            XCTAssertEqual(after, before, accuracy: 0.025)
-            XCTAssertGreaterThan(toneEnergy(outputSound, channel: channel, frequency: channel == 0 ? 440 : 880), 0.12)
-            XCTAssertLessThan(toneEnergy(outputSound, channel: channel, frequency: channel == 0 ? 880 : 440), 0.015)
-        }
-    }
-
-    private func decodedStereoAudio(_ asset: AVAsset) async throws -> [Int16] {
-        let tracks = try await asset.loadTracks(withMediaType: .audio)
-        let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(track: try XCTUnwrap(tracks.first), outputSettings: [
-            AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: 44100, AVNumberOfChannelsKey: 2,
-            AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false,
-            AVLinearPCMIsBigEndianKey: false, AVLinearPCMIsNonInterleaved: false
-        ])
-        reader.add(output)
-        XCTAssertTrue(reader.startReading(), reader.error?.localizedDescription ?? "")
-        var samples: [Int16] = []
-        while let buffer = output.copyNextSampleBuffer() {
-            let block = try XCTUnwrap(CMSampleBufferGetDataBuffer(buffer))
-            let count = CMBlockBufferGetDataLength(block)
-            var data = Data(count: count)
-            let status = data.withUnsafeMutableBytes { CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: count, destination: $0.baseAddress!) }
-            XCTAssertEqual(status, kCMBlockBufferNoErr)
-            data.withUnsafeBytes { raw in
-                for index in stride(from: 0, to: count, by: 2) { samples.append(Int16(littleEndian: raw.loadUnaligned(fromByteOffset: index, as: Int16.self))) }
-            }
-        }
-        XCTAssertEqual(reader.status, .completed, reader.error?.localizedDescription ?? "")
-        XCTAssertFalse(samples.isEmpty)
-        return samples
-    }
-
-    private func rms(_ samples: [Int16], channel: Int) -> Double {
-        let energy = stride(from: channel, to: samples.count, by: 2).reduce(0.0) { $0 + pow(Double(samples[$1]) / 32768, 2) }
-        return sqrt(energy / Double(max(1, samples.count / 2)))
-    }
-
-    private func toneEnergy(_ samples: [Int16], channel: Int, frequency: Double) -> Double {
-        var real = 0.0, imaginary = 0.0
-        let count = samples.count / 2
-        for frame in 0..<count {
-            let phase = Double(frame) * frequency * 2 * .pi / 44100
-            let value = Double(samples[frame * 2 + channel]) / 32768
-            real += value * cos(phase); imaginary += value * sin(phase)
-        }
-        return hypot(real, imaginary) / Double(max(1, count))
+        XCTAssertEqual(result.file.url, source.url)
+        XCTAssertEqual(try Data(contentsOf: result.file.url), original)
+        let asset = AVURLAsset(url: result.file.url), tracks = try await asset.loadTracks(withMediaType: .video)
+        let track = try XCTUnwrap(tracks.first)
+        XCTAssertTrue(track.hasMediaCharacteristic(.containsHDRVideo))
+        let formats = try await track.load(.formatDescriptions)
+        XCTAssertEqual(formats.map { CMFormatDescriptionGetMediaSubType($0) }, [kCMVideoCodecType_HEVC])
     }
 
     func testVideoPlaybackUsesAnAudioCategoryThatIgnoresTheSilentSwitch() throws {
@@ -199,147 +125,6 @@ final class MediaVideoPreparationTests: XCTestCase {
         XCTAssertEqual(session.mode, .moviePlayback)
     }
 
-    func testHighResolution60FPSVideoKeepsDetailAndCadenceWithGentlerCompression() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("Detalle ficticio.mov")
-        let width = 1600, height = 900
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
-        let input = AVAssetWriterInput(mediaType: .video, outputSettings: [
-            AVVideoCodecKey: AVVideoCodecType.h264, AVVideoWidthKey: width, AVVideoHeightKey: height,
-            AVVideoColorPropertiesKey: [AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2, AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2],
-            AVVideoCompressionPropertiesKey: [AVVideoAverageBitRateKey: 24_000_000,
-                AVVideoExpectedSourceFrameRateKey: 60, AVVideoMaxKeyFrameIntervalKey: 60,
-                AVVideoProfileLevelKey: AVVideoProfileLevelH264HighAutoLevel]
-        ])
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input, sourcePixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-            kCVPixelBufferWidthKey as String: width, kCVPixelBufferHeightKey as String: height
-        ])
-        writer.add(input)
-        XCTAssertTrue(writer.startWriting(), writer.error?.localizedDescription ?? "")
-        writer.startSession(atSourceTime: .zero)
-        var noise: UInt32 = 12345
-        func waitForEncoder() async throws {
-            // A cold simulator's software encoder can take more than five
-            // seconds. Never append after a timeout and corrupt the fixture.
-            for _ in 0..<3000 {
-                guard writer.status == .writing else { throw writer.error ?? QueueTestFailure.timeout }
-                if input.isReadyForMoreMediaData { return }
-                try await Task.sleep(for: .milliseconds(10))
-            }
-            throw QueueTestFailure.timeout
-        }
-        for frame in 0..<60 {
-            try await waitForEncoder()
-            var buffer: CVPixelBuffer?
-            XCTAssertEqual(CVPixelBufferPoolCreatePixelBuffer(nil, try XCTUnwrap(adaptor.pixelBufferPool), &buffer), kCVReturnSuccess)
-            let pixel = try XCTUnwrap(buffer)
-            CVPixelBufferLockBaseAddress(pixel, [])
-            let bytes = try XCTUnwrap(CVPixelBufferGetBaseAddress(pixel)).assumingMemoryBound(to: UInt8.self)
-            let stride = CVPixelBufferGetBytesPerRow(pixel)
-            for y in 0..<height {
-                for x in 0..<width {
-                    noise = noise &* 1664525 &+ 1013904223
-                    let grain = Int(noise >> 27) - 16
-                    let index = y * stride + x * 4
-                    bytes[index] = UInt8(clamping: 32 + ((x + frame * 7) % 192) + grain)
-                    bytes[index + 1] = UInt8(clamping: 32 + ((y + frame * 3) % 192) + grain)
-                    bytes[index + 2] = UInt8(clamping: 32 + ((x / 2 + y / 2 + frame * 5) % 192) + grain)
-                    bytes[index + 3] = 255
-                }
-            }
-            CVPixelBufferUnlockBaseAddress(pixel, [])
-            try await waitForEncoder()
-            XCTAssertTrue(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(frame), timescale: 60)))
-        }
-        input.markAsFinished()
-        await writer.finishWriting()
-        XCTAssertEqual(writer.status, .completed, writer.error?.localizedDescription ?? "")
-        let source = try MediaLocalFile.stage(url, quality: .original); defer { source.remove() }
-        let sourceTracks = try await AVURLAsset(url: source.url).loadTracks(withMediaType: .video)
-        let sourceRate = try await XCTUnwrap(sourceTracks.first).load(.nominalFrameRate)
-        let sourceFrameTime = try await XCTUnwrap(sourceTracks.first).load(.minFrameDuration)
-        print("JAC video source: \(sourceRate) fps, exact frame time \(sourceFrameTime.value)/\(sourceFrameTime.timescale)")
-        XCTAssertEqual(sourceRate, 60, accuracy: 0.1, "La fuente de la comparación debe tener los 60 fotogramas por segundo")
-        let result = try await MediaVideoPreparation.prepare(source); defer { result.file.remove() }
-        let original = AVURLAsset(url: source.url), compressed = AVURLAsset(url: result.file.url)
-        let tracks = try await compressed.loadTracks(withMediaType: .video)
-        let track = try XCTUnwrap(tracks.first)
-        let size = try await track.load(.naturalSize), rate = try await track.load(.nominalFrameRate)
-        XCTAssertEqual(size, CGSize(width: width, height: height))
-        XCTAssertEqual(rate, 60, accuracy: 0.1)
-        // A content-based encoder may undershoot its budget. Prevent a repeat
-        // of the drastic reduction on this moving, detailed fixture.
-        let ratio = Double(result.file.size) / Double(source.size)
-        XCTAssertGreaterThan(ratio, 0.5)
-        XCTAssertLessThan(ratio, 0.85)
-        var frameErrors: [Double] = []
-        for frame in [12, 30, 48] {
-            let detail = try framePSNR(original, compressed, at: CMTime(value: Int64(frame), timescale: 60))
-            print("JAC video frame \(frame): \(detail) dB")
-            // Video PSNR uses mean squared error across the sampled frames,
-            // rather than requiring every instant to equal the clip's target.
-            // Also bound the worst frame so an average cannot hide a bad one.
-            frameErrors.append(255 * 255 / pow(10, detail / 10))
-            XCTAssertGreaterThan(detail, 32)
-        }
-        let clipPSNR = 10 * log10(255 * 255 / (frameErrors.reduce(0, +) / Double(frameErrors.count)))
-        print("JAC video clip: \(clipPSNR) dB, minimum frame quality checked separately")
-        XCTAssertGreaterThan(clipPSNR, 34)
-        print("JAC video fixture: \(source.size) → \(result.file.size) bytes; \(Int((1 - ratio) * 100))% less, 1600×900, 60 fps")
-    }
-
-    private func framePSNR(_ original: AVAsset, _ compressed: AVAsset, at time: CMTime) throws -> Double {
-        func pixels(_ asset: AVAsset) throws -> [UInt8] {
-            let generator = AVAssetImageGenerator(asset: asset)
-            generator.appliesPreferredTrackTransform = true
-            generator.requestedTimeToleranceBefore = .zero; generator.requestedTimeToleranceAfter = .zero
-            let image = try generator.copyCGImage(at: time, actualTime: nil)
-            var bytes = [UInt8](repeating: 0, count: image.width * image.height * 4)
-            try bytes.withUnsafeMutableBytes { buffer in
-                let context = try XCTUnwrap(CGContext(data: buffer.baseAddress, width: image.width, height: image.height,
-                    bitsPerComponent: 8, bytesPerRow: image.width * 4, space: CGColorSpaceCreateDeviceRGB(),
-                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue))
-                context.draw(image, in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
-            }
-            return bytes
-        }
-        let before = try pixels(original), after = try pixels(compressed)
-        XCTAssertEqual(before.count, after.count)
-        guard before.count == after.count, !before.isEmpty else { return 0 }
-        var squaredError = 0.0, count = 0
-        for pixel in stride(from: 0, to: before.count, by: 4 * 16) {
-            for channel in 0..<3 { squaredError += pow(Double(before[pixel + channel]) - Double(after[pixel + channel]), 2); count += 1 }
-        }
-        return squaredError == 0 ? 100 : 10 * log10(255 * 255 / (squaredError / Double(count)))
-    }
-
-    func testHDRVideoIsConvertedToSDRInsteadOfKeepingTheOriginal() async throws {
-        let folder = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
-        defer { try? FileManager.default.removeItem(at: folder) }
-        let url = folder.appendingPathComponent("HDR ficticio.mp4")
-        // Synthetic Main10 HLG fixture avoids depending on a cold simulator's
-        // HEVC encoder just to exercise the app's HDR decoder/exporter.
-        let fixture = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "SyntheticHDR", withExtension: "mp4"))
-        try FileManager.default.copyItem(at: fixture, to: url)
-        let source = try MediaLocalFile.stage(url, quality: .original); defer { source.remove() }
-        let sourceAsset = AVURLAsset(url: source.url)
-        let sourceTracks = try await sourceAsset.loadTracks(withMediaType: .video)
-        XCTAssertTrue(try XCTUnwrap(sourceTracks.first).hasMediaCharacteristic(.containsHDRVideo))
-        let result = try await MediaVideoPreparation.prepare(source); defer { result.file.remove() }
-        XCTAssertNotEqual(result.file.url, source.url)
-        XCTAssertTrue(result.file.videoPrepared)
-        let output = AVURLAsset(url: result.file.url)
-        let tracks = try await output.loadTracks(withMediaType: .video)
-        let track = try XCTUnwrap(tracks.first)
-        XCTAssertFalse(track.hasMediaCharacteristic(.containsHDRVideo))
-        let formats = try await track.load(.formatDescriptions)
-        XCTAssertEqual(formats.map { CMFormatDescriptionGetMediaSubType($0) }, [kCMVideoCodecType_H264])
-    }
 }
 
 @MainActor
@@ -534,7 +319,7 @@ final class MediaUploadQueueTests: XCTestCase {
         XCTAssertEqual(originals, 1); XCTAssertEqual(covers, 2)
     }
 
-    func testUncompressedVideoCannotEnterTheUploadQueue() async throws {
+    func testOriginalVideoEntersTheDurableQueueWithoutConversion() async throws {
         let (main, _) = try await client()
         let location = root(), vault = QueueTestVault(), key = QueueTestVault()
         let queue = MediaUploadQueue(root: location, vault: vault, encryptionKeyStore: key, transportFactory: { _, _ in nil }, automaticallyStart: false)
@@ -542,10 +327,13 @@ final class MediaUploadQueueTests: XCTestCase {
         defer { TemporaryDocuments.remove(document) }
         let source = try MediaLocalFile.stage(document.url, quality: .original)
         defer { queue.revoke(); source.remove(); try? FileManager.default.removeItem(at: location) }
-        do { try await queue.enqueue([source], destination: folder, client: main); XCTFail("No debe enviar el original") }
-        catch { XCTAssertFalse(error is CancellationError) }
-        XCTAssertTrue(queue.jobs.isEmpty)
-        XCTAssertEqual(try Data(contentsOf: source.url), MediaFixture.video)
+        try await queue.enqueue([source], destination: folder, client: main)
+        let job = try XCTUnwrap(queue.jobs.first)
+        XCTAssertEqual(job.id, source.id); XCTAssertEqual(job.name, source.name)
+        XCTAssertEqual(job.mimeType, "video/quicktime"); XCTAssertEqual(job.size, source.size)
+        let adopted = location.appendingPathComponent("files").appendingPathComponent(job.id).appendingPathComponent(job.sourceName)
+        XCTAssertEqual(try Data(contentsOf: adopted), MediaFixture.video)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: source.url.path))
     }
     private func waitFor(_ message: String, file: StaticString = #filePath, line: UInt = #line, _ condition: () -> Bool) async throws {
         for _ in 0..<250 {

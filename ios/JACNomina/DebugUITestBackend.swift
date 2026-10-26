@@ -114,6 +114,12 @@ private final class FixtureProtocol: URLProtocol {
     override class func canInit(with request: URLRequest) -> Bool { true }
     override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
     override func startLoading() {
+        if ProcessInfo.processInfo.arguments.contains("--uitest-slow-folder-download"), request.url?.path == "/api/media/file",
+           !(URLComponents(url:request.url!,resolvingAgainstBaseURL:false)?.queryItems ?? []).contains(where:{["thumbnail","preview","metadata"].contains($0.name)}) {
+            let work=DispatchWorkItem { [weak self] in self?.deliverResponse() };delayedResponse=work
+            DispatchQueue.global(qos:.utility).asyncAfter(deadline:.now()+2,execute:work)
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance"), let url = request.url {
             let query = URLComponents(url: url, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let key: String

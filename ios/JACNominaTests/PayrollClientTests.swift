@@ -46,8 +46,9 @@ private struct DeniedMediaPhotosWriter:MediaPhotosWriting {
 @MainActor private final class SelectionMediaPhotosWriter: MediaPhotosWriting {
     var authorizeAction: (() throws -> Void)?
     var saved: [String: Data] = [:]
+    var lastURL: URL?
     func authorize() async throws { try authorizeAction?() }
-    func save(_ document: ExportedDocument, item: MediaItem) async throws { saved[item.id] = try Data(contentsOf: document.url) }
+    func save(_ document: ExportedDocument, item: MediaItem) async throws { lastURL=document.url; saved[item.id] = try Data(contentsOf: document.url) }
 }
 
 private final class MockProtocol: URLProtocol {
@@ -2079,6 +2080,71 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertFalse(client.mediaOffline.isPinned(feed.items.first { $0.kind == "image" }!, scope: scope))
     }
     #endif
+    @MainActor func testLocalFolderRemovalKeepsServerGalleryAndAllowsDownloadingAgain() async throws {
+        let client = UITestBackend.client(); _ = try await client.workspace()
+        _ = try await client.media()
+        let plan = try await client.mediaDownloadPlan(folder: "media-day")
+        for item in plan.files { try await client.saveMediaOffline(item) }
+        let scope = try XCTUnwrap(client.mediaScope()), item = try XCTUnwrap(plan.files.first)
+        let folders = await client.localMediaFoldersForPresentation()
+        XCTAssertTrue(folders.contains("media-day"))
+        let bytes = try await client.removeLocalMediaFolder("media-day")
+        XCTAssertGreaterThan(bytes, 0)
+        XCTAssertFalse(client.mediaOffline.hasFile(item, scope: scope))
+        XCTAssertFalse(client.mediaOffline.isDeleted(item.id, scope: scope))
+        XCTAssertTrue(client.cachedMedia(folder: "media-day")?.items.contains(where: { $0.id == item.id }) == true)
+        let after = try await client.media(folder: "media-day")
+        XCTAssertTrue(after.items.contains(where: { $0.id == item.id }))
+        let removedFolders = await client.localMediaFoldersForPresentation()
+        XCTAssertFalse(removedFolders.contains("media-day"))
+        try await client.saveMediaOffline(item)
+        XCTAssertTrue(client.mediaOffline.hasFile(item, scope: scope))
+    }
+
+    func testLocalFolderRemovalIsRecursiveAndPreservesOtherFoldersAndSessions() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let cache = MediaOfflineCache(root: root), scope = AgendaCacheScope(origin: "https://fixture.invalid", token: String(repeating:"p", count:43))
+        let other = AgendaCacheScope(origin:"https://fixture.invalid", token:String(repeating:"q",count:43))
+        let parent = MediaFolder(id:"parent",name:"Padre"), child=MediaFolder(id:"child",name:"Hija"), sibling=MediaFolder(id:"sibling",name:"Otra")
+        let source = try TemporaryDocuments.save(MediaFixture.photo, filename:"Local.png"); defer { TemporaryDocuments.remove(source) }
+        func item(_ id:String)->MediaItem { MediaItem(id:id,name:id+".png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"one",thumbnailAvailable:false) }
+        let first=item("first"), second=item("second")
+        func feed(_ folder:MediaFolder,_ path:[MediaFolder],_ files:[MediaItem])->MediaFeed { MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:parent,folder:folder,breadcrumbs:path,items:files,nextPageToken:nil,provider:"r2",collectionID:"fixture") }
+        let childFeed=feed(child,[parent,child],[first]), siblingFeed=feed(sibling,[sibling],[second])
+        for current in [scope,other] {
+            _ = try cache.saveFeed(childFeed,key:child.id,append:false,scope:current);try cache.pinFeed(childFeed,key:child.id,scope:current)
+            _ = try cache.saveFeed(siblingFeed,key:sibling.id,append:false,scope:current);try cache.pinFeed(siblingFeed,key:sibling.id,scope:current)
+            try cache.saveFile(source.url,item:first,scope:current);try cache.saveFile(source.url,item:second,scope:current)
+        }
+        let epoch=cache.localDownloadEpoch
+        XCTAssertEqual(try cache.forgetLocalFolder(parent.id,scope:scope),first.size)
+        XCTAssertFalse(cache.hasFile(first,scope:scope));XCTAssertTrue(cache.hasFile(second,scope:scope));XCTAssertTrue(cache.hasFile(first,scope:other))
+        XCTAssertFalse(cache.isDeleted(first.id,scope:scope));XCTAssertNotNil(cache.loadFeed(child.id,scope:scope))
+        XCTAssertThrowsError(try cache.saveFile(source.url,item:first,scope:scope,expectedLocalEpoch:epoch))
+        XCTAssertFalse(cache.hasFile(first,scope:scope),"A download started before removal cannot restore the deleted copy")
+        try cache.saveFile(source.url,item:first,scope:scope,expectedLocalEpoch:cache.localDownloadEpoch)
+        XCTAssertTrue(cache.hasFile(first,scope:scope))
+    }
+
+    @MainActor func testDirectPhotoSaveWritesTheOriginalAndCleansItsTemporaryFile() async throws {
+        let client=UITestBackend.client();_ = try await client.workspace()
+        let feed=try await client.media(folder:"media-day"), item=try XCTUnwrap(feed.items.first(where:{$0.kind=="image"}))
+        let writer=SelectionMediaPhotosWriter()
+        try await MediaPhotosExport.save(item,client:client,writer:writer)
+        XCTAssertEqual(writer.saved[item.id],MediaFixture.photo)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: try XCTUnwrap(writer.lastURL).path))
+    }
+
+    @MainActor func testDirectPhotoSaveStopsAfterDeniedPermissionOrSessionChange() async throws {
+        let client=UITestBackend.client();_ = try await client.workspace()
+        let feed=try await client.media(folder:"media-day"), item=try XCTUnwrap(feed.items.first(where:{$0.kind=="image"}))
+        do { try await MediaPhotosExport.save(item,client:client,writer:DeniedMediaPhotosWriter());XCTFail("Debe respetar Fotos") } catch { }
+        let writer=SelectionMediaPhotosWriter();writer.authorizeAction={try client.clearSession()}
+        do { try await MediaPhotosExport.save(item,client:client,writer:writer);XCTFail("Debe respetar la sesión") } catch { }
+        XCTAssertTrue(writer.saved.isEmpty)
+    }
+
     @MainActor func testBulkPhotoExportStopsIfSessionChangesWhilePhotosPermissionIsPending() async throws {
         let client = UITestBackend.client(); _ = try await client.workspace()
         let feed = try await client.media(folder: "media-day"), writer = SelectionMediaPhotosWriter(), transfer = MediaFolderTransfer()

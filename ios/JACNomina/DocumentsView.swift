@@ -245,7 +245,7 @@ struct MediaPhotoMenu: View {
     var body:some View {
         Menu {
             if !resuming {
-                Button {perform(.download)} label:{Label(item.kind == "video" ? "Descargar video" : "Descargar foto",systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.photo.download")
+                Button {perform(.download)} label:{Label(Self.downloadLabel(item),systemImage:"square.and.arrow.down")}.accessibilityIdentifier("media.photo.download")
                 Button {perform(.offline)} label:{Label(pinned ? "Disponible sin conexión":"Guardar sin conexión",systemImage:pinned ? "checkmark.circle":"arrow.down.circle")}.disabled(pinned).accessibilityIdentifier("media.photo.offline")
             }
             if canDelete {
@@ -278,6 +278,13 @@ struct MediaPhotoMenu: View {
             .onDisappear {operation?.cancel();operation=nil;pinTask?.cancel();pinTask=nil;clearDocument()}
     }
     private enum Action {case download,offline,delete}
+    private static func downloadLabel(_ item: MediaItem) -> String {
+        #if os(iOS)
+        return "Guardar en Fotos"
+        #else
+        return item.kind == "video" ? "Descargar video" : "Descargar foto"
+        #endif
+    }
     private func updatePinned(){
         pinTask?.cancel()
         pinTask=Task {
@@ -288,15 +295,21 @@ struct MediaPhotoMenu: View {
     }
     private func clearDocument(){if let ownedDocument {TemporaryDocuments.remove(ownedDocument)};ownedDocument=nil}
     private func perform(_ action:Action){
-        guard !busy else{return};let selected=item,stamp=try? client.mediaAccessStamp();busy=true;failure=nil
+        guard !busy else{return};let selected=item;busy=true;failure=nil
         operation=Task {
             defer{busy=false;operation=nil}
             do {
                 switch action {
                 case .download:
+                    #if os(iOS)
+                    try await MediaPhotosExport.save(selected, client: client, writer: MediaPhotosExport.writer(client))
+                    message = selected.kind == "video" ? "Video guardado en Fotos." : "Foto guardada en Fotos."
+                    #else
+                    let stamp = try client.mediaAccessStamp()
                     let file=try await client.mediaDocument(selected)
                     guard !Task.isCancelled,stamp == (try? client.mediaAccessStamp()) else {TemporaryDocuments.remove(file);throw CancellationError()}
                     ownedDocument=file;document=file
+                    #endif
                 case .offline:
                     try await client.saveMediaOffline(selected);try Task.checkCancellation();updatePinned();message="Archivo disponible sin conexión en este \(JACDevice.name)."
                 case .delete:
@@ -448,6 +461,7 @@ struct MediaLocalFile: Identifiable, Sendable {
     let mimeType: String
     let size: Int64
     var imageLimit: Int64 = 0
+    // Legacy in-memory marker; new original videos do not require conversion.
     var videoPrepared = false
     static func safeName(_ value: String) -> String {
         let name = (value as NSString).lastPathComponent.replacingOccurrences(of: "\u{0}", with: "").trimmingCharacters(in: .whitespacesAndNewlines)
@@ -541,6 +555,8 @@ struct MediaGalleryView: View {
     @State private var progress: [String: Double] = [:]
     @State private var uploadErrors: [String: String] = [:]
     @State private var uploadNotice: String?
+    @State private var downloadedFolderIDs = Set<String>()
+    @State private var removingLocalFolder = false
     @State private var importing = false
     @State private var importTask: Task<Void, Never>?
     #if os(iOS)
@@ -744,6 +760,10 @@ struct MediaGalleryView: View {
     }
     var body: some View {
         galleryUpdates.sheet(isPresented:$imageQualitySettings) {NavigationStack {MediaImageQualitySettings().toolbar {ToolbarItem(placement:.cancellationAction){Button("Listo"){imageQualitySettings=false}.accessibilityIdentifier("media.quality.close")}}}}
+            .task(id: (store.client.mediaPresentationStamp ?? "") + ":" + String(store.client.cacheRevision)) {
+                let ids = await store.client.localMediaFoldersForPresentation()
+                if !Task.isCancelled { downloadedFolderIDs = ids }
+            }
             #if os(iOS)
             .sheet(item: $sharingFolder) { folder in MediaFolderShareSheet(folder: folder, client: store.client) }
             #endif
@@ -802,10 +822,13 @@ struct MediaGalleryView: View {
                 } else if folderTransfer.running {
                     Button("Detener") { folderTransfer.cancel() }.accessibilityIdentifier("media.selection.stop")
                 } else {
-                    Button { selectionDownloadChoices = true } label: {
-                        Label("Descargar", systemImage: "square.and.arrow.down").frame(minHeight: 44).contentShape(Rectangle())
+                    Button { prepareSelectionTransfer(photos: true) } label: {
+                        Label("Guardar en Fotos", systemImage: "square.and.arrow.down").frame(minHeight: 44).contentShape(Rectangle())
                     }
                         .disabled(selection.count == 0 || selectionBusy || deleting).accessibilityIdentifier("media.selection.download")
+                    Button { prepareSelectionTransfer(photos: false) } label: { Image(systemName: "arrow.down.circle").frame(width:44,height:44) }
+                        .accessibilityLabel("Guardar selección sin conexión").accessibilityIdentifier("media.selection.offline")
+                        .disabled(selection.count == 0 || selectionBusy || deleting)
                     if store.overview?.user.canDeleteMedia == true && selection.canDelete {
                         Button(role: .destructive) {
                             selectionDeletionTargets = selection.items; selectionConfirmation = true
@@ -846,6 +869,7 @@ struct MediaGalleryView: View {
         guard !selectionBusy, !deleting, !selection.items.isEmpty else { return }
         let files = selection.items
         let plan = MediaDownloadPlan(folder: MediaFolder(id: "selection", name: "\(files.count) archivos seleccionados"), files: files)
+        if photos { folderTransfer.start(client: store.client, plan: plan, photos: true, writer: photosWriter); return }
         let scope = try? store.client.mediaScope(), cache = store.client.mediaOffline
         let pending = photos ? files : files.filter { item in scope.map { !cache.isPinned(item, scope: $0) } ?? true }
         transferReview = MediaTransferReview(plan: plan, photos: photos, requiredBytes: MediaStorageReview.required(pending), selection: true, stamp: try? store.client.mediaAccessStamp())
@@ -925,6 +949,11 @@ struct MediaGalleryView: View {
         }
         Button {Task {await prepareTransfer(folder:folder.id,photos:false)}} label:{Label("Disponible sin conexión",systemImage:"arrow.down.circle")}.accessibilityIdentifier("media.offline")
             .disabled(preparingTransfer || folderTransfer.running || uploading || opening != nil)
+        if downloadedFolderIDs.contains(folder.id) {
+            Button(role:.destructive) { removeLocalFolder(folder) } label: { Label("Eliminar descarga sin conexión",systemImage:"iphone.slash") }
+                .accessibilityIdentifier("media.offline.remove." + folder.id)
+                .disabled(removingLocalFolder || preparingTransfer || folderTransfer.running)
+        }
         #if os(iOS)
         if writable, folder.id != feed?.root?.id {
             Button { sharingFolder = folder } label: { Label("Compartir carpeta", systemImage: "link") }.accessibilityIdentifier("media.share.folder")
@@ -938,6 +967,18 @@ struct MediaGalleryView: View {
             Divider()
             Button(role:.destructive) {deletionError=nil;deletionConfirmed=false;deletingFolder=folder;deletionConfirmation=true} label:{Label("Eliminar carpeta",systemImage:"trash")}.accessibilityIdentifier("media.delete.folder")
                 .disabled(deleting || uploading || importing || preparingTransfer || folderTransfer.running || queue.contains(where:{!completed.contains($0.id)}) || store.isOffline)
+        }
+    }
+    private func removeLocalFolder(_ folder: MediaFolder) {
+        guard !removingLocalFolder, !folderTransfer.running, !preparingTransfer else { return }
+        removingLocalFolder = true
+        Task {
+            defer { removingLocalFolder = false }
+            do {
+                let bytes = try await store.client.removeLocalMediaFolder(folder.id)
+                uploadNotice = "Descarga eliminada de este \(JACDevice.name) · \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) liberados."
+                downloadedFolderIDs = await store.client.localMediaFoldersForPresentation()
+            } catch { self.error = store.reportReadFailure(error) }
         }
     }
     private func beginFolderDeletion() {
@@ -1828,6 +1869,8 @@ final class MediaOfflineCache: @unchecked Sendable {
     }
     private var cachedIndex: CachedIndex?
     private var previewEpoch: UInt64 = 0
+    private var localRemovalEpoch: UInt64 = 0
+    var localDownloadEpoch: UInt64 { lock.lock(); defer { lock.unlock() }; return localRemovalEpoch }
     var photoPreviewEpoch: UInt64 { lock.lock(); defer { lock.unlock() }; return previewEpoch }
     private static let chunkSize = 1024 * 1024
     init(root: URL? = nil) {
@@ -1968,6 +2011,40 @@ final class MediaOfflineCache: @unchecked Sendable {
         index.previewAccess?.removeValue(forKey: item.id)
         try? FileManager.default.removeItem(at: encryptedFile(item, scope: scope))
         try writeIndex(index, scope: scope)
+    }
+    // Local removal has no server tombstone. Keep gallery metadata so the
+    // original remains visible and can be downloaded again, including offline.
+    func localFolderIDs(scope: AgendaCacheScope) -> Set<String> {
+        lock.lock(); defer { lock.unlock() }
+        JACPerformanceDiagnostics.record(.diskRead)
+        guard !revoked.contains(scope.id) else { return [] }
+        let index = readIndex(scope)
+        let feeds = Array(index.feeds.values) + Array(index.downloads.values)
+        return Set(feeds.filter { feed in feed.items.contains { index.files[$0.id] != nil } }
+            .flatMap { feed in feed.breadcrumbs.map(\.id) + [feed.folder?.id ?? feed.root?.id ?? ""] }.filter { !$0.isEmpty })
+    }
+    @discardableResult func forgetLocalFolder(_ id: String, scope: AgendaCacheScope) throws -> Int64 {
+        lock.lock(); defer { lock.unlock() }
+        try Task.checkCancellation()
+        guard !revoked.contains(scope.id) else { throw CancellationError() }
+        var index = readIndex(scope)
+        func belongs(_ feed: MediaFeed) -> Bool { feed.folder?.id == id || feed.root?.id == id && feed.folder == nil || feed.breadcrumbs.contains { $0.id == id } }
+        let affected = (Array(index.feeds.values) + Array(index.downloads.values)).filter(belongs)
+        let ids = Set(affected.flatMap { $0.items.filter { $0.kind != "folder" }.map(\.id) })
+        localRemovalEpoch &+= 1
+        var removed: Int64 = 0
+        for fileID in ids {
+            if let item = index.files[fileID] {
+                let url = encryptedFile(item, scope: scope)
+                if FileManager.default.fileExists(atPath: url.path) { try FileManager.default.removeItem(at: url); removed += item.size }
+                index.files.removeValue(forKey: fileID)
+            }
+            index.pinnedFiles?.removeValue(forKey: fileID)
+            index.previewAccess?.removeValue(forKey: fileID)
+        }
+        index.downloads = index.downloads.filter { !belongs($0.value) }
+        try writeIndex(index, scope: scope)
+        return removed
     }
     func isDeleted(_ id:String,scope:AgendaCacheScope) -> Bool {
         lock.lock();defer{lock.unlock()};return (readIndex(scope).deletedFiles ?? []).contains(id)
@@ -2138,7 +2215,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         while result.count < count { guard let next = try handle.read(upToCount: count - result.count), !next.isEmpty else { throw APIError.invalid("La copia del archivo está incompleta. Vuelve a descargarlo.") }; result.append(next) }
         return result
     }
-    func saveFile(_ source: URL, item: MediaItem, scope: AgendaCacheScope, preview: Bool = false) throws {
+    func saveFile(_ source: URL, item: MediaItem, scope: AgendaCacheScope, preview: Bool = false, expectedLocalEpoch: UInt64? = nil) throws {
         lock.lock(); do { try prepare(scope) } catch { lock.unlock(); throw error }; lock.unlock()
         let destination = encryptedFile(item, scope: scope), partial = destination.appendingPathExtension(UUID().uuidString + ".partial")
         defer { try? FileManager.default.removeItem(at: partial) }
@@ -2156,7 +2233,7 @@ final class MediaOfflineCache: @unchecked Sendable {
         guard count == item.size else { throw APIError.invalid("El archivo llegó incompleto. Vuelve a descargarlo.") }
         try output.write(contentsOf: length(0)); try output.synchronize()
         lock.lock(); defer { lock.unlock() }
-        guard !revoked.contains(scope.id) else { throw CancellationError() }
+        guard !revoked.contains(scope.id), expectedLocalEpoch == nil || expectedLocalEpoch == localRemovalEpoch else { throw CancellationError() }
         let current = readIndex(scope)
         guard !(current.deletedFiles ?? []).contains(item.id) else {throw MediaFolderRemoved()}
         guard current.collectionID?.hasPrefix("jac-r2-") != true || item.id.hasPrefix("r2_") else { throw CancellationError() }
@@ -2256,6 +2333,26 @@ struct MediaDownloadPlan: Identifiable {
 protocol MediaPhotosWriting {
     @MainActor func authorize() async throws
     @MainActor func save(_ document: ExportedDocument, item: MediaItem) async throws
+}
+@MainActor enum MediaPhotosExport {
+    static func writer(_ client: PayrollClient) -> any MediaPhotosWriting {
+        #if DEBUG
+        if client.baseURL.host?.hasSuffix(".invalid") == true { return FixtureMediaPhotosWriter() }
+        #endif
+        return DeviceMediaPhotosWriter()
+    }
+    static func save(_ item: MediaItem, client: PayrollClient, writer: any MediaPhotosWriting) async throws {
+        let stamp = try client.mediaAccessStamp()
+        try Task.checkCancellation()
+        try await writer.authorize()
+        guard !Task.isCancelled, stamp == (try client.mediaAccessStamp()) else { throw CancellationError() }
+        let document = try await client.mediaDocument(item)
+        defer { TemporaryDocuments.remove(document) }
+        guard !Task.isCancelled, stamp == (try client.mediaAccessStamp()) else { throw CancellationError() }
+        try await writer.save(document, item: item)
+        try Task.checkCancellation()
+        guard stamp == (try client.mediaAccessStamp()) else { throw CancellationError() }
+    }
 }
 struct DeviceMediaPhotosWriter: MediaPhotosWriting {
     @MainActor func authorize() async throws {

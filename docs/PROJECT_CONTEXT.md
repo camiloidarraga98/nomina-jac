@@ -1,3 +1,7 @@
+## Fotografía nativa: acciones y visor ·26 de octubre de2026
+
+App/widget0.37.0(55): video original sin exportación previa, retirada offline local por carpeta/subcarpetas sin borrar servidor ni tombstones, guardado directo PhotoKit individual/múltiple, carpetas plegables durante transferencia y visor con cabecera de carpeta, tira de miniaturas y gesto vertical de salida. Cancelación, ámbito, archivos originales, cachés, trabajos pendientes y seis guardas se conservan. Ver `IPHONE_MEDIA_ACTIONS.md` para verificación y actualización física pendiente. Esta decisión sustituye la compresión de videos obligatoria anterior.
+
 ## Fotografía: recuperación de subidas Safari ·26 de octubre de2026
 
 Corrección web para el lote pendiente en0%: fetch en WebKit, handshake del iframe con alternativa antes de entregar bytes para otros navegadores, recibo ETag verificado de una parte, estado canónico antes de repetir y dos reintentos acotados del mismo UUID/parte. Sin relay Worker ni cambios de permisos/originales; progreso por fase sin inventar velocidad en fetch.132 casos Node/Workerd y14 recorridos locales de navegador aprobados; la ruta Safari se comprueba en Chromium con user-agent, no en Safari real. Fuente2aca1cf en main, Actions40363045358 correcto y Worker08faedf0-2834-407c-805d-61f82871a705 activo al100%,14 bindings conservados. Ver `PHOTOGRAPHY_WEB_UPLOADS.md` para publicación y recuperación de la pestaña antigua. Los avisos conservan un único evento por carpeta nueva.

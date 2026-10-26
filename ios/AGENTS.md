@@ -1,3 +1,7 @@
+## Fotografía nativa ·26 de octubre de2026
+
+Camilo sustituyó expresamente la compresión obligatoria por subida del video original para evitar recodificar antes de enviarlo. Conservar UUID/bytes de trabajos pendientes, calidad/sonido/HDR y selección `.current`; la copia local/iCloud y la transferencia aún requieren tiempo. App/widget0.37.0(55). Añadir retirada local de carpeta/subcarpetas sin tombstones remotos ni borrar otras sesiones, guardado directo PhotoKit sin Compartir, contracción durante descarga y visor con título de carpeta/tira de miniaturas/salida vertical sin X ni puntos. Paneo ampliado no cierra; accesibilidad conserva salida y selección. No hacer I/O en filas ni debilitar las seis guardas. Ver `../docs/IPHONE_MEDIA_ACTIONS.md`; la publicación de fuente/CI no instala en un iPhone.
+
 ## Vistas previas locales y adaptativas ·25 de octubre de2026
 
 Ver `../docs/PHOTO_PREVIEWS_ADAPTIVE.md`: iOS0.36.0(54) usa copia local incluso online, caché cifrada de JPEG separada de originales fijados, precarga gradual por páginas y mejora de calidad sin vaciar el bitmap visible. Cola compartida máxima2, fondo máximo1, prioridad visible, cancelación por consumidor y rechazo por sesión/revisión/colección. Conservar guardas de scroll, ámbito, borrados, revalidación y ausencia de fallback403; Mac mantiene su interfaz. Perfil móvil1280px/q78/512KiB, detalle2400/q84 según Wi-Fi/caudal, seis anticipadas en datos/lentitud y sin precarga masiva en datos reducidos. No confundir caché de vistas con Disponible sin conexión.

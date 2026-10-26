@@ -1,5 +1,7 @@
 # Compresión de videos y sonido en iOS
 
+**Sustituido el26 de octubre de2026:** Camilo pidió retirar la compresión para evitar la espera previa. Desde0.37.0(55) se sube el video original; conservar sonido multimedia y trabajos ya encolados. Ver [flujo y comprobaciones vigentes](IPHONE_MEDIA_ACTIONS.md). El resto de este documento es evidencia histórica de la conversión anterior, no una orden para restaurarla.
+
 Camilo mantiene la compresión obligatoria de todos los videos nuevos, incluidos HDR. Tras probar una reducción del95%, pidió suavizarla: buscar aproximadamente20–40% de ahorro y priorizar la calidad. Confirmó que el audio sí estaba en el archivo; el botón de silencio del iPhone impedía escucharlo. Pidió reproducción multimedia audible también en ese modo.
 
 ## Preparación vigente
