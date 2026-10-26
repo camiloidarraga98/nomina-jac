@@ -1437,7 +1437,7 @@ final class PayrollClient: ObservableObject {
               collectionID == nil || cached.collectionID == collectionID else { throw CancellationError() }
         if let bytes = cached.data {
             progress(Int64(bytes.count), Int64(bytes.count))
-            return try TemporaryDocuments.save(bytes, filename: cached.quality.filename)
+            return try await preparePhotoPreviewDocument(bytes, quality: cached.quality, stamp: stamp, epoch: cached.epoch)
         }
         if let saved = try await restoredMediaDocument(item, scope: scope) {
             progress(item.size, item.size); return saved
@@ -1446,7 +1446,27 @@ final class PayrollClient: ObservableObject {
         let bytes = try await photoPreviewBytes(item, quality: quality, priority: priority, scope: scope, stamp: stamp, collectionID: cached.collectionID)
         guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
         progress(Int64(bytes.count), Int64(bytes.count))
-        return try TemporaryDocuments.save(bytes, filename: quality.filename)
+        return try await preparePhotoPreviewDocument(bytes, quality: quality, stamp: stamp, epoch: cached.epoch)
+    }
+
+    private func preparePhotoPreviewDocument(_ data: Data, quality: MediaPhotoPreviewQuality, stamp: String, epoch: UInt64) async throws -> ExportedDocument {
+        let work = Task.detached(priority: .userInitiated) {
+            try Task.checkCancellation()
+            return try TemporaryDocuments.save(data, filename: quality.filename)
+        }
+        let document: ExportedDocument
+        do { document = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() } }
+        catch {
+            #if DEBUG
+            if baseURL.host?.hasSuffix(".invalid") == true { print("JAC photo-preview temporary write failed: \((error as NSError).domain) \((error as NSError).code)") }
+            #endif
+            throw error
+        }
+        var accepted = false
+        defer { if !accepted { TemporaryDocuments.remove(document) } }
+        try Task.checkCancellation()
+        guard stamp == (try mediaAccessStamp()), mediaOffline.photoPreviewEpoch == epoch else { throw CancellationError() }
+        accepted = true; return document
     }
 
     func prefetchMediaPhotoPreview(_ item: MediaItem, collectionID: String? = nil) async throws {
@@ -1520,7 +1540,11 @@ final class PayrollClient: ObservableObject {
         let generation = cacheGeneration
         let cache = mediaOffline, work = Task.detached(priority: .userInitiated) { try cache.document(item, scope: scope) }
         let document = try await withTaskCancellationHandler { try await work.value } onCancel: { work.cancel() }
-        guard !Task.isCancelled, generation == cacheGeneration, scope.id == (try mediaScope())?.id else { if let document { TemporaryDocuments.remove(document) }; throw CancellationError() }
+        var accepted = false
+        defer { if !accepted, let document { TemporaryDocuments.remove(document) } }
+        try Task.checkCancellation()
+        guard generation == cacheGeneration, scope.id == (try mediaScope())?.id else { throw CancellationError() }
+        accepted = true
         return document
     }
     func mediaDocument(_ item: MediaItem, progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
@@ -1695,8 +1719,11 @@ struct ExportedDocument: Identifiable {
 }
 
 enum TemporaryDocuments {
+    private static let lock = NSRecursiveLock()
     static var root: URL { FileManager.default.temporaryDirectory.appendingPathComponent("JACPayrollDocuments", isDirectory: true) }
     static func save(_ data: Data, filename: String) throws -> ExportedDocument {
+        lock.lock(); defer { lock.unlock() }
+        JACPerformanceDiagnostics.record(.diskWrite)
         let id = UUID()
         let folder = root.appendingPathComponent(id.uuidString, isDirectory: true)
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: JACFileSecurity.directoryAttributes)
@@ -1707,6 +1734,7 @@ enum TemporaryDocuments {
         return ExportedDocument(id: id, url: url)
     }
     static func move(_ source: URL, filename: String) throws -> ExportedDocument {
+        lock.lock(); defer { lock.unlock() }
         let id = UUID()
         // Use the document UUID for deterministic cleanup on dismiss/logout.
         let targetFolder = root.appendingPathComponent(id.uuidString, isDirectory: true)
@@ -1719,8 +1747,8 @@ enum TemporaryDocuments {
             return ExportedDocument(id: id, url: url)
         } catch { try? FileManager.default.removeItem(at: targetFolder); throw error }
     }
-    static func remove(_ document: ExportedDocument) { try? FileManager.default.removeItem(at: root.appendingPathComponent(document.id.uuidString)) }
-    static func clear() { try? FileManager.default.removeItem(at: root) }
+    static func remove(_ document: ExportedDocument) { lock.lock(); defer { lock.unlock() }; try? FileManager.default.removeItem(at: root.appendingPathComponent(document.id.uuidString)) }
+    static func clear() { lock.lock(); defer { lock.unlock() }; try? FileManager.default.removeItem(at: root) }
 }
 
 // Música has its own namespace, permission checks and encrypted download cache.

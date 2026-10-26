@@ -1,4 +1,4 @@
-## Vistas previas locales y adaptativas ·26 de octubre de2026
+## Vistas previas locales y adaptativas ·25 de octubre de2026
 
 Camilo pidió que las carpetas descargadas abran fotos sin repetir transferencias, anticipar vistas de la carpeta completa y mejorar calidad según conexión. iOS0.36.0(54) prioriza caché cifrada y originales locales, revalida en paralelo, precarga JPEG por páginas con prioridad visible, dos transferencias/una de fondo y presupuesto96MiB/2048/48h separado de originales fijados. Perfil móvil1280px/q78/512KiB, detalle2400px/q84 sólo al mejorar una selección con Wi-Fi suficiente; datos móviles/lentos anticipan seis y datos reducidos evitan precarga masiva. Nunca degradar una vista ya guardada ni reutilizarla tras403/cambio de ámbito. Conservar las seis guardas de scroll, widgets, Team y AppGroup. Ver `docs/PHOTO_PREVIEWS_ADAPTIVE.md`; actualizar con resultados reales antes del cierre.
 

@@ -121,6 +121,7 @@ jobs:
           JAC_APPLE_WALLET: ${{ inputs.scope == 'apple-wallet' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-apple-wallet]')) }}
           JAC_APPLE_PUSH: ${{ inputs.scope == 'apple-push' || inputs.scope == 'apple-push-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-apple-push]')) }}
           JAC_APPLE_PUSH_UI_ONLY: ${{ inputs.scope == 'apple-push-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[push-ui-only]')) }}
+          JAC_ADAPTIVE_PHOTOS_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[adaptive-photos-cache-followup]') }}
           JAC_ADAPTIVE_PHOTOS: ${{ inputs.scope == 'adaptive-photos' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-adaptive-photos]')) }}
           JAC_PHOTO_PREVIEW: ${{ inputs.scope == 'photo-preview' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-preview]')) }}
           JAC_PHOTO_NOTICES: ${{ inputs.scope == 'photo-notices' || inputs.scope == 'photo-notices-ipad' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-photo-notices]') || contains(github.event.head_commit.message, '[photo-notices-ipad-only]'))) }}
@@ -512,6 +513,22 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testDecodedGalleryThumbnailsReuseEightyWarmImagesWithoutSessionReadsAndRejectRevocation
               -only-testing:JACNominaTests/PayrollClientTests/testMediaPhotoCacheRevalidatesEveryOpenAndRevocationPurgesIt
               -only-testing:JACNominaTests/PayrollClientTests/testIndividuallyPinnedPhotoSurvivesReopenAndRemoteDeletionRetiresOnlyThatPhoto
+            )
+          fi
+          # Reuse the ten passed model cases; exercise the corrected R2 fixtures,
+          # off-main temporary writes, shared cleanup and the visible viewer.
+          if [ "$JAC_ADAPTIVE_PHOTOS_FOLLOWUP" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testDownloadedFolderPhotosOpenLocallyWhileOnlineAndOfflineWithoutAnyRequest
+              -only-testing:JACNominaTests/PayrollClientTests/testWholeFolderPreviewPrefetchTraversesPagesWarmsThirdPhotoAndSkipsDownloadedOriginals
+              -only-testing:JACNominaTests/PayrollClientTests/testPendingPhotoPreviewRetriesOnlyTheLightVersionAndKeepsItsSession
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoPreviewCacheReopensAcrossClientsImprovesOnceAndNeverFallsBackAfterDenial
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaCacheStreamsAuthenticatedBlocksAndRejectsCorruptionOtherSessionAndOldRevision
+              -only-testing:JACNominaTests/PayrollClientTests/testMediaPhotoCacheRevalidatesEveryOpenAndRevocationPurgesIt
+              -only-testing:JACNominaTests/PayrollClientTests/testOpeningFolderPrefetchesOffscreenPhotosVideosAndLaterPagesWithoutOriginals
+              -only-testing:JACNominaTests/PayrollClientTests/testLightPhotoPreviewAndAdaptiveVideoNeverRequestOriginalBytes
+              -only-testing:JACNominaTests/PayrollClientTests/testForbiddenPhotoPreviewNeverRetriesOrFallsBackToAnOriginal
+              -only-testing:JACNominaUITests/LaunchTests/testPhotoSlideshowMovesBothWaysWithinTheSameSheet
             )
           fi
           # Every real test scope retains cheap operation-count regressions.

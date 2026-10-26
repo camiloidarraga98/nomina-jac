@@ -1384,7 +1384,7 @@ final class PayrollClientTests: XCTestCase {
         let cache=MediaOfflineCache(root:FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
         let client=PayrollClient(baseURL:URL(string:"https://pinned-preview.invalid")!,vault:vault,configuration:config,mediaOffline:cache,automaticallyDownloadOffline:false)
         let scope=try XCTUnwrap(client.mediaScope()), folder=MediaFolder(id:"folder",name:"Carpeta descargada")
-        let items=(0..<3).map { MediaItem(id:"pinned-\($0)",name:"Foto\($0).png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"one",thumbnailAvailable:true) }
+        let items=(0..<3).map { MediaItem(id:"r2_pinned-\($0)",name:"Foto\($0).png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"one",thumbnailAvailable:true) }
         let feed=MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:items,nextPageToken:nil,provider:"r2",collectionID:"jac-r2-pinned")
         try cache.saveFeed(feed,key:folder.id,append:false,scope:scope);try cache.pinFeed(feed,key:folder.id,scope:scope)
         let source=try TemporaryDocuments.save(MediaFixture.photo,filename:"original.png")
@@ -1418,7 +1418,10 @@ final class PayrollClientTests: XCTestCase {
             return (HTTPURLResponse(url:request.url!,statusCode:denied ? 403:200,httpVersion:nil,headerFields:["Content-Type":denied ? "application/json":"image/jpeg"])!,denied ? Data("{}".utf8):MediaFixture.photo)
         }
         defer {MockProtocol.handler=nil;try? FileManager.default.removeItem(at:root)}
+        JACPerformanceDiagnostics.reset()
         let first=try await client.mediaPhotoPreview(item,quality:.balanced);TemporaryDocuments.remove(first)
+        XCTAssertGreaterThanOrEqual(JACPerformanceDiagnostics.snapshot().count(.diskWrite),1)
+        XCTAssertEqual(JACPerformanceDiagnostics.snapshot().count(.diskWrite,mainThread:true),0,"Preparar el JPEG temporal no debe bloquear el hilo de interfaz")
         let restored=PayrollClient(baseURL:base,vault:vault,configuration:config,mediaOffline:MediaOfflineCache(root:root),automaticallyDownloadOffline:false)
         let second=try await restored.mediaPhotoPreview(item,quality:.balanced);defer{TemporaryDocuments.remove(second)}
         XCTAssertEqual(try Data(contentsOf:second.url),MediaFixture.photo);XCTAssertEqual(calls,["balanced"])
@@ -1471,9 +1474,9 @@ final class PayrollClientTests: XCTestCase {
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
         let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),cache=MediaOfflineCache(root:root)
         let client=PayrollClient(baseURL:URL(string:"https://whole-folder-preview.invalid")!,vault:vault,configuration:config,mediaOffline:cache,automaticallyDownloadOffline:false)
-        client.photoPreviews.updateConnection(MediaPhotoConnection(wifi:true))
+        client.photoPreviews.updateConnection(MediaPhotoConnection(expensive:true))
         let folder=MediaFolder(id:"folder",name:"Carpeta de prueba")
-        let items=(0..<8).map {MediaItem(id:"photo-\($0)",name:"Foto\($0).png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"one",thumbnailAvailable:true)}
+        let items=(0..<8).map {MediaItem(id:"r2_photo-\($0)",name:"Foto\($0).png",mimeType:"image/png",kind:"image",size:Int64(MediaFixture.photo.count),modifiedAt:"one",thumbnailAvailable:true)}
         func feed(_ photos:[MediaItem],next:String?)->MediaFeed {MediaFeed(connected:true,canRead:true,canUpload:false,canConnect:false,root:folder,folder:folder,breadcrumbs:[folder],items:photos,nextPageToken:next,provider:"r2",collectionID:"jac-r2-prefetch")}
         let first=feed(Array(items.prefix(4)),next:"next"),second=feed(Array(items.suffix(4)),next:nil)
         let scope=try XCTUnwrap(client.mediaScope());try cache.saveFeed(first,key:folder.id,append:false,scope:scope)
@@ -1493,10 +1496,18 @@ final class PayrollClientTests: XCTestCase {
         defer{prefetch.stop();TemporaryDocuments.remove(original);MockProtocol.handler=nil;cache.clear(scope)}
         prefetch.start(first,client:client,denied:{_ in XCTFail("No se retiró acceso")})
         for _ in 0..<500 {
+            if cache.loadPhotoPreview(items[5],quality:.balanced,scope:scope) != nil {break}
+            try await Task.sleep(for:.milliseconds(10))
+        }
+        XCTAssertNotNil(cache.loadPhotoPreview(items[2],quality:.balanced,scope:scope))
+        XCTAssertNil(cache.loadPhotoPreview(items[6],quality:.balanced,scope:scope),"En datos móviles se anticipa una ventana, sin descargar toda la carpeta")
+        client.photoPreviews.updateConnection(MediaPhotoConnection(wifi:true))
+        prefetch.start(first,client:client,denied:{_ in XCTFail("No se retiró acceso")})
+        for _ in 0..<500 {
             if cache.loadPhotoPreview(items[7],quality:.balanced,scope:scope) != nil {break}
             try await Task.sleep(for:.milliseconds(10))
         }
-        XCTAssertEqual(previews,Set(items.dropFirst().map(\.id)));XCTAssertEqual(pageCalls,1)
+        XCTAssertEqual(previews,Set(items.dropFirst().map(\.id)));XCTAssertEqual(pageCalls,2)
         let before=previews
         let third=try await client.mediaPhotoPreview(items[2],quality:.balanced);TemporaryDocuments.remove(third)
         XCTAssertEqual(previews,before,"La tercera ya fue preparada sin tocarla")
