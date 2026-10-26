@@ -437,6 +437,33 @@ final class MediaPhotoFilmstripTests:XCTestCase {
         XCTAssertTrue(selected.isEmpty)
     }
 
+    func testRetainedCellRestoresReleasedContentOnRedisplayWithoutAnotherDequeue() throws {
+        let view=makeView(),items=photos(12),path=IndexPath(item:2,section:0)
+        var contents:[String]=[],selected:[String]=[]
+        view.configure(items:items,selectedID:"photo-2",active:true,content:{ item in
+            contents.append(item.id)
+            var configuration=UIListContentConfiguration.cell()
+            configuration.text=item.id
+            return configuration
+        },select:{selected.append($0)})
+        view.layoutIfNeeded()
+        let retained=try XCTUnwrap(view.collectionView.cellForItem(at:path))
+        XCTAssertEqual((retained.contentConfiguration as? UIListContentConfiguration)?.text,"photo-2")
+        view.collectionView(view.collectionView,didEndDisplaying:retained,forItemAt:path)
+        XCTAssertNil(retained.contentConfiguration,"Salir de pantalla libera la miniatura")
+        let before=contents.count
+        // Simulate UIKit's prepared-cell path: no cellForItemAt call in between.
+        view.collectionView(view.collectionView,willDisplay:retained,forItemAt:path)
+        XCTAssertEqual((retained.contentConfiguration as? UIListContentConfiguration)?.text,"photo-2")
+        XCTAssertEqual(contents.count,before+1)
+        XCTAssertEqual(contents.last,"photo-2","Se restaura la foto del índice actual")
+        view.collectionView(view.collectionView,willDisplay:retained,forItemAt:path)
+        XCTAssertEqual(contents.count,before+1,"Mostrar contenido ya preparado no lo reconstruye")
+        XCTAssertEqual(view.selectedID,"photo-2")
+        XCTAssertEqual(view.collectionView.contentOffset.x,98,accuracy:0.01)
+        XCTAssertTrue(selected.isEmpty,"Restaurar una celda no publica selección ni mueve el visor")
+    }
+
     func testEmptySingleDuplicateAndReplacedItemsCannotPublishInvalidIndexes() {
         let view=makeView(),items=photos(3)
         var selected:[String]=[]

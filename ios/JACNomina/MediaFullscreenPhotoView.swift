@@ -261,6 +261,10 @@ final class MediaPhotoFilmstripView:UIView,UICollectionViewDataSource,UICollecti
         return cell
     }
     func collectionView(_ collectionView:UICollectionView,willDisplay cell:UICollectionViewCell,forItemAt indexPath:IndexPath) {
+        guard enabled,items.indices.contains(indexPath.item) else {return}
+        // Prefetching may redisplay a retained cell without asking the data
+        // source for it again. Restore content released when it left the screen.
+        if cell.contentConfiguration == nil {cell.contentConfiguration=content?(items[indexPath.item])}
         style(cell,at:indexPath.item)
     }
     func collectionView(_ collectionView:UICollectionView,didEndDisplaying cell:UICollectionViewCell,forItemAt indexPath:IndexPath) {
