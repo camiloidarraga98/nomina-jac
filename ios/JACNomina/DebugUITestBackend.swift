@@ -12,6 +12,11 @@ enum UITestBackend {
         FixtureProtocol.lock.lock(); defer { FixtureProtocol.lock.unlock() }
         return FixtureProtocol.scrollRequests
     }
+    static func photoProgressFixtureRequests()->String? {
+        guard ProcessInfo.processInfo.arguments.contains("--uitest-slow-photo-preview") else {return nil}
+        FixtureProtocol.lock.lock();defer {FixtureProtocol.lock.unlock()}
+        return String(FixtureProtocol.balancedPhotoRequests)
+    }
     static func selectedPhotoForProgressFixture(_ id:String) {
         guard ProcessInfo.processInfo.arguments.contains("--uitest-slow-photo-preview"),id.hasSuffix("media-photo-2") else {return}
         FixtureProtocol.beginSlowPhotoCompletion()
@@ -101,24 +106,24 @@ private final class FixtureProtocol: URLProtocol {
     static var slowedWorkspace = false
     static var slowedMedia = false
     static var scrollRequests: [String: Int] = [:]
-    private static var slowPhotoSelectedAt:Date?
+    private static var slowPhotoSelectionStarted=false
+    static private(set) var balancedPhotoRequests=0
     private static var slowPhotoTails:[DispatchWorkItem]=[]
     static func beginSlowPhotoCompletion() {
         lock.lock()
-        guard slowPhotoSelectedAt == nil else {lock.unlock();return}
-        slowPhotoSelectedAt=Date()
+        guard !slowPhotoSelectionStarted else {lock.unlock();return}
+        slowPhotoSelectionStarted=true
         let pending=slowPhotoTails;slowPhotoTails=[]
         lock.unlock()
         for work in pending {DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+12,execute:work)}
     }
     private static func scheduleSlowPhotoTail(_ work:DispatchWorkItem) {
         lock.lock()
-        guard let selectedAt=slowPhotoSelectedAt else {slowPhotoTails.append(work);lock.unlock();return}
-        let remaining=max(0,12-Date().timeIntervalSince(selectedAt))
+        guard slowPhotoSelectionStarted else {slowPhotoTails.append(work);lock.unlock();return}
         lock.unlock()
-        DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+remaining,execute:work)
+        DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+12,execute:work)
     }
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; slowPhotoTails.forEach{$0.cancel()};slowPhotoTails=[];slowPhotoSelectedAt=nil;scrollRequests = [:]; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; contracts=ProcessInfo.processInfo.arguments.contains("--uitest-contract-archive") ? [.object(["id":.string("11111111-1234-4234-8234-111111111111"),"filename":.string("Contrato JAC - Pereira - 31 de octubre 2026.pdf"),"municipality":.string("Pereira"),"company":.string("EMPRESA FICTICIA JAC SAS"),"eventDate":.string("2026-10-31"),"price":.number(140000000),"showId":.null,"showTitle":.string(""),"version":.number(1)])]:[]; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; slowPhotoTails.forEach{$0.cancel()};slowPhotoTails=[];slowPhotoSelectionStarted=false;balancedPhotoRequests=0;scrollRequests = [:]; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; contracts=ProcessInfo.processInfo.arguments.contains("--uitest-contract-archive") ? [.object(["id":.string("11111111-1234-4234-8234-111111111111"),"filename":.string("Contrato JAC - Pereira - 31 de octubre 2026.pdf"),"municipality":.string("Pereira"),"company":.string("EMPRESA FICTICIA JAC SAS"),"eventDate":.string("2026-10-31"),"price":.number(140000000),"showId":.null,"showTitle":.string(""),"version":.number(1)])]:[]; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func seedOfflineContent() {
         lock.lock(); defer { lock.unlock() }
         var alert = itinerary
@@ -204,6 +209,9 @@ private final class FixtureProtocol: URLProtocol {
                    let query=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)?.queryItems,
                    query.contains(where:{$0.name=="id" && $0.value?.hasSuffix("media-photo-2")==true}),
                    !query.contains(where:{["thumbnail","metadata"].contains($0.name)}) {
+                    if query.contains(where:{$0.name=="quality" && $0.value=="balanced"}) {
+                        Self.lock.lock();Self.balancedPhotoRequests+=1;Self.lock.unlock()
+                    }
                     headers["Content-Length"]=String(body.count)
                     let response=HTTPURLResponse(url:request.url!,statusCode:code,httpVersion:nil,headerFields:headers)!,split=max(1,body.count/2)
                     client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed)

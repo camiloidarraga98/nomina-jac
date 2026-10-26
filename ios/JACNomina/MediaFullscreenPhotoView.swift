@@ -43,6 +43,9 @@ struct MediaFullscreenPhotoView:View {
                 if photos.paging {ProgressView("Consultando más fotos…").font(.caption).tint(.white).foregroundStyle(.white)}
                 if let error=photos.pageError {HStack {Text(error).font(.caption);Button("Reintentar"){photos.retryPage()}}.foregroundStyle(.white).multilineTextAlignment(.center).padding(.horizontal,16)}
                 Text(photos.counter).font(.caption2).monospacedDigit().foregroundStyle(.white.opacity(0.7)).accessibilityIdentifier("media.preview.counter")
+                    #if DEBUG
+                    .accessibilityValue(UITestBackend.photoProgressFixtureRequests() ?? "")
+                    #endif
                 filmstrip
             }.padding(.vertical,10).background(.black.opacity(0.85))
         }

@@ -520,9 +520,12 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"fotografia-pantalla-completa-progreso-real")
         let pager=app.scrollViews["media.photo.pager"];pager.swipeRight();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");XCTAssertTrue(image.exists)
         pager.swipeLeft();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertTrue(image.waitForExistence(timeout:20))
+        let requestsBeforeReopening=Int(app.staticTexts["media.preview.counter"].value as? String ?? "") ?? 0
+        XCTAssertGreaterThan(requestsBeforeReopening,0,"El fixture debe contar la descarga inicial real de la segunda foto")
         attachScreen(app,name:"fotografia-pantalla-completa-foto");tap(app,"media.preview.close")
         openFilmstripPhoto(app,"r2_media-photo");XCTAssertTrue(image.waitForExistence(timeout:5));tap(app,"media.preview.next")
         XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertTrue(image.waitForExistence(timeout:5),"La copia vista debe abrir sin repetir la descarga ficticia de doce segundos.")
+        XCTAssertEqual(Int(app.staticTexts["media.preview.counter"].value as? String ?? ""),requestsBeforeReopening,"Reabrir desde caché no emite otra solicitud del JPEG inicial")
         XCTAssertFalse(hasSection(app, "Fotografía"))
         tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.r2_media-day"].exists)
     }
