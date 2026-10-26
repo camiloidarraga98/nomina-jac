@@ -222,19 +222,27 @@ export default function MediaPanel(){
    try{
     if(!item.prepared){updateUpload(item.id,{phase:'Preparando imagen…'});const preparation=preparing.current.catch(()=>{}).then(()=>prepareMediaImage(item.file,item.mimeType,item.imageLimit));preparing.current=preparation;item.file=await preparation;item.mimeType=item.file.type||item.mimeType;item.prepared=true;updateUpload(item.id,{file:item.file,mimeType:item.mimeType,prepared:true});if(!mounted.current||!uploadAllowed.current)throw new Error('La subida se ha detenido.');}
     let state:UploadState;try{state=validateProgress(await uploadPost<UploadState>({action:'start',transport:'direct',id:item.id,parentId:item.parentId,filename:item.file.name,mimeType:item.mimeType,size:item.file.size,imageLimit:item.mimeType.startsWith('image/')?item.imageLimit:0}),item);}catch(e){state=await reconcile(item,e);}
-    updateUpload(item.id,{offset:state.offset,sent:state.offset,phase:'Subiendo…'});let compatible=false;
+    updateUpload(item.id,{offset:state.offset,sent:state.offset,phase:'Subiendo…'});let compatible=false,fetchOnly=false,retries=0;
     while(!state.complete){if(!mounted.current||!uploadAllowed.current)throw new Error('La subida se ha detenido.');const offset=state.offset,chunk=item.file.slice(offset,Math.min(offset+(compatible?CHUNK:state.chunkSize),item.file.size));
+     let failure:unknown;
      try{
       if(state.uploadURL&&!compatible){
        try{directMediaUploadURL(state.uploadURL);}catch{throw new MediaFailure('La autorización de subida no es válida.',422);}
-       const controller=new AbortController();uploadControllers.current.add(controller);const timer=setTimeout(()=>controller.abort(),120000);
-       try{await sendMediaDirectChunk(state.uploadURL,item.mimeType,chunk,offset,item.file.size,controller.signal,sent=>{if(mounted.current&&uploadAllowed.current){meter.current.record(item.id,sent);updateUpload(item.id,{sent:offset+sent,phase:'Subiendo…'});}});updateUpload(item.id,{phase:'Confirmando archivo…'});}
+       const controller=new AbortController();uploadControllers.current.add(controller);const timer=setTimeout(()=>controller.abort(new DOMException('El envío tardó demasiado. Reintenta para consultar lo recibido.','TimeoutError')),120000);
+       let partReceipt;
+       try{const received=await sendMediaDirectChunk(state.uploadURL,item.mimeType,chunk,offset,item.file.size,controller.signal,(sent,continuous)=>{if(mounted.current&&uploadAllowed.current){if(continuous!==false)meter.current.record(item.id,sent);updateUpload(item.id,{sent:offset+sent,phase:'Subiendo…'});}},fetchOnly);if(state.provider==='r2'&&offset===0&&chunk.size===item.file.size&&received.etag)partReceipt={partNumber:1,etag:received.etag,size:item.file.size};updateUpload(item.id,{phase:'Confirmando archivo…'});}
        finally{meter.current.finish(item.id);clearTimeout(timer);uploadControllers.current.delete(controller);}
        if(!mounted.current||!uploadAllowed.current)throw new Error('La subida se ha detenido.');
-       state=validateProgress(await uploadPost<UploadState>({action:'status',transport:'direct',id:item.id}),item);
+       state=validateProgress(await uploadPost<UploadState>({action:'status',transport:'direct',id:item.id,...(partReceipt?{partReceipt}:{})}),item);
       }else state=validateProgress(await uploadRequest<UploadState>('/api/media/upload?id='+encodeURIComponent(item.id)+'&offset='+offset+(state.uploadURL?'&transport=direct':''),{method:'PUT',headers:{'Content-Type':'application/octet-stream'},body:chunk}),item);
-     }catch(e){state=await reconcile(item,e);if(state.provider!=='r2'&&state.uploadURL&&!compatible&&state.offset===offset){compatible=true;continue;}}
-     if(state.offset<=offset&&!state.complete)throw new Error('La conexión se interrumpió. Pulsa Reintentar para continuar desde el último tramo confirmado.');
+     }catch(e){failure=e;state=await reconcile(item,e);if(state.provider!=='r2'&&state.uploadURL&&!compatible&&state.offset===offset){compatible=true;continue;}}
+     if(state.offset<=offset&&!state.complete){
+      // A lost response is not a failed upload. Reconcile first; resend only an
+      // unconfirmed part under the same operation/part ID and a fresh URL.
+      if(state.provider==='r2'&&state.uploadURL&&state.offset===offset&&retries<2){retries++;fetchOnly=true;updateUpload(item.id,{sent:offset,phase:`Reintentando envío (${retries}/2)…`});await new Promise(resolve=>setTimeout(resolve,retries*500));continue;}
+      throw failure||new Error('El almacenamiento aún no confirmó este tramo. Pulsa Reintentar para consultar su estado.');
+     }
+     retries=0;
      updateUpload(item.id,{offset:state.offset,sent:state.offset});
     }
     if(state.provider==='r2'){updateUpload(item.id,{phase:'Preparando miniatura…'});const thumbnail=await mediaBrowserThumbnail(item.file,item.mimeType);if(!thumbnail)throw new Error('Archivo subido. No se pudo generar su miniatura; reintenta o usa la app para este formato.');await uploadRequest('/api/media/upload?thumbnail=1&id='+encodeURIComponent(item.id),{method:'PUT',headers:{'Content-Type':'image/jpeg'},body:thumbnail});if(item.mimeType.startsWith('image/')){updateUpload(item.id,{phase:'Preparando vista ligera…'});const preview=await mediaBrowserThumbnail(item.file,item.mimeType,1600,0.76,2*1024*1024);if(!preview)throw new Error('Original subido. Reintenta para completar su vista ligera.');await uploadRequest('/api/media/upload?preview=1&id='+encodeURIComponent(item.id),{method:'PUT',headers:{'Content-Type':'image/jpeg'},body:preview});}}
@@ -340,7 +348,7 @@ export default function MediaPanel(){
    {!!uploads.length&&<section className="media-uploads" aria-label="Estado de las subidas">
     <div className="media-upload-summary">
      <div className="media-upload-ring" role="progressbar" aria-label="Progreso general de subida" aria-valuemin={0} aria-valuemax={100} aria-valuenow={uploadPercent} style={{'--upload-progress':uploadPercent+'%'} as React.CSSProperties}><span>{uploadPercent}%</span></div>
-     <div className="media-upload-summary-text"><h3>{activeUploads?'Subiendo al archivo':uploads.some(x=>x.state==='error')?'Revisa los archivos pendientes':'Archivos guardados'}</h3><p>{uploads.filter(x=>x.state==='done').length} de {uploads.length} completados · {bytes(uploadBytes)} de {bytes(uploadTotal)}</p><strong className="media-upload-speed" data-testid="media.upload.speed">{activeUploads?(speed>0?bytes(speed)+'/s':'Esperando transferencia…'):uploads.some(x=>x.state==='error')?'Subida con pendientes':'Subida finalizada'}</strong><small>La velocidad corresponde a los datos enviados; cada archivo se confirma antes de guardarlo.</small></div>
+     <div className="media-upload-summary-text"><h3>{activeUploads?'Subiendo al archivo':uploads.some(x=>x.state==='error')?'Revisa los archivos pendientes':'Archivos guardados'}</h3><p>{uploads.filter(x=>x.state==='done').length} de {uploads.length} completados · {bytes(uploadBytes)} de {bytes(uploadTotal)}</p><strong className="media-upload-speed" data-testid="media.upload.speed">{activeUploads?(speed>0?bytes(speed)+'/s':uploads.find(x=>x.state==='uploading')?.phase||'Preparando subida…'):uploads.some(x=>x.state==='error')?'Subida con pendientes':'Subida finalizada'}</strong><small>Cada archivo se confirma antes de guardarlo. La velocidad se muestra cuando el navegador permite medirla.</small></div>
      <Button variant="ghost" disabled={!!activeUploads||!uploads.some(x=>x.state==='done')} onClick={()=>{queue.current=queue.current.filter(x=>x.state!=='done');setUploads([...queue.current]);}}>Ocultar completados</Button>
     </div>
     <details className="media-upload-details"><summary>Ver archivos{uploads.some(x=>x.state==='error')?' · Hay archivos por reintentar':''}</summary><div className="media-upload-items">{uploads.map(item=><div className={'media-upload-row '+item.state} key={item.id}><span className="media-upload-symbol">{item.state==='done'?<Check size={20}/>:item.state==='uploading'?<LoaderCircle size={20} className="media-spin"/>:<Upload size={20}/>}</span><div><strong>{item.file.name}</strong><small>{item.folderName} · {item.state==='waiting'?'En espera':item.state==='done'?'Guardado':item.state==='error'?'Pendiente':item.phase||'Pendiente'}</small>{item.error&&<p role="alert">{item.error}</p>}</div>{item.state==='error'&&<Button variant="outline" onClick={()=>{updateUpload(item.id,{state:'waiting',error:''});void processQueue();}}>Reintentar</Button>}</div>)}</div></details>

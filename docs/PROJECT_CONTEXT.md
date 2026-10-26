@@ -1,3 +1,7 @@
+## Fotografía: recuperación de subidas Safari ·26 de octubre de2026
+
+Corrección web para el lote pendiente en0%: fetch en WebKit, handshake del iframe con alternativa antes de entregar bytes para otros navegadores, recibo ETag verificado de una parte, estado canónico antes de repetir y dos reintentos acotados del mismo UUID/parte. Sin relay Worker ni cambios de permisos/originales; progreso por fase sin inventar velocidad en fetch.132 casos Node/Workerd y14 recorridos locales de navegador aprobados; la ruta Safari se comprueba en Chromium con user-agent, no en Safari real. Ver `PHOTOGRAPHY_WEB_UPLOADS.md` para publicación y recuperación de la pestaña antigua. Los avisos conservan un único evento por carpeta nueva.
+
 ## Fotografía: descargas locales y vistas adaptativas ·25 de octubre de2026
 
 Entrega iOS0.36.0(54), implementación inicial `b38dc12`, seguimiento `33d094a`: cache/original local antes de red incluso online, JPEG cifrados reutilizables y precarga gradual de carpeta por páginas; cola2/fondo1, prioridad visible, bajo consumo con seis anticipadas y sin lote en datos reducidos. Primera vista1280px/q78/512KiB y mejora2400/q84 con Wi-Fi suficiente manteniendo los píxeles visibles. Mismo formato de descargas existentes, permisos, Team, push, AppGroup y widget con versión54. El visor revalida en paralelo; nunca fallback403. Ver `PHOTO_PREVIEWS_ADAPTIVE.md`.

@@ -1,3 +1,7 @@
+## Subidas web de Fotografía ·26 de octubre de2026
+
+Safari usa una transferencia compatible sin iframe oculto. Ante un error se consulta primero lo recibido; hasta dos reintentos automáticos del mismo archivo/parte antes de dejarlo pendiente. No confundir un error de envío o confirmación con una desconexión demostrada. Mostrar fase real y velocidad sólo si puede medirse. Reintentar dentro de la misma cola conserva el identificador; recargar pierde la selección local y requiere elegir sólo pendientes en la carpeta existente. Los avisos son una vez por carpeta nueva cuando termina la subida, no por cada archivo añadido posteriormente. Ver [alcance y verificación](../docs/PHOTOGRAPHY_WEB_UPLOADS.md).
+
 ## Vistas de Fotografía ·25 de octubre de2026
 
 Las fotos de carpetas descargadas deben abrir su copia local también cuando hay Internet, sin transferir otra imagen para mostrarlas. Las vistas remotas se conservan cifradas y se anticipan gradualmente por páginas mientras se explora la carpeta o su visor. Perfil inicial1280px, mejora de detalle con Wi-Fi suficiente y JPEG ya guardado reutilizable; en datos móviles/red lenta se anticipan seis, y en modo de datos reducidos se evita la precarga masiva. Ese almacén temporal no reemplaza ni recorta los originales fijados con Disponible sin conexión. Revalidación en paralelo y retirada ante denegación/cambio de ámbito. Ver [alcance y verificación](../docs/PHOTO_PREVIEWS_ADAPTIVE.md).
