@@ -139,3 +139,7 @@ El caso de ochenta imágenes puebla el loader por peticiones reales a URLProtoco
 Conjunto sin duplicar: **40 casos distintos correctos** (24 de cliente,12 de widget y4 UI), más una prueba física explícitamente omitida. Las suites se reutilizan por alcance; no se afirma que todos los casos se ejecutaran de nuevo sobre el último SHA. El flujo de memoria utiliza la misma instancia de imagen ya decodificada y conserva las guardas de lectura nueva, comprobadas por la carga real y revocación de ochenta entradas.
 
 Diagnóstico compacto final de UI: `output/scroll-widgets-53-passed`, resumen8/8 y capturas reales de los fixtures. Artefactos GitHub: diagnóstico12613227732, iPhone final12613637234 y diagnóstico de memoria12613347890. El repo conserva los enlaces de las ejecuciones aunque caduquen los artefactos temporales. Todas las pruebas usan fixtures y protocolos locales, sin fotos, pases, cuentas ni notificaciones reales como pruebas.
+
+## Vistas de fotografías en54
+
+La entrega posterior0.36.0(54) conserva las seis guardas y añade una aserción sobre la escritura real del JPEG de presentación: debe ocurrir fuera del hilo principal, tanto al descargar como al restaurar el JPEG cifrado. La precarga comparte una cola limitada y no publica por cada archivo sobre la cuadrícula. Detalles, casos pendientes y fuente comprobada en `PHOTO_PREVIEWS_ADAPTIVE.md`; los resultados físicos anteriores de53 no se atribuyen a54.

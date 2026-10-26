@@ -1,3 +1,7 @@
+## Vistas de Fotografía ·25 de octubre de2026
+
+Las fotos de carpetas descargadas deben abrir su copia local también cuando hay Internet, sin transferir otra imagen para mostrarlas. Las vistas remotas se conservan cifradas y se anticipan gradualmente por páginas mientras se explora la carpeta o su visor. Perfil inicial1280px, mejora de detalle con Wi-Fi suficiente y JPEG ya guardado reutilizable; en datos móviles/red lenta se anticipan seis, y en modo de datos reducidos se evita la precarga masiva. Ese almacén temporal no reemplaza ni recorta los originales fijados con Disponible sin conexión. Revalidación en paralelo y retirada ante denegación/cambio de ámbito. Ver [alcance y verificación](../docs/PHOTO_PREVIEWS_ADAPTIVE.md).
+
 ## Actualización: datos del pase desde Slack · 25 de octubre de 2026
 
 Cada pase nuevo puede llevar una descripción con Silla, Hora de salida, Hora en sala y Aerolínea en el mismo mensaje que su PDF. Prioridad por campo para esos valores; leer el documento para completar los ausentes. Respetar Hora en sala escrita, con salida menos una hora solo si falta. Un pase por mensaje y destinatario del canal vigente. No asociar texto de otra publicación ni importar historial. Ver [formato y alcance](../docs/BOARDING_SLACK_DETAILS.md).
