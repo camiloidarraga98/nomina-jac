@@ -1425,11 +1425,18 @@ final class PayrollClient: ObservableObject {
                            priority: MediaPhotoPreviewPipeline.Priority = .visible,
                            collectionID: String? = nil,
                            progress: @escaping (Int64, Int64) -> Void = { _, _ in }) async throws -> ExportedDocument {
+        #if DEBUG
+        var fixturePhase = "scope"
+        #endif
+        do {
         guard item.kind == "image", permissionUser?.canReadMedia != false, let scope = try mediaScope(),
               let stamp = try mediaAccessStamp() else { throw APIError.unauthorized }
         // Explicit offline downloads are useful even while the phone is online.
         // Reading them must never wait for a metadata request or a remote JPEG.
         let cache = mediaOffline, offline = usingOfflineCopy
+        #if DEBUG
+        fixturePhase = "snapshot"
+        #endif
         let cached = await Task.detached(priority: .userInitiated) {
             cache.photoPreviewSnapshot(item, quality: quality, allowBalanced: offline, scope: scope)
         }.value
@@ -1442,11 +1449,20 @@ final class PayrollClient: ObservableObject {
         if let saved = try await restoredMediaDocument(item, scope: scope) {
             progress(item.size, item.size); return saved
         }
+        #if DEBUG
+        fixturePhase = "network-and-encrypted-cache"
+        #endif
         guard !usingOfflineCopy else { throw APIError.message("Esta foto todavía no está descargada en este dispositivo.") }
         let bytes = try await photoPreviewBytes(item, quality: quality, priority: priority, scope: scope, stamp: stamp, collectionID: cached.collectionID)
         guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
         progress(Int64(bytes.count), Int64(bytes.count))
         return try await preparePhotoPreviewDocument(bytes, quality: quality, stamp: stamp, epoch: cached.epoch)
+        } catch {
+            #if DEBUG
+            if baseURL.host?.hasSuffix(".invalid") == true { print("JAC fixture photo-preview phase=\(fixturePhase) error=\((error as NSError).domain)/\((error as NSError).code)") }
+            #endif
+            throw error
+        }
     }
 
     private func preparePhotoPreviewDocument(_ data: Data, quality: MediaPhotoPreviewQuality, stamp: String, epoch: UInt64) async throws -> ExportedDocument {
@@ -1525,7 +1541,12 @@ final class PayrollClient: ObservableObject {
                 if quality == .balanced { query.append(URLQueryItem(name: "quality", value: "balanced")) }
                 let (data, response) = try await request(path: "api/media/file", query: query, document: true, forceNetwork: true)
                 guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
-                guard !data.isEmpty, data.count <= quality.maximumBytes, response.mimeType == "image/jpeg" else { throw APIError.invalid("No se recibió una vista previa ligera.") }
+                guard !data.isEmpty, data.count <= quality.maximumBytes, response.mimeType == "image/jpeg" else {
+                    #if DEBUG
+                    if baseURL.host?.hasSuffix(".invalid") == true { print("JAC fixture photo-preview response status=\(response.statusCode) MIME=\(response.mimeType ?? "nil") bytes=\(data.count) limit=\(quality.maximumBytes)") }
+                    #endif
+                    throw APIError.invalid("No se recibió una vista previa ligera.")
+                }
                 return data
             } catch let failure as MediaPreviewUnavailable {
                 guard failure.preparing, retries < 2 else { throw failure }
