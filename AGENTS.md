@@ -1,3 +1,7 @@
+## Deslizamiento de miniaturas del visor ·26 de octubre de2026
+
+Camilo pidió cambiar la foto grande mientras arrastra la tira inferior, como Fotos del iPhone. App/widget0.38.0, build fuente57 tras la entrega real56; Xcode Cloud asigna el build de distribución. Mantener selección por ID durante arrastre/inercia, centrado sin realimentación al tocar o pasar la foto principal, extremos centrables y páginas nuevas sin recargar celdas existentes. Conservar zoom, salida vertical, guardado, permisos y cachés. Ver `docs/IPHONE_MEDIA_ACTIONS.md` para pruebas y estado de distribución.
+
 ## Fotografía nativa: originales y acciones locales ·26 de octubre de2026
 
 Camilo pidió videos originales sin compresión previa, retirar descargas offline por carpeta sin borrar servidor, guardado directo en Fotos desde pulsación prolongada y selección múltiple, contraer carpetas durante descargas y visor con gesto vertical de salida, cabecera de carpeta y tira de miniaturas sin X/puntos/nombre/flechas. Esta decisión sustituye la compresión obligatoria histórica. App/widget0.37.0(55), mismas firmas/grupo/permisos. No recodificar trabajos ya encolados. Retirada local no crea tombstones; conservar otras carpetas/sesiones y barrera para escrituras iniciadas antes de retirarla. Miniaturas compartidas acotadas, disco fuera del dibujo y zoom no dispara salida. Ver `docs/IPHONE_MEDIA_ACTIONS.md` para comprobaciones e instalación real pendiente; mantener las seis guardas de fluidez.

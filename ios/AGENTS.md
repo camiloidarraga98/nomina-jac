@@ -1,3 +1,7 @@
+## Tira de miniaturas sincronizada ·26 de octubre de2026
+
+El visor cambia la foto al desplazar la tira, incluyendo inercia. Distinguir desplazamiento del usuario y centrado programático; confirmar selección por ID sin interrumpir el gesto. App/widget0.38.0, build fuente57; distribución numerada por Xcode Cloud después de56. Conservar pager/zoom/salida vertical/caché y seis guardas. Ver `../docs/IPHONE_MEDIA_ACTIONS.md`; CI focal `photo-filmstrip`.
+
 ## Fotografía nativa ·26 de octubre de2026
 
 Camilo sustituyó expresamente la compresión obligatoria por subida del video original para evitar recodificar antes de enviarlo. Conservar UUID/bytes de trabajos pendientes, calidad/sonido/HDR y selección `.current`; la copia local/iCloud y la transferencia aún requieren tiempo. App/widget0.37.0(55). Añadir retirada local de carpeta/subcarpetas sin tombstones remotos ni borrar otras sesiones, guardado directo PhotoKit sin Compartir, contracción durante descarga y visor con título de carpeta/tira de miniaturas/salida vertical sin X ni puntos. Paneo ampliado no cierra; accesibilidad conserva salida y selección. No hacer I/O en filas ni debilitar las seis guardas. Ver `../docs/IPHONE_MEDIA_ACTIONS.md`; la publicación de fuente/CI no instala en un iPhone.

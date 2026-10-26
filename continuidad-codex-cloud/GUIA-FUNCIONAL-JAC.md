@@ -1,3 +1,7 @@
+## Miniaturas del visor ·26 de octubre de2026
+
+Al deslizar la tira inferior cambia inmediatamente la foto grande según la miniatura central, también durante la inercia. Tocar una miniatura o deslizar la foto sigue centrando y marcando la tira; abrir/cerrar o recibir más fotos no cambia la selección por sí solo. Conservar ampliación, salida vertical, guardado y permisos. App/widget0.38.0, build fuente57 con distribución numerada por Xcode Cloud tras56. Ver [alcance y validaciones](../docs/IPHONE_MEDIA_ACTIONS.md).
+
 ## Fotografía nativa ·26 de octubre de2026
 
 Videos originales sin compresión antes de subir (sustituye la elección anterior), eliminación sólo de la descarga local desde el menú de carpeta, guardado directo al carrete de una foto por pulsación prolongada o del grupo seleccionado y carpetas plegables durante descargas. Visor con nombre de carpeta arriba, tira de miniaturas abajo y arrastre vertical para regresar; conserva zoom/paginación/permisos. App/widget0.37.0(55); el teléfono aún requiere copiar o recuperar de iCloud un original no local y transferir sus bytes. Ver [alcance y comprobaciones](../docs/IPHONE_MEDIA_ACTIONS.md).

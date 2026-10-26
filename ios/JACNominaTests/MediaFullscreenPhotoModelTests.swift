@@ -1,5 +1,6 @@
 #if os(iOS)
 import XCTest
+import UIKit
 @testable import JACNomina
 
 @MainActor
@@ -278,6 +279,182 @@ final class MediaFullscreenPhotoModelTests: XCTestCase {
         try await waitFor("Repetir no debe emitir otra petición del cursor cíclico") { !model.paging }
         XCTAssertEqual(pageCalls, ["cycle"])
         XCTAssertNotNil(model.pageError)
+    }
+}
+
+@MainActor
+final class MediaPhotoFilmstripTests:XCTestCase {
+    private func photos(_ count:Int)->[MediaItem] {
+        (0..<count).map {MediaItem(id:"photo-\($0)",name:"Fixture \($0)",mimeType:"image/jpeg",kind:"image",size:25,modifiedAt:"fixture",thumbnailAvailable:true)}
+    }
+    private func configure(_ view:MediaPhotoFilmstripView,_ items:[MediaItem],_ selected:String,
+                           active:Bool=true,select:@escaping(String)->Void) {
+        view.configure(items:items,selectedID:selected,active:active,
+                       content:{_ in UIListContentConfiguration.cell()},select:select)
+        view.setNeedsLayout()
+        view.layoutIfNeeded()
+    }
+    private func makeView()->MediaPhotoFilmstripView {MediaPhotoFilmstripView(frame:CGRect(x:0,y:0,width:320,height:60))}
+    private func scroll(_ view:MediaPhotoFilmstripView,to offset:CGFloat) {
+        view.collectionView.setContentOffset(CGPoint(x:offset,y:0),animated:false)
+        view.scrollViewDidScroll(view.collectionView)
+    }
+
+    func testOpenExternalSelectionAndRepeatedTapNeverPublishScrollFeedback() {
+        let view=makeView(),items=photos(12)
+        var selected:[String]=[]
+        configure(view,items,"photo-8") {selected.append($0)}
+        XCTAssertEqual(view.collectionView.contentOffset.x,392,accuracy:0.01)
+        view.scrollViewDidScroll(view.collectionView)
+        configure(view,items,"photo-11") {selected.append($0)}
+        XCTAssertEqual(view.collectionView.contentOffset.x,539,accuracy:0.01)
+        view.collectionView(view.collectionView,didSelectItemAt:IndexPath(item:11,section:0))
+        XCTAssertTrue(selected.isEmpty,"Abrir, centrar y volver a tocar la misma foto no publican selección")
+        view.collectionView(view.collectionView,didSelectItemAt:IndexPath(item:0,section:0))
+        XCTAssertEqual(selected,["photo-0"])
+        XCTAssertEqual(view.collectionView.contentOffset.x,0,accuracy:0.01)
+    }
+
+    func testDragPublishesBeforeReleaseAndAcknowledgementKeepsFingerOffset() {
+        let view=makeView(),items=photos(12)
+        var selected:[String]=[]
+        configure(view,items,"photo-0") {selected.append($0)}
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:27)
+        XCTAssertEqual(selected,["photo-1"],"La foto cambia durante el gesto, sin tap ni soltar")
+        configure(view,items,"photo-1") {selected.append($0)}
+        XCTAssertEqual(view.collectionView.contentOffset.x,27,accuracy:0.01,"El eco del modelo no centra ni corta el gesto")
+        scroll(view,to:45)
+        XCTAssertEqual(selected,["photo-1"],"Los callbacks de la misma miniatura se deduplican")
+        scroll(view,to:76)
+        XCTAssertEqual(selected,["photo-1","photo-2"])
+        view.scrollViewDidEndDragging(view.collectionView,willDecelerate:false)
+        XCTAssertEqual(view.collectionView.contentOffset.x,98,accuracy:0.01)
+        XCTAssertEqual(selected.count,2,"El ajuste final no vuelve a publicar")
+    }
+
+    func testFastDragAndInertiaReachBothEndsWithoutOutOfRangeOrDuplicateEvents() {
+        let view=makeView(),items=photos(40)
+        var selected:[String]=[]
+        configure(view,items,"photo-0") {selected.append($0)}
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:173)
+        view.scrollViewDidEndDragging(view.collectionView,willDecelerate:true)
+        scroll(view,to:1060)
+        scroll(view,to:5000)
+        view.scrollViewDidEndDecelerating(view.collectionView)
+        XCTAssertEqual(selected,["photo-4","photo-22","photo-39"])
+        XCTAssertEqual(view.collectionView.contentOffset.x,1911,accuracy:0.01)
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:900)
+        scroll(view,to:-200)
+        view.scrollViewDidEndDragging(view.collectionView,willDecelerate:false)
+        XCTAssertEqual(selected.suffix(2),["photo-18","photo-0"])
+        XCTAssertEqual(view.collectionView.contentOffset.x,0,accuracy:0.01)
+    }
+
+    func testInertialTargetSnapsToValidThumbnailWithoutPublishingFutureSelection() {
+        let view=makeView(),items=photos(3)
+        var selected:[String]=[]
+        configure(view,items,"photo-1") {selected.append($0)}
+        view.scrollViewWillBeginDragging(view.collectionView)
+        var target=CGPoint(x:10000,y:0)
+        view.scrollViewWillEndDragging(view.collectionView,withVelocity:CGPoint(x:8,y:0),targetContentOffset:&target)
+        XCTAssertEqual(target.x,98)
+        target.x = -100
+        view.scrollViewWillEndDragging(view.collectionView,withVelocity:CGPoint(x:-8,y:0),targetContentOffset:&target)
+        XCTAssertEqual(target.x,0)
+        XCTAssertTrue(selected.isEmpty,"La predicción de inercia no adelanta una selección que aún no se ve")
+    }
+
+    func testMainPhotoSelectionInterruptsInertiaAndIgnoresItsLateCallbacks() {
+        let view=makeView(),items=photos(12)
+        var selected:[String]=[]
+        configure(view,items,"photo-0") {selected.append($0)}
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:180)
+        view.scrollViewDidEndDragging(view.collectionView,willDecelerate:true)
+        configure(view,items,"photo-9") {selected.append($0)}
+        view.scrollViewDidEndDecelerating(view.collectionView)
+        XCTAssertEqual(view.selectedID,"photo-9")
+        XCTAssertEqual(view.collectionView.contentOffset.x,441,accuracy:0.01)
+        XCTAssertEqual(selected,["photo-4"])
+    }
+
+    func testProgressiveAppendPreservesCellsOffsetAndOngoingInertia() {
+        let view=makeView(),initial=photos(12),expanded=photos(24)
+        var selected:[String]=[]
+        configure(view,initial,"photo-2") {selected.append($0)}
+        let cell=view.collectionView.cellForItem(at:IndexPath(item:2,section:0))
+        XCTAssertNotNil(cell)
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:108)
+        view.scrollViewDidEndDragging(view.collectionView,willDecelerate:true)
+        configure(view,expanded,"photo-2") {selected.append($0)}
+        XCTAssertEqual(view.collectionView.contentOffset.x,108,accuracy:0.01)
+        XCTAssertTrue(cell === view.collectionView.cellForItem(at:IndexPath(item:2,section:0)),"Agregar una página no recarga las celdas existentes")
+        XCTAssertEqual(view.collectionView.numberOfItems(inSection:0),24)
+        XCTAssertTrue(selected.isEmpty,"Recibir metadatos no selecciona una foto")
+        scroll(view,to:700)
+        view.scrollViewDidEndDecelerating(view.collectionView)
+        XCTAssertEqual(selected,["photo-14"])
+    }
+
+    func testStopInactiveAndReopenDoNotSelectFromAnOldOffset() {
+        let view=makeView(),items=photos(12)
+        var selected:[String]=[]
+        configure(view,items,"photo-4") {selected.append($0)}
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:300)
+        configure(view,items,"photo-6",active:false) {selected.append($0)}
+        view.scrollViewDidEndDecelerating(view.collectionView)
+        configure(view,items,"photo-1") {selected.append($0)}
+        view.scrollViewDidScroll(view.collectionView)
+        view.scrollViewDidEndDecelerating(view.collectionView)
+        XCTAssertEqual(selected,["photo-6"])
+        XCTAssertEqual(view.selectedID,"photo-1")
+        XCTAssertEqual(view.collectionView.contentOffset.x,49,accuracy:0.01)
+        view.stop()
+        scroll(view,to:200)
+        XCTAssertEqual(selected,["photo-6"])
+    }
+
+    func testResizeAndProgressUpdatesKeepSelectionWithoutRebuildingThumbnails() {
+        let view=makeView(),items=photos(12)
+        var selected:[String]=[],contents=0
+        let content:(MediaItem)->UIContentConfiguration={_ in contents+=1;return UIListContentConfiguration.cell()}
+        view.configure(items:items,selectedID:"photo-6",active:true,content:content,select:{selected.append($0)})
+        view.layoutIfNeeded()
+        let before=contents
+        for _ in 0..<20 {
+            view.configure(items:items,selectedID:"photo-6",active:true,content:content,select:{selected.append($0)})
+        }
+        XCTAssertEqual(contents,before,"Cambios de progreso no recrean ni recargan miniaturas")
+        view.frame.size.width=700
+        view.setNeedsLayout();view.layoutIfNeeded()
+        XCTAssertEqual(view.selectedID,"photo-6")
+        XCTAssertEqual(view.collectionView.contentOffset.x,294,accuracy:0.01)
+        XCTAssertTrue(selected.isEmpty)
+    }
+
+    func testEmptySingleDuplicateAndReplacedItemsCannotPublishInvalidIndexes() {
+        let view=makeView(),items=photos(3)
+        var selected:[String]=[]
+        configure(view,[],"missing") {selected.append($0)}
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:300)
+        view.scrollViewDidEndDecelerating(view.collectionView)
+        configure(view,[items[0],items[0]],"missing") {selected.append($0)}
+        XCTAssertEqual(view.collectionView.numberOfItems(inSection:0),1)
+        XCTAssertEqual(view.selectedID,"photo-0")
+        view.scrollViewWillBeginDragging(view.collectionView)
+        scroll(view,to:1000)
+        view.scrollViewDidEndDragging(view.collectionView,willDecelerate:false)
+        configure(view,items,"photo-2") {selected.append($0)}
+        configure(view,[items[0]],"photo-2") {selected.append($0)}
+        view.collectionView(view.collectionView,didSelectItemAt:IndexPath(item:20,section:0))
+        XCTAssertEqual(view.selectedID,"photo-0")
+        XCTAssertTrue(selected.isEmpty)
     }
 }
 

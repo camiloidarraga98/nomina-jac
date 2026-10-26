@@ -1,5 +1,6 @@
 #if os(iOS)
 import SwiftUI
+import UIKit
 
 struct MediaFullscreenPhotoView:View {
     @StateObject private var photos:MediaFullscreenPhotoModel
@@ -67,27 +68,229 @@ struct MediaFullscreenPhotoView:View {
         .onDisappear {photoSave.cancel();prefetch.stop();photos.stop()}
     }
     private var filmstrip:some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal) {
-                LazyHStack(spacing:5) {
-                    ForEach(Array(photos.items.enumerated()),id:\.element.id) { index,item in
-                        Button {photos.select(item.id)} label: {
-                            MediaFilmstripThumbnail(item:item,client:client,denied:denied)
-                                .frame(width:44,height:56).clipShape(RoundedRectangle(cornerRadius:5))
-                                .overlay(RoundedRectangle(cornerRadius:5).stroke(item.id==photos.selectedID ? Color.white:Color.clear,lineWidth:2))
-                                .opacity(item.id==photos.selectedID ? 1:0.65)
-                        }.buttonStyle(.plain).padding(.vertical,2).id(item.id)
-                            .accessibilityLabel("Foto \(index+1)").accessibilityAddTraits(item.id==photos.selectedID ? .isSelected:[])
-                            .accessibilityIdentifier("media.preview.strip."+item.id)
-                    }
-                }.padding(.horizontal,16)
-            }.scrollIndicators(.hidden).frame(height:60).accessibilityIdentifier("media.preview.filmstrip")
-                .onAppear {proxy.scrollTo(photos.selectedID,anchor:.center)}
-                .onChange(of:photos.selectedID) {_,value in proxy.scrollTo(value,anchor:.center)}
-        }
+        MediaPhotoFilmstrip(items:photos.items,selectedID:photos.selectedID,active:phase == .active,
+                            client:client,denied:denied,select:photos.select).frame(height:60)
     }
 
 }
+
+private struct MediaPhotoFilmstrip:UIViewRepresentable {
+    let items:[MediaItem]
+    let selectedID:String
+    let active:Bool
+    let client:PayrollClient
+    let denied:(Error)->Void
+    let select:(String)->Void
+
+    func makeUIView(context:Context)->MediaPhotoFilmstripView {MediaPhotoFilmstripView()}
+    func updateUIView(_ view:MediaPhotoFilmstripView,context:Context) {
+        let stamp=client.mediaPresentationStamp ?? ""
+        view.configure(items:items,selectedID:selectedID,active:active,content:{ item in
+            UIHostingConfiguration {
+                MediaFilmstripThumbnail(item:item,client:client,denied:denied)
+                    .id(item.id+item.modifiedAt+stamp)
+                    .frame(width:44,height:56).clipShape(RoundedRectangle(cornerRadius:5))
+            }.margins(.all,0)
+        },select:select)
+    }
+    static func dismantleUIView(_ view:MediaPhotoFilmstripView,coordinator:()) {view.stop()}
+}
+
+/// Only a user drag (including its inertia) publishes the thumbnail nearest the
+/// center. Selection acknowledgements never recenter an ongoing drag. Cells use
+/// the existing thumbnail loader; progress updates do not rebuild their content.
+final class MediaPhotoFilmstripView:UIView,UICollectionViewDataSource,UICollectionViewDelegate {
+    private let flow:UICollectionViewFlowLayout
+    let collectionView:UICollectionView
+    private var items:[MediaItem]=[]
+    private(set) var selectedID=""
+    private var enabled=false
+    private var userScrolling=false
+    private var changingLayout=false
+    private var viewport=CGSize.zero
+    private var content:((MediaItem)->UIContentConfiguration)?
+    private var select:((String)->Void)?
+    private let step:CGFloat=49
+
+    override init(frame:CGRect) {
+        let flow=UICollectionViewFlowLayout()
+        self.flow=flow
+        flow.scrollDirection = .horizontal
+        flow.itemSize=CGSize(width:44,height:56)
+        flow.minimumLineSpacing=5
+        flow.minimumInteritemSpacing=0
+        collectionView=UICollectionView(frame:.zero,collectionViewLayout:flow)
+        super.init(frame:frame)
+        collectionView.dataSource=self
+        collectionView.delegate=self
+        collectionView.backgroundColor = .clear
+        collectionView.showsHorizontalScrollIndicator=false
+        collectionView.showsVerticalScrollIndicator=false
+        collectionView.contentInsetAdjustmentBehavior = .never
+        collectionView.scrollsToTop=false
+        collectionView.bounces=false
+        collectionView.decelerationRate = .fast
+        collectionView.semanticContentAttribute = .forceLeftToRight
+        collectionView.register(UICollectionViewCell.self,forCellWithReuseIdentifier:"photo")
+        collectionView.accessibilityIdentifier="media.preview.filmstrip"
+        addSubview(collectionView)
+    }
+    required init?(coder:NSCoder) {fatalError("init(coder:) has not been implemented")}
+
+    func configure(items:[MediaItem],selectedID:String,active:Bool,
+                   content:@escaping(MediaItem)->UIContentConfiguration,select:@escaping(String)->Void) {
+        guard active else {stop();return}
+        enabled=true
+        collectionView.isHidden=false
+        collectionView.isScrollEnabled=true
+        self.content=content
+        self.select=select
+        var seen=Set<String>()
+        let next=items.filter {$0.kind == "image" && seen.insert($0.id).inserted}
+        if next != self.items {
+            let oldCount=self.items.count
+            let append=next.starts(with:self.items)
+            if !append {endInteraction()}
+            self.items=next
+            withoutSelection {
+                if append,oldCount>0 {
+                    // New metadata pages keep existing cells and the finger's
+                    // offset, even when they arrive during deceleration.
+                    UIView.performWithoutAnimation {
+                        collectionView.insertItems(at:(oldCount..<next.count).map {IndexPath(item:$0,section:0)})
+                        collectionView.layoutIfNeeded()
+                    }
+                } else {collectionView.reloadData()}
+            }
+        }
+        let validID=next.contains(where:{$0.id==selectedID}) ? selectedID:(next.first?.id ?? "")
+        if self.selectedID != validID {
+            endInteraction()
+            self.selectedID=validID
+            centerSelection()
+        } else if !userScrolling {centerSelection()}
+        updateSelectionAppearance()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        guard viewport != bounds.size else {return}
+        endInteraction()
+        viewport=bounds.size
+        withoutSelection {
+            collectionView.frame=bounds
+            let edge=max(0,(bounds.width-flow.itemSize.width)/2)
+            flow.sectionInset=UIEdgeInsets(top:2,left:edge,bottom:2,right:edge)
+            flow.invalidateLayout()
+            collectionView.layoutIfNeeded()
+        }
+        centerSelection()
+    }
+
+    func stop() {
+        guard enabled else {return}
+        enabled=false
+        endInteraction()
+        collectionView.isHidden=true
+        collectionView.isScrollEnabled=false
+        collectionView.visibleCells.forEach {$0.contentConfiguration=nil}
+        items=[]
+        selectedID=""
+        content=nil
+        select=nil
+        withoutSelection {collectionView.reloadData()}
+    }
+
+    private func withoutSelection(_ work:()->Void) {
+        let previous=changingLayout
+        changingLayout=true
+        work()
+        changingLayout=previous
+    }
+    private func endInteraction() {
+        userScrolling=false
+        withoutSelection {
+            if collectionView.isDragging || collectionView.isDecelerating {
+                collectionView.panGestureRecognizer.isEnabled=false
+                collectionView.panGestureRecognizer.isEnabled=true
+            }
+            collectionView.setContentOffset(collectionView.contentOffset,animated:false)
+        }
+    }
+    private func centerSelection() {
+        guard bounds.width>0,let index=items.firstIndex(where:{$0.id==selectedID}) else {return}
+        withoutSelection {
+            collectionView.layoutIfNeeded()
+            let point=CGPoint(x:CGFloat(index)*step,y:0)
+            if collectionView.contentOffset != point {collectionView.setContentOffset(point,animated:false)}
+        }
+    }
+    private func index(at offset:CGFloat)->Int? {
+        guard !items.isEmpty,offset.isFinite else {return nil}
+        return Int(min(CGFloat(items.count-1),max(0,(offset/step).rounded())))
+    }
+    private func publishSelection(_ index:Int) {
+        guard enabled,items.indices.contains(index),items[index].id != selectedID else {return}
+        selectedID=items[index].id
+        updateSelectionAppearance()
+        select?(selectedID)
+    }
+    private func updateSelectionAppearance() {
+        for cell in collectionView.visibleCells {
+            guard let index=collectionView.indexPath(for:cell)?.item,items.indices.contains(index) else {continue}
+            style(cell,at:index)
+        }
+    }
+    private func style(_ cell:UICollectionViewCell,at index:Int) {
+        guard items.indices.contains(index) else {return}
+        let selected=items[index].id==selectedID
+        cell.layer.borderWidth=2
+        cell.layer.cornerRadius=5
+        cell.layer.borderColor=selected ? UIColor.white.cgColor:UIColor.clear.cgColor
+        cell.alpha=selected ? 1:0.65
+        cell.accessibilityTraits=selected ? [.button,.selected]:[.button]
+    }
+    func collectionView(_ collectionView:UICollectionView,numberOfItemsInSection section:Int)->Int {items.count}
+    func collectionView(_ collectionView:UICollectionView,cellForItemAt indexPath:IndexPath)->UICollectionViewCell {
+        let cell=collectionView.dequeueReusableCell(withReuseIdentifier:"photo",for:indexPath)
+        cell.contentConfiguration=content?(items[indexPath.item])
+        cell.isAccessibilityElement=true
+        cell.accessibilityLabel="Foto \(indexPath.item+1)"
+        cell.accessibilityIdentifier="media.preview.strip."+items[indexPath.item].id
+        style(cell,at:indexPath.item)
+        return cell
+    }
+    func collectionView(_ collectionView:UICollectionView,willDisplay cell:UICollectionViewCell,forItemAt indexPath:IndexPath) {
+        style(cell,at:indexPath.item)
+    }
+    func collectionView(_ collectionView:UICollectionView,didEndDisplaying cell:UICollectionViewCell,forItemAt indexPath:IndexPath) {
+        cell.contentConfiguration=nil
+    }
+    func collectionView(_ collectionView:UICollectionView,didSelectItemAt indexPath:IndexPath) {
+        endInteraction()
+        publishSelection(indexPath.item)
+        centerSelection()
+    }
+    func scrollViewWillBeginDragging(_ scrollView:UIScrollView) {userScrolling=enabled}
+    func scrollViewDidScroll(_ scrollView:UIScrollView) {
+        guard enabled,userScrolling,!changingLayout,let index=index(at:scrollView.contentOffset.x) else {return}
+        publishSelection(index)
+    }
+    func scrollViewWillEndDragging(_ scrollView:UIScrollView,withVelocity velocity:CGPoint,targetContentOffset:UnsafeMutablePointer<CGPoint>) {
+        guard enabled,userScrolling,let index=index(at:targetContentOffset.pointee.x) else {return}
+        targetContentOffset.pointee=CGPoint(x:CGFloat(index)*step,y:0)
+    }
+    func scrollViewDidEndDragging(_ scrollView:UIScrollView,willDecelerate decelerate:Bool) {
+        if !decelerate {finishScrolling()}
+    }
+    func scrollViewDidEndDecelerating(_ scrollView:UIScrollView) {finishScrolling()}
+    private func finishScrolling() {
+        scrollViewDidScroll(collectionView)
+        userScrolling=false
+        centerSelection()
+    }
+}
+
 private struct MediaFilmstripThumbnail:View {
     let item:MediaItem
     let client:PayrollClient

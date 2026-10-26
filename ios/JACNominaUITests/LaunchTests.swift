@@ -96,7 +96,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(image.waitForExistence(timeout:20))
         XCTAssertTrue(app.staticTexts["media.preview.folder"].exists)
         XCTAssertFalse(app.buttons["media.preview.close"].exists);XCTAssertFalse(app.staticTexts["media.preview.name"].exists)
-        XCTAssertTrue(app.scrollViews["media.preview.filmstrip"].exists)
+        XCTAssertTrue(app.collectionViews["media.preview.filmstrip"].exists)
         image.press(forDuration:0.8);tap(app,"Guardar en Fotos")
         XCTAssertTrue(app.staticTexts["1 de 1 archivos guardados en Fotos."].waitForExistence(timeout:15))
         XCTAssertFalse(app.buttons["Guardar en Archivos o compartir"].exists)
@@ -111,6 +111,54 @@ final class LaunchTests: XCTestCase {
         attachScreen(app,name:"fotografia-visor-carpeta-tira-miniaturas")
         app.scrollViews["media.photo.pager"].swipeDown()
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].waitForExistence(timeout:10))
+    }
+
+    @MainActor func testPhotoFilmstripScrubsBothWaysAndStaysSyncedWithPagerAfterReopening() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-r2","--uitest-media-slideshow"];app.launch()
+        tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-photo")
+        let strip=app.collectionViews["media.preview.filmstrip"],counter=app.staticTexts["media.preview.counter"]
+        let first=app.buttons["media.preview.strip.r2_media-photo"],last=app.buttons["media.preview.strip.r2_media-photo-2"]
+        XCTAssertTrue(strip.waitForExistence(timeout:15))
+        strip.swipeLeft()
+        XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label == %@","2 de 2"),timeout:10))
+        XCTAssertTrue(last.isSelected)
+        strip.swipeRight()
+        XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label == %@","1 de 2"),timeout:10))
+        XCTAssertTrue(first.isSelected)
+        last.tap();last.tap()
+        XCTAssertEqual(counter.label,"2 de 2")
+        app.scrollViews["media.photo.pager"].swipeRight()
+        XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label == %@","1 de 2"),timeout:10))
+        XCTAssertTrue(first.isSelected,"El deslizamiento de la foto también centra y marca su miniatura")
+        strip.swipeLeft()
+        XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label == %@","2 de 2"),timeout:10))
+        app.scrollViews["media.photo.pager"].swipeDown()
+        tap(app,"media.item.r2_media-photo")
+        XCTAssertTrue(counter.waitForExistence(timeout:10))
+        XCTAssertEqual(counter.label,"1 de 2")
+        XCTAssertTrue(first.isSelected,"Reabrir conserva la foto que se abrió, sin adoptar el offset anterior")
+        attachScreen(app,name:"fotografia-tira-deslizamiento-sin-tap")
+    }
+
+    @MainActor func testPhotoFilmstripFastScrubbingKeepsTheSelectedThumbnailAndPhotoTogether() {
+        let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-r2","--uitest-media-scroll"];app.launch()
+        tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-scroll-0")
+        let strip=app.collectionViews["media.preview.filmstrip"],counter=app.staticTexts["media.preview.counter"]
+        XCTAssertTrue(strip.waitForExistence(timeout:15))
+        strip.swipeLeft(velocity:.fast);strip.swipeLeft(velocity:.fast)
+        XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label != %@","1 de 80"),timeout:10))
+        let selected=strip.buttons.matching(NSPredicate(format:"selected == true")).firstMatch
+        XCTAssertTrue(selected.waitForExistence(timeout:10))
+        let index=Int(selected.label.replacingOccurrences(of:"Foto ",with:"")) ?? 0
+        XCTAssertTrue((2...80).contains(index))
+        XCTAssertEqual(counter.label,"\(index) de 80")
+        strip.swipeRight(velocity:.fast)
+        XCTAssertTrue(selected.waitForExistence(timeout:10))
+        let settledIndex=Int(selected.label.replacingOccurrences(of:"Foto ",with:"")) ?? 0
+        XCTAssertTrue((1...80).contains(settledIndex))
+        XCTAssertEqual(counter.label,"\(settledIndex) de 80")
+        XCTAssertTrue(app.descendants(matching:.any).matching(identifier:"media.photo.document").firstMatch.waitForExistence(timeout:15))
+        attachScreen(app,name:"fotografia-tira-arrastre-rapido")
     }
 
     @MainActor func testFolderCanCollapseDuringDownloadAndRemoveOnlyItsLocalCopy() {

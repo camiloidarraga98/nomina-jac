@@ -1,3 +1,7 @@
+## Tira del visor de fotos ·26 de octubre de2026
+
+El usuario pidió que arrastrar las miniaturas inferiores cambie la foto grande, como Fotos del iPhone, y continuar todo el proceso en nube conservando la trazabilidad del chat JAC App. Fuente reconciliada con main77677cf, incluida la clasificación de cifrado exento. App/widget0.38.0, build fuente57 tras la última entrega real0.37.0(56); Xcode Cloud asigna el número efectivo. Selección continua durante arrastre/inercia y sincronización con tap/pager, sin alterar zoom, caché, permisos ni servicios. Alcance, validaciones y límites en [IPHONE_MEDIA_ACTIONS.md](IPHONE_MEDIA_ACTIONS.md).
+
 ## Fotografía nativa: acciones y visor ·26 de octubre de2026
 
 App/widget0.37.0(55): video original sin exportación previa, retirada offline local por carpeta/subcarpetas sin borrar servidor ni tombstones, guardado directo PhotoKit individual/múltiple, carpetas plegables durante transferencia y visor con cabecera de carpeta, tira de miniaturas y gesto vertical de salida. Cancelación, ámbito, archivos originales, cachés, trabajos pendientes y seis guardas se conservan. Ver `IPHONE_MEDIA_ACTIONS.md` para verificación y actualización física pendiente. Esta decisión sustituye la compresión de videos obligatoria anterior.
