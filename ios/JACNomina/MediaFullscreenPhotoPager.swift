@@ -153,7 +153,7 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate, UIConte
             }])
         }
     }
-    func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
+    override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
         guard gestureRecognizer === verticalPan else { return true }
         let velocity=verticalPan.velocity(in:self)
         return enabled && dismissPhoto != nil && !(pages[selectedID]?.isMagnified ?? false) && abs(velocity.y)>abs(velocity.x)*1.25
