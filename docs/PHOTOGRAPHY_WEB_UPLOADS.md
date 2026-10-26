@@ -14,7 +14,7 @@ El resumen muestra preparación, envío, confirmación o reintento. Fetch no exp
 
 ## Verificación
 
-- TypeScript y build de Cloudflare; resultados finales registrados al publicar.
+- TypeScript y build de Cloudflare correctos.
 - 132 casos Node/Workerd aprobados: 5 de transporte/medidor, 69 de galería R2 y 58 de acceso/Drive/Worker.
 - 14 recorridos locales del transporte real minificado y la cola React: bytes intactos, progreso aislado, ruta de compatibilidad, iframe bloqueado, rechazo de redirecciones, cancelación, dos subidas simultáneas, recibo, respuesta de almacenamiento perdida, confirmación final perdida, recuperación transitoria, límite de reintentos/reintento manual sin duplicados, revocación y desmontaje durante la espera.
 
@@ -26,4 +26,4 @@ Es un cambio web, sin actualización de iOS ni migración de base de datos. Una 
 
 Los avisos automáticos mantienen su contrato: un evento por **carpeta nueva**, después de originales listos, ausencia de pendientes y al menos 120 s de quietud, sujeto al cron y permisos de dispositivos. Añadir más archivos a una carpeta ya anunciada no produce otro evento. Las subidas sin confirmar no disparan el aviso. Ver [notificaciones de carpetas](PHOTOGRAPHY_FOLDER_NOTIFICATIONS.md).
 
-Publicación pendiente de registrar.
+Fuente funcional `2aca1cf` publicada en main. [GitHub Actions 40363045358](https://github.com/camiloidarraga98/nomina-jac/actions/runs/40363045358) terminó correctamente: TypeScript, build y regresión del módulo Fotografía, además de los casos locales indicados arriba. Worker existente `jac-nomina`, versión `08faedf0-2834-407c-805d-61f82871a705`, verificada activa al100 %. Conserva los14 bindings; todos los bindings ajenos a los assets coinciden íntegramente con la versión anterior. Sin migraciones, cambios de DNS ni escrituras de prueba en producción. El dominio público no está permitido desde este entorno: se verificó la activación por la API de administración de Cloudflare, sin presentar esa consulta como una subida real desde Safari.
