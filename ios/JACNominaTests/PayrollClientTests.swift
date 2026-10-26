@@ -197,6 +197,17 @@ private final class MediaDownloadChunkProtocol: URLProtocol, @unchecked Sendable
 final class PayrollClientTests: XCTestCase {
     // Synthetic BCBP with fixed-width fields and deliberate trailing spaces.
     // It is not a real airline reservation or valid travel document.
+    // Real JPEG bytes: CFNetwork sniffs the PNG fixture even when a mocked
+    // response labels it image/jpeg. Match the production preview contract.
+    private func photoPreviewJPEGFixture() throws -> Data {
+        let source=try XCTUnwrap(CGImageSourceCreateWithData(MediaFixture.photo as CFData,nil))
+        let image=try XCTUnwrap(CGImageSourceCreateImageAtIndex(source,0,nil))
+        let data=NSMutableData()
+        let destination=try XCTUnwrap(CGImageDestinationCreateWithData(data,"public.jpeg" as CFString,1,nil))
+        CGImageDestinationAddImage(destination,image,[kCGImageDestinationLossyCompressionQuality:0.78] as CFDictionary)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        return data as Data
+    }
     private var walletIATAFixture: String {
         "M1" + "DOE/TEST".padding(toLength:20,withPad:" ",startingAt:0) + "E" + "ABC123 " + "BOG" + "MDE" + "XX " + "00001" + "297" + "Y" + "001A" + "00001" + "1" + "00" + "   "
     }
@@ -1404,6 +1415,7 @@ final class PayrollClientTests: XCTestCase {
     }
 
     @MainActor func testPhotoPreviewCacheReopensAcrossClientsImprovesOnceAndNeverFallsBackAfterDenial() async throws {
+        let previewJPEG=try photoPreviewJPEGFixture()
         let vault=MemorySession();vault.token=String(repeating:"b",count:43)
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
         let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),cache=MediaOfflineCache(root:root)
@@ -1415,7 +1427,7 @@ final class PayrollClientTests: XCTestCase {
             let q=URLComponents(url:request.url!,resolvingAgainstBaseURL:false)!.queryItems!
             XCTAssertEqual(q.first{$0.name=="preview"}?.value,"1")
             calls.append(q.first{$0.name=="quality"}?.value ?? "detail")
-            return (HTTPURLResponse(url:request.url!,statusCode:denied ? 403:200,httpVersion:nil,headerFields:["Content-Type":denied ? "application/json":"image/jpeg"])!,denied ? Data("{}".utf8):MediaFixture.photo)
+            return (HTTPURLResponse(url:request.url!,statusCode:denied ? 403:200,httpVersion:nil,headerFields:["Content-Type":denied ? "application/json":"image/jpeg"])!,denied ? Data("{}".utf8):previewJPEG)
         }
         defer {MockProtocol.handler=nil;try? FileManager.default.removeItem(at:root)}
         JACPerformanceDiagnostics.reset()
@@ -1424,7 +1436,7 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(JACPerformanceDiagnostics.snapshot().count(.diskWrite,mainThread:true),0,"Preparar el JPEG temporal no debe bloquear el hilo de interfaz")
         let restored=PayrollClient(baseURL:base,vault:vault,configuration:config,mediaOffline:MediaOfflineCache(root:root),automaticallyDownloadOffline:false)
         let second=try await restored.mediaPhotoPreview(item,quality:.balanced);defer{TemporaryDocuments.remove(second)}
-        XCTAssertEqual(try Data(contentsOf:second.url),MediaFixture.photo);XCTAssertEqual(calls,["balanced"])
+        XCTAssertEqual(try Data(contentsOf:second.url),previewJPEG);XCTAssertEqual(calls,["balanced"])
         restored.photoPreviews.updateConnection(MediaPhotoConnection(wifi:true))
         let improvement=try await restored.improveMediaPhotoPreview(item,current:second)
         let improved=try XCTUnwrap(improvement);TemporaryDocuments.remove(improved)
@@ -1470,6 +1482,7 @@ final class PayrollClientTests: XCTestCase {
 
     #if os(iOS)
     @MainActor func testWholeFolderPreviewPrefetchTraversesPagesWarmsThirdPhotoAndSkipsDownloadedOriginals() async throws {
+        let previewJPEG=try photoPreviewJPEGFixture()
         let vault=MemorySession();vault.token=String(repeating:"e",count:43)
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]
         let root=FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString),cache=MediaOfflineCache(root:root)
@@ -1490,7 +1503,7 @@ final class PayrollClientTests: XCTestCase {
             if request.url?.path=="/api/media" {pageCalls+=1;return(HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"application/json"])!,pageData)}
             XCTAssertEqual(q.first{$0.name=="preview"}?.value,"1");XCTAssertEqual(q.first{$0.name=="quality"}?.value,"balanced")
             previews.insert(try XCTUnwrap(q.first{$0.name=="id"}?.value))
-            return(HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"image/jpeg"])!,MediaFixture.photo)
+            return(HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Type":"image/jpeg"])!,previewJPEG)
         }
         let prefetch=MediaFolderPhotoPrefetch()
         defer{prefetch.stop();TemporaryDocuments.remove(original);MockProtocol.handler=nil;cache.clear(scope)}
@@ -1567,6 +1580,7 @@ final class PayrollClientTests: XCTestCase {
     }
 
     @MainActor func testPendingPhotoPreviewRetriesOnlyTheLightVersionAndKeepsItsSession() async throws {
+        let previewJPEG=try photoPreviewJPEGFixture()
         let vault = MemorySession(); vault.token = String(repeating: "f", count: 43)
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
         let client = PayrollClient(baseURL: URL(string: "https://preview-pending.invalid")!, vault: vault, configuration: configuration, automaticallyDownloadOffline: false)
@@ -1576,11 +1590,11 @@ final class PayrollClientTests: XCTestCase {
         MockProtocol.handler = { request in
             reads += 1; XCTAssertTrue(request.url?.query?.contains("preview=1") == true); XCTAssertFalse(request.url?.query?.contains("thumbnail=1") == true)
             if reads == 1 { return (HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: ["Content-Type":"application/json","Retry-After":"0"])!, Data("{\"code\":\"preview_preparing\",\"error\":\"Preparando vista previa\"}".utf8)) }
-            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"image/jpeg"])!, MediaFixture.photo)
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type":"image/jpeg"])!, previewJPEG)
         }
         defer { MockProtocol.handler = nil; try? client.clearSession() }
         let document = try await client.mediaPhotoPreview(item); defer { TemporaryDocuments.remove(document) }
-        XCTAssertEqual(reads, 2); XCTAssertEqual(try Data(contentsOf: document.url), MediaFixture.photo)
+        XCTAssertEqual(reads, 2); XCTAssertEqual(try Data(contentsOf: document.url), previewJPEG)
         XCTAssertEqual(try client.mediaAccessStamp(), stamp); XCTAssertEqual(client.cacheRevision, revision); XCTAssertFalse(client.usingOfflineCopy)
     }
     @MainActor func testPhotoPreviewFailureIsReadableBoundedAndDoesNotBecomeAMissingThumbnail() async throws {
