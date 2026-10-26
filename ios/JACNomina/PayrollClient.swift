@@ -80,6 +80,78 @@ private final class MediaUploadObserver: NSObject, URLSessionTaskDelegate, @unch
 
 private struct MediaDownloadResponseFailure: Error { let response: URLResponse }
 
+/// Bounded in-memory JPEG reads keep the request's existing response validation
+/// while reporting bytes before completion. The callback never outlives a task.
+final class MediaDataProgressObserver:NSObject,URLSessionDataDelegate,@unchecked Sendable {
+    private let maximumBytes:Int
+    private let callback:@MainActor (Int64,Int64)->Void
+    private let lock=NSLock()
+    private var active=true
+    private var started=false
+    private var task:URLSessionDataTask?
+    private var continuation:CheckedContinuation<(Data,URLResponse),Error>?
+    private var response:URLResponse?
+    private var bytes=Data()
+    init(maximumBytes:Int,callback:@escaping @MainActor (Int64,Int64)->Void) {
+        self.maximumBytes=maximumBytes;self.callback=callback
+    }
+    private var isActive:Bool {lock.lock();defer {lock.unlock()};return active}
+    func data(session:URLSession,request:URLRequest) async throws ->(Data,URLResponse) {
+        try Task.checkCancellation()
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                let task=session.dataTask(with:request);task.delegate=self
+                lock.lock()
+                guard active,!started else {lock.unlock();task.cancel();continuation.resume(throwing:CancellationError());return}
+                started=true;self.task=task;self.continuation=continuation
+                lock.unlock();task.resume()
+            }
+        } onCancel:{self.stop()}
+    }
+    func stop() {finish(error:CancellationError())}
+    func urlSession(_ session:URLSession,dataTask:URLSessionDataTask,didReceive response:URLResponse,completionHandler:@escaping(URLSession.ResponseDisposition)->Void) {
+        lock.lock()
+        guard active else {lock.unlock();completionHandler(.cancel);return}
+        self.response=response
+        let oversized=response.expectedContentLength>Int64(maximumBytes)
+        lock.unlock()
+        if oversized {
+            finish(error:sizeFailure(response));completionHandler(.cancel)
+        } else {completionHandler(.allow)}
+    }
+    func urlSession(_ session:URLSession,dataTask:URLSessionDataTask,didReceive data:Data) {
+        lock.lock()
+        guard active else {lock.unlock();return}
+        guard data.count<=maximumBytes-bytes.count else {
+            let response=self.response;lock.unlock();finish(error:sizeFailure(response));return
+        }
+        bytes.append(data)
+        let received=Int64(bytes.count),total=max(0,response?.expectedContentLength ?? 0)
+        let successful=(response as? HTTPURLResponse).map {(200..<300).contains($0.statusCode)} ?? false
+        lock.unlock()
+        if successful {Task { @MainActor [self] in if isActive {callback(received,total)}}}
+    }
+    private func sizeFailure(_ response:URLResponse?)->Error {
+        if let response=response as? HTTPURLResponse,!(200..<300).contains(response.statusCode) {
+            return MediaDownloadResponseFailure(response:response)
+        }
+        return APIError.invalid("La vista previa supera el tamaño permitido.")
+    }
+    func urlSession(_ session:URLSession,task:URLSessionTask,didCompleteWithError error:Error?) {finish(error:error)}
+    func urlSession(_ session:URLSession,task:URLSessionTask,willPerformHTTPRedirection response:HTTPURLResponse,newRequest request:URLRequest,completionHandler:@escaping(URLRequest?)->Void) {completionHandler(nil)}
+    private func finish(error:Error?) {
+        lock.lock()
+        guard active else {lock.unlock();return}
+        active=false
+        let continuation=self.continuation,task=self.task,response=self.response,bytes=self.bytes
+        self.continuation=nil;self.task=nil;self.response=nil;self.bytes=Data()
+        lock.unlock()
+        if let error {task?.cancel();continuation?.resume(throwing:error)}
+        else if let response {continuation?.resume(returning:(bytes,response))}
+        else {continuation?.resume(throwing:APIError.message("La descarga no terminó correctamente."))}
+    }
+}
+
 final class MediaDownloadProgressObserver: NSObject, URLSessionDownloadDelegate, @unchecked Sendable {
     private let total: Int64
     private let callback: @MainActor (Int64, Int64) -> Void
@@ -479,7 +551,7 @@ final class PayrollClient: ObservableObject {
         return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file", "api/mobile/contracts", "api/media"].contains(path)
     }
 
-    private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false) async throws -> (Data, HTTPURLResponse) {
+    private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false, progress:(@MainActor (Int64,Int64)->Void)? = nil, maximumBytes:Int = 0) async throws -> (Data, HTTPURLResponse) {
         let mediaThumbnailRead = path == "api/media/file" && query.contains { $0.name == "thumbnail" && $0.value == "1" }
         let mediaPreviewRead = path == "api/media/file" && query.contains { $0.name == "preview" && $0.value == "1" }
         guard allowsResource(path,query:query,body:body) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
@@ -520,7 +592,14 @@ final class PayrollClient: ObservableObject {
             request.httpBody = try JSONEncoder().encode(body)
         }
         let data: Data, rawResponse: URLResponse
-        do { (data, rawResponse) = try await session.data(for: request) }
+        do {
+            if let progress {
+                let observer=MediaDataProgressObserver(maximumBytes:maximumBytes,callback:progress)
+                defer {observer.stop()}
+                (data,rawResponse)=try await observer.data(session:session,request:request)
+            } else {(data,rawResponse)=try await session.data(for:request)}
+        }
+        catch let failure as MediaDownloadResponseFailure {(data,rawResponse)=(Data(),failure.response)}
         catch {
             guard sentToken == (try checkedToken()), generation == cacheGeneration else { throw CancellationError() }
             if path.hasPrefix("api/crm") || path == "api/mobile/contracts",body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
@@ -1461,7 +1540,7 @@ final class PayrollClient: ObservableObject {
             progress(item.size, item.size); return saved
         }
         guard !usingOfflineCopy else { throw APIError.message("Esta foto todavía no está descargada en este dispositivo.") }
-        let bytes = try await photoPreviewBytes(item, quality: quality, priority: priority, scope: scope, stamp: stamp, collectionID: cached.collectionID)
+        let bytes = try await photoPreviewBytes(item, quality: quality, priority: priority, scope: scope, stamp: stamp, collectionID: cached.collectionID,progress:progress)
         guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
         progress(Int64(bytes.count), Int64(bytes.count))
         return try await preparePhotoPreviewDocument(bytes, quality: quality, stamp: stamp, epoch: cached.epoch)
@@ -1506,12 +1585,12 @@ final class PayrollClient: ObservableObject {
     }
 
     private func photoPreviewBytes(_ item: MediaItem, quality: MediaPhotoPreviewQuality,
-                                   priority: MediaPhotoPreviewPipeline.Priority, scope: AgendaCacheScope, stamp: String, collectionID: String?) async throws -> Data {
+                                   priority: MediaPhotoPreviewPipeline.Priority, scope: AgendaCacheScope, stamp: String, collectionID: String?,progress:@escaping MediaPhotoPreviewPipeline.Progress = {_,_ in}) async throws -> Data {
         let key = [stamp, collectionID ?? "", item.id, item.modifiedAt, String(item.size), item.mimeType, quality.rawValue].joined(separator: "|")
         return try await photoPreviews.data(key: key, priority: priority, authorized: { [weak self] in
             guard let self else { return false }
             return self.mediaPresentationStamp == stamp && self.accessUser?.canReadMedia != false
-        }) { [self] in
+        },progress:progress) { [self] report in
             let cache = mediaOffline
             let state = await Task.detached(priority: .utility) {
                 (cache.loadPhotoPreview(item, quality: quality, scope: scope), cache.photoPreviewCollection(scope: scope))
@@ -1519,7 +1598,7 @@ final class PayrollClient: ObservableObject {
             guard !Task.isCancelled, stamp == (try mediaAccessStamp()), state.1 == collectionID else { throw CancellationError() }
             if let bytes = state.0 { return bytes }
             let started = ProcessInfo.processInfo.systemUptime
-            let bytes = try await downloadPhotoPreview(item, quality: quality, stamp: stamp)
+            let bytes = try await downloadPhotoPreview(item, quality: quality, stamp: stamp,progress:report)
             photoPreviews.measured(bytes: bytes.count, seconds: ProcessInfo.processInfo.systemUptime - started)
             let write = Task.detached(priority: .utility) {
                 try cache.savePhotoPreview(bytes, item: item, quality: quality, scope: scope, collectionID: state.1)
@@ -1535,13 +1614,13 @@ final class PayrollClient: ObservableObject {
         }
     }
 
-    private func downloadPhotoPreview(_ item: MediaItem, quality: MediaPhotoPreviewQuality, stamp: String) async throws -> Data {
+    private func downloadPhotoPreview(_ item: MediaItem, quality: MediaPhotoPreviewQuality, stamp: String,progress:@escaping MediaPhotoPreviewPipeline.Progress) async throws -> Data {
         var retries = 0
         while true {
             do {
                 var query = [URLQueryItem(name: "id", value: item.id), URLQueryItem(name: "preview", value: "1"), URLQueryItem(name: "revision", value: item.modifiedAt)]
                 if quality == .balanced { query.append(URLQueryItem(name: "quality", value: "balanced")) }
-                let (data, response) = try await request(path: "api/media/file", query: query, document: true, forceNetwork: true)
+                let (data, response) = try await request(path: "api/media/file", query: query, document: true, forceNetwork: true,progress:progress,maximumBytes:quality.maximumBytes)
                 guard !Task.isCancelled, stamp == (try mediaAccessStamp()) else { throw CancellationError() }
                 guard !data.isEmpty, data.count <= quality.maximumBytes, response.mimeType == "image/jpeg" else { throw APIError.invalid("No se recibió una vista previa ligera.") }
                 return data

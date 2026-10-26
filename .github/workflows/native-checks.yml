@@ -158,6 +158,16 @@ jobs:
             checks=(
               -only-testing:JACNominaTests/MediaPhotoFilmstripTests
               -only-testing:JACNominaTests/MediaFullscreenPhotoModelTests
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoDataBridgeReportsMeasuredHalfBeforeCompletingAndRejectsOversize
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoDataBridgeCancellationStopsPendingProgressAndLateCompletion
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoPreviewQueueSharesMeasuredProgressAndWithdrawsCancelledAndRevokedReaders
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoPreviewQueueSharesReadersReservesCapacityAndPrioritizesVisibleRequests
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoPreviewQueueRejectsRevokedLateResultsAndConnectionPolicyAvoidsBulkOnLowData
+              -only-testing:JACNominaTests/PayrollClientTests/testPendingPhotoPreviewRetriesOnlyTheLightVersionAndKeepsItsSession
+              -only-testing:JACNominaTests/PayrollClientTests/testDownloadedFolderPhotosOpenLocallyWhileOnlineAndOfflineWithoutAnyRequest
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotoPreviewCacheReopensAcrossClientsImprovesOnceAndNeverFallsBackAfterDenial
+              -only-testing:JACNominaTests/PayrollClientTests/testLightPhotoPreviewAndAdaptiveVideoNeverRequestOriginalBytes
+              -only-testing:JACNominaTests/PayrollClientTests/testForbiddenPhotoPreviewNeverRetriesOrFallsBackToAnOriginal
               -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripScrubsBothWaysAndStaysSyncedWithPagerAfterReopening
               -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripFastScrubbingKeepsTheSelectedThumbnailAndPhotoTogether
               -only-testing:JACNominaUITests/LaunchTests/testPhotoViewerHasFolderFilmstripDirectSaveAndBothVerticalDismissGestures

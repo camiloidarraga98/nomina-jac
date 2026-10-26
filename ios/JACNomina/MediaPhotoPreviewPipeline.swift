@@ -23,10 +23,13 @@ struct MediaPhotoConnection: Equatable, Sendable {
 /// prefetch. Only JPEG bytes are shared; each reader owns its temporary file.
 @MainActor
 final class MediaPhotoPreviewPipeline {
+    typealias Progress = @MainActor (Int64,Int64)->Void
     enum Priority { case visible, prefetch }
     private final class Flight {
         var priority: Priority
         var readers: [UUID: CheckedContinuation<Data, Error>] = [:]
+        var progress:[UUID:Progress]=[:]
+        var latestProgress:(Int64,Int64)?
         var task: Task<Void, Never>?
         var runningInBackground = false
         init(_ priority: Priority) { self.priority = priority }
@@ -60,7 +63,7 @@ final class MediaPhotoPreviewPipeline {
     }
 
     func data(key: String, priority: Priority, authorized: @escaping () -> Bool,
-              load: @escaping () async throws -> Data) async throws -> Data {
+              progress:@escaping Progress = {_,_ in},load: @escaping (@escaping Progress) async throws -> Data) async throws -> Data {
         try Task.checkCancellation()
         guard authorized() else { throw CancellationError() }
         let reader = UUID()
@@ -69,17 +72,24 @@ final class MediaPhotoPreviewPipeline {
             return try await withCheckedThrowingContinuation { continuation in
                 if let flight = flights[key] {
                     flight.readers[reader] = continuation
+                    flight.progress[reader] = {received,total in if authorized() {progress(received,total)}}
+                    if let latest=flight.latestProgress {flight.progress[reader]?(latest.0,latest.1)}
                     if priority == .visible { flight.priority = .visible; drain() }
                     return
                 }
                 let flight = Flight(priority); flight.readers[reader] = continuation; flights[key] = flight
+                flight.progress[reader] = {received,total in if authorized() {progress(received,total)}}
                 flight.task = Task {
                     do {
                         try await acquire(flight)
                         defer { release(flight) }
                         try Task.checkCancellation()
                         guard authorized() else { throw CancellationError() }
-                        let bytes = try await load()
+                        let bytes = try await load { [weak self,weak flight] received,total in
+                            guard let self,let flight,self.flights[key] === flight else {return}
+                            flight.latestProgress=(received,total)
+                            for callback in Array(flight.progress.values) {callback(received,total)}
+                        }
                         try Task.checkCancellation()
                         guard authorized() else { throw CancellationError() }
                         finish(key, flight, .success(bytes))
@@ -89,6 +99,7 @@ final class MediaPhotoPreviewPipeline {
         } onCancel: {
             Task { @MainActor in
                 guard let flight = self.flights[key], let waiter = flight.readers.removeValue(forKey: reader) else { return }
+                flight.progress[reader]=nil
                 waiter.resume(throwing: CancellationError())
                 if flight.readers.isEmpty { self.flights.removeValue(forKey: key); flight.task?.cancel() }
             }
@@ -102,6 +113,7 @@ final class MediaPhotoPreviewPipeline {
         flights.removeValue(forKey: key)
         for reader in flight.readers.values { reader.resume(with: result) }
         flight.readers.removeAll(); flight.task = nil
+        flight.progress.removeAll();flight.latestProgress=nil
     }
     private func acquire(_ flight: Flight) async throws {
         let id = UUID()

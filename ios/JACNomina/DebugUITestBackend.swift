@@ -212,6 +212,9 @@ private final class FixtureProtocol: URLProtocol {
                     if query.contains(where:{$0.name=="quality" && $0.value=="balanced"}) {
                         Self.lock.lock();Self.balancedPhotoRequests+=1;Self.lock.unlock()
                     }
+                    // Keep a genuine JPEG under the balanced-preview limit,
+                    // with enough bytes for CFNetwork to deliver its first half.
+                    if body.count<256*1024 {body.append(Data(repeating:0,count:256*1024-body.count))}
                     headers["Content-Length"]=String(body.count)
                     let response=HTTPURLResponse(url:request.url!,statusCode:code,httpVersion:nil,headerFields:headers)!,split=max(1,body.count/2)
                     client?.urlProtocol(self,didReceive:response,cacheStoragePolicy:.notAllowed)

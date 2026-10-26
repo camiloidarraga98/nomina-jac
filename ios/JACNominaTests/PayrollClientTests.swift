@@ -184,6 +184,30 @@ private final class MediaDownloadChunkProtocol: URLProtocol, @unchecked Sendable
     override func stopLoading() { lock.lock(); stopped = true; lock.unlock() }
 }
 
+private final class MediaDataGateProtocol:URLProtocol,@unchecked Sendable {
+    static let bytes=Data(repeating:42,count:256*1024)
+    private static let lock=NSLock()
+    private static var held:MediaDataGateProtocol?
+    private let stateLock=NSLock()
+    private var stopped=false
+    static func reset() {lock.lock();held=nil;lock.unlock()}
+    static func complete() {lock.lock();let value=held;held=nil;lock.unlock();value?.finish()}
+    override class func canInit(with request:URLRequest)->Bool {request.url?.host?.hasSuffix(".invalid")==true}
+    override class func canonicalRequest(for request:URLRequest)->URLRequest {request}
+    override func startLoading() {
+        Self.lock.lock();Self.held=self;Self.lock.unlock()
+        client?.urlProtocol(self,didReceive:HTTPURLResponse(url:request.url!,statusCode:200,httpVersion:nil,headerFields:["Content-Length":String(Self.bytes.count)])!,cacheStoragePolicy:.notAllowed)
+        client?.urlProtocol(self,didLoad:Self.bytes.prefix(Self.bytes.count/2))
+    }
+    private func finish() {
+        stateLock.lock();let cancelled=stopped;stateLock.unlock()
+        guard !cancelled else {return}
+        client?.urlProtocol(self,didLoad:Self.bytes.suffix(Self.bytes.count/2))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {stateLock.lock();stopped=true;stateLock.unlock()}
+}
+
 @MainActor private final class FakeMediaPhotosWriter: MediaPhotosWriting {
     var authorizations = 0
     var saved: [String] = []
@@ -1535,12 +1559,12 @@ final class PayrollClientTests: XCTestCase {
         func load(_ id:String) async -> Data {
             calls.append(id);return await withCheckedContinuation {pending[id]=$0}
         }
-        let first=Task {try await pipeline.data(key:"first",priority:.prefetch,authorized:{true}) {await load("first")}}
-        let shared=Task {try await pipeline.data(key:"first",priority:.visible,authorized:{true}) {XCTFail("Debe compartir la petición");return Data()}}
+        let first=Task {try await pipeline.data(key:"first",priority:.prefetch,authorized:{true}) {_ in await load("first")}}
+        let shared=Task {try await pipeline.data(key:"first",priority:.visible,authorized:{true}) {_ in XCTFail("Debe compartir la petición");return Data()}}
         for _ in 0..<100 {if pending["first"] != nil {break};try await Task.sleep(for:.milliseconds(5))}
-        let background=Task {try await pipeline.data(key:"background",priority:.prefetch,authorized:{true}) {await load("background")}}
+        let background=Task {try await pipeline.data(key:"background",priority:.prefetch,authorized:{true}) {_ in await load("background")}}
         await Task.yield()
-        let visible=Task {try await pipeline.data(key:"visible",priority:.visible,authorized:{true}) {await load("visible")}}
+        let visible=Task {try await pipeline.data(key:"visible",priority:.visible,authorized:{true}) {_ in await load("visible")}}
         defer {first.cancel();shared.cancel();background.cancel();visible.cancel();for reply in pending.values {reply.resume(returning:Data())}}
         for _ in 0..<20 {await Task.yield()}
         XCTAssertEqual(calls,["first"])
@@ -1558,10 +1582,39 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(calls,["first","visible","background"])
     }
 
+    @MainActor func testPhotoPreviewQueueSharesMeasuredProgressAndWithdrawsCancelledAndRevokedReaders() async throws {
+        let pipeline=MediaPhotoPreviewPipeline(monitorNetwork:false)
+        var report:MediaPhotoPreviewPipeline.Progress?,reply:CheckedContinuation<Data,Never>?
+        var firstValues:[Int64]=[],secondValues:[Int64]=[],permitted=true
+        let first=Task {try await pipeline.data(key:"shared-progress",priority:.prefetch,authorized:{true},progress:{received,_ in firstValues.append(received)}) {send in
+            report=send;return await withCheckedContinuation {reply=$0}
+        }}
+        defer {first.cancel();reply?.resume(returning:Data())}
+        for _ in 0..<100 {if report != nil {break};try await Task.sleep(for:.milliseconds(5))}
+        let send=try XCTUnwrap(report)
+        send(50,100)
+        let second=Task {try await pipeline.data(key:"shared-progress",priority:.visible,authorized:{permitted},progress:{received,_ in secondValues.append(received)}) {_ in
+            XCTFail("El lector visible debe compartir la transferencia precargada");return Data()
+        }}
+        defer {second.cancel()}
+        for _ in 0..<100 {if !secondValues.isEmpty {break};try await Task.sleep(for:.milliseconds(5))}
+        XCTAssertEqual(firstValues,[50]);XCTAssertEqual(secondValues,[50],"El lector tardío recibe la medida actual")
+        first.cancel()
+        do {_ = try await first.value;XCTFail("Cancelar retira sólo ese consumidor")} catch is CancellationError {}
+        send(60,100)
+        XCTAssertEqual(firstValues,[50]);XCTAssertEqual(secondValues,[50,60])
+        permitted=false;send(80,100)
+        XCTAssertEqual(secondValues,[50,60],"Revocar retira también los callbacks intermedios")
+        reply?.resume(returning:Data([1]));reply=nil
+        do {_ = try await second.value;XCTFail("No se entrega el JPEG al lector revocado")} catch is CancellationError {}
+        send(90,100)
+        XCTAssertEqual(firstValues,[50]);XCTAssertEqual(secondValues,[50,60],"Un reporter antiguo no revive lectores finalizados")
+    }
+
     @MainActor func testPhotoPreviewQueueRejectsRevokedLateResultsAndConnectionPolicyAvoidsBulkOnLowData() async throws {
         let pipeline=MediaPhotoPreviewPipeline(monitorNetwork:false)
         var permitted=true,reply:CheckedContinuation<Data,Never>?
-        let read=Task {try await pipeline.data(key:"late",priority:.visible,authorized:{permitted}) {
+        let read=Task {try await pipeline.data(key:"late",priority:.visible,authorized:{permitted}) {_ in
             await withCheckedContinuation {reply=$0}
         }}
         for _ in 0..<100 {if reply != nil {break};try await Task.sleep(for:.milliseconds(5))}
@@ -2445,6 +2498,58 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(second.map { $0.0 }, [0, item.size], "La copia no inventa pasos de descarga intermedios")
         XCTAssertTrue(second.allSatisfy { $0.1 == item.size })
     }
+    @MainActor func testPhotoDataBridgeReportsMeasuredHalfBeforeCompletingAndRejectsOversize() async throws {
+        MediaDataGateProtocol.reset()
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MediaDataGateProtocol.self]
+        let session=URLSession(configuration:configuration)
+        defer {MediaDataGateProtocol.complete();session.invalidateAndCancel();MediaDataGateProtocol.reset()}
+        let request=URLRequest(url:URL(string:"https://progress-gate.example.invalid/preview")!)
+        let total=Int64(MediaDataGateProtocol.bytes.count),partial=expectation(description:"La mitad real llega antes del final")
+        var values:[Int64]=[],signalled=false,finished=false
+        let observer=MediaDataProgressObserver(maximumBytes:Int(total)) {received,expected in
+            XCTAssertEqual(expected,total);values.append(received)
+            if received==total/2,!signalled {signalled=true;partial.fulfill()}
+        }
+        let loading=Task {let value=try await observer.data(session:session,request:request);finished=true;return value}
+        defer {loading.cancel();observer.stop()}
+        await fulfillment(of:[partial],timeout:4)
+        XCTAssertFalse(finished)
+        MediaDataGateProtocol.complete()
+        let (data,response)=try await loading.value
+        XCTAssertEqual(data,MediaDataGateProtocol.bytes);XCTAssertEqual(response.expectedContentLength,total)
+        XCTAssertTrue(values.contains(total/2))
+        let bounded=MediaDataProgressObserver(maximumBytes:64*1024) {_,_ in XCTFail("Una respuesta sobredimensionada no publica progreso")}
+        defer {bounded.stop()}
+        do {_ = try await bounded.data(session:session,request:request);XCTFail("Debe rechazar el Content-Length que supera el presupuesto")}
+        catch {guard case APIError.invalid=error else {return XCTFail(String(describing:error))}}
+        var redirected=true
+        bounded.urlSession(session,task:session.dataTask(with:request),willPerformHTTPRedirection:HTTPURLResponse(url:request.url!,statusCode:302,httpVersion:nil,headerFields:nil)!,newRequest:URLRequest(url:URL(string:"https://other.example.invalid")!)) {redirected=$0 != nil}
+        XCTAssertFalse(redirected)
+    }
+
+    @MainActor func testPhotoDataBridgeCancellationStopsPendingProgressAndLateCompletion() async throws {
+        MediaDataGateProtocol.reset()
+        let configuration=URLSessionConfiguration.ephemeral;configuration.protocolClasses=[MediaDataGateProtocol.self]
+        let session=URLSession(configuration:configuration)
+        defer {MediaDataGateProtocol.complete();session.invalidateAndCancel();MediaDataGateProtocol.reset()}
+        let partial=expectation(description:"Respuesta parcial antes de cancelar")
+        var values:[Int64]=[],signalled=false
+        let observer=MediaDataProgressObserver(maximumBytes:512*1024) {received,_ in
+            values.append(received)
+            if received>0,!signalled {signalled=true;partial.fulfill()}
+        }
+        let loading=Task {try await observer.data(session:session,request:URLRequest(url:URL(string:"https://cancel-gate.example.invalid/preview")!))}
+        defer {loading.cancel();observer.stop()}
+        await fulfillment(of:[partial],timeout:4)
+        loading.cancel()
+        do {_ = try await loading.value;XCTFail("Cancelar debe detener la transferencia")}
+        catch is CancellationError {}
+        let before=values
+        MediaDataGateProtocol.complete()
+        for _ in 0..<20 {await Task.yield()}
+        XCTAssertEqual(values,before,"Una finalización tardía no restaura progreso tras cancelar")
+    }
+
     @MainActor func testMediaDownloadDelegateReportsActualBytesStopsLateCallbacksAndRejectsRedirects() async throws {
         let configuration = URLSessionConfiguration.ephemeral; configuration.protocolClasses = [MockProtocol.self]
         let session = URLSession(configuration: configuration)
