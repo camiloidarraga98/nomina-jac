@@ -12,6 +12,10 @@ enum UITestBackend {
         FixtureProtocol.lock.lock(); defer { FixtureProtocol.lock.unlock() }
         return FixtureProtocol.scrollRequests
     }
+    static func selectedPhotoForProgressFixture(_ id:String) {
+        guard ProcessInfo.processInfo.arguments.contains("--uitest-slow-photo-preview"),id.hasSuffix("media-photo-2") else {return}
+        FixtureProtocol.beginSlowPhotoCompletion()
+    }
     // Synthetic codes; deliberately not a valid boarding pass or airline payload.
     static func boardingCodePDF() throws -> Data {
         let bytes=NSMutableData(),consumer=CGDataConsumer(data:bytes)!
@@ -97,7 +101,24 @@ private final class FixtureProtocol: URLProtocol {
     static var slowedWorkspace = false
     static var slowedMedia = false
     static var scrollRequests: [String: Int] = [:]
-    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; scrollRequests = [:]; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; contracts=ProcessInfo.processInfo.arguments.contains("--uitest-contract-archive") ? [.object(["id":.string("11111111-1234-4234-8234-111111111111"),"filename":.string("Contrato JAC - Pereira - 31 de octubre 2026.pdf"),"municipality":.string("Pereira"),"company":.string("EMPRESA FICTICIA JAC SAS"),"eventDate":.string("2026-10-31"),"price":.number(140000000),"showId":.null,"showTitle":.string(""),"version":.number(1)])]:[]; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
+    private static var slowPhotoSelectedAt:Date?
+    private static var slowPhotoTails:[DispatchWorkItem]=[]
+    static func beginSlowPhotoCompletion() {
+        lock.lock()
+        guard slowPhotoSelectedAt == nil else {lock.unlock();return}
+        slowPhotoSelectedAt=Date()
+        let pending=slowPhotoTails;slowPhotoTails=[]
+        lock.unlock()
+        for work in pending {DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+12,execute:work)}
+    }
+    private static func scheduleSlowPhotoTail(_ work:DispatchWorkItem) {
+        lock.lock()
+        guard let selectedAt=slowPhotoSelectedAt else {slowPhotoTails.append(work);lock.unlock();return}
+        let remaining=max(0,12-Date().timeIntervalSince(selectedAt))
+        lock.unlock()
+        DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+remaining,execute:work)
+    }
+    static func reset(reader: Bool, conflict: Bool, cancelledReads: Bool, offline: Bool, slowAgenda: Bool) { lock.lock(); defer { lock.unlock() }; slowPhotoTails.forEach{$0.cancel()};slowPhotoTails=[];slowPhotoSelectedAt=nil;scrollRequests = [:]; state = initialState();CRMFixture.reset();MediaFixture.reset(); revision = 1; self.reader = reader; self.conflict = conflict; self.offline = offline; self.slowAgenda = slowAgenda; slowedWorkspace = false; slowedMedia = false; agendaChanges = [:]; overrides=[:];expenses=[];alerts = []; contracts=ProcessInfo.processInfo.arguments.contains("--uitest-contract-archive") ? [.object(["id":.string("11111111-1234-4234-8234-111111111111"),"filename":.string("Contrato JAC - Pereira - 31 de octubre 2026.pdf"),"municipality":.string("Pereira"),"company":.string("EMPRESA FICTICIA JAC SAS"),"eventDate":.string("2026-10-31"),"price":.number(140000000),"showId":.null,"showTitle":.string(""),"version":.number(1)])]:[]; deletedNotices = []; attachments = [:]; readsToCancel = cancelledReads ? ["/api/mobile/payroll?period", "/api/calendar", "/api/notices", "/api/notices?read", "/api/payroll/email", "/api/users"] : [] }
     static func seedOfflineContent() {
         lock.lock(); defer { lock.unlock() }
         var alert = itinerary
@@ -192,7 +213,10 @@ private final class FixtureProtocol: URLProtocol {
                         guard let self,!self.isStopped else{return}
                         self.client?.urlProtocol(self,didLoad:Data(tail));self.client?.urlProtocolDidFinishLoading(self)
                     };delayedResponse=work
-                    DispatchQueue.global(qos:.userInitiated).asyncAfter(deadline:.now()+12,execute:work)
+                    // Background prefetch may start long before the viewer is
+                    // opened. Hold the half-response until its first selection,
+                    // then give XCTest a full measured-progress observation.
+                    Self.scheduleSlowPhotoTail(work)
                     return
                 }
                 let response = HTTPURLResponse(url: request.url!, statusCode: code, httpVersion: nil, headerFields: headers)!

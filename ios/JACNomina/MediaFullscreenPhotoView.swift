@@ -61,7 +61,12 @@ struct MediaFullscreenPhotoView:View {
             if value == .active {photos.refreshAuthorization();prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)}
             else {prefetch.stop()}
         }
-        .onChange(of:photos.selectedID) {_,value in if phase == .active {prefetch.start(feed,client:client,selectedID:value,denied:denied)}}
+        .onChange(of:photos.selectedID) {_,value in
+            #if DEBUG
+            UITestBackend.selectedPhotoForProgressFixture(value)
+            #endif
+            if phase == .active {prefetch.start(feed,client:client,selectedID:value,denied:denied)}
+        }
         .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {photoSave.cancel();photos.stop();prefetch.stop();dismiss()}}
         .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {photos.stop();dismiss()}}
         .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {photos.stop();dismiss()}}

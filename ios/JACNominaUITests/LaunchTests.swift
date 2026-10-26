@@ -18,6 +18,25 @@ final class LaunchTests: XCTestCase {
     @MainActor private func waitFor(_ element: XCUIElement, predicate: NSPredicate, timeout: TimeInterval) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: timeout) == .completed
     }
+    @MainActor private func openFilmstripPhoto(_ app:XCUIApplication,_ id:String) {
+        let photo=app.buttons["media.item."+id]
+        XCTAssertTrue(photo.waitForExistence(timeout:15))
+        var previous=CGRect.null
+        let settled=NSPredicate {_,_ in
+            guard photo.exists,photo.isEnabled else {return false}
+            let frame=photo.frame
+            guard frame.width>=44,frame.height>=44,app.windows.firstMatch.frame.contains(frame) else {previous = .null;return false}
+            let stable=frame==previous;previous=frame
+            return stable
+        }
+        guard waitFor(photo,predicate:settled,timeout:10) else {
+            XCTFail("La foto real debe terminar de expandirse dentro de la ventana");return
+        }
+        // The expanding SwiftUI row can expose an invalid AX activation point.
+        // Tap only its measured visible content, away from the options button.
+        photo.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.65)).tap()
+        XCTAssertTrue(app.otherElements["media.fullscreen"].waitForExistence(timeout:10))
+    }
     @MainActor func testPhoneSidebarShowsAllModulesAndCanBeDismissed() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll"];app.launch()
         XCTAssertTrue(app.buttons["Hoy"].waitForExistence(timeout:20))
@@ -91,7 +110,7 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testPhotoViewerHasFolderFilmstripDirectSaveAndBothVerticalDismissGestures() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-r2","--uitest-media-slideshow"];app.launch()
-        tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-photo")
+        tap(app,"media.item.r2_media-day");openFilmstripPhoto(app,"r2_media-photo")
         let image=app.descendants(matching:.any).matching(identifier:"media.photo.document").firstMatch
         XCTAssertTrue(image.waitForExistence(timeout:20))
         XCTAssertTrue(app.staticTexts["media.preview.folder"].exists)
@@ -100,14 +119,14 @@ final class LaunchTests: XCTestCase {
         image.press(forDuration:0.8);tap(app,"Guardar en Fotos")
         XCTAssertTrue(app.staticTexts["1 de 1 archivos guardados en Fotos."].waitForExistence(timeout:15))
         XCTAssertFalse(app.buttons["Guardar en Archivos o compartir"].exists)
-        tap(app,"Foto 2");XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2")
+        app.collectionViews["media.preview.filmstrip"].cells["Foto 2"].tap();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2")
         XCTAssertTrue(image.waitForExistence(timeout:15));image.doubleTap()
         XCTAssertTrue(waitFor(image,predicate:NSPredicate(format:"value == %@","Ampliada"),timeout:5))
         image.swipeDown();XCTAssertTrue(app.staticTexts["media.preview.folder"].exists,"Zoom panning must not dismiss")
         image.doubleTap();XCTAssertTrue(waitFor(image,predicate:NSPredicate(format:"value == %@","Tamaño original"),timeout:5))
         app.scrollViews["media.photo.pager"].swipeUp()
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].waitForExistence(timeout:10))
-        tap(app,"media.item.r2_media-photo");XCTAssertTrue(image.waitForExistence(timeout:10))
+        openFilmstripPhoto(app,"r2_media-photo");XCTAssertTrue(image.waitForExistence(timeout:10))
         attachScreen(app,name:"fotografia-visor-carpeta-tira-miniaturas")
         app.scrollViews["media.photo.pager"].swipeDown()
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].waitForExistence(timeout:10))
@@ -115,9 +134,9 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testPhotoFilmstripScrubsBothWaysAndStaysSyncedWithPagerAfterReopening() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-r2","--uitest-media-slideshow"];app.launch()
-        tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-photo")
+        tap(app,"media.item.r2_media-day");openFilmstripPhoto(app,"r2_media-photo")
         let strip=app.collectionViews["media.preview.filmstrip"],counter=app.staticTexts["media.preview.counter"]
-        let first=app.buttons["media.preview.strip.r2_media-photo"],last=app.buttons["media.preview.strip.r2_media-photo-2"]
+        let first=strip.cells["media.preview.strip.r2_media-photo"],last=strip.cells["media.preview.strip.r2_media-photo-2"]
         XCTAssertTrue(strip.waitForExistence(timeout:15))
         strip.swipeLeft()
         XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label == %@","2 de 2"),timeout:10))
@@ -133,7 +152,8 @@ final class LaunchTests: XCTestCase {
         strip.swipeLeft()
         XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label == %@","2 de 2"),timeout:10))
         app.scrollViews["media.photo.pager"].swipeDown()
-        tap(app,"media.item.r2_media-photo")
+        XCTAssertTrue(strip.waitForNonExistence(timeout:10))
+        openFilmstripPhoto(app,"r2_media-photo")
         XCTAssertTrue(counter.waitForExistence(timeout:10))
         XCTAssertEqual(counter.label,"1 de 2")
         XCTAssertTrue(first.isSelected,"Reabrir conserva la foto que se abrió, sin adoptar el offset anterior")
@@ -142,12 +162,12 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testPhotoFilmstripFastScrubbingKeepsTheSelectedThumbnailAndPhotoTogether() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-r2","--uitest-media-scroll"];app.launch()
-        tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-scroll-0")
+        tap(app,"media.item.r2_media-day");openFilmstripPhoto(app,"r2_media-scroll-0")
         let strip=app.collectionViews["media.preview.filmstrip"],counter=app.staticTexts["media.preview.counter"]
         XCTAssertTrue(strip.waitForExistence(timeout:15))
         strip.swipeLeft(velocity:.fast);strip.swipeLeft(velocity:.fast)
         XCTAssertTrue(waitFor(counter,predicate:NSPredicate(format:"label != %@","1 de 80"),timeout:10))
-        let selected=strip.buttons.matching(NSPredicate(format:"selected == true")).firstMatch
+        let selected=strip.cells.matching(NSPredicate(format:"selected == true")).firstMatch
         XCTAssertTrue(selected.waitForExistence(timeout:10))
         let index=Int(selected.label.replacingOccurrences(of:"Foto ",with:"")) ?? 0
         XCTAssertTrue((2...80).contains(index))
@@ -489,9 +509,10 @@ final class LaunchTests: XCTestCase {
     }
     @MainActor func testFullscreenPhotoChangesImmediatelyShowsProgressAndReusesViewedCache() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll","--uitest-media-only","--uitest-media-slideshow","--uitest-media-r2","--uitest-slow-photo-preview"];app.launch()
-        tap(app,"media.item.r2_media-day");tap(app,"media.item.r2_media-photo")
+        tap(app,"media.item.r2_media-day");openFilmstripPhoto(app,"r2_media-photo")
         let image=app.descendants(matching:.any).matching(identifier:"media.photo.document").firstMatch
-        XCTAssertTrue(image.waitForExistence(timeout:15));XCTAssertFalse(hasSection(app, "Fotografía"))
+        XCTAssertTrue(image.waitForExistence(timeout:15))
+        XCTAssertTrue(app.otherElements["media.fullscreen"].frame.contains(app.windows.firstMatch.frame),"El visor cubre toda la ventana")
         image.swipeLeft()
         XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertTrue(app.staticTexts["media.preview.folder"].exists)
         let ring=app.descendants(matching:.any).matching(identifier:"media.photo.progress.r2_media-photo-2").firstMatch
@@ -500,8 +521,9 @@ final class LaunchTests: XCTestCase {
         let pager=app.scrollViews["media.photo.pager"];pager.swipeRight();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"1 de 2");XCTAssertTrue(image.exists)
         pager.swipeLeft();XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertTrue(image.waitForExistence(timeout:20))
         attachScreen(app,name:"fotografia-pantalla-completa-foto");tap(app,"media.preview.close")
-        tap(app,"media.item.r2_media-photo");XCTAssertTrue(image.waitForExistence(timeout:5));tap(app,"media.preview.next")
+        openFilmstripPhoto(app,"r2_media-photo");XCTAssertTrue(image.waitForExistence(timeout:5));tap(app,"media.preview.next")
         XCTAssertEqual(app.staticTexts["media.preview.counter"].label,"2 de 2");XCTAssertTrue(image.waitForExistence(timeout:5),"La copia vista debe abrir sin repetir la descarga ficticia de doce segundos.")
+        XCTAssertFalse(hasSection(app, "Fotografía"))
         tap(app,"media.preview.close");XCTAssertTrue(app.buttons["media.item.r2_media-day"].exists)
     }
     @MainActor func testPhotographerCreatesFolderUploadsAndReadsNativePhotoVideoWithoutFinance() {
@@ -863,7 +885,7 @@ final class LaunchTests: XCTestCase {
         if label == "media.preview.close" { app.scrollViews["media.photo.pager"].swipeDown(); return }
         if label == "media.preview.next" || label == "media.preview.previous" {
             let current=Int(app.staticTexts["media.preview.counter"].label.split(separator:" ").first ?? "1") ?? 1
-            app.buttons["Foto \(current + (label == "media.preview.next" ? 1 : -1))"].tap();return
+            app.collectionViews["media.preview.filmstrip"].cells["Foto \(current + (label == "media.preview.next" ? 1 : -1))"].tap();return
         }
         if !label.hasPrefix("crm.suggestion."),label != "crm.keyboard.done",app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
         let button = app.buttons[label].firstMatch
