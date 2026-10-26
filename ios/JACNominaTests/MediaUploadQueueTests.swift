@@ -331,7 +331,7 @@ final class MediaUploadQueueTests: XCTestCase {
         let job = try XCTUnwrap(queue.jobs.first)
         XCTAssertEqual(job.id, source.id); XCTAssertEqual(job.name, source.name)
         XCTAssertEqual(job.mimeType, "video/quicktime"); XCTAssertEqual(job.size, source.size)
-        let adopted = location.appendingPathComponent("files").appendingPathComponent(job.id).appendingPathComponent(job.sourceName)
+        let adopted = location.appendingPathComponent("files").appendingPathComponent(job.id).appendingPathComponent("original.mov")
         XCTAssertEqual(try Data(contentsOf: adopted), MediaFixture.video)
         XCTAssertFalse(FileManager.default.fileExists(atPath: source.url.path))
     }
