@@ -62,7 +62,8 @@ struct MediaFullscreenPhotoView:View {
                 if let failure=photoSave.failures.first {Text(failure).font(.caption).foregroundStyle(.orange).padding(.horizontal,16)}
                 if photos.paging {ProgressView("Consultando más fotos…").font(.caption).tint(.white).foregroundStyle(.white)}
                 if let error=photos.pageError {HStack {Text(error).font(.caption);Button("Reintentar"){photos.retryPage()}}.foregroundStyle(.white).multilineTextAlignment(.center).padding(.horizontal,16)}
-                Text(photos.counter).font(.caption2).monospacedDigit().foregroundStyle(.white.opacity(0.7)).accessibilityIdentifier("media.preview.counter")
+                Text(photos.counter).font(.caption2).monospacedDigit().foregroundStyle(.white.opacity(0.7))
+                    .accessibilityIdentifier(embedded ? "media.preview.embedded.counter" : "media.preview.counter")
                     #if DEBUG
                     .accessibilityValue(UITestBackend.photoProgressFixtureRequests() ?? "")
                     #endif
@@ -71,8 +72,6 @@ struct MediaFullscreenPhotoView:View {
         }
         .statusBarHidden(!embedded).privacySensitive().preferredColorScheme(embedded ? nil : .dark)
         .environment(\.colorScheme, .dark)
-        .accessibilityElement(children: .contain)
-        .accessibilityIdentifier(embedded ? "media.preview.embedded" : "media.preview.fullscreen")
         .task(id: viewActive) {
             guard viewActive else { photos.pause(); prefetch.stop(); return }
             photos.resume()

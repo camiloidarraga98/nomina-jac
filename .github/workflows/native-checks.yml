@@ -148,6 +148,7 @@ jobs:
           JAC_WIDE_PHOTO_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-photo-followup]') }}
           JAC_WIDE_CRM_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-crm-followup]') }}
           JAC_WIDE_WORKSPACE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) }}
+          JAC_WIDE_VIEWER_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-viewer-followup]') }}
           JAC_PHOTO_FILMSTRIP: ${{ inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) }}
           JAC_NATIVE_MEDIA_ACTIONS: ${{ inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) }}
           JAC_NATIVE_MEDIA_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[native-media-ui-only]') }}
@@ -158,7 +159,17 @@ jobs:
           set -euo pipefail
           build_action=test
           if [ "$JAC_WIDE_WORKSPACE" = true ]; then
-            if [ "$JAC_WIDE_PHOTO_FOLLOWUP" = true ]; then
+            if [ "$JAC_WIDE_VIEWER_FOLLOWUP" = true ]; then
+              # Reuse the 31 unit and 12 UI results from 7e36e9e. Only the
+              # viewer's accessibility identifiers and queries change here.
+              checks=(
+                -only-testing:JACNominaUITests/LaunchTests/testWidePhotographyKeepsGridBesidePhotoAndCanExpand
+                -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripScrubsBothWaysAndStaysSyncedWithPagerAfterReopening
+                -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripFastScrubbingKeepsTheSelectedThumbnailAndPhotoTogether
+                -only-testing:JACNominaUITests/LaunchTests/testPhotoViewerHasFolderFilmstripDirectSaveAndBothVerticalDismissGestures
+                -only-testing:JACNominaUITests/LaunchTests/testFullscreenPhotoChangesImmediatelyShowsProgressAndReusesViewedCache
+              )
+            elif [ "$JAC_WIDE_PHOTO_FOLLOWUP" = true ]; then
               checks=(
                 -only-testing:JACNominaUITests/LaunchTests/testWideMusicKeepsPlaylistAndPlaybackAcrossSections
                 -only-testing:JACNominaUITests/LaunchTests/testItineraryOpensPDFDirectlyAndKeepsDocumentWhileRotating
