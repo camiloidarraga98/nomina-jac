@@ -65,8 +65,8 @@ struct MediaFullscreenPhotoView:View {
         .statusBarHidden(!embedded).privacySensitive().preferredColorScheme(embedded ? nil : .dark)
         .environment(\.colorScheme, .dark)
         .task(id: viewActive) {
-            guard viewActive else { photos.stop(); prefetch.stop(); return }
-            photos.start()
+            guard viewActive else { photos.pause(); prefetch.stop(); return }
+            photos.resume()
             photos.refreshAuthorization()
             prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)
             while !Task.isCancelled {
@@ -76,7 +76,7 @@ struct MediaFullscreenPhotoView:View {
             }
         }
         .onChange(of:viewActive) {_,value in
-            if !value {photoSave.cancel();prefetch.stop();photos.stop()}
+            if !value {photoSave.cancel();prefetch.stop();photos.pause()}
         }
         .onChange(of:photos.selectedID) {_,value in
             #if DEBUG
@@ -87,7 +87,7 @@ struct MediaFullscreenPhotoView:View {
         .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {close()}}
         .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {close()}}
         .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {close()}}
-        .onDisappear {photoSave.cancel();prefetch.stop();photos.stop()}
+        .onDisappear {photoSave.cancel();prefetch.stop();if embedded {photos.pause()}else{photos.stop()}}
     }
     private var filmstrip:some View {
         MediaPhotoFilmstrip(items:photos.items,selectedID:photos.selectedID,active:viewActive,

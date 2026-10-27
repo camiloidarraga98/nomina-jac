@@ -25,6 +25,7 @@ final class MediaFullscreenPhotoModel: ObservableObject {
     private var improvementID:UUID?
     private var improved=Set<String>()
     private var active=true
+    private var terminated=false
     private var started=false
     private var loads:[String:(id:UUID,task:Task<Void,Never>)]=[:]
     private var validation:Task<Void,Never>?
@@ -50,6 +51,13 @@ final class MediaFullscreenPhotoModel: ObservableObject {
     func start() {
         guard active,!started,isCurrent() else {return};started=true
         schedule();prefetchMetadata()
+    }
+    /// An embedded viewer is retained when another workspace or a fullscreen
+    /// presentation covers it. Pause releases work/files; revocation is terminal.
+    func resume() {
+        guard !terminated, isCurrent() else { stop(); return }
+        active=true
+        start()
     }
     func select(_ id:String) {
         guard active,isCurrent(),id != selectedID,items.contains(where:{$0.id == id}) else{return}
@@ -188,11 +196,13 @@ final class MediaFullscreenPhotoModel: ObservableObject {
         if let stale=documents.removeValue(forKey:id) {TemporaryDocuments.remove(stale)}
         errors[id]=error.localizedDescription;progress[id]=nil
     }
-    func stop() {
+    func pause() {
         guard active else{return};active=false
+        started=false;seenTokens.remove(token)
         loads.values.forEach{$0.task.cancel()};loads=[:];validation?.cancel();validation=nil;pagination?.cancel();pagination=nil
         improvement?.cancel();improvement=nil;improvementID=nil;improved=[]
         documents.values.forEach{TemporaryDocuments.remove($0)};documents=[:];progress=[:];errors=[:];paging=false
     }
+    func stop() { terminated=true;pause() }
 }
 #endif

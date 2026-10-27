@@ -5,6 +5,32 @@ import UIKit
 
 @MainActor
 final class MediaFullscreenPhotoModelTests: XCTestCase {
+    func testEmbeddedPauseReleasesFilesAndResumesSelectionButRevocationStaysTerminal() async throws {
+        let one = photo("one"), two = photo("two"), files = PhotoModelDocuments()
+        var current = true, loads = 0
+        let model = MediaFullscreenPhotoModel(selected: one, items: [one, two], token: "", folderID: "folder", collectionID: "r2-test",
+            load: { item, _ in loads += 1; return try files.make(item.id) }, validate: { _ in },
+            page: { _ in throw PhotoModelTestFailure.unexpectedPage }, isCurrent: { current }, denied: { _ in XCTFail("Sin denegación de servidor") })
+        defer { model.stop(); files.clear() }
+        model.start()
+        try await waitFor("Las dos vistas deben cargar") { model.documents.count == 2 }
+        model.select(two.id)
+        let temporaryURLs = model.urls.values
+        model.pause()
+        XCTAssertTrue(model.documents.isEmpty)
+        XCTAssertTrue(temporaryURLs.allSatisfy { !FileManager.default.fileExists(atPath: $0.path) })
+        XCTAssertEqual(model.selectedID, two.id)
+        model.resume()
+        try await waitFor("Volver a la sección debe restaurar el visor") { model.documents.count == 2 }
+        XCTAssertEqual(model.selectedID, two.id)
+        model.pause(); current = false
+        let before = loads
+        model.resume()
+        current = true; model.resume()
+        await Task.yield()
+        XCTAssertEqual(loads, before, "Una revocación no se convierte en una pausa recuperable")
+        XCTAssertTrue(model.documents.isEmpty)
+    }
     private func photo(_ id: String, kind: String = "image") -> MediaItem {
         MediaItem(id: id, name: id + ".png", mimeType: kind == "image" ? "image/png" : "video/quicktime",
                   kind: kind, size: 25, modifiedAt: "fixture", thumbnailAvailable: true)
