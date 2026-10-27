@@ -48,13 +48,18 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["phone.section.media"].isHittable, "La vista previa debe dejar la navegación y la cuadrícula disponibles")
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
         XCTAssertTrue(app.collectionViews["media.preview.filmstrip"].exists)
+        let second = app.collectionViews["media.preview.filmstrip"].cells["media.preview.strip.r2_media-photo-2"]
+        XCTAssertTrue(second.waitForExistence(timeout: 10)); second.tap()
+        XCTAssertTrue(waitFor(app.staticTexts["media.preview.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 10))
         attachScreen(app, name: "wide-fotografia-cuadricula-y-visor")
         tap(app, "media.wide.expand")
         XCTAssertTrue(app.scrollViews["media.photo.pager"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["phone.section.media"].isHittable)
+        XCTAssertEqual(app.staticTexts["media.preview.counter"].label, "2 de 2", "Ampliar conserva la selección de la tira")
         app.scrollViews["media.photo.pager"].swipeDown()
         XCTAssertTrue(app.buttons["phone.section.media"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
+        XCTAssertEqual(app.staticTexts["media.preview.counter"].label, "2 de 2")
     }
     @MainActor func testWideBoardingKeepsCardsAndOriginalPDFTogether() {
         XCUIDevice.shared.orientation = .portrait

@@ -583,6 +583,7 @@ struct MediaGalleryView: View {
     @State private var previewFeed: MediaFeed?
     @State private var fullscreenPhotos:MediaPhotoPresentation?
     @State private var inlinePhotos:MediaPhotoPresentation?
+    @State private var inlineSelectionCommand = 0
     @State private var expandedFolders: Set<String> = []
     @State private var uploadComposition: MediaUploadComposition?
     @State private var confirmedUpload = false
@@ -729,7 +730,7 @@ struct MediaGalleryView: View {
                     if let request = inlinePhotos {
                         MediaFullscreenPhotoView(selected: request.selected, feed: request.feed, client: store.client, embedded: true, close: { inlinePhotos = nil }, expand: { item in
                             fullscreenPhotos = MediaPhotoPresentation(selected: item, feed: request.feed)
-                        }, selectedChanged: { item in
+                        }, selectionCommand: inlineSelectionCommand, selectedChanged: { item in
                             if inlinePhotos?.id == request.id, inlinePhotos?.selected.id != item.id {
                                 inlinePhotos = MediaPhotoPresentation(id: request.id, selected: item, feed: request.feed)
                             }
@@ -740,7 +741,7 @@ struct MediaGalleryView: View {
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped().accessibilityIdentifier("media.wide.preview")
             }
             #endif
-        }.accessibilityIdentifier(layout.isWide ? "phone.media.columns" : "phone.media.list")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier(layout.isWide ? "phone.media.columns" : "phone.media.list")
             .onChange(of: layout.isWide) { _, wide in
                 if !wide, let request = inlinePhotos { fullscreenPhotos = request; inlinePhotos = nil }
             }
@@ -817,6 +818,7 @@ struct MediaGalleryView: View {
                 MediaFullscreenPhotoView(selected: request.selected, feed: request.feed, client: store.client, selectedChanged: { item in
                     if let inline = inlinePhotos, inline.feed.folder?.id == request.feed.folder?.id, inline.feed.collectionID == request.feed.collectionID {
                         inlinePhotos = MediaPhotoPresentation(id: inline.id, selected: item, feed: request.feed)
+                        inlineSelectionCommand += 1
                     }
                 }, denied: thumbnailDenied)
             }

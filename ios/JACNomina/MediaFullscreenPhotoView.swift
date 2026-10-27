@@ -16,14 +16,16 @@ struct MediaFullscreenPhotoView:View {
     private let closeEmbedded: (() -> Void)?
     private let expand: ((MediaItem) -> Void)?
     private let requestedSelectionID: String
+    private let selectionCommand: Int
     private let selectedChanged: ((MediaItem) -> Void)?
     @State private var prefetch=MediaFolderPhotoPrefetch()
     @StateObject private var photoSave=MediaFolderTransfer()
 
-    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,selectedChanged:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
+    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,selectionCommand:Int=0,selectedChanged:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
         self.client=client;self.feed=feed;self.denied=denied
         self.embedded=embedded;self.closeEmbedded=close;self.expand=expand
         self.requestedSelectionID=selected.id;self.selectedChanged=selectedChanged
+        self.selectionCommand=selectionCommand
         // Construction can repeat while an embedded gallery scrolls. The RAM
         // identity is presentation only; each real load validates authorization.
         let expected=client.mediaPresentationStamp;stamp=expected
@@ -89,7 +91,9 @@ struct MediaFullscreenPhotoView:View {
             #endif
             if viewActive {prefetch.start(feed,client:client,selectedID:value,denied:denied)}
         }
-        .onChange(of: requestedSelectionID) { _, id in photos.select(id) }
+        // A parent acknowledgement of our own drag is not an external command:
+        // only a fullscreen selection explicitly requests a new inline page.
+        .onChange(of: selectionCommand) { _, _ in photos.select(requestedSelectionID) }
         .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {close()}}
         .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {close()}}
         .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {close()}}

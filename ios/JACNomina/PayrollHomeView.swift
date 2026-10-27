@@ -326,7 +326,7 @@ struct PayrollHomeView: View {
             }.buttonStyle(.plain).accessibilityLabel("Mi cuenta y Gestión").padding(.bottom, 8)
         }.foregroundStyle(JACTheme.ink).background(JACTheme.card)
             .overlay(alignment: .trailing) { Rectangle().fill(JACTheme.border).frame(width: 1) }
-            .accessibilityIdentifier("phone.rail")
+            .accessibilityElement(children: .contain).accessibilityIdentifier("phone.rail")
     }
     private var railPrimaryIDs: Set<String> {
         ["agenda", user.hasSection(.itineraries) && user.hasSection(.boarding) ? "boarding" : "itineraries", "media", "music"]

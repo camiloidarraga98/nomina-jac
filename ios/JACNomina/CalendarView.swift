@@ -225,7 +225,7 @@ struct CalendarView: View {
                     wideEventCard(item)
                 }
             }.frame(maxWidth: .infinity, alignment: .topLeading)
-        }.accessibilityIdentifier("phone.agenda.columns")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("phone.agenda.columns")
     }
     private func wideEventCard(_ item: AgendaEvent) -> some View {
         VStack(alignment: .leading, spacing: 10) {

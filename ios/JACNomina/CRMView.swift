@@ -113,7 +113,7 @@ struct CRMHomeView:View {
                         Rectangle().fill(JACTheme.border).frame(width: 1)
                         wideShowDetail.frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
-                }.accessibilityIdentifier(layout.isWide ? "phone.crm.columns" : "phone.crm.list")
+                }.accessibilityElement(children: .contain).accessibilityIdentifier(layout.isWide ? "phone.crm.columns" : "phone.crm.list")
             }
             else { List {
                 if let error { InlineError(message:error) }

@@ -424,7 +424,7 @@ struct MusicLibraryView: View {
                     if loading && library == nil { ProgressView("Cargando Música…") }
                 }.padding(18)
             }
-        }.accessibilityIdentifier("phone.music.columns").refreshable { await load() }
+        }.accessibilityElement(children: .contain).accessibilityIdentifier("phone.music.columns").refreshable { await load() }
     }
     private var recentlyAdded: [MusicTrack] {
         Array((library?.tracks ?? []).sorted {a,b in a.createdAt == b.createdAt ? a.id < b.id:a.createdAt > b.createdAt}.prefix(2))

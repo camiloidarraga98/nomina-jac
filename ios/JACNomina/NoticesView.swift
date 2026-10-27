@@ -240,6 +240,7 @@ struct NoticesView: View {
     @State private var documentSource: BoardingCodeSelection?
     @State private var documentStamp: String?
     @State private var documentSheetOpen = false
+    @State private var keepDocumentOnDismiss = false
     @State private var documentInformation = false
     @State private var boardingCode: BoardingCodeSelection?
     #if os(iOS)
@@ -451,7 +452,7 @@ struct NoticesView: View {
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }.accessibilityIdentifier(usesDocumentColumns ? "phone.notices.columns" : "phone.notices.list")
+        }.accessibilityElement(children: .contain).accessibilityIdentifier(usesDocumentColumns ? "phone.notices.columns" : "phone.notices.list")
     }
     @ViewBuilder private var documentActions: some View {
         if let source = documentSource {
@@ -481,8 +482,8 @@ struct NoticesView: View {
         }
     }
     var body: some View {
-        noticeUpdates.sheet(isPresented: $documentSheetOpen, onDismiss: { if !usesDocumentColumns { clearOpenDocument() } }) { documentPage }
-            .onChange(of: layout.isWide) { _, _ in if boardingDocument != nil { documentSheetOpen = !usesDocumentColumns } }
+        noticeUpdates.sheet(isPresented: $documentSheetOpen, onDismiss: { if !keepDocumentOnDismiss { clearOpenDocument() } }) { documentPage }
+            .onChange(of: layout.isWide) { _, _ in if boardingDocument != nil { keepDocumentOnDismiss = usesDocumentColumns; documentSheetOpen = !usesDocumentColumns } }
             .sheet(isPresented: Binding(get: { documentInformation && !documentSheetOpen }, set: { documentInformation = $0 })) { if let source = documentSource { NoticeDetail(item: source.item, owner: user.isOwner) } }
             .alert("Eliminar " + (pendingDelete?.kind == "boarding_pass" ? "pase de abordar" : "itinerario"),isPresented:$confirmingListDelete) {
                 Button("Cancelar",role:.cancel) { pendingDelete=nil }.accessibilityIdentifier("notices.list.delete.cancel")
@@ -658,7 +659,7 @@ struct NoticesView: View {
             guard generation == documentGeneration, !Task.isCancelled, stamp == (try? store.client.noticeDocumentAccessStamp(item, file: file)) else { TemporaryDocuments.remove(result); return }
             if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument) }
             documentStamp = stamp; documentSource = BoardingCodeSelection(item: item, file: file)
-            previousBoardingDocument=result; boardingDocument=result; documentSheetOpen = !usesDocumentColumns
+            previousBoardingDocument=result; boardingDocument=result; keepDocumentOnDismiss = usesDocumentColumns; documentSheetOpen = !usesDocumentColumns
             do { if !store.isOffline { try await store.client.noticeCommand(.object(["action":.string("read"),"id":.string(item.id)])) } } catch { self.error=store.reportReadFailure(error) }
         } catch { self.error=store.reportReadFailure(error) }
     }
