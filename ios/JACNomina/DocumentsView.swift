@@ -742,6 +742,8 @@ struct MediaGalleryView: View {
                     }
                 }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
                     .accessibilityElement(children: .contain).accessibilityIdentifier("media.wide.preview")
+                    .accessibilityHidden(fullscreenPhotos != nil)
+                    .allowsHitTesting(fullscreenPhotos == nil)
             }
             #endif
         }.accessibilityElement(children: .contain).accessibilityIdentifier(layout.isWide ? "phone.media.columns" : "phone.media.list")

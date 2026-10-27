@@ -28,7 +28,11 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["music.player.toggle"].waitForExistence(timeout: 10))
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.otherElements["phone.music.columns"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["music.section.tracks"].isHittable)
+        let selectedPlaylist = app.buttons["music.section.tracks"]
+        XCTAssertTrue(waitFor(selectedPlaylist, predicate: NSPredicate(format: "hittable == true"), timeout: 10))
+        XCTAssertLessThanOrEqual(selectedPlaylist.frame.maxY, app.otherElements["music.player"].frame.minY + 1, "La playlist seleccionada debe quedar por encima del reproductor")
+        selectedPlaylist.tap()
+        XCTAssertTrue(app.buttons["music.download.section"].waitForExistence(timeout: 10), "La playlist debe responder al toque con el reproductor visible")
         XCTAssertTrue(app.buttons["music.player.toggle"].exists)
         attachScreen(app, name: "wide-musica-biblioteca-playlist-y-reproductor")
         openSection(app, "Agenda"); openSection(app, "Música")
@@ -47,21 +51,26 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["media.wide.expand"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["phone.section.media"].isHittable, "La vista previa debe dejar la navegación y la cuadrícula disponibles")
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
-        XCTAssertTrue(app.collectionViews["media.preview.filmstrip"].exists)
-        let second = app.collectionViews["media.preview.filmstrip"].cells["media.preview.strip.r2_media-photo-2"]
+        let embedded = app.otherElements["media.preview.embedded"]
+        XCTAssertTrue(embedded.waitForExistence(timeout: 10))
+        XCTAssertTrue(embedded.collectionViews["media.preview.filmstrip"].exists)
+        let second = embedded.collectionViews["media.preview.filmstrip"].cells["media.preview.strip.r2_media-photo-2"]
         XCTAssertTrue(second.waitForExistence(timeout: 10)); second.tap()
-        XCTAssertTrue(waitFor(app.staticTexts["media.preview.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 10))
+        XCTAssertTrue(waitFor(embedded.staticTexts["media.preview.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 10))
         attachScreen(app, name: "wide-fotografia-cuadricula-y-visor")
         tap(app, "media.wide.expand")
-        XCTAssertTrue(app.scrollViews["media.photo.pager"].waitForExistence(timeout: 10))
+        let fullscreen = app.otherElements["media.preview.fullscreen"]
+        XCTAssertTrue(fullscreen.waitForExistence(timeout: 10))
+        XCTAssertTrue(fullscreen.scrollViews["media.photo.pager"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["phone.section.media"].isHittable)
-        XCTAssertEqual(app.staticTexts["media.preview.counter"].label, "2 de 2", "Ampliar conserva la selección de la tira")
+        XCTAssertEqual(fullscreen.staticTexts["media.preview.counter"].label, "2 de 2", "Ampliar conserva la selección de la tira")
         XCUIDevice.shared.press(.home); app.activate()
-        XCTAssertTrue(waitFor(app.staticTexts["media.preview.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 15), "Volver del sistema conserva la foto actual")
-        app.scrollViews["media.photo.pager"].swipeDown()
+        XCTAssertTrue(waitFor(fullscreen.staticTexts["media.preview.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 15), "Volver del sistema conserva la foto actual")
+        fullscreen.scrollViews["media.photo.pager"].swipeDown()
+        XCTAssertTrue(waitFor(fullscreen, predicate: NSPredicate(format: "exists == false"), timeout: 10), "El gesto debe cerrar el visor completo")
         XCTAssertTrue(app.buttons["phone.section.media"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
-        XCTAssertEqual(app.staticTexts["media.preview.counter"].label, "2 de 2")
+        XCTAssertTrue(waitFor(embedded.staticTexts["media.preview.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 10), "Cerrar el visor completo conserva la selección incrustada")
     }
     @MainActor func testWideBoardingKeepsCardsAndOriginalPDFTogether() {
         XCUIDevice.shared.orientation = .portrait
@@ -91,6 +100,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(show.isHittable, "La cuenta del show no debe ocultar el listado")
         attachScreen(app, name: "wide-crm-shows-y-cuenta")
         app.segmentedControls["crm.show.sections"].buttons["Preparación"].tap()
+        XCTAssertTrue(waitFor(app.segmentedControls["crm.show.sections"].buttons["Preparación"], predicate: NSPredicate(format: "selected == true"), timeout: 10), "El toque debe seleccionar Preparación antes de girar")
         XCUIDevice.shared.orientation = .portrait
         XCTAssertTrue(app.buttons["phone.menu.open"].waitForExistence(timeout: 10))
         XCUIDevice.shared.orientation = .landscapeLeft

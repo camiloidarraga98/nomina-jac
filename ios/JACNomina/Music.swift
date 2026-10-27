@@ -390,14 +390,20 @@ struct MusicLibraryView: View {
     #if os(iOS)
     private var wideLibrary: some View {
         HStack(spacing: 0) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("Tu biblioteca").font(.headline)
-                    ForEach(MusicSection.allCases) { item in
-                        playlistRow(item).padding(.horizontal, 10)
-                            .background(section == item ? JACTheme.action.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 14))
-                    }
-                }.padding(16)
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tu biblioteca").font(.headline)
+                        ForEach(MusicSection.allCases) { item in
+                            playlistRow(item).padding(.horizontal, 10)
+                                .background(section == item ? JACTheme.action.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 14))
+                                .id(item.id)
+                        }
+                    }.padding(16)
+                }
+                .accessibilityIdentifier("music.playlists")
+                .onAppear { if let section { proxy.scrollTo(section.id, anchor: .center) } }
+                .onChange(of: section) { _, value in if let value { proxy.scrollTo(value.id, anchor: .center) } }
             }.frame(width: min(290, layout.contentWidth * 0.36))
             Rectangle().fill(JACTheme.border).frame(width: 1)
             ScrollView {

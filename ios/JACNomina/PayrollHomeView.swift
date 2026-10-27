@@ -22,11 +22,17 @@ struct PhoneSidebarToolbar: ViewModifier {
     @State private var insideModal = true
     @ViewBuilder
     func body(content: Content) -> some View {
-        if let menu, !JACDevice.isPad, !layout.isWide {
-            content.background(PhoneSidebarPresentationReader { value in
-                if insideModal != value { insideModal = value }
-            }).toolbar {
-                if !insideModal {
+        // Keep the screen's structural identity when only its toolbar changes.
+        // Branching around content recreates nested tabs and unsaved drafts
+        // whenever the phone crosses the wide-layout threshold.
+        content.background {
+            if menu != nil, !JACDevice.isPad {
+                PhoneSidebarPresentationReader { value in
+                    if insideModal != value { insideModal = value }
+                }
+            }
+        }.toolbar {
+                if let menu, !JACDevice.isPad, !layout.isWide, !insideModal {
                     if title != nil {
                         ToolbarItem(placement: .principal) {
                             Color.clear.frame(width: 1, height: 1).accessibilityHidden(true)
@@ -49,8 +55,7 @@ struct PhoneSidebarToolbar: ViewModifier {
                         }
                     }
                 }
-            }
-        } else { content }
+        }
     }
 }
 
@@ -259,8 +264,12 @@ struct PayrollHomeView: View {
                 }
                     .frame(width: width, height: geometry.size.height)
                     .allowsHitTesting(layout.isWide || menuVisible).accessibilityHidden(!layout.isWide && !menuVisible)
-                phoneWorkspace
-                    .safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
+                VStack(spacing: 0) {
+                    // Give navigation and its scroll views the actual remaining
+                    // height, so playlist controls cannot sit behind the player.
+                    phoneWorkspace.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    MusicMiniPlayer(player: store.music)
+                }
                     .frame(width: workspaceWidth, height: geometry.size.height)
                     .background(JACTheme.canvas)
                     .allowsHitTesting(!menuVisible).accessibilityHidden(menuVisible)

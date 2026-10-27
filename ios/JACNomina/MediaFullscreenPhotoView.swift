@@ -71,6 +71,8 @@ struct MediaFullscreenPhotoView:View {
         }
         .statusBarHidden(!embedded).privacySensitive().preferredColorScheme(embedded ? nil : .dark)
         .environment(\.colorScheme, .dark)
+        .accessibilityElement(children: .contain)
+        .accessibilityIdentifier(embedded ? "media.preview.embedded" : "media.preview.fullscreen")
         .task(id: viewActive) {
             guard viewActive else { photos.pause(); prefetch.stop(); return }
             photos.resume()
