@@ -685,12 +685,14 @@ struct MediaGalleryView: View {
             .toolbar(compactGallery && notificationFolderID == nil && phoneMenu == nil ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }
             .onChange(of: store.client.mediaPresentationStamp) { _, _ in
+                inlinePhotos = nil; fullscreenPhotos = nil
                 sharingFolder = nil
                 selection.synchronize(client: store.client)
                 selectionDownloadChoices = false
                 folderTransfer.cancel(); transferReview = nil; confirmedTransfer = nil
             }
             .onChange(of: feed?.collectionID) { _, _ in
+                inlinePhotos = nil; fullscreenPhotos = nil
                 selectionDownloadChoices = false
                 folderTransfer.cancel(); transferReview = nil; confirmedTransfer = nil
             }
@@ -743,7 +745,7 @@ struct MediaGalleryView: View {
             #endif
         }.accessibilityElement(children: .contain).accessibilityIdentifier(layout.isWide ? "phone.media.columns" : "phone.media.list")
             .onChange(of: layout.isWide) { _, wide in
-                if !wide, let request = inlinePhotos { fullscreenPhotos = request; inlinePhotos = nil }
+                if !wide, let request = inlinePhotos { fullscreenPhotos = request }
             }
     }
     private var galleryUpdates: some View {

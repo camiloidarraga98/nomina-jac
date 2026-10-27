@@ -240,6 +240,12 @@ final class PayrollClientTests: XCTestCase {
         defer { TemporaryDocuments.remove(document); try? client.clearSession() }
         XCTAssertEqual(try client.noticeDocumentAccessStamp(item, file: file), stamp)
         XCTAssertTrue(try Data(contentsOf: document.url).starts(with: Data("%PDF-".utf8)))
+        let baseline = JACPerformanceDiagnostics.snapshot()
+        for _ in 0..<250 { XCTAssertEqual(client.noticeDocumentPresentationStamp(item, file: file), stamp) }
+        let sample = JACPerformanceDiagnostics.snapshot().delta(from: baseline)
+        for operation in [JACPerformanceDiagnostics.Operation.diskRead, .diskWrite, .keyDerivation, .jsonDecode, .jsonEncode, .sessionRead] {
+            XCTAssertEqual(sample.count(operation, mainThread: true), 0, "Revalidar el panel visible no debe bloquear el desplazamiento con \(operation)")
+        }
         let wrong = NoticeAttachment(id: "another-recipient-file", filename: file.filename, mimeType: file.mimeType, size: file.size)
         XCTAssertThrowsError(try client.noticeDocumentAccessStamp(item, file: wrong))
         try await client.updateItinerary(item, requestID: UUID().uuidString.lowercased(), title: item.title, body: "Actualización ficticia", summary: "Cambió la salida", files: [NoticeUpload(filename: "Nuevo.pdf", data: Data("%PDF-1.4 fixture actualizado".utf8))])
@@ -248,6 +254,7 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertThrowsError(try client.noticeDocumentAccessStamp(item, file: file))
         XCTAssertNotEqual(try client.noticeDocumentAccessStamp(updated, file: updatedFile), stamp)
         try client.clearSession()
+        XCTAssertNil(client.noticeDocumentPresentationStamp(updated, file: updatedFile))
         XCTAssertThrowsError(try client.noticeDocumentAccessStamp(updated, file: updatedFile))
     }
     // Synthetic BCBP with fixed-width fields and deliberate trailing spaces.

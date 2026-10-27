@@ -508,7 +508,7 @@ struct NoticesView: View {
     }
     private func validateOpenDocument() {
         guard let source = documentSource, let stamp = documentStamp else { return }
-        if stamp != (try? store.client.noticeDocumentAccessStamp(source.item, file: source.file)) { clearOpenDocument() }
+        if stamp != store.client.noticeDocumentPresentationStamp(source.item, file: source.file) { clearOpenDocument() }
     }
     @ViewBuilder private func deleteButton(_ item:JACNotice,destructive:Bool = true) -> some View {
         Button(role:destructive ? .destructive : nil) { pendingDelete=item; confirmingListDelete=true } label: { Label(item.kind == "boarding_pass" ? "Eliminar pase de abordar" : "Eliminar itinerario",systemImage:"trash").font(.subheadline) }

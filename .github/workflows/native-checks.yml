@@ -172,6 +172,10 @@ jobs:
               -only-testing:JACNominaUITests/LaunchTests/testReaderCanOpenItineraryAndHasNoCreateAlertButton
               -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
               -only-testing:JACNominaUITests/LaunchTests/testExplicitReceiptAndUpdatedItineraryRequireNewConfirmation
+              -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripScrubsBothWaysAndStaysSyncedWithPagerAfterReopening
+              -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripFastScrubbingKeepsTheSelectedThumbnailAndPhotoTogether
+              -only-testing:JACNominaUITests/LaunchTests/testPhotoViewerHasFolderFilmstripDirectSaveAndBothVerticalDismissGestures
+              -only-testing:JACNominaUITests/LaunchTests/testFullscreenPhotoChangesImmediatelyShowsProgressAndReusesViewedCache
             )
           elif [ "$JAC_PHOTO_FILMSTRIP" = true ]; then
             checks=(

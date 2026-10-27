@@ -40,6 +40,7 @@ struct MediaFullscreenPhotoView:View {
             MediaFullscreenPhotoPager(items:photos.items,selectedID:photos.selectedID,documents:photos.urls,progress:photos.progress,errors:photos.errors,active:viewActive,select:photos.select,retry:photos.retry,savePhoto:{ item in
                 photoSave.start(client:client,plan:MediaDownloadPlan(folder:feed.folder ?? feed.root ?? MediaFolder(id:"photo",name:"Foto"),files:[item]),photos:true,writer:MediaPhotosExport.writer(client))
             },dismissPhoto:close)
+                .ignoresSafeArea(edges: embedded ? [] : .all)
                 .accessibilityIdentifier("media.fullscreen")
                 .accessibilityAction(.escape,close)
         }

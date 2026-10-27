@@ -975,14 +975,21 @@ final class PayrollClient: ObservableObject {
         let name = (file.filename as NSString).lastPathComponent
         return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Adjunto" : name)
     }
-    /// Explicit document opening/revalidation only; do not call from row drawing.
-    /// A visible split-pane PDF remains tied to its recipient, revision and session.
+    /// Explicit opening checks the vault. Cache notifications use the RAM
+    /// identity below so background downloads cannot add Keychain work to scroll.
     func noticeDocumentAccessStamp(_ item: JACNotice, file: NoticeAttachment) throws -> String {
-        guard permissionUser?.permitsNotice(item.kind) == true, let scope = try offlineScope(),
+        guard try offlineScope() != nil, let stamp = noticeDocumentPresentationStamp(item, file: file) else {
+            throw APIError.invalid("El documento cambió o ya no está disponible. Vuelve a abrirlo desde la lista.")
+        }
+        return stamp
+    }
+    // Presentation only. Reading the original still requires the checked method.
+    func noticeDocumentPresentationStamp(_ item: JACNotice, file: NoticeAttachment) -> String? {
+        guard permissionUser?.permitsNotice(item.kind) == true, let scope = derivedOfflineScope?.scope,
               let latest = cachedNotice(item.id), latest.kind == item.kind,
               (latest.revision ?? 1) == (item.revision ?? 1),
               latest.files.contains(where: { $0.id == file.id && $0.filename == file.filename && $0.mimeType == file.mimeType && $0.size == file.size }) else {
-            throw APIError.invalid("El documento cambió o ya no está disponible. Vuelve a abrirlo desde la lista.")
+            return nil
         }
         return "\(scope.id):\(cacheGeneration):\(noticeInvalidations[item.id, default: 0]):\(item.revision ?? 1)"
     }
