@@ -160,6 +160,7 @@ jobs:
           if [ "$JAC_WIDE_WORKSPACE" = true ]; then
             if [ "$JAC_WIDE_PHOTO_FOLLOWUP" = true ]; then
               checks=(
+                -only-testing:JACNominaUITests/LaunchTests/testWideCRMShowsListAndSelectedShowDetails
                 -only-testing:JACNominaTests/MediaFullscreenPhotoModelTests
                 -only-testing:JACNominaTests/PayrollClientTests/testDirectPhotoSaveWritesTheOriginalAndCleansItsTemporaryFile
                 -only-testing:JACNominaTests/PayrollClientTests/testDirectPhotoSaveStopsAfterDeniedPermissionOrSessionChange

@@ -740,7 +740,8 @@ struct MediaGalleryView: View {
                     } else {
                         ContentUnavailableView("Selecciona una foto", systemImage: "photo", description: Text("Explora la carpeta y consulta sus fotos aquí. Puedes ampliarlas a pantalla completa."))
                     }
-                }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped().accessibilityIdentifier("media.wide.preview")
+                }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped()
+                    .accessibilityElement(children: .contain).accessibilityIdentifier("media.wide.preview")
             }
             #endif
         }.accessibilityElement(children: .contain).accessibilityIdentifier(layout.isWide ? "phone.media.columns" : "phone.media.list")

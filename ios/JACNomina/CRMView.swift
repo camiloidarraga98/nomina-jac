@@ -208,7 +208,7 @@ struct CRMHomeView:View {
                 Text(feed["shows"].elements.first(where: { $0["id"].text == id })?["title"].text ?? "Detalle del show")
                     .font(.headline).padding(18)
                 CRMShowView(id: id, contacts: feed["contacts"], feed: feed, embedded: true).id(id)
-            }.accessibilityIdentifier("crm.wide.detail")
+            }.accessibilityElement(children: .contain).accessibilityIdentifier("crm.wide.detail")
         } else {
             ContentUnavailableView("Selecciona un show", systemImage: "briefcase", description: Text("Consulta su cuenta, abonos y preparación sin salir del listado."))
         }

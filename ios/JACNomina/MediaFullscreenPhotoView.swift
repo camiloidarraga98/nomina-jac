@@ -47,12 +47,13 @@ struct MediaFullscreenPhotoView:View {
         .safeAreaInset(edge:.top,spacing:0) {
             HStack(spacing: 8) {
                 Text(folderName).font(.headline).foregroundStyle(.white).lineLimit(1).frame(maxWidth: .infinity, alignment: embedded ? .leading : .center)
+                    .accessibilityIdentifier("media.preview.folder")
                 if embedded, let expand {
                     Button { if let item = photos.selected { expand(item) } } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 44, height: 44) }
                         .foregroundStyle(.white).accessibilityLabel("Ver foto a pantalla completa").accessibilityIdentifier("media.wide.expand")
                 }
             }.padding(.horizontal, embedded ? 12 : 24).padding(.vertical, embedded ? 2 : 14)
-                .background(.black.opacity(0.65)).accessibilityIdentifier("media.preview.folder")
+                .background(.black.opacity(0.65))
         }
         .safeAreaInset(edge:.bottom,spacing:0) {
             VStack(spacing:8) {
