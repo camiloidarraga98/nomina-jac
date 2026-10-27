@@ -7,6 +7,7 @@ struct MediaFullscreenPhotoView:View {
     @EnvironmentObject private var store:PayrollStore
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var phase
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     private let client:PayrollClient
     private let stamp:String?
     private let feed:MediaFeed
@@ -20,15 +21,18 @@ struct MediaFullscreenPhotoView:View {
     init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
         self.client=client;self.feed=feed;self.denied=denied
         self.embedded=embedded;self.closeEmbedded=close;self.expand=expand
-        let expected=try? client.mediaAccessStamp();stamp=expected
+        // Construction can repeat while an embedded gallery scrolls. The RAM
+        // identity is presentation only; each real load validates authorization.
+        let expected=client.mediaPresentationStamp;stamp=expected
         _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaPhotoPreview($0,quality:.balanced,collectionID:feed.collectionID,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == client.mediaPresentationStamp},denied:denied,improve:{try await client.improveMediaPhotoPreview($0,current:$1)}))
     }
     private var folderName:String { feed.folder?.name ?? feed.breadcrumbs.last?.name ?? feed.root?.name ?? "Fotografía" }
+    private var viewActive: Bool { phase == .active && (!embedded || isWorkspaceActive) }
     private func close() { photoSave.cancel();photos.stop();prefetch.stop();if let closeEmbedded {closeEmbedded()}else{dismiss()} }
     var body:some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            MediaFullscreenPhotoPager(items:photos.items,selectedID:photos.selectedID,documents:photos.urls,progress:photos.progress,errors:photos.errors,active:phase == .active,select:photos.select,retry:photos.retry,savePhoto:{ item in
+            MediaFullscreenPhotoPager(items:photos.items,selectedID:photos.selectedID,documents:photos.urls,progress:photos.progress,errors:photos.errors,active:viewActive,select:photos.select,retry:photos.retry,savePhoto:{ item in
                 photoSave.start(client:client,plan:MediaDownloadPlan(folder:feed.folder ?? feed.root ?? MediaFolder(id:"photo",name:"Foto"),files:[item]),photos:true,writer:MediaPhotosExport.writer(client))
             },dismissPhoto:close)
                 .accessibilityIdentifier("media.fullscreen")
@@ -58,26 +62,27 @@ struct MediaFullscreenPhotoView:View {
                 filmstrip
             }.padding(.vertical,10).background(.black.opacity(0.85))
         }
-        .statusBarHidden(!embedded).privacySensitive().preferredColorScheme(.dark)
-        .task {
+        .statusBarHidden(!embedded).privacySensitive().preferredColorScheme(embedded ? nil : .dark)
+        .environment(\.colorScheme, .dark)
+        .task(id: viewActive) {
+            guard viewActive else { photos.stop(); prefetch.stop(); return }
             photos.start()
             photos.refreshAuthorization()
             prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)
             while !Task.isCancelled {
                 do {try await Task.sleep(for:.seconds(15))}catch{return}
-                if phase == .active {photos.refreshAuthorization()}
-                if phase == .active {prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)}
+                if viewActive {photos.refreshAuthorization()}
+                if viewActive {prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)}
             }
         }
-        .onChange(of:phase) {_,value in
-            if value == .active {photos.refreshAuthorization();prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)}
-            else {prefetch.stop()}
+        .onChange(of:viewActive) {_,value in
+            if !value {photoSave.cancel();prefetch.stop();photos.stop()}
         }
         .onChange(of:photos.selectedID) {_,value in
             #if DEBUG
             UITestBackend.selectedPhotoForProgressFixture(value)
             #endif
-            if phase == .active {prefetch.start(feed,client:client,selectedID:value,denied:denied)}
+            if viewActive {prefetch.start(feed,client:client,selectedID:value,denied:denied)}
         }
         .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {close()}}
         .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {close()}}
@@ -85,7 +90,7 @@ struct MediaFullscreenPhotoView:View {
         .onDisappear {photoSave.cancel();prefetch.stop();photos.stop()}
     }
     private var filmstrip:some View {
-        MediaPhotoFilmstrip(items:photos.items,selectedID:photos.selectedID,active:phase == .active,
+        MediaPhotoFilmstrip(items:photos.items,selectedID:photos.selectedID,active:viewActive,
                             client:client,denied:denied,select:photos.select).frame(height:60)
     }
 

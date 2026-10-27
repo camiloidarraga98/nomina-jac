@@ -32,6 +32,7 @@ enum CRMFields {
 struct CRMHomeView:View {
     @EnvironmentObject private var store:PayrollStore
     @Environment(\.jacWorkspaceLayout) private var layout
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     @StateObject private var crm:CRMStore
     @State private var feed:JSONValue = .null
     @State private var section="shows"
@@ -57,7 +58,7 @@ struct CRMHomeView:View {
                 }
                 .sheet(isPresented:$showingFilters) { phoneFilters }
                 #endif
-                .task { await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));if section != "contracts" {await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60)} } catch { break } } }
+                .task(id: isWorkspaceActive) { guard isWorkspaceActive else { return }; await load(sync:!store.isOffline);while !Task.isCancelled { do { try await Task.sleep(for:.seconds(30));if isWorkspaceActive && section != "contracts" {await load(sync:!store.isOffline && Date().timeIntervalSince(lastSync)>60)} } catch { break } } }
                 .refreshable { await load(sync:!store.isOffline) }
                 .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             }
@@ -396,6 +397,7 @@ struct CRMEditorRequest:Identifiable {
 struct CRMShowView:View {
     @EnvironmentObject private var store:PayrollStore
     @EnvironmentObject private var crm:CRMStore
+    @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     let id:String;var contacts:JSONValue = .array([]);var feed:JSONValue = .null;var initialTab="account";var embedded=false
     @State private var planData:JSONValue = .null
     @State private var planDraft:JSONValue = .null
@@ -418,7 +420,7 @@ struct CRMShowView:View {
             }.scrollContentBackground(.hidden).refreshable { await load() }
         }.jacSurface()
             .modifier(CRMShowNavigationTitle(title: detail["show"]["title"].text.isEmpty ? "Show" : detail["show"]["title"].text, embedded: embedded)).jacRefreshCommand { Task { await load() } }
-            .task { tab=initialTab;await load();while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30));await load()}catch{break}} }
+            .task(id: isWorkspaceActive) { guard isWorkspaceActive else { return }; if detail.isNull { tab=initialTab };await load();while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30));if isWorkspaceActive {await load()}}catch{break}} }
             .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             .onChange(of:crm.denied) {_,denied in if denied {editor=nil;detail = .null;planData = .null;planDraft = .null;confirmDelete=false}}
             .confirmationDialog(deleteTitle,isPresented:$confirmDelete,titleVisibility:.visible) { Button("Eliminar evento",role:.destructive) { Task { await remove() } };Button("Cancelar",role:.cancel) {} } message:{ Text("Se quitará de Calendar, CRM y Agenda. Abonos y comprobantes se conservan como historial.") }

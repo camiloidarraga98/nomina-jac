@@ -306,16 +306,16 @@ struct PayrollHomeView: View {
                 .padding(.top, 8).accessibilityHidden(true)
             ScrollView {
                 VStack(spacing: 5) {
-                    ForEach(phoneDestinations.filter { ["agenda", "boarding", "media", "music"].contains($0.id) || ($0.id == "itineraries" && !user.hasSection(.boarding)) }, id: \.id) { item in
+                    ForEach(phoneDestinations.filter { railPrimaryIDs.contains($0.id) }, id: \.id) { item in
                         railButton(item)
                     }
                     Menu {
-                        ForEach(phoneDestinations.filter { !["agenda", "boarding", "media", "music"].contains($0.id) && !($0.id == "itineraries" && !user.hasSection(.boarding)) }, id: \.id) { item in
+                        ForEach(phoneDestinations.filter { !railPrimaryIDs.contains($0.id) }, id: \.id) { item in
                             Button { selectPhoneSection(item.id) } label: { Label(item.title, systemImage: item.symbol) }
                                 .accessibilityIdentifier("phone.section." + item.id)
                         }
                     } label: {
-                        railLabel("Más", symbol: "ellipsis", active: !["agenda", "boarding", "media", "music"].contains(selected) && !(selected == "itineraries" && !user.hasSection(.boarding)))
+                        railLabel("Más", symbol: "ellipsis", active: !railPrimaryIDs.contains(selected))
                     }.accessibilityIdentifier("phone.rail.more").accessibilityLabel("Más secciones")
                 }.padding(.horizontal, 6)
             }.scrollIndicators(.hidden)
@@ -327,6 +327,9 @@ struct PayrollHomeView: View {
         }.foregroundStyle(JACTheme.ink).background(JACTheme.card)
             .overlay(alignment: .trailing) { Rectangle().fill(JACTheme.border).frame(width: 1) }
             .accessibilityIdentifier("phone.rail")
+    }
+    private var railPrimaryIDs: Set<String> {
+        ["agenda", user.hasSection(.itineraries) && user.hasSection(.boarding) ? "boarding" : "itineraries", "media", "music"]
     }
     private func selectPhoneSection(_ id: String) {
         phoneVisited.insert(selected); phoneVisited.insert(id); selected = id; setPhoneMenu(false)

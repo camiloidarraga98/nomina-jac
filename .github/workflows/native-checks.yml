@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
+        options: [wide-workspace, photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -22,7 +22,7 @@ permissions:
 
 concurrency:
   # An iPhone-only correction must not cancel a reusable Mac build in progress.
-  group: jac-apple-${{ github.ref }}${{ contains(github.event.head_commit.message, '[iphone-only]') && '-iphone' || '' }}
+  group: jac-apple-${{ github.ref }}${{ contains(github.event.head_commit.message, '[check-wide-workspace]') && '-wide' || '' }}${{ contains(github.event.head_commit.message, '[iphone-only]') && '-iphone' || '' }}
   cancel-in-progress: true
 
 jobs:
@@ -30,7 +30,7 @@ jobs:
     # Public standard runners are free; never use the exhausted private quota.
     if: ${{ github.event.repository.private == false && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) }}
     runs-on: macos-15
-    timeout-minutes: ${{ (inputs.scope == 'scroll-widgets' || contains(github.event.head_commit.message, '[check-scroll-widgets]')) && 35 || 25 }}
+    timeout-minutes: ${{ (inputs.scope == 'wide-workspace' || contains(github.event.head_commit.message, '[check-wide-workspace]')) && 40 || (inputs.scope == 'scroll-widgets' || contains(github.event.head_commit.message, '[check-scroll-widgets]')) && 35 || 25 }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -38,7 +38,7 @@ jobs:
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
-          JAC_LATEST_XCODE: ${{ inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) || inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) || inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || inputs.scope == 'adaptive-photos' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]') || contains(github.event.head_commit.message, '[check-adaptive-photos]'))) }}
+          JAC_LATEST_XCODE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) || inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) || inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) || inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || inputs.scope == 'adaptive-photos' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]') || contains(github.event.head_commit.message, '[check-adaptive-photos]'))) }}
         run: |
           set -euo pipefail
           mkdir -p native-ci
@@ -145,6 +145,7 @@ jobs:
           JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
           JAC_HD_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[hd-only]') }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
+          JAC_WIDE_WORKSPACE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) }}
           JAC_PHOTO_FILMSTRIP: ${{ inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) }}
           JAC_NATIVE_MEDIA_ACTIONS: ${{ inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) }}
           JAC_NATIVE_MEDIA_UI_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[native-media-ui-only]') }}
@@ -154,7 +155,25 @@ jobs:
         run: |
           set -euo pipefail
           build_action=test
-          if [ "$JAC_PHOTO_FILMSTRIP" = true ]; then
+          if [ "$JAC_WIDE_WORKSPACE" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testWideWorkspaceNeedsUsableColumnsAndRespectsAccessibilityText
+              -only-testing:JACNominaTests/PayrollClientTests/testOpenNoticeDocumentStampRejectsOtherAttachmentsNewRevisionAndLogout
+              -only-testing:JACNominaTests/PayrollClientTests/testItinerariesUseAuthenticatedAPIAndProtectedTemporaryPDF
+              -only-testing:JACNominaTests/PayrollClientTests/testManualItineraryAttachmentsArePrivateAndDeletionIsIdempotent
+              -only-testing:JACNominaTests/MediaPhotoFilmstripTests
+              -only-testing:JACNominaTests/MediaFullscreenPhotoModelTests
+              -only-testing:JACNominaUITests/LaunchTests/testWideAgendaKeepsSelectionWhenRotating
+              -only-testing:JACNominaUITests/LaunchTests/testWideMusicKeepsPlaylistAndPlaybackAcrossSections
+              -only-testing:JACNominaUITests/LaunchTests/testWidePhotographyKeepsGridBesidePhotoAndCanExpand
+              -only-testing:JACNominaUITests/LaunchTests/testWideBoardingKeepsCardsAndOriginalPDFTogether
+              -only-testing:JACNominaUITests/LaunchTests/testWideCRMShowsListAndSelectedShowDetails
+              -only-testing:JACNominaUITests/LaunchTests/testItineraryOpensPDFDirectlyAndKeepsDocumentWhileRotating
+              -only-testing:JACNominaUITests/LaunchTests/testReaderCanOpenItineraryAndHasNoCreateAlertButton
+              -only-testing:JACNominaUITests/LaunchTests/testPhoneSidebarShowsAllModulesAndCanBeDismissed
+              -only-testing:JACNominaUITests/LaunchTests/testExplicitReceiptAndUpdatedItineraryRequireNewConfirmation
+            )
+          elif [ "$JAC_PHOTO_FILMSTRIP" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaPhotoFilmstripTests
               -only-testing:JACNominaTests/MediaFullscreenPhotoModelTests
@@ -672,6 +691,7 @@ jobs:
           JAC_CALENDAR_COMPILE: ${{ inputs.scope == 'calendar-compile' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-calendar-compile]')) }}
           JAC_REDESIGN: ${{ inputs.scope == 'redesign' || inputs.scope == 'redesign-followup' || inputs.scope == 'redesign-forms-ui-only' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-redesign]') || contains(github.event.head_commit.message, '[redesign-followup]') || contains(github.event.head_commit.message, '[redesign-forms-ui-only]'))) }}
           JAC_BOARDING_CARD: ${{ inputs.scope == 'boarding-card' || inputs.scope == 'boarding-card-ui' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-boarding-card]')) }}
+          JAC_WIDE_WORKSPACE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) }}
           JAC_NAVIGATION: ${{ inputs.scope == 'navigation' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-navigation]')) }}
         shell: bash
         run: |
@@ -680,7 +700,7 @@ jobs:
             if [ "${JAC_SCROLL_WIDGETS:-false}" = true ]; then
               xcrun xcresulttool get test-results metrics --path native-ci/iphone.xcresult > native-ci/test-metrics.json || true
             fi
-            if [ "${JAC_SCROLL_WIDGETS:-false}" = true ] || [ "${JAC_SLACK_BOARDING:-false}" = true ] || [ "${JAC_CALENDAR_COMPILE:-false}" = true ] || [ "${JAC_REDESIGN:-false}" = true ] || [ "${JAC_NAVIGATION:-false}" = true ] || [ "${JAC_BOARDING_CARD:-false}" = true ]; then
+            if [ "${JAC_WIDE_WORKSPACE:-false}" = true ] || [ "${JAC_SCROLL_WIDGETS:-false}" = true ] || [ "${JAC_SLACK_BOARDING:-false}" = true ] || [ "${JAC_CALENDAR_COMPILE:-false}" = true ] || [ "${JAC_REDESIGN:-false}" = true ] || [ "${JAC_NAVIGATION:-false}" = true ] || [ "${JAC_BOARDING_CARD:-false}" = true ]; then
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments || true
             else
               xcrun xcresulttool export attachments --path native-ci/iphone.xcresult --output-path native-ci/attachments --only-failures || true
@@ -738,7 +758,7 @@ jobs:
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
-          JAC_LATEST_XCODE: ${{ inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) || inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) || inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || inputs.scope == 'adaptive-photos' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]') || contains(github.event.head_commit.message, '[check-adaptive-photos]'))) }}
+          JAC_LATEST_XCODE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) || inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) || inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) || inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || inputs.scope == 'adaptive-photos' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]') || contains(github.event.head_commit.message, '[check-adaptive-photos]'))) }}
         run: |
           set -euo pipefail
           mkdir -p native-ci
@@ -884,7 +904,7 @@ jobs:
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
-          JAC_LATEST_XCODE: ${{ inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) || inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) || inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || inputs.scope == 'adaptive-photos' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]') || contains(github.event.head_commit.message, '[check-adaptive-photos]'))) }}
+          JAC_LATEST_XCODE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) || inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) || inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) || inputs.scope == 'calendar-compile' || inputs.scope == 'slack-boarding' || inputs.scope == 'scroll-widgets' || inputs.scope == 'adaptive-photos' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-calendar-compile]') || contains(github.event.head_commit.message, '[check-slack-boarding]') || contains(github.event.head_commit.message, '[check-scroll-widgets]') || contains(github.event.head_commit.message, '[check-adaptive-photos]'))) }}
         run: |
           set -euo pipefail
           mkdir -p native-ci

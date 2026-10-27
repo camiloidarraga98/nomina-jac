@@ -1,3 +1,7 @@
+## Adaptación horizontal aprobada e itinerarios directos ·27 de octubre de2026
+
+Camilo aprobó las cinco maquetas de pantalla amplia para iPhone y pidió abrir directamente el PDF al tocar un itinerario. Distribución por ancho útil con menú compacto y dos paneles, conservando selección/estado y una columna para tamaños pequeños o texto de accesibilidad. Mantener permisos, privacidad de pases, documentos originales, sesiones/cachés, música/subidas y las seis guardas de fluidez. App/widget0.39.0, build fuente58; firma/grupo/APNs/cifrado exento conservados. Ver `IPHONE_WIDE_WORKSPACE.md` para alcance y resultados reales de CI; no inferir instalación física.
+
 ## Tira del visor de fotos ·26 de octubre de2026
 
 El usuario pidió que arrastrar las miniaturas inferiores cambie la foto grande, como Fotos del iPhone, y continuar todo el proceso en nube conservando la trazabilidad del chat JAC App. Fuente reconciliada con main77677cf, incluida la clasificación de cifrado exento. App/widget0.38.0, build fuente57 tras la última entrega real0.37.0(56); Xcode Cloud asigna el número efectivo. Selección continua durante arrastre/inercia y sincronización con tap/pager, sin alterar zoom, caché, permisos ni servicios. Alcance, validaciones y límites en [IPHONE_MEDIA_ACTIONS.md](IPHONE_MEDIA_ACTIONS.md).

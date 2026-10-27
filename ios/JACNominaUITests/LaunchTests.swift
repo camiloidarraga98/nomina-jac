@@ -2,6 +2,111 @@ import XCTest
 import UIKit
 
 final class LaunchTests: XCTestCase {
+    @MainActor func testWideAgendaKeepsSelectionWhenRotating() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = fixture(); openSection(app, "Agenda")
+        let selected = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND selected == true", "agenda.day.")).firstMatch
+        XCTAssertTrue(selected.waitForExistence(timeout: 10))
+        let id = selected.identifier
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.otherElements["phone.rail"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.otherElements["phone.agenda.columns"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons[id].isSelected)
+        XCTAssertFalse(app.buttons["phone.menu.open"].isHittable)
+        attachScreen(app, name: "wide-agenda-calendario-y-eventos")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.buttons["phone.menu.open"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons[id].isSelected, "Girar debe conservar el día seleccionado")
+    }
+    @MainActor func testWideMusicKeepsPlaylistAndPlaybackAcrossSections() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = fixture(); openSection(app, "Música"); tap(app, "music.section.tracks")
+        let track = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "music.track.")).firstMatch
+        XCTAssertTrue(track.waitForExistence(timeout: 15)); track.tap()
+        XCTAssertTrue(app.buttons["music.player.toggle"].waitForExistence(timeout: 10))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.otherElements["phone.music.columns"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["music.section.tracks"].isHittable)
+        XCTAssertTrue(app.buttons["music.player.toggle"].exists)
+        attachScreen(app, name: "wide-musica-biblioteca-playlist-y-reproductor")
+        openSection(app, "Agenda"); openSection(app, "Música")
+        XCTAssertTrue(app.buttons["music.download.section"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["music.player.toggle"].exists)
+    }
+    @MainActor func testWidePhotographyKeepsGridBesidePhotoAndCanExpand() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = XCUIApplication()
+        app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-r2", "--uitest-media-slideshow", "--uitest-reset-media"]
+        app.launch(); tap(app, "media.item.r2_media-day")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.otherElements["phone.media.columns"].waitForExistence(timeout: 10))
+        openFilmstripPhoto(app, "r2_media-photo")
+        XCTAssertTrue(app.buttons["media.wide.expand"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["phone.section.media"].isHittable, "La vista previa debe dejar la navegación y la cuadrícula disponibles")
+        XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
+        XCTAssertTrue(app.collectionViews["media.preview.filmstrip"].exists)
+        attachScreen(app, name: "wide-fotografia-cuadricula-y-visor")
+        tap(app, "media.wide.expand")
+        XCTAssertTrue(app.scrollViews["media.photo.pager"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["phone.section.media"].isHittable)
+        app.scrollViews["media.photo.pager"].swipeDown()
+        XCTAssertTrue(app.buttons["phone.section.media"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
+    }
+    @MainActor func testWideBoardingKeepsCardsAndOriginalPDFTogether() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = fixture(["--uitest-boarding-code"]); openSection(app, "Pases")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.otherElements["phone.notices.columns"].waitForExistence(timeout: 10))
+        tap(app, "notices.item.boarding-fixture-0")
+        XCTAssertTrue(app.descendants(matching: .any)["notices.inline.pdf"].waitForExistence(timeout: 20))
+        XCTAssertTrue(app.buttons["boarding.code.boarding-fixture-0-pdf"].isHittable)
+        XCTAssertTrue(app.buttons["phone.section.boarding"].isHittable)
+        attachScreen(app, name: "wide-pases-tarjetas-y-pdf-original")
+        tap(app, "notices.document.expand")
+        XCTAssertTrue(app.navigationBars["Pase de abordar PDF"].waitForExistence(timeout: 10))
+        tap(app, "notices.pdf.close")
+        XCTAssertTrue(app.descendants(matching: .any)["notices.inline.pdf"].waitForExistence(timeout: 10))
+    }
+    @MainActor func testWideCRMShowsListAndSelectedShowDetails() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = fixture(); openSection(app, "CRM")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.otherElements["phone.crm.columns"].waitForExistence(timeout: 10))
+        let show = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "crm.show.")).firstMatch
+        XCTAssertTrue(show.waitForExistence(timeout: 15)); show.tap()
+        XCTAssertTrue(app.segmentedControls["crm.show.sections"].waitForExistence(timeout: 15))
+        XCTAssertTrue(show.isHittable, "La cuenta del show no debe ocultar el listado")
+        attachScreen(app, name: "wide-crm-shows-y-cuenta")
+        app.segmentedControls["crm.show.sections"].buttons["Preparación"].tap()
+        openSection(app, "Agenda"); openSection(app, "CRM")
+        XCTAssertTrue(app.segmentedControls["crm.show.sections"].buttons["Preparación"].isSelected)
+    }
+    @MainActor func testItineraryOpensPDFDirectlyAndKeepsDocumentWhileRotating() {
+        XCUIDevice.shared.orientation = .portrait
+        defer { XCUIDevice.shared.orientation = .portrait }
+        let app = fixture(); openSection(app, "Itinerarios")
+        tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
+        XCTAssertFalse(app.buttons["notices.detail.close"].exists, "El toque debe abrir el PDF sin la ventana intermedia")
+        let pdfText = app.descendants(matching: .any).matching(NSPredicate(format: "label CONTAINS %@", "Itinerario simulado")).firstMatch
+        XCTAssertTrue(pdfText.waitForExistence(timeout: 15), "Debe verse el documento, no solamente la barra de título")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.descendants(matching: .any)["notices.inline.pdf"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].isHittable)
+        attachScreen(app, name: "wide-itinerario-apertura-directa")
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
+        tap(app, "notices.document.options"); tap(app, "notices.document.info")
+        XCTAssertTrue(app.buttons["notices.confirm"].waitForExistence(timeout: 10))
+        tap(app, "notices.detail.close"); tap(app, "notices.pdf.close")
+        XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].waitForExistence(timeout: 10))
+    }
     @MainActor func testMediaFolderNotificationOpensTheExactFolderForAMediaOnlyAccount() {
         let app = XCUIApplication()
         app.launchArguments = ["--uitest-payroll", "--uitest-media-only", "--uitest-media-notification", "--uitest-reset-content", "--uitest-reset-media"]
@@ -861,6 +966,13 @@ final class LaunchTests: XCTestCase {
         app.buttons["phone.menu.close"].tap();return result
     }
     @MainActor private func openSection(_ app: XCUIApplication, _ title: String) {
+        if app.otherElements["phone.rail"].exists {
+            var button = app.buttons["phone.section." + sectionID(title)]
+            if title == "Pases" && !button.exists { button = app.buttons["phone.section.itineraries"] }
+            if !button.exists { tap(app, "phone.rail.more") }
+            XCTAssertTrue(button.waitForExistence(timeout: 5)); XCTAssertTrue(button.isHittable); button.tap()
+            return
+        }
         XCTAssertTrue(showMenu(app), "Debe abrirse el menú lateral")
         var button=app.buttons["phone.section."+sectionID(title)]
         if title == "Pases" && !button.exists {button=app.buttons["phone.section.itineraries"]}
@@ -869,6 +981,12 @@ final class LaunchTests: XCTestCase {
         for _ in 0..<5 {if button.isHittable {break};scroll.swipeUp()}
         XCTAssertTrue(button.isHittable);button.tap()
         XCTAssertTrue(app.buttons["phone.menu.open"].waitForExistence(timeout: 5))
+    }
+    @MainActor private func openItineraryInformation(_ app: XCUIApplication) {
+        let item = app.buttons["notices.item.33333333-3333-4333-8333-333333333333"]
+        XCTAssertTrue(item.waitForExistence(timeout: 10)); item.press(forDuration: 1.2)
+        tap(app, "Información y confirmación")
+        XCTAssertTrue(app.buttons["notices.detail.close"].waitForExistence(timeout: 10))
     }
     @MainActor private func fixture(_ arguments: [String] = []) -> XCUIApplication {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"] + arguments; app.launch()
@@ -1046,10 +1164,10 @@ final class LaunchTests: XCTestCase {
         tap(app, "Listo")
         openSection(app, "Itinerarios")
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
-        tap(app, "notices.pdf")
         XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 5))
         attachScreen(app, name: "itinerario-pdf-sin-internet")
         tap(app, "notices.pdf.close")
+        openItineraryInformation(app)
         for _ in 0..<4 { if app.buttons["notices.confirm"].exists { break }; app.swipeUp() }
         XCTAssertTrue(app.buttons["notices.confirm"].exists); XCTAssertFalse(app.buttons["notices.confirm"].isEnabled)
         tap(app, "notices.detail.close")
@@ -1215,7 +1333,7 @@ final class LaunchTests: XCTestCase {
         openSection(app, "Quincena"); openSection(app, "Itinerarios")
         XCTAssertTrue(app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].waitForExistence(timeout: 10))
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
-        tap(app, "notices.detail.close")
+        tap(app, "notices.pdf.close")
         openSection(app, "Gestión"); app.navigationBars.buttons.firstMatch.tap(); tap(app, "Correos y Gmail")
         XCTAssertTrue(app.buttons["Actualizar estados"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.descendants(matching: .any)["error.inline"].exists)
@@ -1233,8 +1351,8 @@ final class LaunchTests: XCTestCase {
         let app = fixture(); openSection(app, "Itinerarios")
         attachScreen(app,name:"nuevos-itinerarios")
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
-        tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
-        attachScreen(app, name: "itinerario-pdf"); tap(app, "notices.pdf.close"); tap(app, "notices.detail.close")
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
+        attachScreen(app, name: "itinerario-pdf"); tap(app, "notices.pdf.close")
         openSection(app, "Gestión"); tap(app, "notices.alerts"); tap(app, "notices.create")
         fill(app, "notices.editor.title", "Alerta simulada iPhone")
         let message = app.descendants(matching: .any).matching(identifier: "notices.editor.message").firstMatch
@@ -1249,7 +1367,7 @@ final class LaunchTests: XCTestCase {
     @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
         let app = fixture(["--uitest-reader", "--uitest-push-settings"]); openSection(app, "Itinerarios")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
-        app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].swipeLeft(); XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.buttons["notices.pdf"].waitForExistence(timeout: 10)); tap(app, "notices.detail.close")
+        app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].swipeLeft(); XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 10)); tap(app, "notices.pdf.close")
         openSection(app, "Gestión"); tap(app, "notices.alerts")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.create"].exists)
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.notifications")
@@ -1269,7 +1387,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(springboard.alerts.firstMatch.exists)
         openSection(app, "Itinerarios")
         tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
-        tap(app, "notices.pdf"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15))
     }
 
     @MainActor func testNotificationPermissionAppearsAfterAuthenticatedStartupWithoutOpeningItineraries() {
@@ -1304,8 +1422,9 @@ final class LaunchTests: XCTestCase {
         tap(app,"notices.editor.fixture"); XCTAssertTrue(app.staticTexts["Prueba.pdf"].waitForExistence(timeout:10)); app.swipeUp(); tap(app,"notices.editor.save")
         XCTAssertTrue(app.staticTexts["Itinerario publicado para todo el equipo."].waitForExistence(timeout:15))
         let item = app.buttons.matching(NSPredicate(format:"label CONTAINS %@", "Itinerario manual ficticio")).firstMatch
-        XCTAssertTrue(item.waitForExistence(timeout:15)); item.tap(); tap(app,"notices.pdf")
+        XCTAssertTrue(item.waitForExistence(timeout:15)); item.tap()
         XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout:15)); tap(app,"notices.pdf.close")
+        item.press(forDuration:1.2); tap(app,"Información y confirmación")
         tap(app,"notices.delete"); tap(app,"notices.delete.cancel"); XCTAssertTrue(app.buttons["notices.pdf"].exists)
         tap(app,"notices.delete"); tap(app,"notices.delete.confirm")
         XCTAssertTrue(app.navigationBars["Itinerarios"].waitForExistence(timeout:15))
@@ -1506,7 +1625,7 @@ final class LaunchTests: XCTestCase {
     }
 
     @MainActor func testExplicitReceiptAndUpdatedItineraryRequireNewConfirmation() {
-        let app=fixture();openSection(app, "Itinerarios");tap(app,"notices.item.33333333-3333-4333-8333-333333333333");tap(app,"notices.confirm")
+        let app=fixture();openSection(app, "Itinerarios");openItineraryInformation(app);tap(app,"notices.confirm")
         XCTAssertTrue(app.buttons["notices.confirm"].waitForExistence(timeout:10));XCTAssertEqual(app.buttons["notices.confirm"].label,"✓ Recibido")
         tap(app,"notices.update")
         let summary=app.descendants(matching:.any).matching(identifier:"itinerary.update.summary").firstMatch
@@ -1732,9 +1851,9 @@ final class IPadTests: XCTestCase {
     }
     @MainActor func testTabletItineraryPrivatePassAndAlertsUseNativeNavigation() {
         let app = XCUIApplication(); app.launchArguments = ["--uitest-payroll"]; app.launch()
-        tap(app, "ipad.section.itineraries"); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); tap(app, "notices.pdf")
+        tap(app, "ipad.section.itineraries"); tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
         XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 15)); capture("ipad-itinerario-pdf")
-        tap(app, "notices.pdf.close"); tap(app, "notices.detail.close"); tap(app, "boarding.open")
+        tap(app, "notices.pdf.close"); tap(app, "boarding.open")
         XCTAssertTrue(app.staticTexts["Pases de abordar para hoy · 2"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["notices.item.boarding-fixture-3"].exists)
         tap(app, "notices.item.boarding-fixture-0")

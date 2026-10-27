@@ -220,6 +220,36 @@ private final class MediaDataGateProtocol:URLProtocol,@unchecked Sendable {
 }
 
 final class PayrollClientTests: XCTestCase {
+    func testWideWorkspaceNeedsUsableColumnsAndRespectsAccessibilityText() {
+        XCTAssertFalse(JACWorkspaceLayout.phone(size: CGSize(width: 393, height: 759), accessibility: false).isWide)
+        XCTAssertFalse(JACWorkspaceLayout.phone(size: CGSize(width: 667, height: 325), accessibility: false).isWide)
+        let landscape = JACWorkspaceLayout.phone(size: CGSize(width: 900, height: 600), accessibility: false)
+        XCTAssertTrue(landscape.isWide)
+        XCTAssertGreaterThanOrEqual(landscape.contentWidth, 660, "El menú no puede dejar sin espacio a las dos columnas")
+        XCTAssertFalse(JACWorkspaceLayout.phone(size: CGSize(width: 900, height: 600), accessibility: true).isWide)
+        XCTAssertFalse(JACWorkspaceLayout.phone(size: CGSize(width: 900, height: 280), accessibility: false).isWide)
+    }
+    @MainActor func testOpenNoticeDocumentStampRejectsOtherAttachmentsNewRevisionAndLogout() async throws {
+        let client = UITestBackend.client()
+        _ = try await client.workspace()
+        let feed = try await client.notices()
+        let item = try XCTUnwrap(feed.notices.first(where: { $0.kind == "itinerary" }))
+        let file = try XCTUnwrap(item.files.first)
+        let stamp = try client.noticeDocumentAccessStamp(item, file: file)
+        let document = try await client.itinerary(item)
+        defer { TemporaryDocuments.remove(document); try? client.clearSession() }
+        XCTAssertEqual(try client.noticeDocumentAccessStamp(item, file: file), stamp)
+        XCTAssertTrue(try Data(contentsOf: document.url).starts(with: Data("%PDF-".utf8)))
+        let wrong = NoticeAttachment(id: "another-recipient-file", filename: file.filename, mimeType: file.mimeType, size: file.size)
+        XCTAssertThrowsError(try client.noticeDocumentAccessStamp(item, file: wrong))
+        try await client.updateItinerary(item, requestID: UUID().uuidString.lowercased(), title: item.title, body: "Actualización ficticia", summary: "Cambió la salida", files: [NoticeUpload(filename: "Nuevo.pdf", data: Data("%PDF-1.4 fixture actualizado".utf8))])
+        let updated = try await client.notice(id: item.id), updatedFile = try XCTUnwrap(updated.files.first)
+        XCTAssertGreaterThan(updated.revision ?? 1, item.revision ?? 1)
+        XCTAssertThrowsError(try client.noticeDocumentAccessStamp(item, file: file))
+        XCTAssertNotEqual(try client.noticeDocumentAccessStamp(updated, file: updatedFile), stamp)
+        try client.clearSession()
+        XCTAssertThrowsError(try client.noticeDocumentAccessStamp(updated, file: updatedFile))
+    }
     // Synthetic BCBP with fixed-width fields and deliberate trailing spaces.
     // It is not a real airline reservation or valid travel document.
     // Real JPEG bytes: CFNetwork sniffs the PNG fixture even when a mocked

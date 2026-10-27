@@ -1,3 +1,7 @@
+## Adaptación horizontal aprobada e itinerarios directos ·27 de octubre de2026
+
+Camilo aprobó las cinco maquetas de pantalla amplia para iPhone y pidió abrir directamente el PDF al tocar un itinerario. Distribución por ancho útil con menú compacto y dos paneles, conservando selección/estado y una columna para tamaños pequeños o texto de accesibilidad. Mantener permisos, privacidad de pases, documentos originales, sesiones/cachés, música/subidas y las seis guardas de fluidez. App/widget0.39.0, build fuente58; firma/grupo/APNs/cifrado exento conservados. Ver `../docs/IPHONE_WIDE_WORKSPACE.md` para alcance y resultados reales de CI; no inferir instalación física.
+
 ## Miniaturas del visor ·26 de octubre de2026
 
 Al deslizar la tira inferior cambia inmediatamente la foto grande según la miniatura central, también durante la inercia. Tocar una miniatura o deslizar la foto sigue centrando y marcando la tira; abrir/cerrar o recibir más fotos no cambia la selección por sí solo. Conservar ampliación, salida vertical, guardado y permisos. App/widget0.38.0, build fuente57 con distribución numerada por Xcode Cloud tras56. Ver [alcance y validaciones](../docs/IPHONE_MEDIA_ACTIONS.md).
