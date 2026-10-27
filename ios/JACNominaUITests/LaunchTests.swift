@@ -43,7 +43,7 @@ final class LaunchTests: XCTestCase {
         app.launch(); tap(app, "media.item.r2_media-day")
         XCUIDevice.shared.orientation = .landscapeLeft
         XCTAssertTrue(app.otherElements["phone.media.columns"].waitForExistence(timeout: 10))
-        openFilmstripPhoto(app, "r2_media-photo")
+        openFilmstripPhoto(app, "r2_media-photo", embedded: true)
         XCTAssertTrue(app.buttons["media.wide.expand"].waitForExistence(timeout: 15))
         XCTAssertTrue(app.buttons["phone.section.media"].isHittable, "La vista previa debe dejar la navegación y la cuadrícula disponibles")
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
@@ -135,7 +135,7 @@ final class LaunchTests: XCTestCase {
     @MainActor private func waitFor(_ element: XCUIElement, predicate: NSPredicate, timeout: TimeInterval) -> Bool {
         XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: predicate, object: element)], timeout: timeout) == .completed
     }
-    @MainActor private func openFilmstripPhoto(_ app:XCUIApplication,_ id:String) {
+    @MainActor private func openFilmstripPhoto(_ app:XCUIApplication,_ id:String,embedded:Bool=false) {
         let photo=app.buttons["media.item."+id]
         XCTAssertTrue(photo.waitForExistence(timeout:15))
         var previous=CGRect.null
@@ -152,7 +152,11 @@ final class LaunchTests: XCTestCase {
         // The expanding SwiftUI row can expose an invalid AX activation point.
         // Tap only its measured visible content, away from the options button.
         photo.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.65)).tap()
-        XCTAssertTrue(app.otherElements["media.fullscreen"].waitForExistence(timeout:10))
+        if embedded {
+            XCTAssertTrue(app.scrollViews["media.photo.pager"].waitForExistence(timeout:10), "El panel debe mostrar el visor real junto a la cuadrícula")
+        } else {
+            XCTAssertTrue(app.otherElements["media.fullscreen"].waitForExistence(timeout:10))
+        }
     }
     @MainActor func testPhoneSidebarShowsAllModulesAndCanBeDismissed() {
         let app=XCUIApplication();app.launchArguments=["--uitest-payroll"];app.launch()
@@ -1022,6 +1026,17 @@ final class LaunchTests: XCTestCase {
         }
         if !label.hasPrefix("crm.suggestion."),label != "crm.keyboard.done",app.keyboards.firstMatch.exists,app.buttons["crm.keyboard.done"].exists {app.buttons["crm.keyboard.done"].tap()}
         let button = app.buttons[label].firstMatch
+        if label == "notices.document.info" {
+            // A system menu can initially expose its row before XCTest marks
+            // it hittable. Never scroll the PDF to find a menu action: that
+            // gesture dismisses the menu. Use the real row's visible bounds.
+            XCTAssertTrue(button.waitForExistence(timeout:10))
+            if waitFor(button,predicate:NSPredicate(format:"hittable == true AND enabled == true"),timeout:5) { button.tap();return }
+            let frame=button.frame,viewport=app.windows.firstMatch.frame
+            print("PDF menu row: frame=\(frame), viewport=\(viewport), enabled=\(button.isEnabled)")
+            guard button.isEnabled,frame.width>=44,frame.height>=20,viewport.contains(frame) else {XCTFail("La acción real de información debe estar visible y habilitada");return}
+            button.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap();return
+        }
         if ["period.create", "crm.add", "management.crm"].contains(label) {
             XCTAssertTrue(button.waitForExistence(timeout:10), "Debe existir el botón real \(label)")
             XCTAssertTrue(waitFor(button,predicate:NSPredicate(format:"enabled == true"),timeout:5), "Debe estar autorizado y habilitado \(label)")
@@ -1379,7 +1394,14 @@ final class LaunchTests: XCTestCase {
     @MainActor func testReaderCanOpenItineraryAndHasNoCreateAlertButton() {
         let app = fixture(["--uitest-reader", "--uitest-push-settings"]); openSection(app, "Itinerarios")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.disable"].exists)
-        app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].swipeLeft(); XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists); tap(app, "notices.item.33333333-3333-4333-8333-333333333333"); XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 10)); tap(app, "notices.pdf.close")
+        app.buttons["notices.item.33333333-3333-4333-8333-333333333333"].swipeLeft()
+        XCTAssertFalse(app.buttons["notices.list.delete.33333333-3333-4333-8333-333333333333"].exists)
+        // The read-only row has no swipe action. Some simulator versions
+        // activate that Button at the end of the synthetic swipe. Reset the
+        // presentation, then verify a separate deliberate tap opens the PDF.
+        if app.navigationBars["Itinerario PDF"].exists {tap(app, "notices.pdf.close")}
+        tap(app, "notices.item.33333333-3333-4333-8333-333333333333")
+        XCTAssertTrue(app.navigationBars["Itinerario PDF"].waitForExistence(timeout: 10)); tap(app, "notices.pdf.close")
         openSection(app, "Gestión"); tap(app, "notices.alerts")
         XCTAssertFalse(app.buttons["notices.enable"].exists); XCTAssertFalse(app.buttons["notices.create"].exists)
         app.navigationBars.buttons.firstMatch.tap(); tap(app, "management.notifications")
