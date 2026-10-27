@@ -31,6 +31,7 @@ enum CRMFields {
 }
 struct CRMHomeView:View {
     @EnvironmentObject private var store:PayrollStore
+    @Environment(\.jacWorkspaceLayout) private var layout
     @StateObject private var crm:CRMStore
     @State private var feed:JSONValue = .null
     @State private var section="shows"
@@ -41,6 +42,7 @@ struct CRMHomeView:View {
     @State private var busy=false
     @State private var lastSync=Date.distantPast
     @State private var showingFilters=false
+    @State private var selectedWideShow: String?
     @ScaledMetric(relativeTo:.subheadline) private var sectionHeight:CGFloat=44
     init(client:PayrollClient){ _crm=StateObject(wrappedValue:CRMStore(client)) }
     var body:some View {
@@ -103,7 +105,15 @@ struct CRMHomeView:View {
         VStack(spacing:0) {
             phoneSections.padding(.horizontal,20).padding(.bottom,12)
             if section == "contracts" { CRMContractsHome() }
-            else if section == "shows" { phoneShows }
+            else if section == "shows" {
+                HStack(spacing: 0) {
+                    phoneShows.frame(maxWidth: layout.isWide ? max(290, layout.contentWidth * 0.43) : .infinity)
+                    if layout.isWide {
+                        Rectangle().fill(JACTheme.border).frame(width: 1)
+                        wideShowDetail.frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
+                }.accessibilityIdentifier(layout.isWide ? "phone.crm.columns" : "phone.crm.list")
+            }
             else { List {
                 if let error { InlineError(message:error) }
                 if section == "weekly" { CRMWeeklyView() }
@@ -169,8 +179,14 @@ struct CRMHomeView:View {
                         .accessibilityLabel("Filtrar shows desde "+phoneMonthLabel).accessibilityIdentifier("crm.filters")
                 }
                 ForEach(searchedShows) { item in
-                    NavigationLink { CRMShowView(id:item.id,contacts:feed["contacts"],feed:feed).environmentObject(crm) } label:{ CRMShowRow(show:item.value) }
-                        .buttonStyle(.plain).accessibilityIdentifier("crm.show."+item.id)
+                    if layout.isWide {
+                        Button { selectedWideShow = item.id } label: { CRMShowRow(show:item.value) }
+                            .buttonStyle(.plain).accessibilityIdentifier("crm.show." + item.id)
+                            .overlay(RoundedRectangle(cornerRadius: 18).stroke(selectedWideShow == item.id ? JACTheme.action : .clear, lineWidth: 2).allowsHitTesting(false))
+                    } else {
+                        NavigationLink { CRMShowView(id:item.id,contacts:feed["contacts"],feed:feed).environmentObject(crm) } label:{ CRMShowRow(show:item.value) }
+                            .buttonStyle(.plain).accessibilityIdentifier("crm.show."+item.id)
+                    }
                 }
                 if searchedShows.isEmpty {
                     Text(feed.isNull ? "Consultando…":search.isEmpty ? "No hay shows próximos en este rango.":"No hay shows que coincidan con la búsqueda.")
@@ -179,6 +195,17 @@ struct CRMHomeView:View {
                 phoneSheets.padding(.top,8)
             }.padding(.horizontal,20).padding(.top,2).padding(.bottom,24)
         }.scrollDismissesKeyboard(.interactively)
+    }
+    @ViewBuilder private var wideShowDetail: some View {
+        if let id = selectedWideShow, !crm.denied {
+            VStack(alignment: .leading, spacing: 0) {
+                Text(feed["shows"].elements.first(where: { $0["id"].text == id })?["title"].text ?? "Detalle del show")
+                    .font(.headline).padding(18)
+                CRMShowView(id: id, contacts: feed["contacts"], feed: feed, embedded: true).id(id)
+            }.accessibilityIdentifier("crm.wide.detail")
+        } else {
+            ContentUnavailableView("Selecciona un show", systemImage: "briefcase", description: Text("Consulta su cuenta, abonos y preparación sin salir del listado."))
+        }
     }
     private var phoneMetrics:some View {
         HStack(alignment:.top,spacing:18) {
@@ -369,7 +396,7 @@ struct CRMEditorRequest:Identifiable {
 struct CRMShowView:View {
     @EnvironmentObject private var store:PayrollStore
     @EnvironmentObject private var crm:CRMStore
-    let id:String;var contacts:JSONValue = .array([]);var feed:JSONValue = .null;var initialTab="account"
+    let id:String;var contacts:JSONValue = .array([]);var feed:JSONValue = .null;var initialTab="account";var embedded=false
     @State private var planData:JSONValue = .null
     @State private var planDraft:JSONValue = .null
     @State private var detail:JSONValue = .null
@@ -390,7 +417,7 @@ struct CRMShowView:View {
                 else { CRMPlanView(id:id,show:detail["show"],tab:tab,data:$planData,draft:$planDraft) }
             }.scrollContentBackground(.hidden).refreshable { await load() }
         }.jacSurface()
-            .navigationTitle(detail["show"]["title"].text.isEmpty ? "Show":detail["show"]["title"].text).jacInlineTitle().jacRefreshCommand { Task { await load() } }
+            .modifier(CRMShowNavigationTitle(title: detail["show"]["title"].text.isEmpty ? "Show" : detail["show"]["title"].text, embedded: embedded)).jacRefreshCommand { Task { await load() } }
             .task { tab=initialTab;await load();while !Task.isCancelled {do{try await Task.sleep(for:.seconds(30));await load()}catch{break}} }
             .sheet(item:$editor,onDismiss:{ Task { await load() } }) { CRMEditor(request:$0).environmentObject(crm) }
             .onChange(of:crm.denied) {_,denied in if denied {editor=nil;detail = .null;planData = .null;planDraft = .null;confirmDelete=false}}
@@ -415,6 +442,14 @@ struct CRMShowView:View {
     private func load() async { let q=["id":id];if detail.isNull,let saved=crm.cached(q){detail=saved};do { detail=try await crm.read(q);error=nil } catch { self.error=store.reportReadFailure(error) } }
     private func prepareRemoval() async { busy=true;defer { busy=false };do { let d=try await crm.command("prepareDeleteShow",record:.object(["id":.string(id),"version":detail["show"]["version"]]));deletion=d["record"];deleteTitle="¿Eliminar \(d["event"]["title"].text.isEmpty ? detail["show"]["title"].text:d["event"]["title"].text)?";confirmDelete=true } catch { self.error=error.localizedDescription } }
     private func remove() async { guard let deletion else{return};busy=true;defer{busy=false};do { _ = try await crm.command("deleteShow",record:deletion);await load() } catch { await load();self.error=error.localizedDescription } }
+}
+private struct CRMShowNavigationTitle: ViewModifier {
+    let title: String
+    let embedded: Bool
+    @ViewBuilder func body(content: Content) -> some View {
+        if embedded { content }
+        else { content.navigationTitle(title).jacInlineTitle() }
+    }
 }
 struct CRMMetric:View {
     let title:String;let value:JSONValue

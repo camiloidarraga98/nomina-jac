@@ -18,10 +18,11 @@ extension EnvironmentValues {
 struct PhoneSidebarToolbar: ViewModifier {
     var title: String? = nil
     @Environment(\.phoneSidebarMenu) private var menu
+    @Environment(\.jacWorkspaceLayout) private var layout
     @State private var insideModal = true
     @ViewBuilder
     func body(content: Content) -> some View {
-        if let menu, !JACDevice.isPad {
+        if let menu, !JACDevice.isPad, !layout.isWide {
             content.background(PhoneSidebarPresentationReader { value in
                 if insideModal != value { insideModal = value }
             }).toolbar {
@@ -83,11 +84,12 @@ private final class PhoneSidebarPresentationAnchor: UIView {
 // A screen-edge recognizer leaves ordinary horizontal controls and vertical
 // scrolling alone. A pushed navigation destination keeps the system back swipe.
 private struct PhoneSidebarEdgeGesture: UIViewRepresentable {
+    @Environment(\.jacWorkspaceLayout) private var layout
     let enabled: Bool
     let open: () -> Void
     func makeUIView(context: Context) -> PhoneSidebarGestureAnchor { PhoneSidebarGestureAnchor() }
     func updateUIView(_ view: PhoneSidebarGestureAnchor, context: Context) {
-        view.enabled = enabled; view.open = open
+        view.enabled = enabled && !layout.isWide; view.open = open
     }
     static func dismantleUIView(_ view: PhoneSidebarGestureAnchor, coordinator: ()) { view.detach() }
 }
@@ -219,6 +221,7 @@ struct PayrollHomeView: View {
     @State private var phoneMenuOpen = false
     @State private var phoneVisited: Set<String> = []
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.dynamicTypeSize) private var typeSize
     @AccessibilityFocusState private var menuCloseFocused: Bool
     @AccessibilityFocusState private var menuOpenFocused: Bool
     private var phoneDestinations: [(id: String, title: String, symbol: String)] {
@@ -242,31 +245,39 @@ struct PayrollHomeView: View {
     }
     private var phoneDrawerWorkspace: some View {
         GeometryReader { geometry in
-            let width = min(314, geometry.size.width * 0.86)
+            let layout = JACWorkspaceLayout.phone(size: geometry.size, accessibility: typeSize.isAccessibilitySize)
+            let width = layout.isWide ? JACWorkspaceLayout.railWidth : min(314, geometry.size.width * 0.86)
+            let menuVisible = !layout.isWide && phoneMenuOpen
+            let workspaceWidth = layout.isWide ? geometry.size.width - width : geometry.size.width
             // Move the persistent panel and screen as one layout. A render-only
             // offset leaves UIKit accessibility children at the old drawer x;
             // positioning the layout also updates their native hit-test frames.
             HStack(spacing: 0) {
-                phoneSidebar
+                Group {
+                    if layout.isWide { phoneRail }
+                    else { phoneSidebar }
+                }
                     .frame(width: width, height: geometry.size.height)
-                    .allowsHitTesting(phoneMenuOpen).accessibilityHidden(!phoneMenuOpen)
+                    .allowsHitTesting(layout.isWide || menuVisible).accessibilityHidden(!layout.isWide && !menuVisible)
                 phoneWorkspace
                     .safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
-                    .frame(width: geometry.size.width, height: geometry.size.height)
+                    .frame(width: workspaceWidth, height: geometry.size.height)
                     .background(JACTheme.canvas)
-                    .allowsHitTesting(!phoneMenuOpen).accessibilityHidden(phoneMenuOpen)
+                    .allowsHitTesting(!menuVisible).accessibilityHidden(menuVisible)
                     .overlay {
                         Color.clear.contentShape(Rectangle())
                             .onTapGesture { setPhoneMenu(false) }
                             .simultaneousGesture(DragGesture(minimumDistance: 30).onEnded { closePhoneMenuOnSwipe($0) })
-                            .allowsHitTesting(phoneMenuOpen).accessibilityHidden(true)
+                            .allowsHitTesting(menuVisible).accessibilityHidden(true)
                     }
             }
-            .frame(width: geometry.size.width + width, height: geometry.size.height, alignment: .leading)
-            .position(x: phoneMenuOpen ? (geometry.size.width + width) / 2 : (geometry.size.width - width) / 2,
+            .frame(width: layout.isWide ? geometry.size.width : geometry.size.width + width, height: geometry.size.height, alignment: .leading)
+            .position(x: layout.isWide ? geometry.size.width / 2 : menuVisible ? (geometry.size.width + width) / 2 : (geometry.size.width - width) / 2,
                       y: geometry.size.height / 2)
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .leading)
             .clipped()
+            .environment(\.jacWorkspaceLayout, layout)
+            .onChange(of: layout.isWide) { _, wide in if wide { setPhoneMenu(false) } }
         }.background(JACTheme.canvas.ignoresSafeArea())
     }
     private func closePhoneMenuOnSwipe(_ value: DragGesture.Value) {
@@ -288,6 +299,52 @@ struct PayrollHomeView: View {
         .environment(\.phoneSidebarMenu, PhoneSidebarMenu(open: { setPhoneMenu(true) }, focus: $menuOpenFocused))
         .background(PhoneSidebarEdgeGesture(enabled: !phoneMenuOpen) { setPhoneMenu(true) })
         .onChange(of: selected) { old, new in phoneVisited.insert(old); phoneVisited.insert(new) }
+    }
+    private var phoneRail: some View {
+        VStack(spacing: 8) {
+            Image("JACLogo").resizable().scaledToFit().frame(width: 58, height: 32)
+                .padding(.top, 8).accessibilityHidden(true)
+            ScrollView {
+                VStack(spacing: 5) {
+                    ForEach(phoneDestinations.filter { ["agenda", "boarding", "media", "music"].contains($0.id) || ($0.id == "itineraries" && !user.hasSection(.boarding)) }, id: \.id) { item in
+                        railButton(item)
+                    }
+                    Menu {
+                        ForEach(phoneDestinations.filter { !["agenda", "boarding", "media", "music"].contains($0.id) && !($0.id == "itineraries" && !user.hasSection(.boarding)) }, id: \.id) { item in
+                            Button { selectPhoneSection(item.id) } label: { Label(item.title, systemImage: item.symbol) }
+                                .accessibilityIdentifier("phone.section." + item.id)
+                        }
+                    } label: {
+                        railLabel("Más", symbol: "ellipsis", active: !["agenda", "boarding", "media", "music"].contains(selected) && !(selected == "itineraries" && !user.hasSection(.boarding)))
+                    }.accessibilityIdentifier("phone.rail.more").accessibilityLabel("Más secciones")
+                }.padding(.horizontal, 6)
+            }.scrollIndicators(.hidden)
+            Button { selectPhoneSection("management") } label: {
+                Text(user.displayName.split(separator: " ").prefix(2).map { String($0.prefix(1)) }.joined().uppercased())
+                    .font(.caption.weight(.semibold)).frame(width: 44, height: 44)
+                    .background(JACTheme.border, in: Circle())
+            }.buttonStyle(.plain).accessibilityLabel("Mi cuenta y Gestión").padding(.bottom, 8)
+        }.foregroundStyle(JACTheme.ink).background(JACTheme.card)
+            .overlay(alignment: .trailing) { Rectangle().fill(JACTheme.border).frame(width: 1) }
+            .accessibilityIdentifier("phone.rail")
+    }
+    private func selectPhoneSection(_ id: String) {
+        phoneVisited.insert(selected); phoneVisited.insert(id); selected = id; setPhoneMenu(false)
+    }
+    private func railButton(_ item: (id: String, title: String, symbol: String)) -> some View {
+        Button { selectPhoneSection(item.id) } label: {
+            railLabel(item.id == "media" ? "Fotos" : item.title, symbol: item.symbol, active: selected == item.id)
+        }.buttonStyle(.plain).accessibilityAddTraits(selected == item.id ? [.isSelected] : [])
+            .accessibilityIdentifier("phone.section." + item.id)
+    }
+    private func railLabel(_ title: String, symbol: String, active: Bool) -> some View {
+        VStack(spacing: 4) {
+            Image(systemName: symbol).font(.system(size: 21))
+            Text(title).font(.system(size: 10, weight: active ? .semibold : .regular)).lineLimit(1)
+        }.frame(maxWidth: .infinity, minHeight: 54)
+            .foregroundStyle(active ? JACTheme.action : JACTheme.ink)
+            .background(active ? JACTheme.action.opacity(0.1) : .clear, in: RoundedRectangle(cornerRadius: 12))
+            .contentShape(Rectangle())
     }
     @ViewBuilder private func phoneContent(_ destination: String) -> some View {
         switch destination {

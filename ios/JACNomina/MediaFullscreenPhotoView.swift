@@ -11,28 +11,37 @@ struct MediaFullscreenPhotoView:View {
     private let stamp:String?
     private let feed:MediaFeed
     private let denied:(Error)->Void
+    private let embedded: Bool
+    private let closeEmbedded: (() -> Void)?
+    private let expand: ((MediaItem) -> Void)?
     @State private var prefetch=MediaFolderPhotoPrefetch()
     @StateObject private var photoSave=MediaFolderTransfer()
 
-    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,denied:@escaping(Error)->Void) {
+    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
         self.client=client;self.feed=feed;self.denied=denied
+        self.embedded=embedded;self.closeEmbedded=close;self.expand=expand
         let expected=try? client.mediaAccessStamp();stamp=expected
         _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaPhotoPreview($0,quality:.balanced,collectionID:feed.collectionID,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == client.mediaPresentationStamp},denied:denied,improve:{try await client.improveMediaPhotoPreview($0,current:$1)}))
     }
     private var folderName:String { feed.folder?.name ?? feed.breadcrumbs.last?.name ?? feed.root?.name ?? "Fotografía" }
-    private func close() { photoSave.cancel();photos.stop();prefetch.stop();dismiss() }
+    private func close() { photoSave.cancel();photos.stop();prefetch.stop();if let closeEmbedded {closeEmbedded()}else{dismiss()} }
     var body:some View {
         ZStack {
             Color.black.ignoresSafeArea()
             MediaFullscreenPhotoPager(items:photos.items,selectedID:photos.selectedID,documents:photos.urls,progress:photos.progress,errors:photos.errors,active:phase == .active,select:photos.select,retry:photos.retry,savePhoto:{ item in
                 photoSave.start(client:client,plan:MediaDownloadPlan(folder:feed.folder ?? feed.root ?? MediaFolder(id:"photo",name:"Foto"),files:[item]),photos:true,writer:MediaPhotosExport.writer(client))
             },dismissPhoto:close)
-                .ignoresSafeArea().accessibilityIdentifier("media.fullscreen")
+                .accessibilityIdentifier("media.fullscreen")
                 .accessibilityAction(.escape,close)
         }
         .safeAreaInset(edge:.top,spacing:0) {
-            Text(folderName).font(.headline).foregroundStyle(.white).lineLimit(1)
-                .frame(maxWidth:.infinity).padding(.horizontal,24).padding(.vertical,14)
+            HStack(spacing: 8) {
+                Text(folderName).font(.headline).foregroundStyle(.white).lineLimit(1).frame(maxWidth: .infinity, alignment: embedded ? .leading : .center)
+                if embedded, let expand {
+                    Button { if let item = photos.selected { expand(item) } } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 44, height: 44) }
+                        .foregroundStyle(.white).accessibilityLabel("Ver foto a pantalla completa").accessibilityIdentifier("media.wide.expand")
+                }
+            }.padding(.horizontal, embedded ? 12 : 24).padding(.vertical, embedded ? 2 : 14)
                 .background(.black.opacity(0.65)).accessibilityIdentifier("media.preview.folder")
         }
         .safeAreaInset(edge:.bottom,spacing:0) {
@@ -49,7 +58,7 @@ struct MediaFullscreenPhotoView:View {
                 filmstrip
             }.padding(.vertical,10).background(.black.opacity(0.85))
         }
-        .statusBarHidden().privacySensitive().preferredColorScheme(.dark)
+        .statusBarHidden(!embedded).privacySensitive().preferredColorScheme(.dark)
         .task {
             photos.start()
             photos.refreshAuthorization()
@@ -70,9 +79,9 @@ struct MediaFullscreenPhotoView:View {
             #endif
             if phase == .active {prefetch.start(feed,client:client,selectedID:value,denied:denied)}
         }
-        .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {photoSave.cancel();photos.stop();prefetch.stop();dismiss()}}
-        .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {photos.stop();dismiss()}}
-        .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {photos.stop();dismiss()}}
+        .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {close()}}
+        .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {close()}}
+        .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {close()}}
         .onDisappear {photoSave.cancel();prefetch.stop();photos.stop()}
     }
     private var filmstrip:some View {

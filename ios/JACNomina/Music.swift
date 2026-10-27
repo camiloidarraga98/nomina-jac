@@ -319,6 +319,7 @@ struct MusicLibraryView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     @Environment(\.scenePhase) private var phase
+    @Environment(\.jacWorkspaceLayout) private var layout
     @State private var library: MusicLibrary?
     @State private var section: MusicSection?
     @State private var search = ""
@@ -339,7 +340,7 @@ struct MusicLibraryView: View {
         titledContent
             .jacSearchable(text:$search,prompt:section == nil ? "Buscar en toda Música":"Buscar en esta sección")
             .toolbar {
-                if section != nil {ToolbarItem(placement:.cancellationAction){Button {section=nil;search=""} label:{Label("Música",systemImage:"chevron.left")}}}
+                if section != nil && !layout.isWide {ToolbarItem(placement:.cancellationAction){Button {section=nil;search=""} label:{Label("Música",systemImage:"chevron.left")}}}
                 if user.canUploadMusic {ToolbarItem(placement:.primaryAction){importButton}}
                 #if os(macOS)
                 ToolbarItem {Button {Task{await load()}} label:{Image(systemName:"arrow.clockwise")}.disabled(loading).accessibilityLabel("Actualizar Música")}
@@ -361,7 +362,8 @@ struct MusicLibraryView: View {
     }
     @ViewBuilder private var titledContent: some View {
         #if os(iOS)
-        if section == nil {mobileLibrary.jacSurface().jacWorkspaceTitle("Música")}
+        if layout.isWide {wideLibrary.jacSurface().jacWorkspaceTitle("Música")}
+        else if section == nil {mobileLibrary.jacSurface().jacWorkspaceTitle("Música")}
         else {mobileLibrary.jacSurface().navigationTitle(section!.title).jacInlineTitle()}
         #else
         legacyLibrary.jacSurface().navigationTitle(section?.title ?? "Música").jacInlineTitle()
@@ -385,6 +387,45 @@ struct MusicLibraryView: View {
         #endif
     }
     #if os(iOS)
+    private var wideLibrary: some View {
+        HStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    Text("Tu biblioteca").font(.headline)
+                    ForEach(MusicSection.allCases) { item in
+                        playlistRow(item).padding(.horizontal, 10)
+                            .background(section == item ? JACTheme.action.opacity(0.09) : .clear, in: RoundedRectangle(cornerRadius: 14))
+                    }
+                }.padding(16)
+            }.frame(width: min(290, layout.contentWidth * 0.36))
+            Rectangle().fill(JACTheme.border).frame(width: 1)
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    if let error { InlineError(message: error) }
+                    if let notice { Text(notice).font(.caption).foregroundStyle(.secondary) }
+                    HStack {
+                        Text(section?.title ?? "Todos los audios").font(.title2.bold())
+                        Spacer(); libraryOptions
+                    }
+                    if let downloadProgress {
+                        HStack { ProgressView(); Text(downloadProgress).font(.caption); Button("Cancelar") { downloadTask?.cancel() } }
+                    }
+                    HStack(spacing: 14) {
+                        Button { if let first = tracks.first { store.music.play(first, queue: tracks) } } label: { Label("Reproducir", systemImage: "play.fill") }
+                            .buttonStyle(.borderedProminent).disabled(tracks.isEmpty).accessibilityIdentifier("music.wide.play")
+                        Button { download(tracks) } label: { Image(systemName: "arrow.down.circle").frame(width: 44, height: 44) }
+                            .disabled(tracks.isEmpty || downloadTask != nil || store.isOffline)
+                            .accessibilityLabel("Descargar audios sin conexión").accessibilityIdentifier("music.download.section")
+                    }
+                    LazyVStack(spacing: 0) {
+                        ForEach(tracks) { track in row(track); Divider().overlay(JACTheme.border) }
+                    }
+                    if tracks.isEmpty && !loading { ContentUnavailableView("No hay audios", systemImage: "music.note", description: Text("Elige otra playlist o cambia la búsqueda.")) }
+                    if loading && library == nil { ProgressView("Cargando Música…") }
+                }.padding(18)
+            }
+        }.accessibilityIdentifier("phone.music.columns").refreshable { await load() }
+    }
     private var recentlyAdded: [MusicTrack] {
         Array((library?.tracks ?? []).sorted {a,b in a.createdAt == b.createdAt ? a.id < b.id:a.createdAt > b.createdAt}.prefix(2))
     }

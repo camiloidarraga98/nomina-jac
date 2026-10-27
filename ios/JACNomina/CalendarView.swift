@@ -5,6 +5,7 @@ struct CalendarView: View {
     @Environment(\.scenePhase) private var phase
     @Environment(\.isWorkspaceActive) private var isWorkspaceActive
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
+    @Environment(\.jacWorkspaceLayout) private var layout
     let user: PayrollUser
     @StateObject private var connectivity = AgendaConnectivity()
     @State private var month = CalendarClock.month(Date())
@@ -15,6 +16,7 @@ struct CalendarView: View {
     @State private var error: String?
     @State private var settings = false
     @State private var event: AgendaEvent?
+    @State private var selectedWideEvent: String?
     @State private var editor: AgendaEditorSession?
     @State private var editAfterDetail: AgendaEvent?
     @State private var notice: String?
@@ -111,7 +113,8 @@ struct CalendarView: View {
         }
     }
     @ViewBuilder private func connectedAgenda(_ visible: AgendaData, byDay: [String: [AgendaEvent]]) -> some View {
-        if compactPhone { phoneAgenda(visible, byDay: byDay) }
+        if compactPhone && layout.isWide { widePhoneAgenda(visible, byDay: byDay) }
+        else if compactPhone { phoneAgenda(visible, byDay: byDay) }
         else { regularAgenda(visible, byDay: byDay) }
         if let warning = store.agendaStorageWarning {
             AgendaSection { Text(warning).font(.footnote).foregroundStyle(.secondary) }
@@ -203,6 +206,43 @@ struct CalendarView: View {
         if let item = editAfterDetail, let visible {
             editor = AgendaEditorSession(event: item, day: day, revision: visible.connection.revision)
             editAfterDetail = nil
+        }
+    }
+    private func widePhoneAgenda(_ visible: AgendaData, byDay: [String: [AgendaEvent]]) -> some View {
+        HStack(alignment: .top, spacing: 18) {
+            VStack(alignment: .leading, spacing: 10) {
+                phoneMonthHeading
+                agendaModePicker
+                phoneCalendar(visible, byDay: byDay)
+            }.frame(width: max(328, (layout.contentWidth - 58) * 0.55))
+            Rectangle().fill(JACTheme.border).frame(width: 1)
+            VStack(alignment: .leading, spacing: 12) {
+                Text(mode == "Mes" ? phoneDayLabel : "Próximos eventos").font(.headline)
+                    .accessibilityIdentifier("agenda.wide.day")
+                let events = mode == "Mes" ? byDay[day] ?? [] : visible.upcoming
+                if events.isEmpty { Text("No hay eventos programados.").font(.subheadline).foregroundStyle(JACTheme.muted) }
+                ForEach(events) { item in
+                    wideEventCard(item)
+                }
+            }.frame(maxWidth: .infinity, alignment: .topLeading)
+        }.accessibilityIdentifier("phone.agenda.columns")
+    }
+    private func wideEventCard(_ item: AgendaEvent) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button { selectedWideEvent = selectedWideEvent == item.id ? nil : item.id } label: {
+                AgendaEventRow(event: item, showsDay: mode != "Mes", compact: true)
+            }.buttonStyle(.plain).accessibilityIdentifier("agenda.event." + item.id)
+                .accessibilityValue(selectedWideEvent == item.id ? "Detalles visibles" : "Mostrar detalles")
+            if selectedWideEvent == item.id {
+                VStack(alignment: .leading, spacing: 10) {
+                    if !item.location.isEmpty { Label(item.location, systemImage: "mappin.and.ellipse") }
+                    Label(item.timeLabel, systemImage: "clock")
+                    if !item.description.isEmpty { Text(item.description).lineLimit(4) }
+                    Button("Ver detalle") { event = item }.frame(minHeight: 44)
+                        .accessibilityIdentifier("agenda.wide.detail." + item.id)
+                }.font(.subheadline).padding(14).frame(maxWidth: .infinity, alignment: .leading)
+                    .background(JACTheme.card, in: RoundedRectangle(cornerRadius: 14))
+            }
         }
     }
     private func monitorAgenda() async {

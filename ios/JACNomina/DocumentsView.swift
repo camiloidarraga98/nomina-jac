@@ -527,6 +527,7 @@ struct MediaGalleryView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var phase
     @Environment(\.isWorkspaceActive) private var isWorkspaceActive
+    @Environment(\.jacWorkspaceLayout) private var layout
     @StateObject private var folderTransfer = MediaFolderTransfer()
     @State private var transferReview: MediaTransferReview?
     @State private var confirmedTransfer: MediaTransferReview?
@@ -581,6 +582,7 @@ struct MediaGalleryView: View {
     @State private var preview: MediaPreview?
     @State private var previewFeed: MediaFeed?
     @State private var fullscreenPhotos:MediaPhotoPresentation?
+    @State private var inlinePhotos:MediaPhotoPresentation?
     @State private var expandedFolders: Set<String> = []
     @State private var uploadComposition: MediaUploadComposition?
     @State private var confirmedUpload = false
@@ -677,7 +679,7 @@ struct MediaGalleryView: View {
         }
     }
     private var galleryNavigation: some View {
-        galleryContent.accessibilityIdentifier("media.gallery.scroll").jacSurface().jacWorkspaceTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : "Fotografía")
+        adaptiveGalleryContent.jacSurface().jacWorkspaceTitle(notificationFolderID != nil ? feed?.folder?.name ?? "Fotografía" : "Fotografía")
             #if os(iOS)
             .toolbar(compactGallery && notificationFolderID == nil && phoneMenu == nil ? .hidden : .automatic,for:.navigationBar)
             .safeAreaInset(edge: .bottom) { if selection.active { selectionActions } }
@@ -714,6 +716,29 @@ struct MediaGalleryView: View {
                 ToolbarItem {Button {Task {await reload()}} label:{Image(systemName:"arrow.clockwise")}.accessibilityLabel("Actualizar fotografías").accessibilityIdentifier("media.refresh").disabled(loading || uploading)}
                 ToolbarItem {if let folder=feed?.folder,feed?.canRead == true {Menu {folderCommands(folder);if user.canUploadMedia {Button("Calidad de las imágenes",systemImage:"slider.horizontal.3"){imageQualitySettings=true}.accessibilityIdentifier("media.quality")}} label:{Image(systemName:"ellipsis.circle")}.accessibilityLabel("Opciones de esta carpeta").accessibilityIdentifier("media.current.options")}}
                 }
+            }
+    }
+    private var adaptiveGalleryContent: some View {
+        HStack(spacing: 0) {
+            galleryContent.accessibilityIdentifier("media.gallery.scroll")
+                .frame(maxWidth: layout.isWide ? max(290, layout.contentWidth * 0.47) : .infinity)
+            #if os(iOS)
+            if layout.isWide {
+                Rectangle().fill(JACTheme.border).frame(width: 1)
+                Group {
+                    if let request = inlinePhotos {
+                        MediaFullscreenPhotoView(selected: request.selected, feed: request.feed, client: store.client, embedded: true, close: { inlinePhotos = nil }, expand: { item in
+                            fullscreenPhotos = MediaPhotoPresentation(selected: item, feed: request.feed)
+                        }, denied: thumbnailDenied).id(request.id)
+                    } else {
+                        ContentUnavailableView("Selecciona una foto", systemImage: "photo", description: Text("Explora la carpeta y consulta sus fotos aquí. Puedes ampliarlas a pantalla completa."))
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity).clipped().accessibilityIdentifier("media.wide.preview")
+            }
+            #endif
+        }.accessibilityIdentifier(layout.isWide ? "phone.media.columns" : "phone.media.list")
+            .onChange(of: layout.isWide) { _, wide in
+                if !wide, let request = inlinePhotos { fullscreenPhotos = request; inlinePhotos = nil }
             }
     }
     private var galleryUpdates: some View {
@@ -1213,7 +1238,9 @@ struct MediaGalleryView: View {
         if item.kind == "folder" { navigate(to: item.id); return }
         if compactGallery,item.kind == "image",let source=context ?? feed {
             let whole=MediaFeed(connected:source.connected,canRead:source.canRead,canUpload:source.canUpload,canConnect:source.canConnect,root:source.root,folder:source.folder,breadcrumbs:source.breadcrumbs,items:context?.items ?? items,nextPageToken:source.nextPageToken,provider:source.provider,collectionID:source.collectionID,canDelete:source.canDelete,pendingDeletions:source.pendingDeletions,deletedFolders:source.deletedFolders,deletedFiles:source.deletedFiles,pendingFileDeletions:source.pendingFileDeletions)
-            fullscreenPhotos=MediaPhotoPresentation(selected:item,feed:whole);return
+            if layout.isWide { inlinePhotos=MediaPhotoPresentation(selected:item,feed:whole) }
+            else { fullscreenPhotos=MediaPhotoPresentation(selected:item,feed:whole) }
+            return
         }
         guard opening == nil else { return }; opening = item.id
         openingTask = Task {

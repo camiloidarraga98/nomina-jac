@@ -16,6 +16,27 @@ struct JACWorkspaceRefreshID: Equatable {
     var active: Bool
 }
 
+/// Use the window's usable space, never a device name or a guessed screen size.
+/// Both columns keep normal touch targets; large accessibility text stays stacked.
+struct JACWorkspaceLayout: Equatable {
+    static let railWidth: CGFloat = 80
+    var isWide = false
+    var contentWidth: CGFloat = 0
+    static func phone(size: CGSize, accessibility: Bool) -> Self {
+        let wide = !accessibility && size.width >= 740 && size.height >= 300 && size.width > size.height
+        return Self(isWide: wide, contentWidth: max(0, size.width - (wide ? railWidth : 0)))
+    }
+}
+private struct JACWorkspaceLayoutKey: EnvironmentKey {
+    static let defaultValue = JACWorkspaceLayout()
+}
+extension EnvironmentValues {
+    var jacWorkspaceLayout: JACWorkspaceLayout {
+        get { self[JACWorkspaceLayoutKey.self] }
+        set { self[JACWorkspaceLayoutKey.self] = newValue }
+    }
+}
+
 // Keep the iPhone's system picker; Mac dates open from a complete button.
 #if os(macOS)
 typealias JACDatePicker = MacDatePicker

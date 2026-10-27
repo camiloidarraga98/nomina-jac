@@ -216,6 +216,7 @@ struct NoticesView: View {
     @EnvironmentObject private var store: PayrollStore
     @Environment(\.scenePhase) private var scenePhase
     @Environment(\.isWorkspaceActive) private var isWorkspaceActive
+    @Environment(\.jacWorkspaceLayout) private var layout
     let user: PayrollUser
     var kind = "itinerary"
     var initialNotice: String? = nil
@@ -236,6 +237,10 @@ struct NoticesView: View {
     @State private var boardingCount = 0
     @State private var tomorrowCount = 0
     @State private var boardingDocument: ExportedDocument?
+    @State private var documentSource: BoardingCodeSelection?
+    @State private var documentStamp: String?
+    @State private var documentSheetOpen = false
+    @State private var documentInformation = false
     @State private var boardingCode: BoardingCodeSelection?
     #if os(iOS)
     @State private var boardingWallet: BoardingCodeSelection?
@@ -274,10 +279,18 @@ struct NoticesView: View {
                 let items = records.filter { $0.kind == effectiveKind }
                 if items.isEmpty && feed != nil { Text(effectiveKind == "itinerary" ? "Todavía no hay itinerarios publicados." : "No tienes alertas en este momento.").foregroundStyle(.secondary) }
                 ForEach(items) { item in
-                    Button { detail = item } label: { JACNoticeCard(item:item) }
-                        .buttonStyle(.plain).accessibilityIdentifier("notices.item.\(item.id)").jacStandaloneRow()
+                    Button { openNotice(item) } label: {
+                        VStack(alignment: .leading, spacing: 8) {
+                            JACNoticeCard(item:item)
+                            if let openingFile, item.files.contains(where: { $0.id == openingFile }) { ProgressView("Abriendo itinerario…").font(.caption) }
+                        }
+                    }
+                        .buttonStyle(.plain).disabled(openingFile != nil).accessibilityIdentifier("notices.item.\(item.id)").jacStandaloneRow()
                         .swipeActions(edge:.trailing,allowsFullSwipe:false) { if user.isOwner && item.kind == "itinerary" { deleteButton(item,destructive:false).tint(.red) } }
-                        .contextMenu { if user.isOwner && item.kind == "itinerary" { deleteButton(item) } }
+                        .contextMenu {
+                            Button("Información y confirmación") { detail = item }.accessibilityIdentifier("notices.info." + item.id)
+                            if user.isOwner && item.kind == "itinerary" { deleteButton(item) }
+                        }
                 }
                 if let cursor = feed?.nextCursor, !cursor.isEmpty { Button("Ver anteriores") { Task { await refresh(cursor) } }.disabled(loading) }
             } }
@@ -385,7 +398,7 @@ struct NoticesView: View {
         return effectiveKind == "itinerary" ? "Itinerarios" : "Alertas"
     }
     private var noticeUpdates: some View {
-        noticeList.accessibilityIdentifier("notices.list").jacSurface().jacWorkspaceTitle(noticeTitle).refreshable { boardingDetails.retryUnavailable(); await refresh() }
+        adaptiveNoticeContent.jacSurface().jacWorkspaceTitle(noticeTitle).refreshable { boardingDetails.retryUnavailable(); await refresh() }
             .task(id: JACWorkspaceRefreshID(location: effectiveKind, active: workspaceCanRefresh)) {
                 guard workspaceCanRefresh else { return }
                 restoreCached(); await refresh()
@@ -398,8 +411,8 @@ struct NoticesView: View {
             .onChange(of: workspaceCanRefresh) { _, active in
                 if !active { refreshGeneration = UUID(); loading = false; boardingDetails.cancelPending() }
             }
-            .onChange(of: store.cacheRevision) { _, _ in boardingDetails.revalidate(); if workspaceCanRefresh { restoreCached() } }
-            .onChange(of: store.overview?.user) { _, _ in boardingDetails.revalidate() }
+            .onChange(of: store.cacheRevision) { _, _ in boardingDetails.revalidate(); validateOpenDocument(); if workspaceCanRefresh { restoreCached() } }
+            .onChange(of: store.overview?.user) { _, _ in boardingDetails.revalidate(); validateOpenDocument() }
             .onChange(of: store.isOffline) { _, offline in if !offline && workspaceCanRefresh { Task { await refresh() } } }
             .onChange(of:historyOpen) { _,open in if open && workspaceCanRefresh { Task { await loadHistory() } } }
             #if os(iOS)
@@ -408,24 +421,89 @@ struct NoticesView: View {
             .sheet(item:$boardingCode,onDismiss:openFullPassAfterCode) { selection in codeViewer(selection).frame(minWidth:620,minHeight:540) }
             #endif
     }
-    var body: some View {
-        noticeUpdates.sheet(item:$boardingDocument,onDismiss:{ if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }) { file in
-                NavigationStack { DocumentPreview(url:file.url).privacySensitive().ignoresSafeArea(edges:.bottom).navigationTitle(file.url.pathExtension.lowercased() == "pdf" ? "Pase de abordar PDF" : "Pase de abordar").jacInlineTitle().toolbar { ToolbarItem(placement:.cancellationAction) { Button("Listo") { boardingDocument=nil }.accessibilityIdentifier("notices.pdf.close") }
-                    #if os(iOS)
-                    ToolbarItem(placement:.confirmationAction) { ShareLink(item:file.url) { Image(systemName:"square.and.arrow.up") }.accessibilityLabel("Compartir archivo") }
-                    #endif
-                } }
+    private var usesDocumentColumns: Bool { layout.isWide && effectiveKind != "alert" }
+    private var adaptiveNoticeContent: some View {
+        HStack(spacing: 0) {
+            noticeList.accessibilityIdentifier("notices.list")
+                .frame(maxWidth: usesDocumentColumns ? max(290, layout.contentWidth * 0.44) : .infinity)
+            if usesDocumentColumns {
+                Rectangle().fill(JACTheme.border).frame(width: 1)
+                VStack(spacing: 0) {
+                    HStack {
+                        Text("Vista del documento").font(.headline)
+                        Spacer()
+                        if boardingDocument != nil {
+                            Button { documentSheetOpen = true } label: { Image(systemName: "arrow.up.left.and.arrow.down.right").frame(width: 44, height: 44) }
+                                .accessibilityLabel("Ampliar documento").accessibilityIdentifier("notices.document.expand")
+                            Menu { documentActions } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }.accessibilityLabel("Opciones del documento")
+                        }
+                    }.padding(.horizontal, 16)
+                    if let file = boardingDocument {
+                        DocumentPreview(url: file.url).id(file.url).privacySensitive().accessibilityIdentifier("notices.inline.pdf")
+                    } else if openingFile != nil {
+                        Spacer(); ProgressView("Abriendo documento…"); Spacer()
+                    } else {
+                        ContentUnavailableView("Selecciona un documento", systemImage: "doc.text", description: Text("Toca una ficha para ver aquí su PDF."))
+                    }
+                }.frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }.accessibilityIdentifier(usesDocumentColumns ? "phone.notices.columns" : "phone.notices.list")
+    }
+    @ViewBuilder private var documentActions: some View {
+        if let source = documentSource {
+            if source.item.kind == "itinerary" {
+                Button("Información y confirmación") { documentInformation = true }.accessibilityIdentifier("notices.document.info")
+            }
+            ForEach(source.item.files.filter { $0.id != source.file.id }) { attachment in
+                Button(attachment.filename) { Task { await openBoarding(source.item, file: attachment) } }
+            }
+        }
+        if let file = boardingDocument { ShareLink(item: file.url) { Label("Compartir archivo", systemImage: "square.and.arrow.up") } }
+    }
+    private var documentPage: some View {
+        NavigationStack {
+            Group {
+                if let file = boardingDocument { DocumentPreview(url: file.url).id(file.url).privacySensitive().ignoresSafeArea(edges: .bottom) }
+            }.navigationTitle(documentSource?.item.kind == "itinerary" ? "Itinerario PDF" : "Pase de abordar PDF").jacInlineTitle()
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Listo") { documentSheetOpen = false }.accessibilityIdentifier("notices.pdf.close")
+                    }
+                    ToolbarItem(placement: .confirmationAction) {
+                        Menu { documentActions } label: { Image(systemName: "ellipsis.circle") }.accessibilityLabel("Opciones del documento").accessibilityIdentifier("notices.document.options")
+                    }
+                }
+                .sheet(isPresented: $documentInformation) { if let source = documentSource { NoticeDetail(item: source.item, owner: user.isOwner) } }
+        }
+    }
+    var body: some View {
+        noticeUpdates.sheet(isPresented: $documentSheetOpen, onDismiss: { if !usesDocumentColumns { clearOpenDocument() } }) { documentPage }
+            .onChange(of: layout.isWide) { _, _ in if boardingDocument != nil { documentSheetOpen = !usesDocumentColumns } }
+            .sheet(isPresented: Binding(get: { documentInformation && !documentSheetOpen }, set: { documentInformation = $0 })) { if let source = documentSource { NoticeDetail(item: source.item, owner: user.isOwner) } }
             .alert("Eliminar " + (pendingDelete?.kind == "boarding_pass" ? "pase de abordar" : "itinerario"),isPresented:$confirmingListDelete) {
                 Button("Cancelar",role:.cancel) { pendingDelete=nil }.accessibilityIdentifier("notices.list.delete.cancel")
                 Button("Eliminar",role:.destructive) { if let item=pendingDelete { Task { await remove(item) } } }.accessibilityIdentifier("notices.list.delete.confirm")
             } message: { Text(pendingDelete?.kind == "boarding_pass" ? "¿Estás seguro de que quieres eliminar este pase de abordar?" : "¿Estás seguro de que quieres eliminar este itinerario para todo el equipo?") }
-            .onDisappear { boardingDetails.cancelPending(); documentGeneration += 1; if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument=nil } }
+            .onDisappear { boardingDetails.cancelPending(); clearOpenDocument() }
             .sheet(item: $detail, onDismiss: { Task { await refresh() } }) { item in NoticeDetail(item: item, owner: user.isOwner) }
             .sheet(isPresented: $editor) { if let feed { NoticeComposer(users: feed.users, boardingUsers: feed.boardingUsers ?? feed.users) { savedKind in incomingKind = savedKind; notice = savedKind == "boarding_pass" ? "Pase publicado únicamente para la persona elegida." : savedKind == "itinerary" ? "Itinerario publicado para todo el equipo." : "Alerta guardada para los destinatarios elegidos."; await refresh() } } }
             #if os(iOS)
             .sheet(item:$boardingWallet) { selection in BoardingWalletPreparationView(selection:selection) }
             #endif
+    }
+    private func openNotice(_ item: JACNotice) {
+        if item.kind == "itinerary", let file = item.files.first(where: { $0.mimeType == "application/pdf" }) {
+            Task { await openBoarding(item, file: file) }
+        } else { detail = item }
+    }
+    private func clearOpenDocument() {
+        documentGeneration += 1; documentSheetOpen = false; documentInformation = false
+        boardingDocument = nil; documentSource = nil; documentStamp = nil
+        if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument); self.previousBoardingDocument = nil }
+    }
+    private func validateOpenDocument() {
+        guard let source = documentSource, let stamp = documentStamp else { return }
+        if stamp != (try? store.client.noticeDocumentAccessStamp(source.item, file: source.file)) { clearOpenDocument() }
     }
     @ViewBuilder private func deleteButton(_ item:JACNotice,destructive:Bool = true) -> some View {
         Button(role:destructive ? .destructive : nil) { pendingDelete=item; confirmingListDelete=true } label: { Label(item.kind == "boarding_pass" ? "Eliminar pase de abordar" : "Eliminar itinerario",systemImage:"trash").font(.subheadline) }
@@ -571,9 +649,12 @@ struct NoticesView: View {
     private func openBoarding(_ item:JACNotice,file:NoticeAttachment) async {
         guard openingFile == nil else { return }; openingFile=file.id; let generation=documentGeneration; defer { openingFile=nil }
         do {
-            let result=try await store.client.noticeFile(item,file:file)
-            guard generation == documentGeneration else { TemporaryDocuments.remove(result); return }
-            previousBoardingDocument=result; boardingDocument=result
+            let stamp = try store.client.noticeDocumentAccessStamp(item, file: file)
+            let result = item.kind == "itinerary" && item.attachments == nil ? try await store.client.itinerary(item) : try await store.client.noticeFile(item,file:file)
+            guard generation == documentGeneration, !Task.isCancelled, stamp == (try? store.client.noticeDocumentAccessStamp(item, file: file)) else { TemporaryDocuments.remove(result); return }
+            if let previousBoardingDocument { TemporaryDocuments.remove(previousBoardingDocument) }
+            documentStamp = stamp; documentSource = BoardingCodeSelection(item: item, file: file)
+            previousBoardingDocument=result; boardingDocument=result; documentSheetOpen = !usesDocumentColumns
             do { if !store.isOffline { try await store.client.noticeCommand(.object(["action":.string("read"),"id":.string(item.id)])) } } catch { self.error=store.reportReadFailure(error) }
         } catch { self.error=store.reportReadFailure(error) }
     }
@@ -621,7 +702,7 @@ struct NoticesView: View {
                 tomorrowCount = passes.notices.filter { $0.travelDate == BoardingClock.nextDay(day) }.count
             }
             if historyOpen { await loadHistory() }
-            if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { detail = item } }
+            if !handledInitial, let initialNotice { handledInitial = true; let item: JACNotice; if let found = records.first(where: { $0.id == initialNotice }) { item = found } else { item = try await store.client.notice(id: initialNotice) }; incomingKind = item.kind; if item.kind == "boarding_pass",let first=item.files.first { await openBoarding(item,file:first) } else { openNotice(item) } }
         } catch {
             guard request == refreshGeneration, workspaceCanRefresh, !Task.isCancelled else { return }
             self.error = store.reportReadFailure(error)

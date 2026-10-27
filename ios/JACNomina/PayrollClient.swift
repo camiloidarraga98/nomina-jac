@@ -975,6 +975,17 @@ final class PayrollClient: ObservableObject {
         let name = (file.filename as NSString).lastPathComponent
         return try TemporaryDocuments.save(data, filename: name.isEmpty ? "Adjunto" : name)
     }
+    /// Explicit document opening/revalidation only; do not call from row drawing.
+    /// A visible split-pane PDF remains tied to its recipient, revision and session.
+    func noticeDocumentAccessStamp(_ item: JACNotice, file: NoticeAttachment) throws -> String {
+        guard permissionUser?.permitsNotice(item.kind) == true, let scope = try offlineScope(),
+              let latest = cachedNotice(item.id), latest.kind == item.kind,
+              (latest.revision ?? 1) == (item.revision ?? 1),
+              latest.files.contains(where: { $0.id == file.id && $0.filename == file.filename && $0.mimeType == file.mimeType && $0.size == file.size }) else {
+            throw APIError.invalid("El documento cambió o ya no está disponible. Vuelve a abrirlo desde la lista.")
+        }
+        return "\(scope.id):\(cacheGeneration):\(noticeInvalidations[item.id, default: 0]):\(item.revision ?? 1)"
+    }
     // A derived code belongs to the same private session, attachment and revision
     // as its PDF. Removal/denial invalidates even an in-memory, already decoded code.
     // Identity for a cached card's display/task key. This is deliberately not
