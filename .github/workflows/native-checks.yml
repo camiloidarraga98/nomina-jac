@@ -145,6 +145,7 @@ jobs:
           JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
           JAC_HD_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[hd-only]') }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
+          JAC_WIDE_CRM_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-crm-followup]') }}
           JAC_WIDE_WORKSPACE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) }}
           JAC_PHOTO_FILMSTRIP: ${{ inputs.scope == 'photo-filmstrip' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-photo-filmstrip]')) }}
           JAC_NATIVE_MEDIA_ACTIONS: ${{ inputs.scope == 'media-native-actions' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-native-media-actions]')) }}
@@ -156,6 +157,9 @@ jobs:
           set -euo pipefail
           build_action=test
           if [ "$JAC_WIDE_WORKSPACE" = true ]; then
+            if [ "$JAC_WIDE_CRM_FOLLOWUP" = true ]; then
+              checks=(-only-testing:JACNominaUITests/LaunchTests/testWideCRMShowsListAndSelectedShowDetails)
+            else
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testWideWorkspaceNeedsUsableColumnsAndRespectsAccessibilityText
               -only-testing:JACNominaTests/PayrollClientTests/testOpenNoticeDocumentStampRejectsOtherAttachmentsNewRevisionAndLogout
@@ -177,6 +181,7 @@ jobs:
               -only-testing:JACNominaUITests/LaunchTests/testPhotoViewerHasFolderFilmstripDirectSaveAndBothVerticalDismissGestures
               -only-testing:JACNominaUITests/LaunchTests/testFullscreenPhotoChangesImmediatelyShowsProgressAndReusesViewedCache
             )
+            fi
           elif [ "$JAC_PHOTO_FILMSTRIP" = true ]; then
             checks=(
               -only-testing:JACNominaTests/MediaPhotoFilmstripTests

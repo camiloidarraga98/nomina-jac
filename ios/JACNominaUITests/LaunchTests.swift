@@ -89,6 +89,11 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(show.isHittable, "La cuenta del show no debe ocultar el listado")
         attachScreen(app, name: "wide-crm-shows-y-cuenta")
         app.segmentedControls["crm.show.sections"].buttons["Preparación"].tap()
+        XCUIDevice.shared.orientation = .portrait
+        XCTAssertTrue(app.buttons["phone.menu.open"].waitForExistence(timeout: 10))
+        XCUIDevice.shared.orientation = .landscapeLeft
+        XCTAssertTrue(app.otherElements["phone.crm.columns"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.segmentedControls["crm.show.sections"].buttons["Preparación"].isSelected, "Girar no debe reconstruir el detalle ni sus borradores")
         openSection(app, "Agenda"); openSection(app, "CRM")
         XCTAssertTrue(app.segmentedControls["crm.show.sections"].buttons["Preparación"].isSelected)
     }

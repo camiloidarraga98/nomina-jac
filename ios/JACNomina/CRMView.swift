@@ -109,10 +109,15 @@ struct CRMHomeView:View {
             else if section == "shows" {
                 HStack(spacing: 0) {
                     phoneShows.frame(maxWidth: layout.isWide ? max(290, layout.contentWidth * 0.43) : .infinity)
-                    if layout.isWide {
-                        Rectangle().fill(JACTheme.border).frame(width: 1)
-                        wideShowDetail.frame(maxWidth: .infinity, maxHeight: .infinity)
-                    }
+                    Rectangle().fill(JACTheme.border).frame(width: layout.isWide ? 1 : 0).accessibilityHidden(true)
+                    // Keep the detail's tab and any editing sheet mounted when
+                    // rotating. A narrow window hides it without losing drafts.
+                    wideShowDetail
+                        .frame(width: layout.isWide ? nil : max(320, layout.contentWidth))
+                        .frame(maxWidth: layout.isWide ? .infinity : 0, maxHeight: .infinity)
+                        .clipped().opacity(layout.isWide ? 1 : 0)
+                        .allowsHitTesting(layout.isWide).accessibilityHidden(!layout.isWide)
+                        .environment(\.isWorkspaceActive, isWorkspaceActive && layout.isWide)
                 }.accessibilityElement(children: .contain).accessibilityIdentifier(layout.isWide ? "phone.crm.columns" : "phone.crm.list")
             }
             else { List {
