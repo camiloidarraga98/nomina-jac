@@ -73,7 +73,7 @@ struct MediaFullscreenPhotoView:View {
         .task(id: viewActive) {
             guard viewActive else { photos.pause(); prefetch.stop(); return }
             photos.resume()
-            photos.select(requestedSelectionID)
+            if embedded { photos.select(requestedSelectionID) }
             photos.refreshAuthorization()
             prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)
             while !Task.isCancelled {
@@ -83,7 +83,13 @@ struct MediaFullscreenPhotoView:View {
             }
         }
         .onChange(of:viewActive) {_,value in
-            if !value {photoSave.cancel();prefetch.stop();photos.pause()}
+            if !value {
+                // System permission prompts briefly deactivate the scene. Keep
+                // the user's save intent; the transfer rechecks session/access
+                // after permission returns. Leaving this workspace still cancels.
+                if embedded && !isWorkspaceActive { photoSave.cancel() }
+                prefetch.stop();photos.pause()
+            }
         }
         .onChange(of:photos.selectedID) {_,value in
             if let item = photos.selected { selectedChanged?(item) }

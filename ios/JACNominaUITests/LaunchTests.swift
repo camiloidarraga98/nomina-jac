@@ -56,6 +56,8 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.scrollViews["media.photo.pager"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["phone.section.media"].isHittable)
         XCTAssertEqual(app.staticTexts["media.preview.counter"].label, "2 de 2", "Ampliar conserva la selección de la tira")
+        XCUIDevice.shared.press(.home); app.activate()
+        XCTAssertTrue(waitFor(app.staticTexts["media.preview.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 15), "Volver del sistema conserva la foto actual")
         app.scrollViews["media.photo.pager"].swipeDown()
         XCTAssertTrue(app.buttons["phone.section.media"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
