@@ -422,6 +422,10 @@ struct NoticesView: View {
             #endif
     }
     private var usesDocumentColumns: Bool { layout.isWide && effectiveKind != "alert" }
+    private var documentTitle: String {
+        if documentSource?.file.mimeType != "application/pdf" { return "Imagen adjunta" }
+        return documentSource?.item.kind == "itinerary" ? "Itinerario PDF" : "Pase de abordar PDF"
+    }
     private var adaptiveNoticeContent: some View {
         HStack(spacing: 0) {
             noticeList.accessibilityIdentifier("notices.list")
@@ -464,7 +468,7 @@ struct NoticesView: View {
         NavigationStack {
             Group {
                 if let file = boardingDocument { DocumentPreview(url: file.url).id(file.url).privacySensitive().ignoresSafeArea(edges: .bottom) }
-            }.navigationTitle(documentSource?.item.kind == "itinerary" ? "Itinerario PDF" : "Pase de abordar PDF").jacInlineTitle()
+            }.navigationTitle(documentTitle).jacInlineTitle()
                 .toolbar {
                     ToolbarItem(placement: .cancellationAction) {
                         Button("Listo") { documentSheetOpen = false }.accessibilityIdentifier("notices.pdf.close")

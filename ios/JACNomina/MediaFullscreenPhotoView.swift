@@ -15,12 +15,15 @@ struct MediaFullscreenPhotoView:View {
     private let embedded: Bool
     private let closeEmbedded: (() -> Void)?
     private let expand: ((MediaItem) -> Void)?
+    private let requestedSelectionID: String
+    private let selectedChanged: ((MediaItem) -> Void)?
     @State private var prefetch=MediaFolderPhotoPrefetch()
     @StateObject private var photoSave=MediaFolderTransfer()
 
-    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
+    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,selectedChanged:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
         self.client=client;self.feed=feed;self.denied=denied
         self.embedded=embedded;self.closeEmbedded=close;self.expand=expand
+        self.requestedSelectionID=selected.id;self.selectedChanged=selectedChanged
         // Construction can repeat while an embedded gallery scrolls. The RAM
         // identity is presentation only; each real load validates authorization.
         let expected=client.mediaPresentationStamp;stamp=expected
@@ -67,6 +70,7 @@ struct MediaFullscreenPhotoView:View {
         .task(id: viewActive) {
             guard viewActive else { photos.pause(); prefetch.stop(); return }
             photos.resume()
+            photos.select(requestedSelectionID)
             photos.refreshAuthorization()
             prefetch.start(feed,client:client,selectedID:photos.selectedID,denied:denied)
             while !Task.isCancelled {
@@ -79,11 +83,13 @@ struct MediaFullscreenPhotoView:View {
             if !value {photoSave.cancel();prefetch.stop();photos.pause()}
         }
         .onChange(of:photos.selectedID) {_,value in
+            if let item = photos.selected { selectedChanged?(item) }
             #if DEBUG
             UITestBackend.selectedPhotoForProgressFixture(value)
             #endif
             if viewActive {prefetch.start(feed,client:client,selectedID:value,denied:denied)}
         }
+        .onChange(of: requestedSelectionID) { _, id in photos.select(id) }
         .onChange(of:client.mediaPresentationStamp) {_,value in if value != stamp {close()}}
         .onReceive(client.$cacheRevision) {_ in if let id=photos.selected?.id,let scope=try? client.mediaScope(),client.mediaOffline.isDeleted(id,scope:scope) {close()}}
         .onChange(of:store.overview?.user.canReadMedia) {_,value in if value != true {close()}}

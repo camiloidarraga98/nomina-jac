@@ -729,6 +729,10 @@ struct MediaGalleryView: View {
                     if let request = inlinePhotos {
                         MediaFullscreenPhotoView(selected: request.selected, feed: request.feed, client: store.client, embedded: true, close: { inlinePhotos = nil }, expand: { item in
                             fullscreenPhotos = MediaPhotoPresentation(selected: item, feed: request.feed)
+                        }, selectedChanged: { item in
+                            if inlinePhotos?.id == request.id, inlinePhotos?.selected.id != item.id {
+                                inlinePhotos = MediaPhotoPresentation(id: request.id, selected: item, feed: request.feed)
+                            }
                         }, denied: thumbnailDenied).id(request.id)
                     } else {
                         ContentUnavailableView("Selecciona una foto", systemImage: "photo", description: Text("Explora la carpeta y consulta sus fotos aquí. Puedes ampliarlas a pantalla completa."))
@@ -809,7 +813,13 @@ struct MediaGalleryView: View {
             }}) { review in MediaTransferReviewSheet(review: review) { confirmedTransfer=review } }
             .sheet(item: $preview, onDismiss: clearPreview) { document in MediaPreviewSheet(preview: document, photos: (previewFeed?.items ?? items).filter { $0.kind == "image" }, feed: previewFeed ?? feed, client: store.client, denied: thumbnailDenied) }
             #if os(iOS)
-            .fullScreenCover(item:$fullscreenPhotos) {request in MediaFullscreenPhotoView(selected:request.selected,feed:request.feed,client:store.client,denied:thumbnailDenied)}
+            .fullScreenCover(item:$fullscreenPhotos) { request in
+                MediaFullscreenPhotoView(selected: request.selected, feed: request.feed, client: store.client, selectedChanged: { item in
+                    if let inline = inlinePhotos, inline.feed.folder?.id == request.feed.folder?.id, inline.feed.collectionID == request.feed.collectionID {
+                        inlinePhotos = MediaPhotoPresentation(id: inline.id, selected: item, feed: request.feed)
+                    }
+                }, denied: thumbnailDenied)
+            }
             #endif
             .fileImporter(isPresented: $pickingFiles, allowedContentTypes: [.image, .movie, .video], allowsMultipleSelection: true) { result in
                 switch result { case .success(let urls): importTask?.cancel(); importTask = Task { await readFiles(urls) }; case .failure(let failure): if (failure as? CocoaError)?.code != .userCancelled { error = failure.localizedDescription } }
@@ -1372,9 +1382,10 @@ private struct MediaUploadComposition:Identifiable {
     let destination:MediaFolder?
 }
 private struct MediaPhotoPresentation:Identifiable {
-    let id=UUID()
+    let id: UUID
     let selected:MediaItem
     let feed:MediaFeed
+    init(id: UUID = UUID(), selected: MediaItem, feed: MediaFeed) { self.id=id;self.selected=selected;self.feed=feed }
 }
 
 struct MediaTile: View {
