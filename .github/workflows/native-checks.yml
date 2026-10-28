@@ -160,9 +160,12 @@ jobs:
           build_action=test
           if [ "$JAC_WIDE_WORKSPACE" = true ]; then
             if [ "$JAC_WIDE_VIEWER_FOLLOWUP" = true ]; then
-              # Reuse the 31 unit and 12 UI results from 7e36e9e. Only the
-              # viewer's accessibility identifiers and queries change here.
+              # Reuse the unchanged CRM, music, navigation and privacy results.
+              # Check native viewer pause/resume and its two presentation scopes.
               checks=(
+                -only-testing:JACNominaTests/MediaFullscreenPhotoModelTests
+                -only-testing:JACNominaTests/PayrollClientTests/testDirectPhotoSaveWritesTheOriginalAndCleansItsTemporaryFile
+                -only-testing:JACNominaTests/PayrollClientTests/testDirectPhotoSaveStopsAfterDeniedPermissionOrSessionChange
                 -only-testing:JACNominaUITests/LaunchTests/testWidePhotographyKeepsGridBesidePhotoAndCanExpand
                 -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripScrubsBothWaysAndStaysSyncedWithPagerAfterReopening
                 -only-testing:JACNominaUITests/LaunchTests/testPhotoFilmstripFastScrubbingKeepsTheSelectedThumbnailAndPhotoTogether

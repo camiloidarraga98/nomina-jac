@@ -71,6 +71,8 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.buttons["phone.section.media"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["media.item.r2_media-photo"].isHittable)
         XCTAssertTrue(waitFor(embedded.staticTexts["media.preview.embedded.counter"], predicate: NSPredicate(format: "label == %@", "2 de 2"), timeout: 10), "Cerrar el visor completo conserva la selección incrustada")
+        XCTAssertTrue(embedded.images["media.photo.document"].waitForExistence(timeout: 15), "El panel debe reanudar la imagen real después de cerrar el modal")
+        XCTAssertEqual(embedded.images["media.photo.document"].label, "Segunda foto ficticia.png")
     }
     @MainActor func testWideBoardingKeepsCardsAndOriginalPDFTogether() {
         XCUIDevice.shared.orientation = .portrait
@@ -163,7 +165,7 @@ final class LaunchTests: XCTestCase {
         // Tap only its measured visible content, away from the options button.
         photo.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.65)).tap()
         if embedded {
-            XCTAssertTrue(app.scrollViews["media.photo.pager"].waitForExistence(timeout:10), "El panel debe mostrar el visor real junto a la cuadrícula")
+            XCTAssertTrue(app.scrollViews["media.preview.embedded.pager"].waitForExistence(timeout:10), "El panel debe mostrar el visor real junto a la cuadrícula")
         } else {
             XCTAssertTrue(app.otherElements["media.fullscreen"].waitForExistence(timeout:10))
         }

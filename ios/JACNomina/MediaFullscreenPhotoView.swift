@@ -13,6 +13,7 @@ struct MediaFullscreenPhotoView:View {
     private let feed:MediaFeed
     private let denied:(Error)->Void
     private let embedded: Bool
+    private let covered: Bool
     private let closeEmbedded: (() -> Void)?
     private let expand: ((MediaItem) -> Void)?
     private let requestedSelectionID: String
@@ -21,9 +22,9 @@ struct MediaFullscreenPhotoView:View {
     @State private var prefetch=MediaFolderPhotoPrefetch()
     @StateObject private var photoSave=MediaFolderTransfer()
 
-    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,selectionCommand:Int=0,selectedChanged:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
+    init(selected:MediaItem,feed:MediaFeed,client:PayrollClient,embedded:Bool=false,covered:Bool=false,close:(() -> Void)?=nil,expand:((MediaItem) -> Void)?=nil,selectionCommand:Int=0,selectedChanged:((MediaItem) -> Void)?=nil,denied:@escaping(Error)->Void) {
         self.client=client;self.feed=feed;self.denied=denied
-        self.embedded=embedded;self.closeEmbedded=close;self.expand=expand
+        self.embedded=embedded;self.covered=covered;self.closeEmbedded=close;self.expand=expand
         self.requestedSelectionID=selected.id;self.selectedChanged=selectedChanged
         self.selectionCommand=selectionCommand
         // Construction can repeat while an embedded gallery scrolls. The RAM
@@ -32,16 +33,16 @@ struct MediaFullscreenPhotoView:View {
         _photos=StateObject(wrappedValue:MediaFullscreenPhotoModel(selected:selected,items:feed.items,token:feed.nextPageToken ?? "",folderID:feed.folder?.id ?? "",collectionID:feed.collectionID,load:{try await client.mediaPhotoPreview($0,quality:.balanced,collectionID:feed.collectionID,progress:$1)},validate:{try await client.validateMediaItem($0)},page:{try await client.media(folder:feed.folder?.id ?? "",pageToken:$0)},isCurrent:{expected != nil && expected == client.mediaPresentationStamp},denied:denied,improve:{try await client.improveMediaPhotoPreview($0,current:$1)}))
     }
     private var folderName:String { feed.folder?.name ?? feed.breadcrumbs.last?.name ?? feed.root?.name ?? "Fotografía" }
-    private var viewActive: Bool { phase == .active && (!embedded || isWorkspaceActive) }
+    private var viewActive: Bool { phase == .active && !covered && (!embedded || isWorkspaceActive) }
     private func close() { photoSave.cancel();photos.stop();prefetch.stop();if let closeEmbedded {closeEmbedded()}else{dismiss()} }
     var body:some View {
         ZStack {
             Color.black.ignoresSafeArea()
             MediaFullscreenPhotoPager(items:photos.items,selectedID:photos.selectedID,documents:photos.urls,progress:photos.progress,errors:photos.errors,active:viewActive,select:photos.select,retry:photos.retry,savePhoto:{ item in
                 photoSave.start(client:client,plan:MediaDownloadPlan(folder:feed.folder ?? feed.root ?? MediaFolder(id:"photo",name:"Foto"),files:[item]),photos:true,writer:MediaPhotosExport.writer(client))
-            },dismissPhoto:close)
+            },dismissPhoto:close,pagerIdentifier:embedded ? "media.preview.embedded.pager" : "media.photo.pager")
                 .ignoresSafeArea(edges: embedded ? [] : .all)
-                .accessibilityIdentifier("media.fullscreen")
+                .accessibilityIdentifier(embedded ? "media.embedded" : "media.fullscreen")
                 .accessibilityAction(.escape,close)
         }
         .safeAreaInset(edge:.top,spacing:0) {
@@ -72,6 +73,7 @@ struct MediaFullscreenPhotoView:View {
         }
         .statusBarHidden(!embedded).privacySensitive().preferredColorScheme(embedded ? nil : .dark)
         .environment(\.colorScheme, .dark)
+        .accessibilityHidden(covered)
         .task(id: viewActive) {
             guard viewActive else { photos.pause(); prefetch.stop(); return }
             photos.resume()
@@ -126,6 +128,7 @@ private struct MediaPhotoFilmstrip:UIViewRepresentable {
     func makeUIView(context:Context)->MediaPhotoFilmstripView {MediaPhotoFilmstripView()}
     func updateUIView(_ view:MediaPhotoFilmstripView,context:Context) {
         let stamp=client.mediaPresentationStamp ?? ""
+        view.accessibilityElementsHidden = !active
         view.configure(items:items,selectedID:selectedID,active:active,content:{ item in
             UIHostingConfiguration {
                 MediaFilmstripThumbnail(item:item,client:client,denied:denied)

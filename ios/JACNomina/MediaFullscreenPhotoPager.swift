@@ -16,6 +16,7 @@ struct MediaFullscreenPhotoPager: UIViewRepresentable {
     let retry: (String) -> Void
     var savePhoto: ((MediaItem) -> Void)? = nil
     var dismissPhoto: (() -> Void)? = nil
+    var pagerIdentifier = "media.photo.pager"
 
     func makeUIView(context: Context) -> MediaFullscreenPhotoPagerView {
         MediaFullscreenPhotoPagerView()
@@ -24,7 +25,7 @@ struct MediaFullscreenPhotoPager: UIViewRepresentable {
     func updateUIView(_ view: MediaFullscreenPhotoPagerView, context: Context) {
         view.configure(items: items, selectedID: selectedID, documents: documents,
                        progress: progress, errors: errors, active: active,
-                       select: select, retry: retry, savePhoto: savePhoto, dismissPhoto: dismissPhoto)
+                       select: select, retry: retry, savePhoto: savePhoto, dismissPhoto: dismissPhoto, pagerIdentifier: pagerIdentifier)
     }
 
     static func dismantleUIView(_ view: MediaFullscreenPhotoPagerView, coordinator: ()) {
@@ -86,7 +87,9 @@ final class MediaFullscreenPhotoPagerView: UIView, UIScrollViewDelegate, UIConte
 
     func configure(items: [MediaItem], selectedID: String, documents: [String: URL],
                    progress: [String: Double], errors: [String: String], active: Bool,
-                   select: @escaping (String) -> Void, retry: @escaping (String) -> Void, savePhoto: ((MediaItem) -> Void)? = nil, dismissPhoto: (() -> Void)? = nil) {
+                   select: @escaping (String) -> Void, retry: @escaping (String) -> Void, savePhoto: ((MediaItem) -> Void)? = nil, dismissPhoto: (() -> Void)? = nil, pagerIdentifier: String = "media.photo.pager") {
+        pager.accessibilityIdentifier = pagerIdentifier
+        accessibilityElementsHidden = !active
         guard active else { stop(); return }
         if !enabled { enabled = true; epoch = UUID(); pager.isHidden = false }
         self.select = select

@@ -730,7 +730,7 @@ struct MediaGalleryView: View {
                 Rectangle().fill(JACTheme.border).frame(width: 1)
                 Group {
                     if let request = inlinePhotos {
-                        MediaFullscreenPhotoView(selected: request.selected, feed: request.feed, client: store.client, embedded: true, close: { inlinePhotos = nil }, expand: { item in
+                        MediaFullscreenPhotoView(selected: request.selected, feed: request.feed, client: store.client, embedded: true, covered: fullscreenPhotos != nil, close: { inlinePhotos = nil }, expand: { item in
                             fullscreenPhotos = MediaPhotoPresentation(selected: item, feed: request.feed)
                         }, selectionCommand: inlineSelectionCommand, selectedChanged: { item in
                             if inlinePhotos?.id == request.id, inlinePhotos?.selected.id != item.id {
