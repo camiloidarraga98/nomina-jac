@@ -14,7 +14,7 @@ test('resumen PDF/Excel suma Camilo aparte y muestra honorarios efectivos conser
  const {p,e}=fixture(),before=structuredClone(p),general=m.payrollGeneral(p.snapshot);assert.equal(general.team,356250);assert.equal(general.total,456250);
  const pdf=await m.payrollPdf(p),text=await pdfText(pdf);assert.match(text,/TOTAL GENERAL DE NÓMINA/);assert.match(text,/Camilo · comisión del 5%/);assert.match(text,/456\.250,00/);assert.match(text,/356\.250,00/);assert.match(text,/100\.000,00/);
  const xlsx=m.payrollXlsx(p),files=unzipSync(xlsx),summary=strFromU8(files['xl/worksheets/sheet1.xml']),shows=strFromU8(files['xl/worksheets/sheet3.xml']);
- assert.match(summary,/TOTAL EQUIPO/);assert.match(summary,/Camilo · comisión del 5%/);assert.match(summary,/<f>H6\+H7<\/f><v>456250<\/v>/);assert.match(shows,/<v>750000<\/v>/);assert.match(shows,/50%/);assert.match(shows,/<f>E2\*0.5<\/f><v>375000<\/v>/);
+ assert.match(summary,/TOTAL EQUIPO/);assert.match(summary,/Camilo · comisión del 5%/);assert.match(summary,/<f>H6\+H7<\/f><v>456250<\/v>/);assert.match(shows,/<v>750000<\/v>/);assert.match(shows,/50%/);assert.match(shows,/<f>ROUND\(E2\*0.5,2\)<\/f><v>375000<\/v>/);
  const slip=await pdfText(await m.payrollPdf(p,e.id));assert.match(slip,/375\.000,00/);assert.match(slip,/356\.250,00/);assert.doesNotMatch(slip,/comisión|456\.250,00/);
  assert.deepEqual(p,before);await mkdir('work/local/payroll-promotional',{recursive:true});await Promise.all([writeFile('work/local/payroll-promotional/resumen.pdf',pdf),writeFile('work/local/payroll-promotional/resumen.xlsx',xlsx)]);
 });
@@ -23,4 +23,12 @@ test('cierres sin comisión o con comisión pendiente conservan total del equipo
   const before=structuredClone(p),text=await pdfText(await m.payrollPdf(p)),sheet=strFromU8(unzipSync(m.payrollXlsx(p))['xl/worksheets/sheet1.xml']);
   assert.match(text,/Pendiente de revisión/);assert.match(text,/356\.250,00/);assert.doesNotMatch(text,/456\.250,00/);assert.match(sheet,/Pendiente de revisión/);assert.doesNotMatch(sheet,/<f>H6\+H7<\/f>/);assert.deepEqual(p,before);
  }
+});
+test('el general conserva la comisión cuando no hay participantes por pagar y Excel no suma un rango vacío invertido',async()=>{
+ const {p}=fixture(),settings=p.snapshot.settings,employees=p.snapshot.employees.map(e=>({...e,active:false}));
+ p.status='abierta';delete p.snapshot;p.shows[0].participants=[];
+ p.snapshot={...m.calculate({settings,employees,concepts:[],periods:[p]},p),employees,closedAt:'2026-10-15T20:00:00Z',closedBy:'ficticio@example.invalid'};p.status='cerrada';
+ assert.deepEqual(m.payrollGeneral(p.snapshot),{team:0,camilo:100000,total:100000,gross:100000});
+ const sheet=strFromU8(unzipSync(m.payrollXlsx(p))['xl/worksheets/sheet1.xml']);assert.doesNotMatch(sheet,/SUM\([A-H]5:[A-H]4\)/);assert.match(sheet,/<f>H5\+H6<\/f><v>100000<\/v>/);
+ const text=await pdfText(await m.payrollPdf(p));assert.match(text,/100\.000,00/);assert.match(text,/Camilo · comisión del 5%/);
 });

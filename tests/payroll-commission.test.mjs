@@ -69,3 +69,12 @@ test('general incluye una sola comisión independiente y conserva los importes c
  delete p.snapshot.camiloCommission;assert.equal(m.payrollGeneral(m.calculate(state,p)).total,null);assert.equal(m.payrollGeneral(m.calculate(state,p)).team,out.total);
  const pending={...out,camiloCommission:{...out.camiloCommission,amount:null,issues:['Revisar kilómetros']}};assert.equal(m.payrollGeneral(pending).total,null);
 });
+test('reabrir un promocional conserva tarifas completas, porcentaje y redondeo por persona sin volver a reducir el cierre',()=>{
+ const {state,p}=fixture();p.shows=[{...show('promo',2000000,true),halfPay:true}];p.shows[0].participants[0].amount=750000.01;
+ const original=m.calculate(state,p);assert.equal(original.rows.find(r=>r.employeeId==='music').items[0].amount,375000.01);
+ p.snapshot={...original,employees:structuredClone(state.employees),closedAt:'2026-10-15T12:00:00Z',closedBy:'owner@example.invalid'};p.status='cerrada';const frozen=structuredClone(p.snapshot);
+ state.employees.forEach(e=>{e.showRate=1;e.fixedService=0;e.salary=0});m.reopenPeriod(p,'camilo@mac2you.co');
+ assert.equal(m.calculate(state,p).gross,original.gross);assert.equal(p.shows[0].participants[0].amount,750000.01);assert.deepEqual(p.revisions,[frozen]);
+ m.updateShow(p,{...p.shows[0],name:'Nombre corregido'});assert.equal(m.calculate(state,p).gross,original.gross);assert.deepEqual(p.revisions,[frozen]);
+ assert.equal(m.showHonorarium(p.shows[0],.01),.01);assert.equal(m.showHonorarium(p.shows[0],999.99),500);
+});
