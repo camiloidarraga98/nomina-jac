@@ -16,6 +16,7 @@ globalThis.__mobileEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('B
 globalThis.__mobileHeaders=new Headers();
 const bundle=await build({stdin:{contents:"export * as api from './app/api/mobile/payroll/route';export * as webApi from './app/api/payroll/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-store';export * from './lib/payroll';export * from './lib/payroll-mobile';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mobile-platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__mobileEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__mobileHeaders;',loader:'js'}));}}]});
 const m=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'));
+const withGeneral=value=>({...value,general:m.payrollGeneral(value)});
 const base='https://mobile.example.invalid';
 globalThis.fetch=async()=>{throw new Error('Las pruebas móviles no permiten red ni correos reales.');};
 async function get(path='',token='',email=''){
@@ -39,7 +40,7 @@ test('API nativa requiere sesión real, usa snapshots y conserva controles de ac
  assert.ok(!JSON.stringify(list.body).includes(token));
  const p=initial.data.periods[0];
  const opened=await get('?period='+encodeURIComponent(p.id),token);
- assert.deepEqual(opened.body.calculation,m.calculate(initial.data,p));
+ assert.deepEqual(opened.body.calculation,withGeneral(m.calculate(initial.data,p)));
  assert.deepEqual(opened.body.closeIssues,m.closeIssues(initial.data,p));
  assert.equal((await get('?period=missing',token)).status,404);
  assert.equal((await get('?period=',token)).status,400);
@@ -49,7 +50,7 @@ test('API nativa requiere sesión real, usa snapshots y conserva controles de ac
  initial.data.employees.forEach(e=>{e.salary=999999999;e.name='Condición actual distinta';});
  const saved=await m.writePayroll(initial.data,initial.version,'mobile-test');
  const closed=await get('?period='+encodeURIComponent(p.id),token);
- assert.deepEqual(closed.body.calculation,historical);
+ assert.deepEqual(closed.body.calculation,withGeneral(historical));
  assert.deepEqual(closed.body.employees,historical.employees);
  assert.deepEqual(closed.body.closeIssues,[]);
  assert.equal(closed.body.version,saved.version);
@@ -107,7 +108,7 @@ test('crear, previsualizar, editar y eliminar actividades reutiliza validación,
  const before=await m.readPayroll(),preview=await edit(writer,'period',p,undefined,'previewEdit');
  assert.equal(preview.status,200);assert.equal((await m.readPayroll()).version,before.version);assert.equal((await m.readPayroll()).data.periods.length,0);
  assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0,'La vista previa nunca prepara correo');
- assert.deepEqual(preview.body.detail.calculation,m.calculate(preview.body.data,preview.body.data.periods[0]));
+ assert.deepEqual(preview.body.detail.calculation,withGeneral(m.calculate(preview.body.data,preview.body.data.periods[0])));
  const created=await edit(writer,'period',p);assert.equal(created.status,200);
  assert.deepEqual(created.body.data.periods[0].shows,[]);assert.deepEqual(created.body.data.periods[0].excludedEmployees,[]);
  assert.equal((await edit(writer,'period',{...p,id:'overlap'})).status,400);
@@ -126,7 +127,7 @@ test('crear, previsualizar, editar y eliminar actividades reutiliza validación,
  assert.equal((await edit(writer,'movement',{...movement,quantity:-1},p.id)).status,400);
  assert.equal((await edit(writer,'hours',{employeeId:'dependiente',counts:[1,2,3,4,5,6,7],days:12,vacations:50000,note:''},p.id)).status,200);
  const current=await m.readPayroll(),detail=await get('?period='+p.id,writer);
- assert.deepEqual(detail.body.calculation,m.calculate(current.data,current.data.periods[0]));
+ assert.deepEqual(detail.body.calculation,withGeneral(m.calculate(current.data,current.data.periods[0])));
  const drivers=detail.body.calculation.rows.filter(r=>r.category==='conductores');
  assert.equal(drivers.find(r=>r.employeeId==='conductor-a').gross,130000);assert.equal(drivers.find(r=>r.employeeId==='conductor-b').gross,162500);
  const full=await get('?workspace=1',reader);assert.equal(full.status,200);assert.deepEqual(full.body.data,current.data);
@@ -151,7 +152,7 @@ test('cierres, condiciones históricas y permisos independientes siguen protegid
  assert.equal((await edit(staff,'employee',{...employee,salary:9000000})).status,200);
  assert.equal((await edit(rules,'concept',{id:'native-concept',name:'Concepto nuevo',kind:'reintegro',amount:18000})).status,200);
  assert.equal((await edit(rules,'settings',{...current.data.settings,hourDivisor:200})).status,200);
- assert.deepEqual((await get('?period='+p.id,ordinary)).body.calculation,snapshot,'Cambiar tarifas vigentes no cambia cierres');
+ assert.deepEqual((await get('?period='+p.id,ordinary)).body.calculation,withGeneral(snapshot),'Cambiar tarifas vigentes no cambia cierres');
  assert.equal((await command(ordinary,'reopen',{periodId:p.id})).status,403);
  const reopened=await command(corrector,'reopen',{periodId:p.id});assert.equal(reopened.status,200);
  p=reopened.body.data.periods[0];assert.deepEqual(p.revisions,[snapshot]);assert.deepEqual(p.calculationBase.employees,snapshot.employees);assert.equal(p.ownerOnly,true);
@@ -165,7 +166,7 @@ test('cierres, condiciones históricas y permisos independientes siguen protegid
  const closed=await command(corrector,'close',{periodId:p.id});assert.equal(closed.status,200);
  assert.deepEqual(closed.body.data.periods[0].revisions,[snapshot]);assert.equal(closed.body.data.periods[0].snapshot.employees.find(e=>e.id==='dependiente').salary,1800000);
  assert.equal((await command(staff,'deleteEmployee',{employeeId:'dependiente'})).status,200,'Eliminar personal vigente conserva su historia cerrada');
- assert.deepEqual((await get('?period='+p.id,owner)).body.calculation,closed.body.data.periods[0].snapshot);
+ assert.deepEqual((await get('?period='+p.id,owner)).body.calculation,withGeneral(closed.body.data.periods[0].snapshot));
  assert.equal((await command(staff,'restoreEmployee',{employeeId:'dependiente'})).status,200);
  assert.equal((await m.readPayroll()).data.employees.find(e=>e.id==='dependiente').active,false);
 });
@@ -201,7 +202,7 @@ test('ensayos antiguos bloqueados se consultan y cierran como honorarios; consul
  assert.equal(stored.status,'cerrada');assert.equal(stored.movements[0].kind,'servicio');assert.equal(stored.movements[0].amount,87500);assert.equal(stored.movements[0].quantity,2);assert.equal(stored.movements[0].note,'Dato simulado anterior');assert.equal(JSON.stringify(p.movements),snapshotText);
  assert.equal(stored.snapshot.rows.find(r=>r.employeeId==='musica').gross,175000);const jobs=sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n;assert.ok(jobs>0);
  assert.equal((await post({action:'close',periodId:p.id,version:before.version},owner)).status,409);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,jobs,'El reintento no duplica correos');
- const readClosed=await get('?period='+p.id,reader);assert.deepEqual(readClosed.body.calculation,stored.snapshot);
+ const readClosed=await get('?period='+p.id,reader);assert.deepEqual(readClosed.body.calculation,withGeneral(stored.snapshot));
 });
 
 test('API web e iPhone impiden ensayos a salario fijo y normalizan solo la novedad editada',async()=>{
@@ -232,4 +233,17 @@ test('gastos por show y promocional usan permisos/CAS, no alteran pagos y conser
  const old={...show};delete old.promotional;assert.equal((await edit(writer,'show',old,p.id)).status,200);assert.equal((await get('?period='+p.id,writer)).body.period.shows[0].promotional,true);
  assert.equal((await edit(writer,'show',{...show,promotional:false},p.id)).status,200);const normal=await get('?period='+p.id,writer);assert.equal(normal.body.calculation.camiloCommission.costs,825000);assert.equal(normal.body.calculation.camiloCommission.amount,8750);
  const now=await m.readPayroll();assert.equal((await post({action:'remove',version:now.version,edit:{kind:'showExpense',periodId:p.id,id:expense.id}},writer)).status,200);assert.equal((await get('?period='+p.id,writer)).body.period.showExpenses.length,0);
+});
+
+test('API liquida 50% solo en promocionales y devuelve total general, con preview sin escritura y tarifas completas intactas',async()=>{
+ await fakePayroll();const writer=await actor('half-writer',['payroll']),reader=await actor('half-reader');
+ const p={id:'half-period',start:'2027-04-01',end:'2027-04-15'};assert.equal((await edit(writer,'period',p)).status,200);
+ const show={id:'half-show',date:p.start,name:'Promocional ficticio al 50%',sale:2000000,promotional:true,halfPay:true,participants:[{employeeId:'musica',amount:725000}]};
+ assert.equal((await edit(reader,'show',show,p.id)).status,403);
+ const before=await m.readPayroll(),preview=await edit(writer,'show',show,p.id,'previewEdit');assert.equal(preview.status,200);assert.equal((await m.readPayroll()).version,before.version);
+ const result=preview.body.detail.calculation;assert.equal(result.rows.find(r=>r.employeeId==='musica').items[0].amount,362500);assert.equal(result.general.camilo,100000);assert.equal(result.general.total,result.total+100000);
+ assert.equal((await edit(writer,'show',{...show,promotional:false},p.id)).status,400);assert.equal((await edit(writer,'show',show,p.id)).status,200);
+ const legacy={...show,name:'Cambio desde cliente anterior'};delete legacy.halfPay;delete legacy.promotional;assert.equal((await edit(writer,'show',legacy,p.id)).status,200);
+ const actual=await get('?period='+p.id,writer);assert.equal(actual.body.period.shows[0].halfPay,true);assert.equal(actual.body.period.shows[0].participants[0].amount,725000);assert.equal(actual.body.calculation.rows.find(r=>r.employeeId==='musica').items[0].amount,362500);
+ assert.equal((await edit(writer,'show',{...legacy,promotional:false},p.id)).status,200);const full=await get('?period='+p.id,writer);assert.equal(full.body.calculation.rows.find(r=>r.employeeId==='musica').items[0].amount,725000);
 });

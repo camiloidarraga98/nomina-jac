@@ -1727,8 +1727,12 @@ final class LaunchTests: XCTestCase {
         let toggle=app.switches["editor.promotional"]
         for _ in 0..<8 { if toggle.isHittable { break };app.swipeUp() }
         XCTAssertTrue(toggle.exists);XCTAssertTrue(toggle.isHittable,app.debugDescription);toggle.coordinate(withNormalizedOffset:CGVector(dx:0.9,dy:0.5)).tap()
-        XCTAssertEqual(toggle.value as? String,"1");tap(app,"editor.save")
-        XCTAssertTrue(app.staticTexts["Promocional"].waitForExistence(timeout:15))
+        XCTAssertEqual(toggle.value as? String,"1")
+        let half=app.switches["editor.halfPay"]
+        for _ in 0..<6 {if half.isHittable {break};app.swipeUp()}
+        XCTAssertTrue(half.isHittable);half.coordinate(withNormalizedOffset:CGVector(dx:0.9,dy:0.5)).tap()
+        XCTAssertEqual(half.value as? String,"1");tap(app,"editor.save")
+        XCTAssertTrue(app.staticTexts["Promocional · honorarios 50%"].waitForExistence(timeout:15))
         app.navigationBars.buttons.firstMatch.tap();tap(app,"activity.expenses");tap(app,"activity.add")
         XCTAssertTrue(app.buttons["editor.showId"].exists)
         fill(app,"editor.concept","Hotel de prueba vinculado");tap(app,"Listo");fill(app,"editor.amount","300000");tap(app,"editor.save")

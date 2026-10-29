@@ -3,7 +3,9 @@ export const categoryNames:Record<Category,string>={musicos:'Músicos',tecnica:'
 export const hourNames=['Recargo nocturno','Recargo dominical diurno','Recargo dominical nocturno','Extra diurna','Extra nocturna','Extra dominical diurna','Extra dominical nocturna'];
 export type Employee={id:string;name:string;document:string;role:string;category:Category;active:boolean;showRate:number;kmRate:number;fixedService:number;withholding:number;ica:number;salary:number;transport:number;pension:boolean;health:boolean;cycle:'quincenal'|'mensual';monthlyHalf:1|2;nonSalary:number;contributionBase:number;incomeTax:number;solidarity:number;deleted?:boolean;email?:string};
 export type Concept={id:string;name:string;amount:number;kind:'servicio'|'reintegro'|'salarial'|'descuento'};
-export type Show={id:string;date:string;name:string;sale:number;promotional?:boolean;crmShowId?:string;crmVersion?:number;participants:{employeeId:string;amount:number}[]};
+export type Show={id:string;date:string;name:string;sale:number;promotional?:boolean;halfPay?:boolean;crmShowId?:string;crmVersion?:number;participants:{employeeId:string;amount:number}[]};
+export const showHonorarium=(show:Pick<Show,'promotional'|'halfPay'>,base:number)=>show.promotional===true&&show.halfPay===true ? round(base*.5) : base;
+export function payrollGeneral(result:Pick<Snapshot,'total'|'gross'|'camiloCommission'>){const camilo=result.camiloCommission?.amount??null;return {team:result.total,camilo,total:camilo===null?null:round(result.total+camilo),gross:camilo===null?null:round(result.gross+camilo)};}
 export const showExpenseNames={tiquetes:'Tiquetes',hoteles:'Hoteles',alimentacion:'Alimentación',otros:'Otros gastos'};
 export type ShowExpense={id:string;showId:string;date:string;category:keyof typeof showExpenseNames;concept:string;amount:number;note:string};
 export type CommissionShow={id:string;name:string;date:string;promotional:boolean;sale:number;musicians:number;technical:number;drivers:number;expenses:number;cost:number;deductible:number};
@@ -17,7 +19,7 @@ export type Route=LegacyRoute|ShowRoute|ExtraRoute;
 export const routeDrivers=(r:Route)=>'drivers' in r?r.drivers:[{employeeId:r.employeeId,rate:r.rate}];
 export function legacyRoutesForShow(p:Period,show:Show):LegacyRoute[]{return p.routes.filter((r):r is LegacyRoute=>'employeeId' in r&&r.date===show.date&&(r.name.trim().toLocaleLowerCase('es')===show.name.trim().toLocaleLowerCase('es')||p.shows.filter(s=>s.date===show.date).length===1));}
 export function setShowRoute(p:Period,r:ShowRoute){const show=p.shows.find(s=>s.id===r.showId);if(!show)throw new Error('El show no existe.');const old=new Set(legacyRoutesForShow(p,show).map(x=>x.id));p.routes=p.routes.filter(x=>!old.has(x.id)&&!('showId' in x&&x.showId===r.showId));p.routes.push({...r,date:show.date,name:show.name});}
-export function updateShow(p:Period,s:Show){const i=p.shows.findIndex(x=>x.id===s.id);if(i<0)p.shows.push(s);else p.shows[i]={...s,...(s.crmShowId===undefined&&p.shows[i].crmShowId?{crmShowId:p.shows[i].crmShowId,crmVersion:p.shows[i].crmVersion}:{}),...(s.promotional===undefined&&p.shows[i].promotional!==undefined?{promotional:p.shows[i].promotional}:{})};p.routes=p.routes.map(r=>'showId' in r&&r.showId===s.id?{...r,date:s.date,name:s.name}:r);}
+export function updateShow(p:Period,s:Show){const i=p.shows.findIndex(x=>x.id===s.id);if(i<0)p.shows.push(s);else {const old=p.shows[i],next={...s,...(s.crmShowId===undefined&&old.crmShowId?{crmShowId:old.crmShowId,crmVersion:old.crmVersion}:{}),...(s.promotional===undefined&&old.promotional!==undefined?{promotional:old.promotional}:{})};if(next.promotional&&s.halfPay===undefined&&old.halfPay!==undefined)next.halfPay=old.halfPay;p.shows[i]=next;}p.routes=p.routes.map(r=>'showId' in r&&r.showId===s.id?{...r,date:s.date,name:s.name}:r);}
 export function removeShow(p:Period,id:string){p.shows=p.shows.filter(s=>s.id!==id);p.routes=p.routes.filter(r=>!('showId' in r&&r.showId===id));if(p.showExpenses)p.showExpenses=p.showExpenses.filter(e=>e.showId!==id);}
 export type Item={concept:string;quantity:number;rate:number;amount:number;kind:'ingreso'|'deduccion'|'reintegro';reference?:string};
 export type PayrollRow={employeeId:string;name:string;document:string;role:string;category:Category;gross:number;reimbursements:number;deductions:number;net:number;items:Item[]};
@@ -45,7 +47,7 @@ function commissionForPeriod(state:PayrollState,p:Period):CamiloCommission {
  const issues:string[]=[],payable=(id:string)=>state.employees.find(e=>e.id===id&&e.active&&!e.deleted&&!p.excludedEmployees.includes(id));
  const shows:CommissionShow[]=p.shows.map(s=>{
   let musicians=0,technical=0,drivers=0;
-  for(const part of s.participants){const e=payable(part.employeeId);if(e?.category==='musicos')musicians+=part.amount;else if(e?.category==='tecnica')technical+=part.amount;else if(e?.category==='conductores')drivers+=part.amount;}
+  for(const part of s.participants){const e=payable(part.employeeId),amount=showHonorarium(s,part.amount);if(e?.category==='musicos')musicians+=amount;else if(e?.category==='tecnica')technical+=amount;else if(e?.category==='conductores')drivers+=amount;}
   return {id:s.id,name:s.name,date:s.date,promotional:s.promotional===true,sale:s.sale,musicians:round(musicians),technical:round(technical),drivers:round(drivers),expenses:round((p.showExpenses||[]).filter(e=>e.showId===s.id).reduce((v,e)=>v+e.amount,0)),cost:0,deductible:0};
  });
  const byShow=new Map(shows.map(s=>[s.id,s])),legacyMatches=new Map<string,CommissionShow[]>();
@@ -72,7 +74,7 @@ export function calculate(state:PayrollState,p:Period):Omit<Snapshot,'closedAt'|
   if(!e.active||e.deleted||p.excludedEmployees.includes(e.id))continue;
   const moves=p.movements.filter(m=>m.employeeId===e.id&&!rehearsalPaymentIssue(m,e));
   const service:Item[]=[];
-  for(const s of p.shows){const part=s.participants.find(x=>x.employeeId===e.id);if(part&&part.amount>0)service.push({concept:s.name,quantity:1,rate:part.amount,amount:part.amount,kind:'ingreso',reference:s.date});}
+  for(const s of p.shows){const part=s.participants.find(x=>x.employeeId===e.id);if(part&&part.amount>0){const amount=showHonorarium(s,part.amount);service.push({concept:s.name+(s.promotional&&s.halfPay?' · Promocional 50%':''),quantity:1,rate:amount,amount,kind:'ingreso',reference:s.date});}}
   for(const r of p.routes){const driver=routeDrivers(r).find(d=>d.employeeId===e.id);if(driver)service.push({concept:'kind' in r?'Kilometraje extra · '+r.name:r.name,quantity:r.km,rate:driver.rate,amount:round(r.km*driver.rate),kind:'ingreso',reference:r.date});}
   if(e.fixedService>0)service.push({concept:'Honorario fijo quincenal',quantity:1,rate:e.fixedService,amount:e.fixedService,kind:'ingreso'});
   for(const m of moves.filter(m=>m.kind==='servicio'))service.push({concept:m.concept+(m.note?' · '+m.note:''),quantity:m.quantity,rate:m.amount,amount:round(m.quantity*m.amount),kind:'ingreso'});

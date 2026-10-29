@@ -1,4 +1,4 @@
-import {calculate,closeIssues,legacyRoutesForShow,normalizeRehearsalMovements,type PayrollState,type Period} from './payroll';
+import {calculate,payrollGeneral,closeIssues,legacyRoutesForShow,normalizeRehearsalMovements,type PayrollState,type Period} from './payroll';
 
 // Mobile clients display the same server calculations and historical snapshots as the web.
 export function mobileOverview(data:PayrollState,version:number){
@@ -13,10 +13,11 @@ export function mobilePeriod(data:PayrollState,p:Period,version:number){
  p=normalizeRehearsalMovements(p);
  const employees=p.snapshot?.employees??p.calculationBase?.employees??data.employees;
  const drivers=employees.filter(e=>e.active&&!e.deleted&&e.category==='conductores'&&!p.excludedEmployees.includes(e.id));
+ const calculation=calculate(data,p);
  return {
   version,period:p,
   employees,
-  calculation:calculate(data,p),
+  calculation:{...calculation,general:payrollGeneral(calculation)},
   closeIssues:p.status==='cerrada'?[]:closeIssues(data,p),
   editing:{
    settings:p.snapshot?.settings??p.calculationBase?.settings??data.settings,

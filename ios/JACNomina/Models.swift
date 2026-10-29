@@ -124,6 +124,7 @@ struct PayrollShow: Decodable, Identifiable {
     let name: String
     let sale: Double
     var promotional: Bool? = nil
+    var halfPay: Bool? = nil
     let participants: [Participant]
 }
 
@@ -175,6 +176,7 @@ struct PayrollCamiloCommission: Decodable {
 }
 struct PayrollCalculation: Decodable {
     var camiloCommission: PayrollCamiloCommission? = nil
+    var general: PayrollGeneral? = nil
     let rows: [PayrollPayment]
     let sale: Double
     let total: Double
@@ -184,6 +186,13 @@ struct PayrollCalculation: Decodable {
     let company: String
     let nit: String
     let closedAt: String?
+}
+
+struct PayrollGeneral: Decodable {
+    let team: Double
+    let camilo: Double?
+    let total: Double?
+    let gross: Double?
 }
 
 struct PayrollPayment: Decodable {

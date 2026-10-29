@@ -60,7 +60,8 @@ struct ActivityView: View {
         ForEach(d.period.shows) { show in
             Section(show.name) {
                 LabeledContent("Fecha", value: PayrollFormat.date(show.date)); AmountRow(title: "Venta", value: show.sale)
-                if show.promotional == true { Label("Promocional", systemImage: "tag") }
+                if show.promotional == true { Label(show.halfPay == true ? "Promocional · honorarios 50%" : "Promocional", systemImage: "tag") }
+                Text("Tarifas completas; consulta los importes liquidados en Pagos.").font(.caption).foregroundStyle(.secondary)
                 ForEach(show.participants, id: \.employeeId) { AmountRow(title: d.employeeName($0.employeeId), value: $0.amount) }
                 if let record = d.record["shows"].elements.first(where: { $0["id"].text == show.id }) { recordActions(record, detail: d) }
             }

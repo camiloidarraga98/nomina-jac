@@ -2909,11 +2909,23 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNil(try data.decoded(PayrollCalculation.self).camiloCommission)
         data["camiloCommission"] = .object(["rate":.number(0.05),"sales":.number(10000000),"costs":.number(2000000),"promotionalCosts":.number(500000),"balance":.number(8000000),"base":.number(8000000),"amount":.number(400000),"shows":.array([]),"issues":.array([]),"unlinkedKilometers":.number(0)])
         let reviewed=try data.decoded(PayrollCalculation.self)
-        XCTAssertEqual(reviewed.camiloCommission?.amount,400000);XCTAssertEqual(reviewed.total,2000000,"La comisión no se suma al neto")
+        XCTAssertEqual(reviewed.camiloCommission?.amount,400000);XCTAssertEqual(reviewed.total,2000000,"El neto individual del equipo se conserva")
         data["camiloCommission"]["amount"] = .null
         XCTAssertNil(try data.decoded(PayrollCalculation.self).camiloCommission?.amount)
         let show:JSONValue = .object(["id":.string("show"),"name":.string("Ficticio"),"date":.string("2026-10-01"),"sale":.number(0),"participants":.array([]),"promotional":.bool(true)])
         XCTAssertEqual(try show.decoded(PayrollShow.self).promotional,true)
+    }
+    func testGeneralPayrollUsesServerTotalAndHalfPayIsOptionalInOldShows() throws {
+        var data:JSONValue = .object(["rows":.array([]),"sale":.number(10000000),"total":.number(2000000),"gross":.number(2000000),"deductions":.number(0),"reimbursements":.number(0),"company":.string("Empresa ficticia"),"nit":.string("TEST")])
+        XCTAssertNil(try data.decoded(PayrollCalculation.self).general)
+        data["general"] = .object(["team":.number(2000000),"camilo":.number(400000),"total":.number(2400000),"gross":.number(2400000)])
+        let result=try data.decoded(PayrollCalculation.self)
+        XCTAssertEqual(result.general?.team,2000000);XCTAssertEqual(result.general?.camilo,400000);XCTAssertEqual(result.general?.total,2400000);XCTAssertEqual(result.total,2000000)
+        data["general"]["camilo"] = .null;data["general"]["total"] = .null
+        XCTAssertNil(try data.decoded(PayrollCalculation.self).general?.total)
+        var show:JSONValue = .object(["id":.string("show"),"name":.string("Ficticio"),"date":.string("2026-10-01"),"sale":.number(0),"participants":.array([]),"promotional":.bool(true)])
+        XCTAssertNil(try show.decoded(PayrollShow.self).halfPay)
+        show["halfPay"] = .bool(true);XCTAssertEqual(try show.decoded(PayrollShow.self).halfPay,true)
     }
     private let base = URL(string: "https://payroll.example.invalid")!
     private let token = String(repeating: "a", count: 43)

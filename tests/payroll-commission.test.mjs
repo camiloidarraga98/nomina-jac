@@ -38,3 +38,34 @@ test('kilómetros históricos se asignan una sola vez y coincidencias ambiguas r
  p.shows.push({...show('two',5000000),name:p.shows[0].name});p.routes[0].name=p.shows[0].name;const c=m.calculate(state,p).camiloCommission;assert.equal(c.amount,null);assert.equal(c.issues.length,1);
  p.routes[0].date=p.start;const unlinked=m.calculate(state,p).camiloCommission;assert.equal(unlinked.unlinkedKilometers,100000);assert.equal(unlinked.shows.reduce((v,s)=>v+s.drivers,0),0);
 });
+
+test('el 50% promocional liquida cada tarifa una vez, conserva bases y no reduce salarios, kilómetros, fijos ni novedades',()=>{
+ const {state,p}=fixture();p.shows=[{...show('promo',2000000,true),halfPay:true}];
+ p.routes=[{id:'km',showId:'promo',name:p.shows[0].name,date:p.shows[0].date,km:100,drivers:[{employeeId:'driver',rate:1000}]}];
+ p.movements=[{id:'extra',employeeId:'tech',kind:'servicio',concept:'Ensayo',quantity:2,amount:80000,note:''}];
+ const before=structuredClone(p),out=m.calculate(state,p),music=out.rows.find(r=>r.employeeId==='music'),tech=out.rows.find(r=>r.employeeId==='tech');
+ assert.equal(music.items.find(i=>i.reference===p.shows[0].date).amount,375000);assert.equal(music.gross,1875000);assert.equal(music.deductions,393750);
+ assert.equal(tech.gross,285000);assert.equal(tech.deductions,59850);
+ assert.equal(out.rows.find(r=>r.employeeId==='driver'&&r.category==='conductores').gross,100000);
+ assert.equal(out.rows.find(r=>r.employeeId==='fixed').gross,4000000);
+ assert.equal(out.camiloCommission.promotionalCosts,600000);assert.equal(out.camiloCommission.costs,0);assert.equal(out.camiloCommission.amount,100000);
+ assert.deepEqual(p,before);assert.deepEqual(m.calculate(state,p),out);assert.ok(m.stateSchema.safeParse(state).success);
+ p.shows[0].halfPay=false;assert.equal(m.calculate(state,p).rows.find(r=>r.employeeId==='tech').gross,410000);
+ p.shows[0].promotional=false;p.shows[0].halfPay=true;assert.equal(m.stateSchema.safeParse(state).success,false);
+ assert.equal(m.showHonorarium(p.shows[0],250000),250000,'Un show normal no reduce honorarios aunque reciba un indicador inválido');
+});
+test('ediciones antiguas conservan el porcentaje y al quitar promocional recupera el 100% sin cambiar tarifas',()=>{
+ const {state,p}=fixture();p.shows=[{...show('promo',0,true),halfPay:true}];
+ const old={...p.shows[0]};delete old.halfPay;delete old.promotional;
+ m.updateShow(p,{...old,name:'Nombre corregido'});assert.equal(p.shows[0].halfPay,true);assert.equal(m.showHonorarium(p.shows[0],p.shows[0].participants[0].amount),375000);
+ const next=structuredClone(state);delete next.periods[0].shows[0].halfPay;assert.match(m.validateSave(state,next,'owner@example.invalid'),/50%/);
+ m.updateShow(p,{...old,promotional:false});assert.equal(p.shows[0].halfPay,undefined);assert.equal(p.shows[0].participants[0].amount,750000);assert.equal(m.showHonorarium(p.shows[0],750000),750000);assert.ok(m.stateSchema.safeParse(state).success);
+});
+test('general incluye una sola comisión independiente y conserva los importes congelados de cierres/revisiones',()=>{
+ const {state,p}=fixture();p.shows=[{...show('promo',2000000,true),halfPay:true}];const out=m.calculate(state,p),before=structuredClone(out);
+ assert.deepEqual(m.payrollGeneral(out),{team:out.total,camilo:100000,total:out.total+100000,gross:out.gross+100000});assert.deepEqual(out,before);assert.ok(!out.rows.some(r=>r.category==='comision'));
+ p.snapshot={...out,employees:structuredClone(state.employees),closedAt:'2026-10-15T12:00:00Z',closedBy:'owner@example.invalid'};p.status='cerrada';const frozen=structuredClone(p.snapshot);
+ p.shows[0].sale=99999999;state.employees.forEach(e=>e.showRate=1);assert.equal(m.payrollGeneral(m.calculate(state,p)).camilo,100000);assert.deepEqual(p.snapshot,frozen);
+ delete p.snapshot.camiloCommission;assert.equal(m.payrollGeneral(m.calculate(state,p)).total,null);assert.equal(m.payrollGeneral(m.calculate(state,p)).team,out.total);
+ const pending={...out,camiloCommission:{...out.camiloCommission,amount:null,issues:['Revisar kilómetros']}};assert.equal(m.payrollGeneral(pending).total,null);
+});

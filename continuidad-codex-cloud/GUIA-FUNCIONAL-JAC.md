@@ -85,7 +85,7 @@ Se eligen secciones por separado: Nómina, Agenda, Itinerarios, Alertas, Pases, 
 
 La primera quincena abarca del 1 al 15; la segunda del 16 al último día del mes. Se conservan Shows, Novedades, Recorridos, Gastos, Horas y salarios y Liquidación, aunque la distribución nativa sea distinta. Personal, conceptos/reglas, correos y Archivo siguen disponibles desde Gestión/configuración.
 
-- Los participantes y tarifas se guardan con el show/recorrido. Un cambio de tarifa actual no reemplaza valores históricos.
+- Los participantes y tarifas se guardan con el show/recorrido. Un cambio de tarifa actual no reemplaza valores históricos. Solo un show promocional ofrece **Pagar el 50% de honorarios a cada participante**; es opcional, conserva las tarifas completas y afecta únicamente los honorarios de ese show, sin reducir kilómetros, salarios, fijos u otras novedades.
 - La nómina dependiente de **Jenny se paga solo en la segunda quincena**, al cierre mensual; no incluirla en la primera.
 - Los campos COP permiten borrar el valor completo y escriben separadores de miles, por ejemplo `140.000.000`; no imponer un cero inicial imborrable.
 - Los cierres guardan instantáneas y requieren reapertura/corrección autorizada para editar. No recalcular cierres antiguos con reglas o tarifas nuevas ni probar cerrando quincenas reales.
@@ -103,7 +103,7 @@ Regla acordada:
 | Nómina fija/dependientes, honorarios fijos quincenales, novedades, retenciones, reintegros, recorridos extra | Se excluyen. |
 | Todos los costos de un show marcado promocional | Se excluyen de esta base; permanecen en el costo real y en los pagos del equipo. |
 
-Es un **cálculo revisable**, no un pago automático a Camilo ni una suma al neto. Si la base es negativa, comisión cero, sin arrastrar una deuda a la quincena siguiente. Un recorrido compartido no se cobra dos veces; si su asociación es ambigua se pide resolverla, no se inventa un reparto.
+Desde el 29 de octubre, el **total general de nómina suma el neto del equipo y la comisión de Camilo**, con una línea separada. La comisión no crea un empleado ni un envío/desprendible individual automático. Si falta la comisión guardada o está pendiente de revisión, el general queda pendiente y el neto del equipo sigue visible. Si la base es negativa, comisión cero, sin arrastrar una deuda a la quincena siguiente. Un recorrido compartido no se cobra dos veces; si su asociación es ambigua se pide resolverla, no se inventa un reparto.
 
 **Gastos por show**: pestaña Gastos en web; en iPhone, Quincena → Actividad → Gastos por show. Cada registro tiene show, categoría, fecha, concepto, COP y observación opcional. La fecha del comprobante puede diferir de la fecha del show. Permite editar/eliminar con permisos y periodo abierto. **No genera un reintegro ni un pago**. No duplicar automáticamente el mismo gasto desde Gastos de viaje.
 

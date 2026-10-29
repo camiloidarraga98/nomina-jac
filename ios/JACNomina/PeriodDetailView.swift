@@ -83,11 +83,16 @@ struct PeriodDetailView: View {
                 }
             } message: { Text(confirmationMessage) }
     }
+    private func generalAmount(_ calculation: PayrollCalculation) -> String {
+        guard let general = calculation.general else { return PayrollFormat.money(calculation.total) }
+        guard let total = general.total else { return "Pendiente de revisión" }
+        return PayrollFormat.money(total)
+    }
     @ViewBuilder private func periodSummary(_ d: PeriodDetail) -> some View {
         #if os(iOS)
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación")
+                Text(d.calculation.general == nil ? "Neto del equipo" : "Total general de nómina")
                     .font(.caption).foregroundStyle(JACTheme.muted)
                 Spacer(minLength: 0)
                 Text(d.period.isClosed ? "Cerrada" : "En curso")
@@ -95,11 +100,16 @@ struct PeriodDetailView: View {
                     .padding(.horizontal, 9).padding(.vertical, 6)
                     .background(JACTheme.action.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
             }
-            Text(PayrollFormat.money(d.calculation.total))
+            Text(generalAmount(d.calculation))
                 .font(.system(.largeTitle, weight: .semibold)).monospacedDigit()
                 .minimumScaleFactor(0.65).lineLimit(1)
                 .accessibilityIdentifier("period.net")
             Divider()
+            if let general=d.calculation.general {
+                AmountRow(title:"Neto del equipo",value:general.team)
+                if let camilo=general.camilo {AmountRow(title:"Camilo · comisión del 5%",value:camilo)}
+                else {Text("Comisión de Camilo pendiente de revisión").font(.caption).foregroundStyle(.secondary)}
+            }
             ViewThatFits(in: .horizontal) {
                 HStack {
                     Text("\(Set(d.calculation.rows.map(\.employeeId)).count) personas")
@@ -117,8 +127,13 @@ struct PeriodDetailView: View {
         #else
         VStack(alignment:.leading,spacing:16) {
             HStack { Label("JAC · NÓMINA",systemImage:"waveform").font(.caption2.weight(.bold)).tracking(1.5);Spacer();Image(systemName:d.period.isClosed ? "lock.shield":"wallet.pass").font(.title3) }.foregroundStyle(JACTheme.highlight)
-            Text(d.period.isClosed ? "Neto del cierre" : "Neto en preparación").font(.subheadline).foregroundStyle(.white.opacity(0.8))
-            Text(PayrollFormat.money(d.calculation.total)).font(.system(.largeTitle,design:.rounded,weight:.bold)).minimumScaleFactor(0.6).lineLimit(1).monospacedDigit()
+            Text(d.calculation.general == nil ? "Neto del equipo" : "Total general de nómina").font(.subheadline).foregroundStyle(.white.opacity(0.8))
+            Text(generalAmount(d.calculation)).font(.system(.largeTitle,design:.rounded,weight:.bold)).minimumScaleFactor(0.6).lineLimit(1).monospacedDigit()
+            if let general=d.calculation.general {
+                AmountRow(title:"Neto del equipo",value:general.team)
+                if let camilo=general.camilo {AmountRow(title:"Camilo · comisión del 5%",value:camilo)}
+                else {Text("Comisión de Camilo pendiente de revisión").font(.caption)}
+            }
             Label(d.period.isClosed ? "Quincena cerrada" : "Quincena abierta",systemImage:d.period.isClosed ? "lock.fill":"pencil").font(.caption.weight(.semibold))
                 .padding(.horizontal,12).padding(.vertical,7).background(.white.opacity(0.12),in:Capsule())
         }.padding(24).foregroundStyle(.white).frame(maxWidth:.infinity,alignment:.leading)
@@ -272,7 +287,7 @@ struct CamiloCommissionSection: View {
             if let amount = value.amount { AmountRow(title: "Comisión para revisión", value: amount).accessibilityIdentifier("commission.amount") }
             else { Text("Pendiente de revisión de recorridos").foregroundStyle(.orange) }
             if value.balance < 0 { Text("Los costos superan las ventas: comisión en cero, sin saldo al próximo corte.").font(.footnote) }
-            Text("Calculada por el servidor. No se agrega como pago a la nómina. Excluye salarios, honorarios fijos, novedades, reintegros y recorridos extra.").font(.footnote).foregroundStyle(.secondary)
+            Text("Calculada por el servidor e incluida en el total general de nómina, en una línea independiente. Excluye salarios, honorarios fijos, novedades, reintegros y recorridos extra.").font(.footnote).foregroundStyle(.secondary)
             ForEach(value.issues, id: \.self) { Text($0).font(.footnote).foregroundStyle(.orange) }
             if value.unlinkedKilometers > 0 { AmountRow(title: "Kilómetros sin show, no descontados", value: value.unlinkedKilometers) }
             DisclosureGroup("Costos por show") {

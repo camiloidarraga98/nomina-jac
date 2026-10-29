@@ -20,7 +20,12 @@ struct ShowFields: View {
         }
         Section {
             RecordToggle(title: "Show promocional", record: $record, key: "promotional").accessibilityIdentifier("editor.promotional")
-            Text("Sus costos no se descuentan para la comisión de Camilo. Los pagos del equipo se mantienen.").font(.footnote).foregroundStyle(.secondary)
+                .onChange(of:record["promotional"].flag) {_,value in if !value {record["halfPay"] = .bool(false)}}
+            Text("Sus costos no se descuentan para la comisión de Camilo.").font(.footnote).foregroundStyle(.secondary)
+            if record["promotional"].flag {
+                RecordToggle(title:"Pagar el 50% de honorarios a cada participante",record:$record,key:"halfPay").accessibilityIdentifier("editor.halfPay")
+                Text("Se conserva la tarifa completa y se liquida el 50% solo en este show. Kilómetros y otras novedades mantienen su valor.").font(.footnote).foregroundStyle(.secondary)
+            }
         }
     }
 }
@@ -36,7 +41,7 @@ struct ParticipantField: View {
         }))
         if selected {
             VStack(alignment: .leading, spacing: 8) {
-                Text("Honorario").font(.subheadline).foregroundStyle(.secondary)
+                Text("Tarifa completa").font(.subheadline).foregroundStyle(.secondary)
                 TextField("Honorario", value: Binding(get: {
                     record["participants"].elements.first { $0["employeeId"].text == employee.id }?["amount"].number ?? 0
                 }, set: { amount in

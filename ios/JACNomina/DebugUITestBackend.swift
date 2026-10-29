@@ -494,6 +494,7 @@ private final class FixtureProtocol: URLProtocol {
         var value: JSONValue = .object(["rows": .array([]), "sale": .number(0), "total": .number(0), "gross": .number(0), "deductions": .number(0), "reimbursements": .number(0), "company": state["settings"]["company"], "nit": state["settings"]["nit"], "settings": p["calculationBase"]["settings"] == .null ? state["settings"] : p["calculationBase"]["settings"]])
         if ProcessInfo.processInfo.arguments.contains("--uitest-commission") {
             // Canned server contract; financial formulas are tested in Node, not implemented in the app.
+            value["general"] = .object(["team":.number(0),"camilo":.number(400000),"total":.number(400000),"gross":.number(400000)])
             value["camiloCommission"] = .object(["rate":.number(0.05),"sales":.number(10000000),"costs":.number(2000000),"promotionalCosts":.number(500000),"balance":.number(8000000),"base":.number(8000000),"amount":.number(400000),"shows":.array([]),"issues":.array([]),"unlinkedKilometers":.number(0)])
         }
         return value

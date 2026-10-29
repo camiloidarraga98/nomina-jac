@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [contract-forms, wide-workspace, photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
+        options: [payroll-promotional, contract-forms, wide-workspace, photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -145,7 +145,7 @@ jobs:
           JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
           JAC_HD_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[hd-only]') }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
-          JAC_CONTRACT_FORMS: ${{ inputs.scope == 'contract-forms' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-contract-forms]')) }}
+          JAC_CONTRACT_FORMS: ${{ inputs.scope == 'payroll-promotional' || inputs.scope == 'contract-forms' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-contract-forms]') || contains(github.event.head_commit.message, '[check-payroll-promotional]'))) }}
           JAC_WIDE_PHOTO_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-photo-followup]') }}
           JAC_WIDE_CRM_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-crm-followup]') }}
           JAC_WIDE_WORKSPACE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) }}
@@ -161,6 +161,9 @@ jobs:
           build_action=test
           if [ "$JAC_CONTRACT_FORMS" = true ]; then
             checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testGeneralPayrollUsesServerTotalAndHalfPayIsOptionalInOldShows
+              -only-testing:JACNominaTests/PayrollClientTests/testCommissionContractIsOptionalForOldCopiesAndPreservesServerReviewedAmount
+              -only-testing:JACNominaUITests/LaunchTests/testPromotionalShowAndLinkedExpenseCanBeCreatedWithoutAddingPayrollPayment
               -only-testing:JACNominaTests/PayrollClientTests/testContractDraftMatchesWebInputsFilenameAndHalfPaymentRules
               -only-testing:JACNominaTests/PayrollClientTests/testContractDraftSeparatesOwnIdentityAndNormalizesFullPaymentWithoutChangingTheDraft
               -only-testing:JACNominaTests/PayrollClientTests/testContractUsesBearerOnlyAndPrivateTemporaryUTF8PDF
