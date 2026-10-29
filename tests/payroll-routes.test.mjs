@@ -12,6 +12,7 @@ test('Andrés es elegible por su identidad, con tarifa base de Mariano, sin camb
  assert.equal(option.rate,1250);assert.equal(option.selectedByDefault,false);assert.equal(option.selectAloneLabel,'Solo Andrés Rey');assert.deepEqual(state,before);assert.equal(andres.category,'tecnica');assert.equal(andres.kmRate,0);
  mariano.kmRate=1500;assert.equal(m.routeParticipantOptions(state.employees).find(e=>e.employeeId===andres.id).rate,1500);
  const native=m.mobilePeriod(state,p,1);assert.ok(!native.editing.drivers.some(e=>e.employeeId===andres.id));assert.ok(native.editing.routeParticipants.some(e=>e.employeeId===andres.id));assert.equal(p.routes.length,0);assert.ok(!m.calculate(state,p).rows.some(r=>r.employeeId===andres.id));
+ p.shows=[{id:'new-show',date:p.start,name:'Show nuevo ficticio',sale:0,participants:[]}];const template=m.mobilePeriod(state,p,2).editing.showRoutes[0];assert.deepEqual(template.drivers,[{employeeId:mariano.id,rate:1500}]);assert.equal(p.routes.length,0,'Consultar una plantilla no registra recorridos ni añade a Andrés');
 });
 test('ruta independiente paga únicamente a Andrés y usa sus retenciones sin alterar el salario de Mariano',()=>{
  const {state,p,andres,mariano}=fixture(),before=m.calculate(state,p);p.routes=[extra(p)];assert.ok(m.stateSchema.safeParse(state).success);
