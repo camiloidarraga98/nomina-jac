@@ -1746,7 +1746,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(andres.waitForExistence(timeout:10));XCTAssertEqual(andres.value as? String,"1")
         for id in ["driver-a","driver-b","emp-19"] {XCTAssertEqual(app.switches["editor.route.participant."+id].value as? String,"0")}
         fill(app,"editor.km","120");tap(app,"editor.save")
-        XCTAssertTrue(app.staticTexts["120 km"].waitForExistence(timeout:15))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","120 km")).firstMatch.waitForExistence(timeout:15))
         attachScreen(app,name:"recorrido-independiente-andres-ficticio")
     }
 

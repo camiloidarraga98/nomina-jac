@@ -145,6 +145,7 @@ jobs:
           JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
           JAC_HD_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[hd-only]') }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
+          JAC_ANDRES_RATE_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[andres-rate-followup]') }}
           JAC_ANDRES_ROUTES: ${{ inputs.scope == 'andres-routes' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-andres-routes]')) }}
           JAC_CONTRACT_FORMS: ${{ inputs.scope == 'payroll-promotional' || inputs.scope == 'contract-forms' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-contract-forms]') || contains(github.event.head_commit.message, '[check-payroll-promotional]'))) }}
           JAC_WIDE_PHOTO_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-photo-followup]') }}
@@ -166,8 +167,10 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testLegacyAndSharedRoutesDecodeTogether
               -only-testing:JACNominaTests/PayrollClientTests/testNativeWorkspaceAndActionsUseTheSameVersionedServerContract
               -only-testing:JACNominaUITests/LaunchTests/testIndependentAndresRouteSelectsOnlyHimAndKeepsSelectionAfterEditing
-              -only-testing:JACNominaUITests/LaunchTests/testCreatePeriodAndManageItsActivitiesWithNativeForms
             )
+            if [ "$JAC_ANDRES_RATE_FOLLOWUP" != true ]; then
+              checks+=(-only-testing:JACNominaUITests/LaunchTests/testCreatePeriodAndManageItsActivitiesWithNativeForms)
+            fi
           elif [ "$JAC_CONTRACT_FORMS" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testGeneralPayrollUsesServerTotalAndHalfPayIsOptionalInOldShows

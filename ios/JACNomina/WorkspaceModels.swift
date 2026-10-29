@@ -155,6 +155,12 @@ struct PayrollEditorSession: Identifiable {
     }
 }
 
+enum PayrollRouteSelection {
+    static func only(_ option: JSONValue, in record: JSONValue) -> JSONValue {
+        let existing = record["drivers"].elements.first { $0["employeeId"] == option["employeeId"] }
+        return .array([.object(["employeeId": option["employeeId"], "rate": existing?["rate"] ?? option["rate"]])])
+    }
+}
 struct PayrollPreview: Decodable { let data: JSONValue; let version: Int; let detail: PeriodDetail? }
 struct OperationNotice: Decodable { let notice: String? }
 struct UserDirectory: Decodable { let configured: Bool; let users: [ManagedUser] }

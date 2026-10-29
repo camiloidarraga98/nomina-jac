@@ -120,7 +120,7 @@ struct RouteFields: View {
                 ForEach(Array(participants.enumerated()), id: \.offset) { _, option in
                     if !option["selectAloneLabel"].text.isEmpty {
                         Button(option["selectAloneLabel"].text) {
-                            record["drivers"] = .array([.object(["employeeId": option["employeeId"], "rate": option["rate"]])])
+                            record["drivers"] = PayrollRouteSelection.only(option, in: record)
                         }.accessibilityIdentifier("editor.route.only." + option["employeeId"].text)
                     }
                     RouteParticipantField(record: $record, option: option, name: name(option))

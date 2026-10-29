@@ -7,7 +7,7 @@ import {needsPayrollData,canViewSection,defaultSection,payrollRoute,payrollHref,
 const UsersPanel=lazy(()=>import('./users-panel'));
 import AuthForm from './auth-form';
 import {can,hasSection,type AccessUser} from '@/lib/payroll-permissions';
-import {routePayees,defaultRouteParticipant,andresRouteEmployeeId} from '@/lib/payroll-routes';
+import {routePayees,defaultRouteParticipant,andresRouteEmployeeId,onlyRouteParticipant} from '@/lib/payroll-routes';
 const PayrollEmailPanel=lazy(()=>import('./payroll-email-panel'));
 const AgendaPanel=lazy(()=>import('./agenda-panel'));
 const CrmPanel=lazy(()=>import('./crm-panel'));
@@ -194,7 +194,7 @@ function RoutesPanel({period:p,employees,readOnly,busy,onEdit,onLegacy,onExtra,o
 }
 function RouteParticipantPicker({employees,drivers,km,onChange}:{employees:Employee[];drivers:ShowRoute['drivers'];km:number;onChange:(d:ShowRoute['drivers'])=>void}){
  const andres=employees.find(e=>e.id===andresRouteEmployeeId);
- return <div className="route-participant-picker"><h3>¿A quién se le paga este recorrido?</h3>{andres&&<Button type="button" variant="outline" onClick={()=>onChange([{employeeId:andres.id,rate:andres.kmRate}])}>Solo Andrés Rey</Button>}
+ return <div className="route-participant-picker"><h3>¿A quién se le paga este recorrido?</h3>{andres&&<Button type="button" variant="outline" onClick={()=>onChange(onlyRouteParticipant(drivers,andres))}>Solo Andrés Rey</Button>}
  {employees.map(e=>{const selected=drivers.find(d=>d.employeeId===e.id);return <div key={e.id} className="participant"><Toggle label={e.name} value={!!selected} onChange={yes=>onChange(yes?[...drivers,{employeeId:e.id,rate:e.kmRate}]:drivers.filter(d=>d.employeeId!==e.id))}/><div className="route-participant-amount"><strong>{money(selected?.rate??e.kmRate)}/km</strong>{selected&&<small>{km} km · {money(km*selected.rate)} brutos</small>}{e.id===andresRouteEmployeeId&&<small>Tarifa base de Mariano · solo se paga si lo seleccionas.</small>}</div></div>;})}
  {drivers.filter(d=>!employees.some(e=>e.id===d.employeeId)).map(d=><div className="inline-total" key={d.employeeId}><span>Participante no disponible · {d.employeeId}</span><Button type="button" variant="outline" onClick={()=>onChange(drivers.filter(x=>x.employeeId!==d.employeeId))}>Retirar del recorrido</Button></div>)}
  </div>;

@@ -3259,6 +3259,10 @@ final class PayrollClientTests: XCTestCase {
         record["name"] = .string("Pereira–Medellín · actividad ficticia")
         record["km"] = .number(100)
         record["drivers"] = .array([.object(["employeeId":.string("emp-18"),"rate":.number(1250)])])
+        let reference:JSONValue = .object(["employeeId":.string("emp-18"),"rate":.number(1500)])
+        XCTAssertEqual(PayrollRouteSelection.only(reference,in:record).elements.first?["rate"].number,1250,"Elegir solo a Andrés no cambia la tarifa capturada")
+        var newRecord=record;newRecord["drivers"] = .array([])
+        XCTAssertEqual(PayrollRouteSelection.only(reference,in:newRecord).elements.first?["rate"].number,1500,"Una selección nueva recibe la tarifa vigente")
         let session = PayrollEditorSession(kind:.route,workspace:workspace,detail:detail,record:record)
         let command = session.command(record), saved = command["edit"]["record"]
         XCTAssertEqual(command["edit"]["periodId"].text,period.id)

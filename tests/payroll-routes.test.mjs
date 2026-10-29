@@ -40,6 +40,11 @@ test('tarifas guardadas y cierres conservan sus importes aunque cambie Mariano; 
  const {state,p,andres,mariano}=fixture();p.routes=[extra(p)];const original=m.calculate(state,p);p.snapshot={...original,employees:structuredClone(state.employees),closedAt:'2026-10-29T20:00:00Z',closedBy:'test@example.invalid'};p.status='cerrada';const frozen=structuredClone(p.snapshot);
  mariano.kmRate=2000;andres.withholding=.5;assert.deepEqual(m.calculate(state,p),frozen);m.reopenPeriod(p,'camilo@mac2you.co');assert.equal(m.calculate(state,p).total,original.total);assert.deepEqual(p.revisions,[frozen]);assert.equal(m.mobilePeriod(state,p,2).editing.routeParticipants.find(e=>e.employeeId===andres.id).rate,1250);assert.equal(p.routes[0].drivers[0].rate,1250);
 });
+test('Solo Andrés retira otros participantes y conserva su tarifa capturada aunque la nueva referencia haya cambiado',()=>{
+ const stored=[{employeeId:'emp-18',rate:1250},{employeeId:'emp-19',rate:1500}],before=structuredClone(stored),person={id:'emp-18',kmRate:1500};
+ assert.deepEqual(m.onlyRouteParticipant(stored,person),[{employeeId:'emp-18',rate:1250}]);assert.deepEqual(stored,before);
+ assert.deepEqual(m.onlyRouteParticipant([],person),[{employeeId:'emp-18',rate:1500}]);
+});
 test('PDF individual y Excel incluyen la ruta pagada a Andrés, sus kilómetros y la tarifa capturada',async()=>{
  const {state,p,andres}=fixture();p.routes=[extra(p)];p.snapshot={...m.calculate(state,p),employees:structuredClone(state.employees),closedAt:'2026-10-29T20:00:00Z',closedBy:'test@example.invalid'};p.status='cerrada';
  const sheet=strFromU8(unzipSync(m.payrollXlsx(p))['xl/worksheets/sheet6.xml']);assert.match(sheet,/Andrés ficticio/);assert.match(sheet,/Pereira–Medellín/);assert.match(sheet,/<v>1250<\/v>/);assert.match(sheet,/<f>D2\*E2<\/f><v>125000<\/v>/);
