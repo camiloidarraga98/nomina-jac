@@ -167,6 +167,8 @@ Referencias: [WEB_AGENDA_CACHE.md](../docs/WEB_AGENDA_CACHE.md), [IOS_AGENDA_EVE
 
 Los itinerarios nuevos también llegan desde **Slack JAC Music → #itinerarios-finales**. Solo PDF nuevos del canal configurado: no texto, otros canales ni historial. No reinstalar otra app Slack para empezar Cloud: la conexión existente ya está configurada.
 
+Los pases privados pueden acompañarse de Silla, Hora de salida, Hora en sala y Aerolínea en el mismo mensaje que contiene un único PDF. Estos datos explícitos tienen prioridad; se admiten horas locales con `(hora Colombia, UTC−5)` y se conservan como HH:mm, sin convertirlas. La corrección del29 de octubre evita que esa anotación descarte también la silla. Mensajes separados o ediciones posteriores no actualizan un pase ya importado. Ver [formato y alcance](../docs/BOARDING_SLACK_DETAILS.md).
+
 - Itinerarios muestra los itinerarios y el apartado privado de pases. Quitar controles de conexión/notificaciones de ese panel fue intencional: viven en **Servicios conectados** y **Notificaciones** dentro de configuración.
 - Abrir un aviso marca lectura; **Confirmar recibido** es una acción expresa y distinta. Pertenece al usuario y a la versión; el administrador puede ver recibidos/pendientes, sin ganar lectura de pases ajenos.
 - Actualizar itinerario requiere resumen de cambios y versión completa de adjuntos. Conserva identidad/destinatarios, incrementa versión y exige nueva confirmación; no edita el original en Slack.

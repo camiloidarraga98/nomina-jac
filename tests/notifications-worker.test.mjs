@@ -256,7 +256,7 @@ test('Workerd/D1/R2 conserva la descripción del pase con su archivo y destinata
   await db.prepare("INSERT INTO jac_boarding_channels(id,user_id,created_at) VALUES (?,?,'fixture')").bind(channel,person).run();
   const run=body=>mf.dispatchFetch('https://boarding.example.invalid/message',{method:'POST',body:JSON.stringify(body)});
   assert.equal((await run({action:'init'})).status,200);
-  const text='*Silla:* Sin asignar\nHora de salida: 00:30\nHora en sala: 23:20\nAerolínea: LATAM',canonical='Silla: Sin asignar\nHora de salida: 00:30\nHora en sala: 23:20\nAerolínea: LATAM';
+  const text='*Silla:* Sin asignar\nHora de salida: 00:30 (hora Colombia, UTC−5)\nHora en sala: 23:20 (hora Colombia, UTC−5)\nAerolínea: LATAM',canonical='Silla: Sin asignar\nHora de salida: 00:30\nHora en sala: 23:20\nAerolínea: LATAM';
   const queued=await(await run({action:'queue',file,text})).json();assert.equal(queued.boarding_message,canonical);assert.equal(queued.status,'pending');assert.equal(outbound,0,'El snapshot se guarda antes de consultar o descargar el PDF.');
   const replay=await(await run({action:'queue',file,text:'Silla: 22C\nHora de salida: 21:10'})).json();assert.equal(replay.boarding_message,canonical);
   const imported=await(await run({action:'import',file})).json();assert.ok(imported.id);assert.equal(imported.body,canonical);assert.equal(outbound,2);

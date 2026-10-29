@@ -337,7 +337,7 @@ test('Pases Slack: mapeo CAS, canales exactos, destinatario inmutable, archivos 
 });
 test('Pases Slack: la descripción firmada queda guardada con su PDF antes de importar y no cambia con replays',async()=>{
  const prior=fileMeta,id='FBDMESSAGE01',channel='C0C8FAPHTCG';
- const text='*Silla:* 12A\nHora de salida: 6:45 PM\nHora en sala: 17:30\nAerolínea: Avianca',body='Silla: 12A\nHora de salida: 18:45\nHora en sala: 17:30\nAerolínea: Avianca';
+ const text='Persona ficticia · AV9999 · Ruta de prueba\n*Silla:* 12A\nHora de salida: 6:45 PM (hora Colombia, UTC−5)\nHora en sala: 17:30 (hora Colombia, UTC−5)\nAerolínea: Avianca',body='Silla: 12A\nHora de salida: 18:45\nHora en sala: 17:30\nAerolínea: Avianca';
  const expected={seat:'12A',departureTime:'18:45',boardingTime:'17:30',airline:'Avianca'};
  let release;const held=new Promise(resolve=>{release=resolve;});
  fileMeta={...prior,name:'Jhon Alex 10 de octubre 2026 Bogota-Pereira.pdf',channels:[channel]};

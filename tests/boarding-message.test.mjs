@@ -24,10 +24,24 @@ test('los campos vacíos se omiten y una silla sin asignar queda explícitamente
  assert.deepEqual(parse('constructor: Otro vuelo\n__proto__: prueba\nHora en sala: 23:30'),{boardingTime:'23:30'});
 });
 
-test('las horas son civiles y explícitas, sin zonas ni inferencia de otro horario',()=>{
+test('las horas son civiles y explícitas, sin convertir zonas ni inferir otro horario',()=>{
  for(const [input,expected] of [['18:45','18:45'],['0:05','00:05'],['6:45 p. m.','18:45'],['12:05 AM','00:05'],['12:05 PM','12:05'],['11:59pm','23:59']])assert.equal(time(input),expected,input);
  for(const input of ['24:00','14:61','00:30 AM','18:45 PM','18:45 / 19:45','18:45 UTC-5','18:45:00','Gate 6',18,null,{},'Hora de salida: 18:45'])assert.equal(time(input),undefined,JSON.stringify(input));
  assert.deepEqual(parse('Hora en sala: 23:30'),{boardingTime:'23:30'},'No inventar una salida a partir de la hora en sala.');
+});
+
+test('la anotación Colombia UTC−5 conserva la hora local y no descarta la silla ni el resto del bloque',()=>{
+ const input='Persona ficticia · AV9999 · Ruta ficticia\nSilla: 18C\nHora de salida: 18:35 (hora Colombia, UTC−5)\nHora en sala: 17:35 (hora Colombia, UTC−5)\nAerolínea: Avianca';
+ const expected={seat:'18C',departureTime:'18:35',boardingTime:'17:35',airline:'Avianca'};
+ assert.deepEqual(parse(input),expected);assert.deepEqual(parse(canonical(input)),expected);
+ assert.equal(canonical(input),'Silla: 18C\nHora de salida: 18:35\nHora en sala: 17:35\nAerolínea: Avianca');
+ for(const [input,value] of [['0:05 (hora de Colombia, UTC-05:00)','00:05'],['6:35 p. m. (COT, UTC-5)','18:35'],['12:05 AM (HORA COLOMBIA, UTC−5)','00:05']])assert.equal(time(input),value);
+});
+
+test('una zona contradictoria, anotación libre o segunda hora sigue rechazando el bloque completo',()=>{
+ for(const value of ['18:35 (hora Colombia, UTC-4)','18:35 (hora Colombia, UTC+5)','18:35 (hora local, UTC−5)','18:35 (hora Colombia, UTC-05:30)','18:35 / 19:35 (hora Colombia, UTC−5)','18:35 (hora Colombia, UTC−5) 19:35','18:35 (hora Colombia, UTC−5)\u202e']){
+  assert.equal(time(value),undefined,value);assert.equal(parse('Silla: 18C\nHora de salida: '+value),undefined,value);
+ }
 });
 
 test('no combina dos bloques de vuelo ni acepta valores contradictorios o imposibles',()=>{

@@ -21,8 +21,11 @@ const labels = new Map<string, keyof BoardingMessageDetails>([
 
 /** A civil HH:mm value: do not convert to UTC or infer a timezone. */
 export function normalizeBoardingMessageTime(value: unknown): string | undefined {
-  if (typeof value !== 'string' || value.length > 40 || forbidden.test(value)) return undefined;
-  const text = value.trim().toUpperCase().replace(/([AP])\s*\.?\s*M\.?/g, '$1M');
+  if (typeof value !== 'string' || value.length > 64 || forbidden.test(value)) return undefined;
+  // This known annotation describes the same local civil time. Strip only the
+  // explicit Colombia/COT UTC−5 suffix, never arbitrary text or a second time.
+  const local = value.trim().toUpperCase().replace(/[ \t]*\((?:HORA(?:[ \t]+DE)?[ \t]+COLOMBIA|COT)[ \t]*,[ \t]*UTC[ \t]*[-−][ \t]*0?5(?::00)?\)[ \t]*$/, '').trim();
+  const text = local.replace(/([AP])\s*\.?\s*M\.?/g, '$1M');
   const match = /^(\d{1,2}):(\d{2})(?:\s*(AM|PM))?$/.exec(text);
   if (!match) return undefined;
   let hour = Number(match[1]);

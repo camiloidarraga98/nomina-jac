@@ -1,3 +1,7 @@
+## Pases Slack: silla y horas anotadas ·29 de octubre de2026
+
+El texto confirmado por Camilo incluía horas con `(hora Colombia, UTC−5)`. El parser anterior rechazaba esa anotación y descartaba también la silla y la aerolínea. Se acepta el sufijo explícito de Colombia sin convertir la hora local, conservando las guardas y el rechazo de zonas contradictorias/bloques ambiguos. API entrega los cuatro campos canónicos al cliente existente0.34.0(52)+, sin cambiar OCR/PDF/Wallet ni firma. Ver `BOARDING_SLACK_DETAILS.md` para verificación y reparación puntual del pase propio con datos confirmados; no convertir esta reparación en importación de historial ni modificación de los snapshots de Slack.
+
 ## Recorridos opcionales de Andrés Rey · 29 de octubre de 2026
 
 Web/API finales de `43579ef` activos en Worker `a9a57a4e-9f0b-44d2-943a-562502f64eec` a las 15:08 Colombia. Check web40946162120, 96 casos locales y Chromium correctos. App/widget0.41.0(60): Apple40946162346 aprobó ambas Release, 9 unitarias/guardas y UI de Andrés; se reutiliza el recorrido de actividades existente de40943167883. Fuente en main, sin instalación física ni distribución TestFlight ejecutada aquí.

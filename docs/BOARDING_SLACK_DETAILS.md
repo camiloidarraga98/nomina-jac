@@ -15,6 +15,8 @@ Aerolínea: Avianca
 
 Usar la hora local indicada por la aerolínea, preferentemente formato de 24 horas. Se normalizan también AM/PM, mayúsculas, acentos y etiquetas en negrita de Slack. Los campos vacíos se omiten; `Silla: Sin asignar` conserva la ausencia de silla y evita sustituirla desde el código. Campos repetidos o valores no válidos descartan el bloque completo para no mezclar vuelos. El PDF sigue importándose con su flujo anterior.
 
+Desde la corrección del29 de octubre de2026 se acepta también `18:45 (hora Colombia, UTC−5)` y el equivalente explícito `hora de Colombia`/`COT` con `UTC-5` o `UTC-05:00`. La anotación describe la misma hora local y se retira antes de guardar HH:mm: no se suma ni resta cinco horas. Se siguen rechazando otra zona, una segunda hora, texto arbitrario o controles de dirección. El encabezado libre del mensaje no se guarda ni selecciona el destinatario.
+
 El mensaje debe contener su propio texto y adjunto. Un comentario de texto enviado por separado no se asocia al archivo; no se consultan el historial ni las respuestas del hilo. Una respuesta que incluya su propio PDF y descripción sí es autosuficiente. Varios archivos en el mismo mensaje conservan la importación anterior sin aplicarles la descripción común. El nombre del archivo sigue aportando pasajero, ruta y fecha según el formato vigente.
 
 ## Prioridad de los datos
@@ -32,6 +34,12 @@ La migración aditiva 0037 añade `boarding_message` a `jac_slack_files`. El web
 El ID del archivo mantiene la idempotencia: repeticiones o reenvíos del evento no cambian el bloque capturado ni redirigen el destinatario. Se conservan revisión/asignación del canal, verificación de firma/equipo, validación del archivo, restricciones de acceso, revocación, borrado y notificaciones privadas. La API no expone el bloque común a avisos con varios adjuntos. Cachés nativas conservan sesión, archivo, revisión y metadatos canónicos; las respuestas tardías no recuperan valores revocados.
 
 Se aplica a publicaciones nuevas. Editar un mensaje ya importado no actualiza el pase: para añadir una descripción a un pase anterior, subir el archivo de nuevo junto con su descripción en una publicación nueva. No se importa el historial.
+
+## Corrección de horas anotadas ·29 de octubre de2026
+
+El incidente confirmado tenía una silla válida, pero las horas incluían `(hora Colombia, UTC−5)`. La validación anterior descartaba todo el bloque, incluida la silla y la aerolínea; la cola y el aviso quedaron sin descripción. Corregir el parser resuelve las publicaciones futuras; no recupera por sí solo un texto ya descartado. Una reparación puntual del pase propio con los cuatro valores confirmados debe conservar archivo/destinatario/snapshot de Slack, comprobar revisión y asignación vigentes y aumentar la revisión del aviso para invalidar la caché de metadatos. No requiere volver a subir el PDF ni reenviar el evento o el push. No se ejecuta un backfill de otros usuarios.
+
+Comprobaciones locales:133 casos correctos, con6 del parser,61 de notificaciones (evento firmado → cola durable → importación → `boardingDetails`, incluida la silla con horas anotadas),8 en Workerd/D1/R2,5 de datos del código/Wallet y53 de nómina/autenticación/correo/API móvil. TypeScript y build Cloudflare correctos. Servicios externos interceptados y documentos ficticios; el PDF privado recibido no se incorpora a fixtures ni al repositorio público. No cambia código Swift ni versión/firma: las apps0.34.0(52)+ ya consumen estos campos; la actualización canónica del aviso invalida su caché anterior.
 
 ## Comprobaciones y entrega
 
