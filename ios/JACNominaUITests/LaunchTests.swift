@@ -1730,6 +1730,26 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Aprobado e incorporado a nómina"].waitForExistence(timeout:15));attachScreen(app,name:"gasto-con-comprobante-aprobado")
     }
 
+    @MainActor func testIndependentAndresRouteSelectsOnlyHimAndKeepsSelectionAfterEditing() {
+        let app = fixture(["--uitest-andres-route"])
+        tap(app,"period.fixture-period");tap(app,"Actividad");tap(app,"activity.routes");tap(app,"activity.add")
+        fill(app,"editor.name","Pereira–Medellin actividad ficticia");tap(app,"Listo")
+        fill(app,"editor.km","100");tap(app,"Listo")
+        let andres = app.switches["editor.route.participant.emp-18"]
+        XCTAssertTrue(andres.waitForExistence(timeout:10));XCTAssertEqual(andres.value as? String,"0")
+        tap(app,"editor.route.only.emp-18")
+        XCTAssertEqual(andres.value as? String,"1")
+        for id in ["driver-a","driver-b","emp-19"] {XCTAssertEqual(app.switches["editor.route.participant."+id].value as? String,"0")}
+        tap(app,"editor.save")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","Pereira–Medellin actividad ficticia")).firstMatch.waitForExistence(timeout:15))
+        tap(app,"Editar")
+        XCTAssertTrue(andres.waitForExistence(timeout:10));XCTAssertEqual(andres.value as? String,"1")
+        for id in ["driver-a","driver-b","emp-19"] {XCTAssertEqual(app.switches["editor.route.participant."+id].value as? String,"0")}
+        fill(app,"editor.km","120");tap(app,"editor.save")
+        XCTAssertTrue(app.staticTexts["120 km"].waitForExistence(timeout:15))
+        attachScreen(app,name:"recorrido-independiente-andres-ficticio")
+    }
+
     @MainActor func testPromotionalShowAndLinkedExpenseCanBeCreatedWithoutAddingPayrollPayment() {
         let app=fixture(["--uitest-commission"])
         tap(app,"period.fixture-period")

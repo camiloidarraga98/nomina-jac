@@ -94,7 +94,7 @@ struct ActivityView: View {
         }
     }
     @ViewBuilder private func routes(_ d: PeriodDetail) -> some View {
-        Section { Text("Registra el recorrido total de ida y regreso una sola vez por show. Los pagos usan las tarifas registradas de cada conductor.").font(.footnote).foregroundStyle(.secondary) }
+        Section { Text("Registra el recorrido total de ida y regreso una sola vez por show. Puedes seleccionar a Andrés Rey u otros participantes; las rutas sin show se registran por separado.").font(.footnote).foregroundStyle(.secondary) }
         let templates = d.editing?["showRoutes"].elements ?? []
         ForEach(Array(templates.enumerated()), id: \.offset) { _, record in
             Section(record["name"].text) {

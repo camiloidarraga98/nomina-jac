@@ -2050,7 +2050,8 @@ final class PayrollClientTests: XCTestCase {
         refreshed.canDelete = false; model.reconcile(refreshed); XCTAssertFalse(model.canDelete)
     }
     @MainActor func testMediaSelectionIsRemovedOnSessionChangeAndPermissionRevocation() async throws {
-        let client = UITestBackend.client(), workspace = try await client.workspace(), feed = try await client.media(folder: "media-day"), model = MediaBatchSelection()
+        let client = UITestBackend.client()
+        let workspace = try await client.workspace(), feed = try await client.media(folder: "media-day"), model = MediaBatchSelection()
         model.select(feed.items[0], in: feed, client: client)
         var changed = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(workspace))
         changed["user"]["isOwner"] = .bool(false); changed["user"]["administrator"] = .bool(false); changed["user"]["sections"] = .array([.string("calendar")])
@@ -3245,6 +3246,28 @@ final class PayrollClientTests: XCTestCase {
         let payment = try JSONDecoder().decode(PayrollPayment.self, from: row)
         XCTAssertEqual(payment.net, 696749.75)
         XCTAssertEqual(payment.deductions, 71250.25)
+    }
+
+    @MainActor func testIndependentRouteCommandKeepsOnePayeeRateAndRouteDescription() async throws {
+        let client = UITestBackend.client()
+        let workspace = try await client.workspace()
+        let period = try XCTUnwrap(workspace.periods.first)
+        let detail = try await client.detail(periodID: period.id)
+        var record = PayrollEditorSession.newRecord(.route, workspace: workspace, detail: detail)
+        XCTAssertEqual(record["kind"].text,"extra")
+        XCTAssertFalse(record["drivers"].elements.contains { $0["employeeId"].text == "emp-18" })
+        record["name"] = .string("Pereira–Medellín · actividad ficticia")
+        record["km"] = .number(100)
+        record["drivers"] = .array([.object(["employeeId":.string("emp-18"),"rate":.number(1250)])])
+        let session = PayrollEditorSession(kind:.route,workspace:workspace,detail:detail,record:record)
+        let command = session.command(record), saved = command["edit"]["record"]
+        XCTAssertEqual(command["edit"]["periodId"].text,period.id)
+        XCTAssertEqual(saved["drivers"].elements.count,1)
+        XCTAssertEqual(saved["drivers"].elements.first?["rate"].number,1250)
+        XCTAssertEqual(saved["name"].text,"Pereira–Medellín · actividad ficticia")
+        XCTAssertTrue(saved["showId"].isNull);XCTAssertTrue(command["data"].isNull)
+        let route = try saved.decoded(PayrollRoute.self)
+        XCTAssertEqual(route.kind,"extra");XCTAssertEqual(route.participants.first?.employeeId,"emp-18")
     }
 
     func testLegacyAndSharedRoutesDecodeTogether() throws {

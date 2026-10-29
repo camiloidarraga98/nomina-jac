@@ -1,5 +1,6 @@
 import {z} from 'zod';
 import {rehearsalPaymentIssue} from './payroll';
+import {canReceiveRoutePay} from './payroll-routes';
 const amount=z.number().finite().min(0).max(1e12),id=z.string().min(1).max(80),str=z.string().max(180),date=z.string().regex(/^\d{4}-\d{2}-\d{2}$/).refine(s=>!Number.isNaN(Date.parse(s))&&new Date(s+'T12:00:00Z').toISOString().slice(0,10)===s,'Fecha inválida');
 const employee=z.object({id,name:str.min(2),document:str,role:str,category:z.enum(['musicos','tecnica','conductores','administracion','comision']),active:z.boolean(),showRate:amount,kmRate:amount,fixedService:amount,withholding:z.number().min(0).max(1),ica:z.number().min(0).max(1),salary:amount,transport:amount,pension:z.boolean(),health:z.boolean(),cycle:z.enum(['quincenal','mensual']),monthlyHalf:z.union([z.literal(1),z.literal(2)]),nonSalary:amount,contributionBase:z.number().min(0).max(1),incomeTax:amount,solidarity:amount,deleted:z.boolean().optional(),email:z.union([z.literal(''),z.string().trim().email().max(254)]).optional()});
 const movement=z.object({id,employeeId:id,concept:str.min(1),kind:z.enum(['servicio','reintegro','salarial','descuento']),quantity:z.number().finite().min(0.01).max(10000),amount,note:z.string().max(500)});
@@ -21,10 +22,11 @@ export const stateSchema=z.object({employees:z.array(employee).max(200),concepts
   const shared=p.routes.filter(r=>'showId' in r);
   if(!unique(shared.map(r=>r.showId)))error('Solo se registra un kilometraje por show.');
   for(const r of p.routes){
+   if(p.status==='abierta'&&'kind' in r&&!r.name.trim())error('Indica la ruta o actividad que se está pagando.');
    if(r.date<p.start||r.date>p.end)error('La fecha de un recorrido está fuera de la quincena.');
    if('drivers' in r){
     if(!unique(r.drivers.map(d=>d.employeeId)))error('Un conductor no puede repetirse en un recorrido.');
-    for(const d of r.drivers)if(!(periodEmployees as z.infer<typeof employee>[]).some(e=>e.id===d.employeeId&&e.category==='conductores'))error('El pago por kilómetros solo corresponde a conductores.');
+    for(const d of r.drivers)if(!(periodEmployees as z.infer<typeof employee>[]).some(e=>e.id===d.employeeId&&canReceiveRoutePay(e)))error('El pago por kilómetros solo corresponde a conductores o a Andrés Ricardo Rey.');
    }
    if('showId' in r){
     const show=p.shows.find(sh=>sh.id===r.showId);

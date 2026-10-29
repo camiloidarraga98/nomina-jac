@@ -1,3 +1,7 @@
+## Recorridos opcionales de Andrés Rey · 29 de octubre de 2026
+
+Camilo pidió incluir a Andrés Ricardo Rey (`emp-18`, técnico) en Recorridos, con la tarifa por km de Mariano (`emp-19`) y rutas/actividades externas sin show. No cambiar categoría, honorarios de técnico ni retenciones de Andrés. Elegibilidad centralizada en `lib/payroll-routes.ts`: conductores y Andrés, activos/no eliminados/no excluidos; Andrés nunca preseleccionado. Su tarifa inicial sigue la guardada de Mariano en las condiciones del periodo (base conocida1250 si ese perfil no está disponible), capturada por recorrido, sin recalcular históricos. «Solo Andrés Rey» retira otros destinatarios explícitamente; exigir ruta/actividad, fecha y km. Reutilizar `ExtraRoute` sin vincularla por coincidencia de fecha/nombre a un show, sin descontarla de la comisión; si se selecciona para un show, incluir sus km en ese costo. Clientes anteriores conservan `editing.drivers` sin Andrés; opciones nuevas en `editing.routeParticipants`. No migrar ni editar datos reales para probar. App/widget0.41.0(60), misma firma/grupo/APNs; detalles/resultados en `docs/PAYROLL_ROUTES.md`.
+
 ## Nómina promocional al 50% y total con Camilo · 29 de octubre de 2026
 
 Estado de entrega: web/API activos en Worker `9a59e36b-c7a9-4bb6-8844-8eb521f26cce` (14:16 Colombia), check web40938581198 y120 pruebas locales correctos. App/widget0.40.0(59) en GitHub; Release Apple40937560584 y seguimiento de pruebas40938925040 en cola, sin distribución TestFlight. No convertir esta cola en un resultado aprobado.

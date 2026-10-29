@@ -1,3 +1,4 @@
+import {canReceiveRoutePay} from './payroll-routes';
 export type Category='musicos'|'tecnica'|'conductores'|'administracion'|'comision';
 export const categoryNames:Record<Category,string>={musicos:'Músicos',tecnica:'Técnica',conductores:'Conductores',administracion:'Dependientes',comision:'Comisiones y otros'};
 export const hourNames=['Recargo nocturno','Recargo dominical diurno','Recargo dominical nocturno','Extra diurna','Extra nocturna','Extra dominical diurna','Extra dominical nocturna'];
@@ -55,7 +56,7 @@ function commissionForPeriod(state:PayrollState,p:Period):CamiloCommission {
  let unlinkedKilometers=0;
  for(const route of p.routes){
   if('kind' in route)continue;
-  const value=round(routeDrivers(route).reduce((v,d)=>v+(payable(d.employeeId)?.category==='conductores'?round(route.km*d.rate):0),0));
+  const value=round(routeDrivers(route).reduce((v,d)=>{const e=payable(d.employeeId);return v+(e&&canReceiveRoutePay(e)?round(route.km*d.rate):0);},0));
   const matches='showId' in route?(byShow.has(route.showId)?[byShow.get(route.showId)!]:[]):legacyMatches.get(route.id)||[];
   if(matches.length===1)matches[0].drivers=round(matches[0].drivers+value);
   else if(matches.length>1&&value>0)issues.push('El recorrido '+route.name+' coincide con varios shows. Vincúlalo a uno solo para calcular la comisión.');

@@ -88,10 +88,11 @@ async function edit(token,kind,record,periodId,action='edit',version){
  return post({action,version:version??(await m.readPayroll()).version,edit:{kind,record,periodId}},token);
 }
 async function command(token,action,extra={}){return post({action,version:(await m.readPayroll()).version,...extra},token);}
-async function fakePayroll(){
+async function fakePayroll({andresRoutes=false}={}){
  const current=await m.readPayroll(),prototype=current.data.employees[0];
  const person=(id,category,values={})=>({...prototype,id,name:'Persona simulada '+id,document:'TEST-'+id,email:id+'@example.invalid',role:'Prueba',category,active:true,deleted:false,showRate:750000,kmRate:0,fixedService:0,withholding:.095,ica:0,salary:0,transport:0,cycle:'quincenal',monthlyHalf:2,nonSalary:0,contributionBase:1,incomeTax:0,solidarity:0,...values});
  const data={employees:[person('musica','musicos'),person('conductor-a','conductores',{kmRate:1000}),person('conductor-b','conductores',{kmRate:1250}),person('dependiente','administracion',{salary:1500000,transport:200000,pension:false}),person('sin-registros','tecnica',{showRate:300000})],concepts:[{id:'ensayo',name:'Ensayo simulado',kind:'servicio',amount:80000}],settings:{...current.data.settings,company:'Empresa simulada'},periods:[]};
+ if(andresRoutes)data.employees.push(person('emp-18','tecnica',{name:'Andrés Rey simulado',showRate:600000,withholding:.06,ica:.01}),person('emp-19','conductores',{name:'Mariano simulado',kmRate:1250}));
  // A fresh, in-memory database only; replaces seeded data to make every write fictitious.
  sql.prepare('DELETE FROM payroll_mail_jobs').run();sql.prepare('DELETE FROM payroll_mail_batches').run();
  // Existing people cannot be removed through ordinary save, so reset this test-only state directly.
@@ -246,4 +247,16 @@ test('API liquida 50% solo en promocionales y devuelve total general, con previe
  const legacy={...show,name:'Cambio desde cliente anterior'};delete legacy.halfPay;delete legacy.promotional;assert.equal((await edit(writer,'show',legacy,p.id)).status,200);
  const actual=await get('?period='+p.id,writer);assert.equal(actual.body.period.shows[0].halfPay,true);assert.equal(actual.body.period.shows[0].participants[0].amount,725000);assert.equal(actual.body.calculation.rows.find(r=>r.employeeId==='musica').items[0].amount,362500);
  assert.equal((await edit(writer,'show',{...legacy,promotional:false},p.id)).status,200);const full=await get('?period='+p.id,writer);assert.equal(full.body.calculation.rows.find(r=>r.employeeId==='musica').items[0].amount,725000);
+});
+
+test('recorrido independiente de Andrés usa tarifa de Mariano, selección explícita, descripción, permisos y CAS',async()=>{
+ await fakePayroll({andresRoutes:true});const writer=await actor('andres-route-writer',['payroll']),reader=await actor('andres-route-reader');
+ const p={id:'andres-route-period',start:'2027-05-01',end:'2027-05-15'};assert.equal((await edit(writer,'period',p)).status,200);
+ const detail=await get('?period='+p.id,writer),option=detail.body.editing.routeParticipants.find(e=>e.employeeId==='emp-18');assert.equal(option.rate,1250);assert.equal(option.selectedByDefault,false);assert.equal(option.selectAloneLabel,'Solo Andrés Rey');assert.ok(!detail.body.editing.drivers.some(e=>e.employeeId==='emp-18'));assert.deepEqual(detail.body.period.routes,[]);
+ const route={id:'andres-route',kind:'extra',name:'Pereira–Medellín · diligencia ficticia con Jhon Alex',date:p.start,km:100,drivers:[{employeeId:option.employeeId,rate:option.rate}]};
+ assert.equal((await edit(reader,'route',route,p.id)).status,403);assert.equal((await edit(writer,'route',{...route,name:' '},p.id)).status,400);
+ const before=await m.readPayroll(),preview=await edit(writer,'route',route,p.id,'previewEdit');assert.equal(preview.status,200);assert.equal((await m.readPayroll()).version,before.version);assert.equal(preview.body.detail.calculation.rows.find(r=>r.employeeId==='emp-18').net,116250);
+ const saved=await edit(writer,'route',route,p.id);assert.equal(saved.status,200);assert.equal((await edit(writer,'route',route,p.id,'edit',before.version)).status,409);
+ assert.equal((await edit(writer,'route',{...route,name:'Ruta corregida'},p.id)).status,200);const current=await get('?period='+p.id,writer);assert.equal(current.body.period.routes.length,1);assert.deepEqual(current.body.period.routes[0].drivers,route.drivers);assert.equal(current.body.period.shows.length,0);assert.equal(current.body.calculation.rows.find(r=>r.employeeId==='emp-18').gross,125000);assert.ok(!current.body.calculation.rows.some(r=>r.employeeId==='emp-19'));
+ assert.equal(current.body.employees.find(e=>e.id==='emp-18').category,'tecnica');assert.equal(current.body.employees.find(e=>e.id==='emp-18').showRate,600000);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0);
 });

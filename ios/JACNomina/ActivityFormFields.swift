@@ -92,26 +92,58 @@ struct HoursFields: View {
 struct RouteFields: View {
     @Binding var record: JSONValue
     let session: PayrollEditorSession
+    private var participants: [JSONValue] {
+        var values = session.detail?.editing?["routeParticipants"].elements ?? []
+        if values.isEmpty { values = session.detail?.editing?["drivers"].elements ?? [] }
+        for selected in record["drivers"].elements where !values.contains(where: { $0["employeeId"] == selected["employeeId"] }) {
+            values.append(selected)
+        }
+        return values
+    }
+    private func name(_ value: JSONValue) -> String {
+        value["name"].text.isEmpty ? (session.detail?.employeeName(value["employeeId"].text) ?? "Participante") : value["name"].text
+    }
     var body: some View {
         Section {
             if !record["showId"].text.isEmpty {
                 LabeledContent("Show", value: record["name"].text); LabeledContent("Fecha", value: PayrollFormat.date(record["date"].text))
             } else {
-                RecordTextField(title: "Nombre del recorrido", record: $record, key: "name")
+                RecordTextField(title: "Ruta o actividad que se paga", record: $record, key: "name")
                 RecordDateField(title: "Fecha", record: $record, key: "date", start: session.detail?.period.start ?? "", end: session.detail?.period.end ?? "")
             }
             RecordNumberField(title: "Kilómetros totales (ida y regreso)", record: $record, key: "km")
             if !record["employeeId"].text.isEmpty {
-                RecordChoice(title: "Conductor", record: $record, key: "employeeId", options: session.activeEmployees.filter { $0.category == "conductores" }.map { ($0.id, $0.name) })
-                    .onChange(of: record["employeeId"]) { _, value in if let employee = session.employees.first(where: { $0.id == value.text }) { record["rate"] = .number(employee.kmRate) } }
+                RecordChoice(title: "Persona", record: $record, key: "employeeId", options: participants.map { ($0["employeeId"].text, name($0)) })
+                    .onChange(of: record["employeeId"]) { _, value in if let option = participants.first(where: { $0["employeeId"] == value }) { record["rate"] = option["rate"] } }
                 RecordNumberField(title: "Tarifa por kilómetro", record: $record, key: "rate")
             } else {
-                ForEach(Array(record["drivers"].elements.enumerated()), id: \.offset) { _, driver in AmountRow(title: (session.detail?.employeeName(driver["employeeId"].text) ?? "") + " / km", value: driver["rate"].number) }
+                ForEach(Array(participants.enumerated()), id: \.offset) { _, option in
+                    if !option["selectAloneLabel"].text.isEmpty {
+                        Button(option["selectAloneLabel"].text) {
+                            record["drivers"] = .array([.object(["employeeId": option["employeeId"], "rate": option["rate"]])])
+                        }.accessibilityIdentifier("editor.route.only." + option["employeeId"].text)
+                    }
+                    RouteParticipantField(record: $record, option: option, name: name(option))
+                }
             }
         }
         Section {
-            Text("El recorrido compartido registra una sola distancia. Cada conductor conserva su tarifa; cámbiala en Personal o en las condiciones del cierre si corresponde.").font(.footnote).foregroundStyle(.secondary)
+            Text("Selecciona solo a quienes hicieron el recorrido. Andrés Rey usa como base la tarifa por km de Mariano. Los recorridos guardados conservan su tarifa; una ruta sin show no se vincula automáticamente a un evento.").font(.footnote).foregroundStyle(.secondary)
             if record["legacyCount"].number > 0 { Text("Al guardar se consolidarán los registros anteriores que corresponden a este show.").font(.footnote).foregroundStyle(.orange) }
         }
+    }
+}
+struct RouteParticipantField: View {
+    @Binding var record: JSONValue
+    let option: JSONValue
+    let name: String
+    private var selected: JSONValue? { record["drivers"].elements.first { $0["employeeId"] == option["employeeId"] } }
+    var body: some View {
+        Toggle(name, isOn: Binding(get: { selected != nil }, set: { on in
+            var list = record["drivers"].elements.filter { $0["employeeId"] != option["employeeId"] }
+            if on { list.append(.object(["employeeId": option["employeeId"], "rate": option["rate"]])) }
+            record["drivers"] = .array(list)
+        })).accessibilityIdentifier("editor.route.participant." + option["employeeId"].text)
+        AmountRow(title: "Tarifa por km", value: selected?["rate"].number ?? option["rate"].number)
     }
 }
