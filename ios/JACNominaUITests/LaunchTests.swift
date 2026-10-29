@@ -1072,7 +1072,7 @@ final class LaunchTests: XCTestCase {
             guard button.isEnabled,frame.width>=44,frame.height>=20,viewport.contains(frame) else {XCTFail("La acción real de información debe estar visible y habilitada");return}
             button.coordinate(withNormalizedOffset:CGVector(dx:0.5,dy:0.5)).tap();return
         }
-        if ["period.create", "crm.add", "management.crm"].contains(label) {
+        if ["period.create", "crm.add", "management.crm", "crm.moreSections"].contains(label) {
             XCTAssertTrue(button.waitForExistence(timeout:10), "Debe existir el botón real \(label)")
             XCTAssertTrue(waitFor(button,predicate:NSPredicate(format:"enabled == true"),timeout:5), "Debe estar autorizado y habilitado \(label)")
             if tapMeasuredRedesignControl(app,button:button,identifier:label) { return }
@@ -1088,6 +1088,22 @@ final class LaunchTests: XCTestCase {
         // form/navigation postconditions must still exist and succeed.
         guard button.exists,button.isEnabled else { return false }
         let viewport=app.windows.firstMatch.frame,reported=button.frame
+        if identifier == "crm.moreSections",reported.maxX > viewport.maxX {
+            // XCTest can keep the closed drawer's +width translation on the
+            // Menu child, while its visible horizontal ScrollView is correct.
+            // Tap only its measured, fully contained real control rectangle.
+            let drawer=app.scrollViews["phone.sidebar.scroll"],sections=app.scrollViews["crm.sections"]
+            guard drawer.exists,sections.exists else {return false}
+            let width=drawer.frame.width,corrected=reported.offsetBy(dx:-width,dy:0)
+            guard width>0,width<viewport.width,corrected.width>=44,corrected.height>=44,
+                  viewport.contains(corrected),sections.frame.contains(corrected) else {return false}
+            print("CRM sections measured menu: child=\(reported), visible=\(corrected), container=\(sections.frame)")
+            let origin=app.frame.origin
+            app.coordinate(withNormalizedOffset:CGVector(dx:0,dy:0))
+                .withOffset(CGVector(dx:corrected.midX-origin.x,dy:corrected.midY-origin.y)).tap()
+            XCTAssertTrue(app.buttons["Contratos"].waitForExistence(timeout:10),"El toque medido debe abrir el menú real de secciones")
+            return true
+        }
         if ["period.create", "crm.add"].contains(identifier) {
             let wrapper=app.navigationBars.descendants(matching:.other).matching(identifier:identifier).firstMatch
             let childHittable=button.isHittable
