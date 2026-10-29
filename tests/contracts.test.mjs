@@ -32,7 +32,7 @@ test('los cuatro PDF distinguen contratante y pago; solo cambian los bloques var
   assert.match(pages[0],individual?/ANA MARÍA PRUEBA identificado\(a\).*nombre propio y a título personal/:/EMPRESA FICTICIA S.A.S. con NIT 900.000.000-0/);
   if(individual){assert.match(pages[3],/ANA MARÍA PRUEBA.*C.C 00.000.000.*Actuando en nombre propio/);assert.doesNotMatch(pages.join(' '),/900.000.000-0|MARÍA JOSÉ MUÑOZ ÁLVAREZ/);}
   else {assert.match(pages[3],/EMPRESA FICTICIA S.A.S..*NIT 900.000.000-0.*MARÍA JOSÉ MUÑOZ ÁLVAREZ/);}
-  if(fullyPaid){assert.match(pages[1],/recibido de EL CONTRATANTE la totalidad.*100%/);assert.match(pages[1],/pagada y cancelada en un 100%.*No existe saldo pendiente/);assert.doesNotMatch(pages[1],/deberá pagar|se completara|deberá ser consignada|50%/);}
+  if(fullyPaid){assert.match(pages[0],/EL CONTRATANTE ha pagado íntegramente el precio/);assert.doesNotMatch(pages[0],/deberá pagar el precio acordado/);assert.match(pages[1],/recibido de EL CONTRATANTE la totalidad.*100%/);assert.match(pages[1],/pagada y cancelada en un 100%.*No existe saldo pendiente/);assert.doesNotMatch(pages[1],/deberá pagar|se completara|deberá ser consignada|50%/);}
   else {assert.match(pages[1],/deberá pagar/);assert.match(pages[1],/50%.*deberá ser consignada 5 días/);}
  }
  for(const pages of versions)assert.equal(pages[2],versions[0][2],'Las cláusulas fijas de la tercera página se conservan');

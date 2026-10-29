@@ -44,10 +44,11 @@ function dataRuns(v:ContractInput){
  };
 }
 export async function contractPdf(input:unknown){
- const v=contractInput.parse(input),pdf=await PDFDocument.load(master.template),pack=await PDFDocument.load(master.fontPack);
+ const v=contractInput.parse(input),pdf=await PDFDocument.load(v.fullyPaid?master.paidTemplate:master.template),pack=await PDFDocument.load(master.fontPack);
  const [fontPage]=await pdf.copyPages(pack,[0]),resources=fontPage.node.Resources()!.lookup(PDFName.of('Font'),PDFDict);
  const fonts:Fonts={regular:{ref:resources.get(PDFName.of(master.fonts.regular.resource)) as PDFRef,glyphs:master.fonts.regular.glyphs},bold:{ref:resources.get(PDFName.of(master.fonts.bold.resource)) as PDFRef,glyphs:master.fonts.bold.glyphs}};
  const pages=pdf.getPages(),r=dataRuns(v);paragraph(pages[0],r.intro,fonts,657.85,11,'la presentación');paragraph(pages[0],r.object,fonts,446.05,4,'el objeto');
+ if(v.fullyPaid)paragraph(pages[0],[bold('EL CONTRATANTE'),normal(' ha pagado íntegramente el precio acordado por la presentación que se obliga a ejecutar '),bold('EL ARTISTA'),normal('. El recibo del pago total consta en la cláusula cuarta del presente contrato.')],fonts,277.35,2,'el pago recibido');
  let y=paragraph(pages[1],r.price,fonts,205.75,4,'el precio')-8;y=paragraph(pages[1],r.deposit,fonts,y,3,'el abono')-9;paragraph(pages[1],r.final,fonts,y,3,'el pago final');
  // Keep the last paragraph clear of the original footer even with long amounts.
  const finalLines=wrap(r.final,fonts,10.15,516).length;if(y-(finalLines-1)*13.5<73)throw Error('Los importes ocupan demasiado espacio en la plantilla. Revisa los datos.');

@@ -3,7 +3,7 @@ Usage: python3 scripts/prepare-contract-template.py supplied-contract.pdf
 Requires pypdf/reportlab. Keeps artwork/signature and removes variable text operators,
 so the example's identities and prices are not hidden behind replacement text.
 """
-import base64, hashlib, io, json, re, sys
+import base64, hashlib, io, json, re, sys, subprocess
 from pathlib import Path
 from pypdf import PdfReader, PdfWriter
 from pypdf.generic import ContentStream
@@ -62,3 +62,4 @@ output = {'sourceSha256': hashlib.sha256(source).hexdigest(), 'template': base64
           'fontPack': base64.b64encode(pack.getvalue()).decode(), 'fonts': fonts}
 Path('lib/contract-template.json').write_text(json.dumps(output, ensure_ascii=False, separators=(',', ':')) + '\n')
 print('Prepared private template and Arial subsets:', len(master.getvalue()), len(pack.getvalue()), 'bytes')
+subprocess.run([sys.executable, str(Path(__file__).with_name('prepare-paid-contract-template.py'))], check=True)
