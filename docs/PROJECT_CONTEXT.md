@@ -1,5 +1,7 @@
 ## Pases Slack: silla y horas anotadas ·29 de octubre de2026
 
+Fuente `8c49835` en main;133 comprobaciones locales, TypeScript/build correctos. Worker `02000ec0-08ec-4c65-a4ea-c6a024f89a4b` verificado activo al100% desde15:37 Colombia con14 bindings y dos crons conservados. Completado únicamente el pase propio indicado con datos confirmados, CAS/revisión1→2; original/destinatario/snapshot de Slack intactos y sin nuevas entregas push. Actualizar listado en la app0.34.0(52)+, sin nueva compilación ni reenvío de PDF. No se repitieron compilaciones Apple por este cambio solo de servidor.
+
 El texto confirmado por Camilo incluía horas con `(hora Colombia, UTC−5)`. El parser anterior rechazaba esa anotación y descartaba también la silla y la aerolínea. Se acepta el sufijo explícito de Colombia sin convertir la hora local, conservando las guardas y el rechazo de zonas contradictorias/bloques ambiguos. API entrega los cuatro campos canónicos al cliente existente0.34.0(52)+, sin cambiar OCR/PDF/Wallet ni firma. Ver `BOARDING_SLACK_DETAILS.md` para verificación y reparación puntual del pase propio con datos confirmados; no convertir esta reparación en importación de historial ni modificación de los snapshots de Slack.
 
 ## Recorridos opcionales de Andrés Rey · 29 de octubre de 2026
