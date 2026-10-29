@@ -1,5 +1,7 @@
 ## Nómina promocional al 50% y total con Camilo · 29 de octubre de 2026
 
+Estado de entrega: web/API activos en Worker `9a59e36b-c7a9-4bb6-8844-8eb521f26cce` (14:16 Colombia), check web40938581198 y120 pruebas locales correctos. App/widget0.40.0(59) en GitHub; Release Apple40937560584 y seguimiento de pruebas40938925040 en cola, sin distribución TestFlight. No convertir esta cola en un resultado aprobado.
+
 Camilo pidió una opción por show promocional para liquidar el 50% de los honorarios de cada participante y confirmó sumar su comisión calculada del 5% en el general con una línea separada. `Show.halfPay` es opcional, solo válido junto a `promotional=true`; conservar siempre las tarifas completas guardadas y aplicar el factor al calcular, sin acumular reducciones ni tocar kilómetros, salarios, fijos o novedades. Shows normales y promocionales sin seleccionar la opción mantienen el 100%. API central, costos reales del CRM y exportaciones usan los importes efectivos. Clientes antiguos conservan el indicador al editar; un guardado completo que lo pierda se rechaza. General derivado = neto del equipo + comisión guardada; no crear un empleado/pago/correo ficticio ni alterar los desprendibles individuales. Cierres/revisiones inmutables; sin comisión histórica o con asociaciones pendientes, mostrar el total general pendiente y conservar el neto conocido. App/widget0.40.0(59), firma/grupo/APNs intactos. Ver `docs/SHOW_COSTS_COMMISSION.md` para comprobaciones y publicación reales.
 
 ## Contratos: persona natural y pago recibido ·29 de octubre de2026
