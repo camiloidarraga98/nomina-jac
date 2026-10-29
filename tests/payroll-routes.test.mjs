@@ -5,7 +5,7 @@ import {unzipSync,strFromU8} from 'fflate';
 import {getDocument} from 'pdfjs-dist/legacy/build/pdf.mjs';
 const bundle=await build({stdin:{contents:"export * from './lib/payroll';export * from './lib/payroll-routes';export * from './lib/payroll-seed';export * from './lib/payroll-schema';export * from './lib/payroll-mobile';export * from './lib/payroll-policy';export * from './lib/payroll-export';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false});
 const m=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'));
-function fixture(){const state=m.initialPayroll();state.employees.forEach(e=>e.active=false);const andres=state.employees.find(e=>e.id==='emp-18'),mariano=state.employees.find(e=>e.id==='emp-19');andres.active=mariano.active=true;andres.name='Andrés ficticio';mariano.name='Mariano ficticio';const p=state.periods[0];return {state,p,andres,mariano};}
+function fixture(){const state=m.initialPayroll();state.settings.company='JAC ficticio';state.settings.nit='TEST';state.employees.forEach(e=>{e.active=false;e.name='Persona ficticia '+e.id;e.document='TEST-'+e.id;e.email=e.id+'@example.invalid'});const andres=state.employees.find(e=>e.id==='emp-18'),mariano=state.employees.find(e=>e.id==='emp-19');andres.active=mariano.active=true;andres.name='Andrés ficticio';mariano.name='Mariano ficticio';const p=state.periods[0];return {state,p,andres,mariano};}
 const extra=p=>({id:'route-andres',kind:'extra',date:p.start,name:'Pereira–Medellín · actividad externa ficticia',km:100,drivers:[{employeeId:'emp-18',rate:1250}]});
 test('Andrés es elegible por su identidad, con tarifa base de Mariano, sin cambiar su categoría ni seleccionarlo automáticamente',()=>{
  const {state,p,andres,mariano}=fixture(),before=structuredClone(state),options=m.routeParticipantOptions(state.employees),option=options.find(e=>e.employeeId===andres.id);
@@ -29,6 +29,7 @@ test('si se selecciona a Andrés para un show, sus kilómetros forman parte del 
  const {state,p,andres}=fixture();p.shows=[{id:'show',date:p.start,name:'Show ficticio',sale:2000000,participants:[{employeeId:andres.id,amount:600000}]}];m.setShowRoute(p,{id:'shared',showId:'show',date:p.start,name:'',km:100,drivers:[{employeeId:andres.id,rate:1250}]});
  assert.ok(m.stateSchema.safeParse(state).success);const result=m.calculate(state,p),cost=result.camiloCommission.shows[0];assert.equal(cost.technical,600000);assert.equal(cost.drivers,125000);assert.equal(cost.cost,725000);assert.equal(result.camiloCommission.amount,63750);
  const native=m.mobilePeriod(state,p,1);assert.deepEqual(native.editing.showRoutes[0].drivers,p.routes[0].drivers);
+ p.shows[0].promotional=true;p.shows[0].halfPay=true;const promo=m.calculate(state,p);assert.equal(promo.rows.find(r=>r.employeeId===andres.id).gross,425000);assert.equal(promo.camiloCommission.shows[0].drivers,125000,'El porcentaje promocional no reduce los kilómetros de Andrés');assert.equal(promo.camiloCommission.promotionalCosts,425000);
 });
 test('validación exige una ruta descriptiva y participantes válidos; exclusión o inactividad retira la opción y bloquea el cierre',()=>{
  const {state,p,andres}=fixture();p.routes=[extra(p)];
