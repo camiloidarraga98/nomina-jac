@@ -164,6 +164,8 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testGeneralPayrollUsesServerTotalAndHalfPayIsOptionalInOldShows
               -only-testing:JACNominaTests/PayrollClientTests/testCommissionContractIsOptionalForOldCopiesAndPreservesServerReviewedAmount
               -only-testing:JACNominaUITests/LaunchTests/testPromotionalShowAndLinkedExpenseCanBeCreatedWithoutAddingPayrollPayment
+              -only-testing:JACNominaUITests/LaunchTests/testCreatePeriodAndManageItsActivitiesWithNativeForms
+              -only-testing:JACNominaUITests/LaunchTests/testCloseArchiveAndReopenWithoutRealEmailsOrData
               -only-testing:JACNominaTests/PayrollClientTests/testContractDraftMatchesWebInputsFilenameAndHalfPaymentRules
               -only-testing:JACNominaTests/PayrollClientTests/testContractDraftSeparatesOwnIdentityAndNormalizesFullPaymentWithoutChangingTheDraft
               -only-testing:JACNominaTests/PayrollClientTests/testContractUsesBearerOnlyAndPrivateTemporaryUTF8PDF
