@@ -1,3 +1,7 @@
+## Contratos: identidad propia y pago total ·29 de octubre de2026
+
+El creador compartido admite persona natural con nombre/cédula propios y show pagado al100%, sin representante ni plazos50/50 cuando corresponda. Conservar borradores independientes de empresa/persona y no modificar pagos o shows al generar. Payload antiguo omite opciones por defecto; el servidor normaliza y genera/archiva el PDF privado. App/widget0.40.0(59), mismos Team/bundles/grupo/APNs. Ver `../docs/CONTRACTS.md`; scope focal `contract-forms`, sin datos ni envíos reales.
+
 ## Adaptación horizontal aprobada e itinerarios directos ·27 de octubre de2026
 
 Camilo aprobó las cinco maquetas de pantalla amplia para iPhone y pidió abrir directamente el PDF al tocar un itinerario. Distribución por ancho útil con menú compacto y dos paneles, conservando selección/estado y una columna para tamaños pequeños o texto de accesibilidad. Mantener permisos, privacidad de pases, documentos originales, sesiones/cachés, música/subidas y las seis guardas de fluidez. App/widget0.39.0, build fuente58; firma/grupo/APNs/cifrado exento conservados. Ver `../docs/IPHONE_WIDE_WORKSPACE.md` para alcance y resultados reales de CI; no inferir instalación física.

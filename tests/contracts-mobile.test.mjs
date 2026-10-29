@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test,{before} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {build} from 'esbuild';
@@ -18,6 +18,8 @@ globalThis.__contractMobileEnv={DB:{prepare:s=>new Query(s),batch:async statemen
 globalThis.__contractMobileBeforePdf=null;
 globalThis.__contractMobilePdfCalls=0;
 globalThis.fetch=async()=>{throw new Error('Las pruebas de contratos no permiten servicios externos.');};
+let m;
+before(async()=>{
 const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * as api from './app/api/mobile/contracts/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {PDFDocument} from 'pdf-lib';"},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'contract-mobile-isolated-platform',setup(b){
  b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'platform'}));
  b.onLoad({filter:/.*/,namespace:'platform'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__contractMobileEnv;export const waitUntil=p=>p.catch(()=>{});':"export const headers=async()=>new Headers({'oai-authenticated-user-email':'camilo@mac2you.co'});",loader:'js'}));
@@ -26,7 +28,8 @@ const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * as 
 }}]});
 const temporary=await mkdtemp(resolve('work/contracts-mobile-tests-'));
 await writeFile(temporary+'/bundle.mjs',bundle.outputFiles[0].contents);
-const m=await import(pathToFileURL(temporary+'/bundle.mjs').href);await rm(temporary,{recursive:true});
+m=await import(pathToFileURL(temporary+'/bundle.mjs').href);await rm(temporary,{recursive:true});
+});
 const base='https://contracts-mobile.example.invalid';
 const fixture={company:'EMPRESA FICTICIA S.A.S.',nit:'900.000.000-0',representative:'MARÍA JOSÉ MUÑOZ ÁLVAREZ',identity:'00.000.000',eventDate:'2027-11-21',venue:'Teatro ficticio',municipality:'Soracá',department:'Boyacá',showTime:'23:00',price:140000000,deposited:22000000,halfDeadline:'2027-11-10'};
 let sequence=0;
@@ -40,6 +43,14 @@ function request(token='',body=fixture,extra={}){
  return new Request(base+'/api/mobile/contracts',{method:'POST',headers,body:typeof body==='string'||body instanceof ReadableStream?body:JSON.stringify(body),...(body instanceof ReadableStream?{duplex:'half'}:{}),...extra.options});
 }
 function reset(){globalThis.__contractMobileBeforePdf=null;globalThis.__contractMobilePdfCalls=0;}
+
+test('API móvil acepta persona natural y pago total sin representante ni plazos y conserva PDF privado',async()=>{
+ reset();const account=await actor();const before=sql.prepare('SELECT total_changes() AS n').get().n;
+ const input={...fixture,company:'ANA MARÍA PRUEBA',nit:undefined,representative:undefined,partyType:'individual',fullyPaid:true,halfDeadline:''};
+ const response=await m.api.POST(request(account.token,input));assert.equal(response.status,200,await response.clone().text());
+ assert.equal(response.headers.get('cache-control'),'private, no-store, max-age=0');assert.equal((await m.PDFDocument.load(await response.arrayBuffer())).getPageCount(),4);
+ assert.equal(sql.prepare('SELECT total_changes() AS n').get().n,before);
+});
 
 test('contratos móviles exigen Bearer real; cookies e identidad legacy no autorizan',async()=>{
  reset();const account=await actor();

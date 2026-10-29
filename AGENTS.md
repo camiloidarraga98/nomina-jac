@@ -1,3 +1,7 @@
+## Contratos: persona natural y pago total ·29 de octubre de2026
+
+Camilo pidió declarar show pagado al100% para legalizarlo sin pagos futuros y contratar personas naturales a título propio, sin representante legal. Las opciones son independientes; mantener persona jurídica y50/50 por defecto y los hashes de reintentos antiguos. La declaración no registra abonos ni cambia precios/Calendar/estado del show. Preservar PDF inmutable, cuatro páginas/firma, guardas y RUT privado; lector RUT en modo empresa, datos de persona natural manuales y separados. App/widget0.40.0(59), misma firma/grupo/APNs. Alcance y resultados reales en `docs/CONTRACTS.md`; no inferir instalación o distribución desde CI.
+
 ## Adaptación horizontal aprobada e itinerarios directos ·27 de octubre de2026
 
 Camilo aprobó las cinco maquetas de pantalla amplia para iPhone y pidió abrir directamente el PDF al tocar un itinerario. Distribución por ancho útil con menú compacto y dos paneles, conservando selección/estado y una columna para tamaños pequeños o texto de accesibilidad. Mantener permisos, privacidad de pases, documentos originales, sesiones/cachés, música/subidas y las seis guardas de fluidez. App/widget0.39.0, build fuente58; firma/grupo/APNs/cifrado exento conservados. Ver `docs/IPHONE_WIDE_WORKSPACE.md` para alcance y resultados reales de CI; no inferir instalación física.

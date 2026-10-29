@@ -739,6 +739,8 @@ struct CRMContactView:View {
 // itself never leaves this device or enters the cache.
 struct ContractDraft: Sendable {
     var company="",nit="",representative="",identity=""
+    var isIndividual=false,fullyPaid=false
+    var individualName="",individualIdentity=""
     var eventDate=CalendarClock.day(CalendarClock.calendar.date(byAdding:.day,value:14,to:Date()) ?? Date())
     var venue="",municipality="",department="",showTime="23:00"
     var price:Double=0,deposited:Double=0
@@ -750,7 +752,8 @@ struct ContractDraft: Sendable {
         return "Contrato JAC - \(town) - \(CalendarClock.date(eventDate).map {f.string(from:$0)} ?? eventDate).pdf"
     }
     func payload() throws -> JSONValue {
-        let fields=[("company",company,"la razón social",100),("nit",nit,"el NIT",25),("representative",representative,"el representante legal",90),("identity",identity,"la cédula",25),("venue",venue,"el sitio del evento",100),("municipality",municipality,"el municipio",60),("department",department,"el departamento",40)]
+        var fields=[("company",isIndividual ? individualName:company,isIndividual ? "el nombre completo":"la razón social",100),("identity",isIndividual ? individualIdentity:identity,"la cédula",25),("venue",venue,"el sitio del evento",100),("municipality",municipality,"el municipio",60),("department",department,"el departamento",40)]
+        if !isIndividual {fields += [("nit",nit,"el NIT",25),("representative",representative,"el representante legal",90)]}
         var values:[String:JSONValue]=[:]
         for (key,value,label,limit) in fields {
             let text=value.trimmingCharacters(in:.whitespacesAndNewlines).precomposedStringWithCanonicalMapping
@@ -759,13 +762,17 @@ struct ContractDraft: Sendable {
             guard text.range(of:"^[\\u0020-\\u007e\\u00a0-\\u00ff–—‘’“”€]+$",options:.regularExpression) != nil else {throw APIError.invalid("\(label.capitalized): usa letras, números y signos habituales en español.")}
             values[key] = .string(text)
         }
-        for value in [eventDate,halfDeadline] { guard let date=CalendarClock.date(value),CalendarClock.day(date)==value,value >= "1900-01-01",value <= "2199-12-31" else {throw APIError.invalid("Introduce una fecha válida.")} }
+        for value in [eventDate]+(fullyPaid ? []:[halfDeadline]) { guard let date=CalendarClock.date(value),CalendarClock.day(date)==value,value >= "1900-01-01",value <= "2199-12-31" else {throw APIError.invalid("Introduce una fecha válida.")} }
         guard showTime.range(of:"^([01]\\d|2[0-3]):[0-5]\\d$",options:.regularExpression) != nil else {throw APIError.invalid("Introduce la hora del show.")}
         guard price.isFinite,price>0,price<=1e12,price.rounded()==price else {throw APIError.invalid("Introduce el precio en pesos enteros, mayor que cero y hasta un billón.")}
-        guard deposited.isFinite,deposited>=0,deposited.rounded()==deposited,deposited<=price/2 else {throw APIError.invalid("El abono debe estar en pesos enteros y no superar el 50% del contrato.")}
-        guard halfDeadline<=finalDate else {throw APIError.invalid("El plazo para completar el 50% debe ser anterior o igual al pago final, cinco días antes del show.")}
-        for (key,value) in [("eventDate",eventDate),("halfDeadline",halfDeadline),("showTime",showTime)] { values[key] = .string(value) }
-        values["price"] = .number(price);values["deposited"] = .number(deposited)
+        if !fullyPaid {
+            guard deposited.isFinite,deposited>=0,deposited.rounded()==deposited,deposited<=price/2 else {throw APIError.invalid("El abono debe estar en pesos enteros y no superar el 50% del contrato.")}
+            guard halfDeadline<=finalDate else {throw APIError.invalid("El plazo para completar el 50% debe ser anterior o igual al pago final, cinco días antes del show.")}
+        }
+        for (key,value) in [("eventDate",eventDate),("halfDeadline",fullyPaid ? "":halfDeadline),("showTime",showTime)] { values[key] = .string(value) }
+        values["price"] = .number(price);values["deposited"] = .number(fullyPaid ? price:deposited)
+        if isIndividual {values["partyType"] = .string("individual");values["nit"] = .string("");values["representative"] = .string("")}
+        if fullyPaid {values["fullyPaid"] = .bool(true)}
         return .object(values)
     }
     mutating func apply(_ rut:RutExtraction) {
@@ -896,6 +903,13 @@ struct CRMContractForm:View {
     private let dateRange=CalendarClock.date("1900-01-01")!...CalendarClock.date("2199-12-31")!
     var body:some View {
         Form {
+            Section("Tipo de contratante") {
+                Picker("El contrato se celebra con",selection:$draft.isIndividual) {
+                    Text("Persona jurídica").tag(false)
+                    Text("Persona natural").tag(true)
+                }.pickerStyle(.segmented).accessibilityIdentifier("contracts.partyType")
+            }.disabled(busy || reading)
+            if !draft.isIndividual {
             Section {
                 Button { importing=true } label: { HStack {Label(reading ? "Leyendo RUT…":"Subir RUT",systemImage:"doc.badge.plus");Spacer();if reading {ProgressView()} } }.buttonStyle(JACPrimaryButtonStyle()).disabled(reading || busy).accessibilityIdentifier("contracts.rut.upload")
                 Text("Completa los datos del contratante desde un RUT PDF. También puedes escribirlos manualmente y modificar cualquier campo.").font(.footnote).foregroundStyle(.secondary)
@@ -913,12 +927,19 @@ struct CRMContractForm:View {
                 if ProcessInfo.processInfo.arguments.contains("--uitest-payroll") { Button("Usar RUT ficticio") { useRut(RutExtraction(company:"EMPRESA FICTICIA JAC SAS",nit:"900000001-0",representatives:[RutRepresentative(name:"ANA MARÍA PRUEBA GÓMEZ",identity:"100000001",kind:.principal,documentType:"Cédula de ciudadanía")],warnings:[])) }.accessibilityIdentifier("contracts.rut.fixture") }
                 #endif
             }
+            }
             if let error { Section {InlineError(message:error).accessibilityIdentifier("contracts.error")} }
             Section("Contratante") {
+                if draft.isIndividual {
+                    TextField("Nombre completo",text:$draft.individualName).accessibilityIdentifier("contracts.personName")
+                    TextField("Cédula de ciudadanía",text:$draft.individualIdentity).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("contracts.personIdentity")
+                    Text("Actúa en nombre propio, sin representante legal.").font(.footnote).foregroundStyle(.secondary)
+                } else {
                 TextField("Razón social",text:$draft.company).accessibilityIdentifier("contracts.company")
                 TextField("NIT con dígito de verificación",text:$draft.nit).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("contracts.nit")
                 TextField("Representante legal",text:$draft.representative).accessibilityIdentifier("contracts.representative")
                 TextField("Cédula de ciudadanía",text:$draft.identity).keyboardType(.numbersAndPunctuation).accessibilityIdentifier("contracts.identity")
+                }
             }.disabled(busy)
             Section("Show vinculado (opcional)") { CRMContractShowPicker(selection:$showId) }.disabled(busy)
             Section("Presentación") {
@@ -929,7 +950,13 @@ struct CRMContractForm:View {
                 JACDatePicker("Hora del show",selection:timeBinding,displayedComponents:.hourAndMinute).accessibilityIdentifier("contracts.showTime")
             }.disabled(busy)
             Section("Precio y forma de pago") {
+                Toggle("Show pagado al 100 %",isOn:$draft.fullyPaid).accessibilityIdentifier("contracts.fullyPaid")
                 CRMAmountField(title:"Precio del contrato (COP)",value:$draft.price)
+                if draft.fullyPaid {
+                    LabeledContent("Pagado · 100 %",value:CRMFields.money(draft.price))
+                    LabeledContent("Saldo pendiente",value:CRMFields.money(0))
+                    Text("El contrato dejará constancia del pago total. Esta declaración no registra abonos en el CRM.").font(.footnote).foregroundStyle(.secondary)
+                } else {
                 CRMAmountField(title:"Consignado a la fecha (COP)",value:$draft.deposited)
                 JACDatePicker("Plazo para completar el 50%",selection:dateBinding("halfDeadline"),in:dateRange,displayedComponents:.date).accessibilityIdentifier("contracts.halfDeadline")
                 if draft.price>0 {
@@ -938,10 +965,11 @@ struct CRMContractForm:View {
                     LabeledContent("Pago final · 50%",value:CRMFields.money(draft.price/2))
                     LabeledContent("Pago final antes del",value:CalendarClock.dayLabel(draft.finalDate))
                 }
+                }
             }.disabled(busy)
             Section {
                 Button { generate() } label:{ HStack {Label(busy ? "Generando PDF…":"Crear contrato PDF",systemImage:"doc.text");Spacer();if busy {ProgressView()} } }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy || reading || store.isOffline).accessibilityIdentifier("contracts.generate")
-                Text("El PDF se guarda en Contratos. Conserva la plantilla de JAC. Los importes se escriben en letras y números; el pago final es el 50%, cinco días antes del show.").font(.footnote).foregroundStyle(.secondary)
+                Text(draft.fullyPaid ? "El PDF se guarda en Contratos y deja constancia de que la presentación está pagada al 100 %, sin saldo pendiente.":"El PDF se guarda en Contratos. Conserva la plantilla de JAC. Los importes se escriben en letras y números; el pago final es el 50%, cinco días antes del show.").font(.footnote).foregroundStyle(.secondary)
             }
         }.jacSurface().privacySensitive()
             .toolbar {
@@ -953,7 +981,7 @@ struct CRMContractForm:View {
                 switch result {case .success(let urls):if let url=urls.first {readRut(url)};case .failure(let failure):if !RutParser.cancelled(failure) {error=failure.localizedDescription}}
             }
             .onChange(of:selectedRepresentative) {_,value in
-                guard let rut,let index=Int(value),rut.representatives.indices.contains(index) else {return}
+                guard !draft.isIndividual,let rut,let index=Int(value),rut.representatives.indices.contains(index) else {return}
                 let person=rut.representatives[index]
                 guard person.documentType == "Cédula de ciudadanía" else {return}
                 draft.representative=person.name;draft.identity=person.identity

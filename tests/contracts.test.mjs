@@ -1,11 +1,42 @@
-import test from 'node:test';import assert from 'node:assert/strict';import {build}from'esbuild';import {readFile,writeFile,mkdtemp,rm}from'node:fs/promises';import {resolve}from'node:path';import {pathToFileURL}from'node:url';
+import test,{before} from 'node:test';import assert from 'node:assert/strict';import {build}from'esbuild';import {readFile,writeFile,mkdtemp,rm}from'node:fs/promises';import {resolve}from'node:path';import {pathToFileURL}from'node:url';
+import {getDocument} from 'pdfjs-dist/legacy/build/pdf.mjs';
+let m;
+before(async()=>{
 const directory=await mkdtemp(resolve('work/contracts-tests-'));
 const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * from './lib/contract-core';export * from './lib/contract-pdf';export * as api from './app/api/crm/contract/route';export {PDFDocument} from 'pdf-lib';"},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'isolated-contract-auth',setup(b){b.onResolve({filter:/^cloudflare:workers$/},()=>({path:'cloudflare',namespace:'runtime'}));b.onLoad({filter:/.*/,namespace:'runtime'},()=>({contents:'export const env={};',loader:'js'}));b.onResolve({filter:/payroll-access$/},()=>({path:'access',namespace:'fixture'}));b.onResolve({filter:/crm-store$/},()=>({path:'store',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},a=>({contents:a.path==='access'?"export async function payrollUser(){return globalThis.contractTest.user;}export const payrollHeaders={'Cache-Control':'private, no-store, max-age=0','Vary':'Cookie'};":"export async function guardActive(){const state=globalThis.contractTest;state.checks++;return state.active&&(!state.revokeOnSecond||state.checks<2);}",loader:'js'}));}}]});
-await writeFile(directory+'/bundle.mjs',bundle.outputFiles[0].contents);const m=await import(pathToFileURL(directory+'/bundle.mjs'));await rm(directory,{recursive:true});
+await writeFile(directory+'/bundle.mjs',bundle.outputFiles[0].contents);m=await import(pathToFileURL(directory+'/bundle.mjs'));await rm(directory,{recursive:true});
+});
 const fixture={company:'EMPRESA FICTICIA S.A.S.',nit:'900.000.000-0',representative:'MARÍA JOSÉ MUÑOZ ÁLVAREZ',identity:'00.000.000',eventDate:'2027-11-21',venue:'Teatro ficticio',municipality:'Municipio de prueba',department:'Risaralda',showTime:'23:00',price:141000001,deposited:22000000,halfDeadline:'2027-11-10'};
 const user={id:'fixture-owner',email:'owner@example.invalid',username:'owner',displayName:'Admin ficticio',fullName:null,isOwner:true,permissions:[],sections:['crm']};
 function state(extra={}){globalThis.contractTest={user,active:true,checks:0,revokeOnSecond:false,...extra};}
 const request=(body=fixture,options={})=>new Request('https://contracts.example.invalid/api/crm/contract',{method:'POST',headers:{origin:'https://contracts.example.invalid','Content-Type':'application/json',cookie:'fixture=never-real',...options.headers},body:typeof body==='string'?body:JSON.stringify(body)});
+async function textPages(bytes){const task=getDocument({data:Uint8Array.from(bytes),useSystemFonts:false,isEvalSupported:false,disableFontFace:true});try{const pdf=await task.promise,pages=[];for(let i=1;i<=pdf.numPages;i++)pages.push((await (await pdf.getPage(i)).getTextContent()).items.map(x=>x.str??'').join(' ').replace(/\s+/g,' '));return pages;}finally{await task.destroy();}}
+
+test('persona natural exige identidad propia y el pago total normaliza los campos ocultos; empresa y 50/50 siguen siendo el valor por defecto',()=>{
+ assert.deepEqual(m.contractInput.parse({...fixture,partyType:'company',fullyPaid:false}),m.contractInput.parse(fixture));
+ const individual={...fixture,partyType:'individual',company:'ANA MARÍA PRUEBA',nit:undefined,representative:undefined};
+ assert.equal(m.contractInput.parse(individual).representative,'');assert.equal(m.contractInput.parse(individual).nit,'');
+ for(const change of [{company:''},{identity:''},{partyType:'unknown'},{fullyPaid:'true'}])assert.equal(m.contractInput.safeParse({...individual,...change}).success,false);
+ assert.equal(m.contractInput.safeParse({...fixture,nit:'',representative:''}).success,false);
+ const paid=m.contractInput.parse({...individual,fullyPaid:true,halfDeadline:''});
+ assert.equal(paid.deposited,fixture.price);assert.equal(paid.halfDeadline,'');assert.equal(paid.fullyPaid,true);
+ assert.equal(m.contractInput.safeParse({...individual,halfDeadline:''}).success,false);
+ assert.equal(m.contractInput.safeParse({...fixture,deposited:fixture.price}).success,false);
+});
+
+test('los cuatro PDF distinguen contratante y pago; solo cambian los bloques variables y no prometen pagos futuros cuando está pago',async()=>{
+ const versions=[];
+ for(const individual of [false,true])for(const fullyPaid of [false,true]){
+  const input={...fixture,...(individual?{partyType:'individual',company:'ANA MARÍA PRUEBA',nit:'',representative:''}:{}),...(fullyPaid?{fullyPaid:true,halfDeadline:''}:{})};
+  const pages=await textPages(await m.contractPdf(input));assert.equal(pages.length,4);versions.push(pages);
+  assert.match(pages[0],individual?/ANA MARÍA PRUEBA identificado\(a\).*nombre propio y a título personal/:/EMPRESA FICTICIA S.A.S. con NIT 900.000.000-0/);
+  if(individual){assert.match(pages[3],/ANA MARÍA PRUEBA.*C.C 00.000.000.*Actuando en nombre propio/);assert.doesNotMatch(pages.join(' '),/900.000.000-0|MARÍA JOSÉ MUÑOZ ÁLVAREZ/);}
+  else {assert.match(pages[3],/EMPRESA FICTICIA S.A.S..*NIT 900.000.000-0.*MARÍA JOSÉ MUÑOZ ÁLVAREZ/);}
+  if(fullyPaid){assert.match(pages[1],/recibido de EL CONTRATANTE la totalidad.*100%/);assert.match(pages[1],/pagada y cancelada en un 100%.*No existe saldo pendiente/);assert.doesNotMatch(pages[1],/deberá pagar|se completara|deberá ser consignada|50%/);}
+  else {assert.match(pages[1],/deberá pagar/);assert.match(pages[1],/50%.*deberá ser consignada 5 días/);}
+ }
+ for(const pages of versions)assert.equal(pages[2],versions[0][2],'Las cláusulas fijas de la tercera página se conservan');
+});
 
 test('importes en español: apócopes, millones, miles, centavos y límite',()=>{for(const [n,expected]of[[0,'CERO PESOS'],[1,'UN PESO'],[21,'VEINTIÚN PESOS'],[101,'CIENTO UN PESOS'],[1000,'MIL PESOS'],[31000,'TREINTA Y UN MIL PESOS'],[1000000,'UN MILLÓN DE PESOS'],[120000000,'CIENTO VEINTE MILLONES DE PESOS'],[141000001,'CIENTO CUARENTA Y UN MILLONES UN PESOS'],[70500000.5,'SETENTA MILLONES QUINIENTOS MIL PESOS CON CINCUENTA CENTAVOS'],[1e12,'UN BILLÓN DE PESOS']])assert.equal(m.contractMoneyWords(n),expected);assert.throws(()=>m.spanishInteger(-1));});
 test('fechas y nombre de archivo solicitado, medianoche, año bisiesto y cambio de año',()=>{assert.equal(m.contractDate('2026-10-31'),'sábado 31 de octubre de 2026');assert.equal(m.contractFinalDate('2027-01-03'),'2026-12-29');assert.equal(m.contractFinalDate('2028-03-03'),'2028-02-27');assert.equal(m.contractTime('00:05'),'12:05 am');assert.equal(m.contractTime('12:00'),'12:00 pm');assert.equal(m.contractFilename({...fixture,municipality:'Soracá',eventDate:'2026-10-31'}),'Contrato JAC - Soracá - 31 de octubre 2026.pdf');assert.equal(m.contractFilename({...fixture,municipality:'Pereira',eventDate:'2025-02-22'}),'Contrato JAC - Pereira - 22 de febrero 2025.pdf');assert.doesNotMatch(m.contractFilename({...fixture,municipality:'../Prueba/"\r\n'}),/[\/"\r\n]/);});

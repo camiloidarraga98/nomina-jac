@@ -4,14 +4,26 @@ const text=(label:string,max:number)=>z.string().trim().min(1,`Completa ${label}
 function validDate(v:string){if(!/^\d{4}-\d{2}-\d{2}$/.test(v))return false;const d=new Date(v+'T12:00:00Z');return Number.isFinite(d.getTime())&&d.toISOString().slice(0,10)===v&&v>='1900-01-01'&&v<='2199-12-31';}
 const date=z.string().refine(validDate,'Introduce una fecha válida.');
 export const contractInput=z.object({
- company:text('la empresa contratante',100),nit:text('el NIT',25),representative:text('el representante legal',90),identity:text('la cédula',25),
+ company:text('el nombre o razón social del contratante',100),nit:text('el NIT',25).or(z.literal('')).default(''),representative:text('el representante legal',90).or(z.literal('')).default(''),identity:text('la cédula',25),
  eventDate:date,venue:text('el sitio del evento',100),municipality:text('el municipio',60),department:text('el departamento',40),
  showTime:z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/,'Introduce la hora del show.'),
  price:z.number().int('Introduce el precio en pesos enteros.').positive('El precio debe ser mayor que cero.').max(1e12),
- deposited:z.number().int('Introduce el abono en pesos enteros.').min(0).max(1e12),halfDeadline:date,
+ deposited:z.number().int('Introduce el abono en pesos enteros.').min(0).max(1e12),halfDeadline:z.string().max(10).default(''),
+ partyType:z.enum(['company','individual']).optional(),fullyPaid:z.boolean().optional(),
 }).strict().superRefine((v,ctx)=>{
- if(v.deposited>v.price/2)ctx.addIssue({code:'custom',path:['deposited'],message:'En esta plantilla el abono no puede superar el 50% del contrato.'});
- if(validDate(v.eventDate)&&validDate(v.halfDeadline)&&v.halfDeadline>contractFinalDate(v.eventDate))ctx.addIssue({code:'custom',path:['halfDeadline'],message:'El plazo para completar el 50% debe ser anterior o igual al pago final, cinco días antes del show.'});
+ if(v.partyType!=='individual'){
+  if(!v.nit)ctx.addIssue({code:'custom',path:['nit'],message:'Completa el NIT.'});
+  if(!v.representative)ctx.addIssue({code:'custom',path:['representative'],message:'Completa el representante legal.'});
+ }
+ if(!v.fullyPaid){
+  if(!validDate(v.halfDeadline))ctx.addIssue({code:'custom',path:['halfDeadline'],message:'Introduce una fecha válida para completar el 50%.'});
+  if(v.deposited>v.price/2)ctx.addIssue({code:'custom',path:['deposited'],message:'En esta plantilla el abono no puede superar el 50% del contrato.'});
+  if(validDate(v.eventDate)&&validDate(v.halfDeadline)&&v.halfDeadline>contractFinalDate(v.eventDate))ctx.addIssue({code:'custom',path:['halfDeadline'],message:'El plazo para completar el 50% debe ser anterior o igual al pago final, cinco días antes del show.'});
+ }
+}).transform(({partyType,fullyPaid,...fields})=>{
+ // Preserve the exact legacy field order/hash for retries of saved contracts.
+ // Hidden fields cannot contradict the selected party or payment declaration.
+ return {...fields,...(partyType==='individual'?{nit:'',representative:'',partyType: 'individual' as 'company'|'individual'}:{}),...(fullyPaid?{deposited:fields.price,halfDeadline:'',fullyPaid:true as boolean}:{})};
 });
 export type ContractInput=z.infer<typeof contractInput>;
 const small=['cero','uno','dos','tres','cuatro','cinco','seis','siete','ocho','nueve','diez','once','doce','trece','catorce','quince','dieciséis','diecisiete','dieciocho','diecinueve','veinte','veintiuno','veintidós','veintitrés','veinticuatro','veinticinco','veintiséis','veintisiete','veintiocho','veintinueve'];

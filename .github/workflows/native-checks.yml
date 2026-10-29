@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [wide-workspace, photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
+        options: [contract-forms, wide-workspace, photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -145,6 +145,7 @@ jobs:
           JAC_VIDEO_DETAIL_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[check-video-detail]') }}
           JAC_HD_ONLY: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[hd-only]') }}
           JAC_GALLERY_ONLY: ${{ inputs.scope == 'gallery-media' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-gallery-media]')) }}
+          JAC_CONTRACT_FORMS: ${{ inputs.scope == 'contract-forms' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-contract-forms]')) }}
           JAC_WIDE_PHOTO_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-photo-followup]') }}
           JAC_WIDE_CRM_FOLLOWUP: ${{ github.event_name == 'push' && contains(github.event.head_commit.message, '[wide-crm-followup]') }}
           JAC_WIDE_WORKSPACE: ${{ inputs.scope == 'wide-workspace' || (github.event_name == 'push' && contains(github.event.head_commit.message, '[check-wide-workspace]')) }}
@@ -158,7 +159,18 @@ jobs:
         run: |
           set -euo pipefail
           build_action=test
-          if [ "$JAC_WIDE_WORKSPACE" = true ]; then
+          if [ "$JAC_CONTRACT_FORMS" = true ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testContractDraftMatchesWebInputsFilenameAndHalfPaymentRules
+              -only-testing:JACNominaTests/PayrollClientTests/testContractDraftSeparatesOwnIdentityAndNormalizesFullPaymentWithoutChangingTheDraft
+              -only-testing:JACNominaTests/PayrollClientTests/testContractUsesBearerOnlyAndPrivateTemporaryUTF8PDF
+              -only-testing:JACNominaTests/PayrollClientTests/testContractRefusesServerDenialInvalidDocumentAndOfflineWrite
+              -only-testing:JACNominaTests/PayrollClientTests/testArchivedContractsUseBearerAndKeepSaveIdentityAndAssociation
+              -only-testing:JACNominaTests/PayrollClientTests/testContractLatePDFCannotSurviveLogout
+              -only-testing:JACNominaUITests/LaunchTests/testCRMContractIndividualPaidInFullKeepsCompanyDraftAndGeneratesPDF
+              -only-testing:JACNominaUITests/LaunchTests/testCRMContractsRUTEditableFieldsManualEntryAndPDFPreview
+            )
+          elif [ "$JAC_WIDE_WORKSPACE" = true ]; then
             if [ "$JAC_WIDE_VIEWER_FOLLOWUP" = true ]; then
               # Reuse the unchanged CRM, music, navigation and privacy results.
               # Check native viewer pause/resume and its two presentation scopes.

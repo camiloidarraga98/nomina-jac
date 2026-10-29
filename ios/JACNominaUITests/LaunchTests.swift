@@ -908,6 +908,29 @@ final class LaunchTests: XCTestCase {
         tap(app,"crm.moreSections");tap(app,"Contratos");XCTAssertFalse(app.buttons["contracts.open."+id].exists)
     }
 
+    @MainActor func testCRMContractIndividualPaidInFullKeepsCompanyDraftAndGeneratesPDF() {
+        let app=fixture();openSection(app,"CRM");tap(app,"crm.moreSections");tap(app,"Contratos");tap(app,"contracts.create")
+        tap(app,"contracts.rut.fixture")
+        let parties=app.segmentedControls["contracts.partyType"]
+        for _ in 0..<5 {if parties.isHittable {break};app.swipeDown()}
+        XCTAssertTrue(parties.waitForExistence(timeout:10));parties.buttons["Persona natural"].tap()
+        fill(app,"contracts.personName","ANA MARÍA PRUEBA");fill(app,"contracts.personIdentity","100000002")
+        XCTAssertFalse(app.textFields["contracts.representative"].exists);XCTAssertFalse(app.textFields["contracts.nit"].exists)
+        parties.buttons["Persona jurídica"].tap()
+        XCTAssertEqual(app.textFields["contracts.company"].value as? String,"EMPRESA FICTICIA JAC SAS")
+        parties.buttons["Persona natural"].tap()
+        XCTAssertEqual(app.textFields["contracts.personName"].value as? String,"ANA MARÍA PRUEBA")
+        fill(app,"contracts.venue","Escenario ficticio");fill(app,"contracts.municipality","Pereira");fill(app,"contracts.department","Risaralda")
+        let paid=app.switches["contracts.fullyPaid"]
+        for _ in 0..<6 {if paid.isHittable {break};app.swipeUp()}
+        XCTAssertTrue(paid.waitForExistence(timeout:10));paid.tap();XCTAssertEqual(paid.value as? String,"1")
+        fill(app,"crm.amount.Precio del contrato (COP)","140000000")
+        XCTAssertFalse(app.datePickers["contracts.halfDeadline"].exists)
+        tap(app,"contracts.generate")
+        XCTAssertTrue(app.navigationBars["Contrato JAC"].waitForExistence(timeout:15));XCTAssertTrue(app.buttons["contracts.share"].exists)
+        attachScreen(app,name:"contrato-persona-natural-pagado-ficticio");tap(app,"contracts.preview.close");tap(app,"contracts.form.close")
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format:"label CONTAINS %@","ANA MARÍA PRUEBA")).firstMatch.waitForExistence(timeout:10))
+    }
     @MainActor func testCRMContractsRUTEditableFieldsManualEntryAndPDFPreview() {
         let app=fixture();openSection(app, "Gestión");tap(app,"management.crm");tap(app,"crm.moreSections");tap(app,"Contratos");tap(app,"contracts.create")
         XCTAssertTrue(app.buttons["contracts.rut.upload"].waitForExistence(timeout:10))

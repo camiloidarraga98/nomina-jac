@@ -1,3 +1,7 @@
+## Contratos: persona natural y pago recibido ·29 de octubre de2026
+
+Camilo pidió legalizar shows ya pagados y contratar personas naturales a título propio. Creador web/nativo con modalidades independientes y borradores separados, redacción de pago total sin plazos50/50 y comparecencia/firma de persona natural con nombre/cédula sin representante. Mantener defaults antiguos, hash/idempotencia, PDF inmutable y guardas; no registrar abonos ni cambiar eventos/precios del CRM. App/widget0.40.0(59), misma firma y servicios. Alcance y comprobaciones/publicación en [CONTRACTS.md](CONTRACTS.md).
+
 ## Adaptación horizontal aprobada e itinerarios directos ·27 de octubre de2026
 
 Camilo aprobó las cinco maquetas de pantalla amplia para iPhone y pidió abrir directamente el PDF al tocar un itinerario. Distribución por ancho útil con menú compacto y dos paneles, conservando selección/estado y una columna para tamaños pequeños o texto de accesibilidad. Mantener permisos, privacidad de pases, documentos originales, sesiones/cachés, música/subidas y las seis guardas de fluidez. App/widget0.39.0, build fuente58; firma/grupo/APNs/cifrado exento conservados. Ver `IPHONE_WIDE_WORKSPACE.md` para alcance y resultados reales de CI; no inferir instalación física.

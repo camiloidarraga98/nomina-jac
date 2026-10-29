@@ -3987,6 +3987,21 @@ extension PayrollClientTests {
         d.eventDate="2026-10-31";d.company="Nombre\nOmitido";XCTAssertThrowsError(try d.payload())
         d.company="FUNDACIÓN FICTICIA";d.municipality="../Pereira";XCTAssertFalse(d.filename.contains("/"));payload=try d.payload();XCTAssertFalse(payload.fields.keys.contains("rut"),"El PDF original del RUT nunca entra en el POST")
     }
+    func testContractDraftSeparatesOwnIdentityAndNormalizesFullPaymentWithoutChangingTheDraft() throws {
+        var d=contractDraftFixture();d.isIndividual=true
+        XCTAssertThrowsError(try d.payload(),"No se debe reutilizar el nombre de la empresa para la persona")
+        d.individualName="ANA MARÍA PRUEBA";d.individualIdentity="100000002"
+        var payload=try d.payload()
+        XCTAssertEqual(payload["company"].text,"ANA MARÍA PRUEBA");XCTAssertEqual(payload["identity"].text,"100000002")
+        XCTAssertEqual(payload["partyType"].text,"individual");XCTAssertEqual(payload["representative"].text,"");XCTAssertEqual(payload["nit"].text,"")
+        d.fullyPaid=true;d.halfDeadline="";d.deposited=0;payload=try d.payload()
+        XCTAssertTrue(payload["fullyPaid"].flag);XCTAssertEqual(payload["deposited"].number,d.price);XCTAssertEqual(payload["halfDeadline"].text,"")
+        XCTAssertEqual(d.deposited,0,"La declaración contractual no modifica abonos del borrador ni del CRM")
+        d.isIndividual=false;payload=try d.payload()
+        XCTAssertEqual(payload["company"].text,"EMPRESA FICTICIA JAC SAS");XCTAssertEqual(payload["representative"].text,"ANA MARÍA PRUEBA GÓMEZ");XCTAssertFalse(payload.fields.keys.contains("partyType"))
+        d.fullyPaid=false;XCTAssertThrowsError(try d.payload(),"Sin pago total vuelven a exigirse los plazos")
+        d.fullyPaid=true;d.price=0;XCTAssertThrowsError(try d.payload())
+    }
     @MainActor func testContractUsesBearerOnlyAndPrivateTemporaryUTF8PDF() async throws {
         let vault=MemorySession();vault.token=token
         let config=URLSessionConfiguration.ephemeral;config.protocolClasses=[MockProtocol.self]

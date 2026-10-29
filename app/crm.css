@@ -24,3 +24,4 @@
 
 .contract-link-dialog{margin:auto;border:0;background:white}.contract-link-dialog::backdrop{background:#09233888}
 .contract-archive-row .contract-actions>.contract-delete-button{width:42px;min-width:42px;height:42px;padding:0;display:inline-flex;justify-content:center;color:#ae362c}.contract-delete-button:hover{background:#fff0ed}.contract-delete-dialog .contract-delete-confirm{background:#ae362c;color:white;border-color:#ae362c}.contract-delete-dialog .contract-actions>button{width:auto;min-height:44px}
+.contract-paid-option{display:flex;align-items:center;gap:10px;min-height:44px;margin-bottom:16px;font-weight:600;cursor:pointer}.contract-paid-option input{width:18px;height:18px;accent-color:var(--jac-blue);flex-shrink:0}

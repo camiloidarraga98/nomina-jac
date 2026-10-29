@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test,{before} from 'node:test';
 import assert from 'node:assert/strict';
 import {DatabaseSync} from 'node:sqlite';
 import {build} from 'esbuild';
@@ -18,6 +18,8 @@ globalThis.__contractMobileEnv={DB:{prepare:s=>new Query(s),batch:async statemen
 globalThis.__contractMobileBeforePdf=null;
 globalThis.__contractMobilePdfCalls=0;
 globalThis.fetch=async()=>{throw new Error('Las pruebas de contratos no permiten servicios externos.');};
+let m;
+before(async()=>{
 const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * as api from './app/api/mobile/contracts/route';export * as web from './app/api/crm/contract/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export {PDFDocument} from 'pdf-lib';"},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'contract-mobile-isolated-platform',setup(b){
  b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'platform'}));
  b.onLoad({filter:/.*/,namespace:'platform'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__contractMobileEnv;export const waitUntil=p=>p.catch(()=>{});':"export const headers=async()=>globalThis.__contractArchiveHeaders||new Headers({'oai-authenticated-user-email':'camilo@mac2you.co'});",loader:'js'}));
@@ -26,7 +28,8 @@ const bundle=await build({stdin:{resolveDir:process.cwd(),contents:"export * as 
 }}]});
 const temporary=await mkdtemp(resolve('work/contracts-archive-tests-'));
 await writeFile(temporary+'/bundle.mjs',bundle.outputFiles[0].contents);
-const m=await import(pathToFileURL(temporary+'/bundle.mjs').href);await rm(temporary,{recursive:true});
+m=await import(pathToFileURL(temporary+'/bundle.mjs').href);await rm(temporary,{recursive:true});
+});
 const base='https://contracts-mobile.example.invalid';
 const fixture={company:'EMPRESA FICTICIA S.A.S.',nit:'900.000.000-0',representative:'MARÍA JOSÉ MUÑOZ ÁLVAREZ',identity:'00.000.000',eventDate:'2027-11-21',venue:'Teatro ficticio',municipality:'Soracá',department:'Boyacá',showTime:'23:00',price:140000000,deposited:22000000,halfDeadline:'2027-11-10'};
 let sequence=0;
@@ -49,6 +52,23 @@ const get=(account,query='')=>m.api.GET(new Request(base+'/api/mobile/contracts'
 const link=(account,id,showId,version)=>m.api.POST(request(account.token,{action:'link',id,showId,version}));
 const remove=(account,id,version=1,extra={})=>m.api.POST(request(account.token,{action:'delete',id,confirmation:id,version,...extra}));
 function show(title='PEREIRA FICTICIO',date='2020-01-10'){const id=crypto.randomUUID(),now=new Date().toISOString();sql.prepare('INSERT INTO jac_crm_shows (id,calendar_id,event_id,title,municipality,show_date,created_at,updated_at) VALUES (?,?,?,?,?,?,?,?)').run(id,'calendar.invalid',id,title,'Pereira',date,now,now);return id;}
+
+test('legaliza pago total de persona natural con instantánea inmutable sin registrar pagos ni cambiar el show; conserva hashes antiguos',async()=>{
+ reset();const a=await actor(),showId=show(),id=crypto.randomUUID(),legacyId=crypto.randomUUID();
+ const before=sql.prepare('SELECT * FROM jac_crm_shows WHERE id=?').get(showId),payments=sql.prepare('SELECT * FROM jac_crm_payments').all();
+ const input={...fixture,company:'ANA MARÍA PRUEBA',partyType:'individual',fullyPaid:true,halfDeadline:''};
+ const response=await create(a,id,showId,input);assert.equal(response.status,200,await response.clone().text());const bytes=Buffer.from(await response.arrayBuffer());
+ const row=sql.prepare('SELECT * FROM jac_crm_contracts WHERE id=?').get(id),snapshot=JSON.parse(row.input_json);
+ assert.equal(snapshot.partyType,'individual');assert.equal(snapshot.company,input.company);assert.equal(snapshot.representative,'');assert.equal(snapshot.nit,'');assert.equal(snapshot.deposited,input.price);assert.equal(snapshot.halfDeadline,'');assert.equal(snapshot.fullyPaid,true);
+ assert.deepEqual(sql.prepare('SELECT * FROM jac_crm_shows WHERE id=?').get(showId),before);assert.deepEqual(sql.prepare('SELECT * FROM jac_crm_payments').all(),payments);
+ assert.deepEqual(Buffer.from(await (await create(a,id,showId,input)).arrayBuffer()),bytes);
+ assert.equal((await create(a,id,showId,{...input,fullyPaid:false,halfDeadline:fixture.halfDeadline})).status,409);
+ assert.equal((await create(a,id,showId,{...input,partyType:'company'})).status,409);
+ assert.equal((await create(a,legacyId,showId)).status,200);
+ const expected=Buffer.from(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(JSON.stringify({input:fixture,showId})))).toString('hex');
+ assert.equal(sql.prepare('SELECT request_hash FROM jac_crm_contracts WHERE id=?').get(legacyId).request_hash,expected);
+ assert.equal((await create(a,legacyId,showId,{...fixture,partyType:'company',fullyPaid:false})).status,200);
+});
 
 test('guarda PDF exacto, reintento idempotente y listado privado compartido entre administradores',async()=>{
  reset();const a=await actor(),b=await actor(),id=crypto.randomUUID(),showId=show();

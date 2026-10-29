@@ -273,6 +273,8 @@ Referencias: [PHOTOGRAPHY_R2_MIGRATION.md](../docs/PHOTOGRAPHY_R2_MIGRATION.md),
 
 ## 11. Contratos y extracción de RUT
 
+**29 de octubre:** el creador añade Persona natural (nombre/cédula, actuación a título propio, sin representante) y Show pagado al100% (recibo total, saldo cero y sin plazos50/50). Se pueden combinar. Mantener los borradores de empresa y persona separados; el RUT existente se usa con empresa y los datos de persona natural se escriben manualmente. La declaración solo afecta al nuevo contrato: no crea abonos, no altera el show ni modifica PDF ya archivados. Sin seleccionar estas opciones, conserva empresa y forma de pago anteriores. Ver `docs/CONTRACTS.md` para entrega y pruebas.
+
 CRM → **Contratos**, para administradores. Generador, archivo de contratos guardados, apertura, asociación a un show existente y borrado manual están incorporados en web y apps nativas.
 
 - Primera opción **Subir RUT**; extrae razón social, NIT/DV y representante legal principal con cédula. Todos los campos quedan editables; también se puede diligenciar todo manualmente sin RUT.

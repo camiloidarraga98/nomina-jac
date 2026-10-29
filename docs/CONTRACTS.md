@@ -1,5 +1,15 @@
 # Contratos de presentación · web, iPhone y Mac
 
+## Persona natural y pago total ·29 de octubre de2026
+
+El creador permite **Persona jurídica · empresa** o **Persona natural · a título propio**. Persona natural pide nombre completo y cédula; la comparecencia y firma indican actuación en nombre propio, sin NIT ni representante del contratante. Los datos personales y de empresa se mantienen en borradores separados al alternar. El lector RUT existente permanece en el modo empresa; persona natural se completa manualmente. JAC conserva su identificación y representante como contratista.
+
+**Show pagado al100%** declara en el PDF que se recibió la totalidad del precio, que la presentación está pagada y cancelada al100% y que no existe saldo pendiente por ese concepto. Sustituye únicamente los párrafos variables de precio/pago; elimina exigencias futuras del50% y sus plazos. El formulario conserva los importes/plazos parciales para volver al modo habitual. La declaración contractual no crea ni modifica abonos, precios, eventos o estados del show en CRM.
+
+Las dos opciones son independientes y funcionan combinadas. Sin seleccionarlas se mantiene persona jurídica y el esquema50/50 existente. El servidor valida/normaliza los campos ocultos, guarda pago total como `deposited=price` y plazo vacío, y omite las opciones por defecto para conservar el hash de reintentos antiguos. Los PDF archivados permanecen inmutables: cambiar modalidad requiere un nuevo contrato. Se mantienen cuatro páginas, gráficos, cláusulas fijas, firma, permisos, archivo privado y control de sesión/revisión. No requiere migración, dependencias o secretos nuevos.
+
+Web/API: lógica, texto extraído de las cuatro combinaciones de PDF, archivo, privacidad, idempotencia y compatibilidad comprobados; TypeScript y build correctos. App/widget0.40.0, build fuente59, misma firma/Team/AppGroup/APNs. Verificación de interfaz web, compilaciones Apple y publicación pendientes de registrar antes de afirmar entrega completa.
+
 ## Eliminar contratos guardados · 17 de octubre de 2026
 
 CRM → Contratos incorpora una papelera discreta en web, iPhone/iPad y Mac. Pide «¿Estás seguro de que quieres eliminar este contrato?» y permite cancelar. La eliminación es compartida entre administradores del CRM: retira el contrato del archivo y su PDF privado, sin borrar ni modificar el show, sus abonos, precios o comprobantes. Crear, abrir, asignar y leer RUT conservan su comportamiento. Se requiere conexión para eliminar.
