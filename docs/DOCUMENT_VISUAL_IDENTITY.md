@@ -12,7 +12,7 @@ Camilo pidió aplicar a preliquidaciones y documentos generados la línea del co
 
 `lib/document-brand.ts`, `document-pdf.ts` y `document-xlsx.ts` centralizan la identidad. `payroll-pdf.ts` compone los informes y `payroll-export.ts` conserva su API pública, proyección y datos del Excel.
 
-Se aplica a preliquidaciones, resumen definitivo, desprendibles individuales, PDF agrupado, cada PDF del ZIP y los adjuntos de los envíos manuales. Las ocho hojas del Excel de revisión (siete del definitivo) llevan logo, título, contexto, formato monetario y ajustes de impresión. La vista web de impresión usa `SlipDocument` y una hoja CSS propia con la misma identidad, aislando los estilos globales de tablas.
+Se aplica a preliquidaciones, resumen definitivo, desprendibles individuales, PDF agrupado, cada PDF del ZIP y los adjuntos de los envíos de nómina. Las ocho hojas del Excel de revisión (siete del definitivo) llevan logo, título, contexto, formato monetario y ajustes de impresión. La vista web de impresión usa `SlipDocument` y una hoja CSS propia con la misma identidad, aislando los estilos globales de tablas.
 
 Los contratos generados ya utilizan el membrete de esta referencia: se conserva la plantilla legal y sus cuatro páginas, comprobadas con la batería existente. No se reescriben contratos archivados, PDFs originales aportados por terceros ni documentos ya descargados/enviados. Las descargas nuevas consultan el generador del servidor; una copia offline anterior conserva su archivo.
 
@@ -24,7 +24,7 @@ Los contratos generados ya utilizan el membrete de esta referencia: se conserva 
 - Los desprendibles agrupan por identidad, no por número de páginas: una persona con recorridos y salario puede necesitar varias páginas, dentro del mismo PDF y adjunto. No duplicar totales o destinatarios.
 - Excel: texto ajustado, alturas calculadas, cifras con ajuste al ancho, filas superiores fijas y títulos repetidos al imprimir. Filtros del resumen excluyen totales y comisión. A4 horizontal o A3 para hojas anchas; una página de ancho y las necesarias de alto.
 - La nueva cabecera de Excel desplaza filas. Ajustar las referencias de fórmulas generadas junto con los datos; mantener los valores calculados en caché. Texto proporcionado por usuarios sigue siendo una cadena, nunca una fórmula.
-- No modificar cálculos, importes, instantáneas, permisos, estados, versión de nómina ni envío manual. La preliquidación sigue siendo una revisión editable sin correos.
+- Los ajustes visuales no modifican cálculos, importes, instantáneas, permisos, estados, versión de nómina ni la política vigente de envío del cierre. La preliquidación sigue siendo una revisión editable sin correos.
 
 ## Comprobación
 
