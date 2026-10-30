@@ -36,4 +36,4 @@ Verificación local adicional con PyMuPDF y openpyxl: separadores fuera del text
 
 Muestras con datos ficticios y evidencia local en `work/local/document-brand/`, fuera de Git. No se accedió a nómina real para generar pruebas, no hubo migraciones ni envíos reales. Este cambio no modifica binarios Apple ni necesita un nuevo TestFlight.
 
-La publicación se registra en `PROJECT_CONTEXT.md` después de comprobar la versión activa y conservar bindings/crons.
+Fuente final `8d61d3b` en main. Worker `f71358fc-8e2c-4ed3-8800-816328bcf46b` activo al100% desde13:27 Colombia del30 de octubre, verificado mediante API, con14 bindings y los dos crons conservados. El CLI terminó con los errores auxiliares conocidos de subdominio/memberships tras activar la versión; no se amplió el token. Dominio de producción inaccesible desde la red del entorno: la comprobación visual fue local, con generación real y datos ficticios. La revisión final añadió espacio alrededor del total usando las métricas completas de impresión; PDF.js y PyMuPDF confirmaron ausencia de intersecciones.
