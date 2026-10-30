@@ -16,8 +16,8 @@ export default function PayrollPersonInput({employees,value,onChange,disabled=fa
  const selected=employees.find(e=>e.id===value);
  const [query,setQuery]=useState(()=>selected?.name??''),[open,setOpen]=useState(false),[active,setActive]=useState(-1);
  const words=normalize(query).split(/\s+/).filter(Boolean);
- const matches=employees.filter(e=>words.every(word=>normalize(e.name).includes(word))).slice(0,8);
- const expanded=open&&!disabled;
+ const matches=words.length?employees.filter(e=>words.every(word=>normalize(e.name).includes(word))).slice(0,8):[];
+ const expanded=open&&words.length>0&&!disabled;
  useEffect(()=>{input.current?.setCustomValidity(selected&&query===selected.name?'':'Selecciona una persona de las sugerencias.');},[query,selected]);
  useEffect(()=>{if(expanded&&active>=0)list.current?.children[active]?.scrollIntoView({block:'nearest'});},[active,expanded]);
  function choose(person:Employee){input.current?.focus({preventScroll:true});setQuery(person.name);onChange(person.id);setOpen(false);setActive(-1);}
@@ -30,7 +30,7 @@ export default function PayrollPersonInput({employees,value,onChange,disabled=fa
   <div className="payroll-person-control">
    <Search size={18} className="payroll-person-search" aria-hidden="true"/>
    <Input ref={input} id={id} data-payroll-person aria-label="Persona" role="combobox" aria-autocomplete="list" aria-expanded={expanded} aria-controls={expanded?id+'-list':undefined} aria-activedescendant={expanded&&active>=0&&matches[active]?id+'-option-'+active:undefined} autoComplete="off" placeholder="Escribe el nombre o apellido" value={query} required maxLength={200} disabled={disabled}
-    onFocus={e=>{setOpen(true);setActive(-1);if(selected)e.currentTarget.select();}}
+    onFocus={e=>{setOpen(false);setActive(-1);if(selected)e.currentTarget.select();}}
     onChange={e=>{setQuery(e.target.value);onChange('');setOpen(true);setActive(-1);}}
     onKeyDown={e=>{
      if(e.nativeEvent.isComposing)return;
