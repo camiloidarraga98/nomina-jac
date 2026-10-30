@@ -16,7 +16,7 @@ Estos registros son costos para análisis y comisión: **no generan pagos ni rei
 - Las tarifas utilizadas son las guardadas en cada show/recorrido; no se sustituyen por las tarifas actuales del personal.
 - La casilla **Show promocional**, al final del formulario de show, excluye todos sus honorarios, kilómetros y gastos de la base de comisión. Conserva los pagos al equipo y los costos reales en el análisis.
 - El resultado negativo deja la comisión en cero, sin arrastre a otra quincena.
-- Desde el 29 de octubre de 2026, por confirmación de Camilo, **se suma en el total general**, con una línea independiente: neto del equipo + Camilo · comisión del 5%. No se crea un empleado/pago/envío ficticio ni se incorpora esa comisión a los desprendibles de otras personas.
+- Desde el 29 de octubre de 2026, por confirmación de Camilo, **se suma en el total general**: neto del equipo + comisión del 5%. El30 de octubre pidió incluirlo en el listado general: PDF definitivo, preliquidación y Excel muestran **Camilo Idarraga · Comisión del 5%** como fila de la tabla de pagos, antes de los totales, en lugar de dejarlo debajo como una línea aislada. Esta fila es solo presentación de la comisión guardada; el subtotal del equipo la excluye y el total general la suma una sola vez. No se crea un empleado/pago/envío ficticio ni se incorpora esa comisión a los desprendibles de otras personas.
 
 El cuadro **Comisión de Camilo · 5%** muestra ventas, costos descontados, costos promocionales excluidos, base y comisión. **Costos y resultado por show** permite consultar ventas, músicos, técnica, conductores/km, gastos, costo total, resultado económico y costo descontado de la comisión. El filtro de gastos no cambia la comisión de la quincena.
 

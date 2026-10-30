@@ -74,10 +74,24 @@ test('preliquidación de varias páginas: nombres completos, columnas sin superp
   for (const page of pages) assert.match(page.text, /PRELIQUIDACIÓN · PARA REVISIÓN/);
   for (const row of review.calculation.rows) assert.ok(pages.some(page => page.text.includes(row.name)), row.name);
   for (const page of pages.filter(page => page.text.includes('PERSONA DE EJEMPLO'))) assert.match(page.text, /DEVENGADO.*ADICIONES.*DESCUENTOS.*NETO/);
+  const camiloPage = pages.find(page => page.boxes.some(box => box.text === 'Camilo Idarraga'));
+  assert.ok(camiloPage); assert.match(camiloPage.text, /PERSONA.*DEVENGADO.*ADICIONES.*DESCUENTOS.*NETO/);
+  const name = camiloPage.boxes.find(box => box.text === 'Camilo Idarraga');
+  assert.equal(name.x, camiloPage.boxes.find(box => box.text === 'PERSONA').x);
+  assert.ok(camiloPage.boxes.some(box => box.x > 480 && Math.abs(box.top-name.top) < 1), 'El neto de Camilo comparte la fila del nombre');
   assert.deepEqual(state, before);
   await writeFile(directory + '/preliquidacion.pdf', bytes);
   await writeFile(directory + '/preliquidacion.xlsx', m.payrollXlsx(period, review));
   await writeFile(directory + '/print-fixture.json', JSON.stringify({period: {...period, status: 'cerrada', snapshot: {...review.calculation, closedAt: review.generatedAt, closedBy: 'revision@example.invalid'}}, employee: state.employees[0].id}));
+  close(state, period);
+  const finalBytes = await m.payrollPdf(period), finalPages = await inspectPdf(finalBytes);
+  const finalPage = finalPages.find(page => page.boxes.some(box => box.text === 'Camilo Idarraga'));
+  assert.ok(finalPage); assert.match(finalPage.text, /PERSONA.*GRUPO.*NETO A PAGAR/);
+  const finalName = finalPage.boxes.find(box => box.text === 'Camilo Idarraga'), group = finalPage.boxes.find(box => box.text === 'Comisión del 5%');
+  assert.equal(finalName.x, finalPage.boxes.find(box => box.text === 'PERSONA').x);
+  assert.ok(Math.abs(finalName.top-group.top)<1, 'Nombre y grupo de Camilo quedan en la misma fila');
+  assert.ok(finalPage.boxes.some(box => box.x>440&&Math.abs(box.top-finalName.top)<1), 'Importe alineado en la fila de Camilo');
+  await writeFile(directory + '/resumen-camilo-listado.pdf', finalBytes);
 });
 
 test('desprendible multipágina y resumen: conceptos, referencias, identificación y valores completos incluso con importes grandes', async () => {
@@ -134,8 +148,8 @@ test('Excel incluye logo y títulos en todas las hojas; fórmulas, filtros, fila
     assert.match(strFromU8(files[`xl/drawings/_rels/drawing${i}.xml.rels`]), /jac-logo.png/);
   }
   const summary = strFromU8(files['xl/worksheets/sheet1.xml']);
-  assert.match(summary, /<autoFilter ref="A5:H8"/); // Excludes the three reconciliation rows.
-  assert.match(summary, /<f>SUM\(H6:H8\)<\/f>/); assert.match(summary, /<f>H9\+H10<\/f>/);
+  assert.match(summary, /<autoFilter ref="A5:H9"/); // Includes Camilo as a payable row; excludes both totals.
+  assert.match(summary, /<f>SUM\(H6:H8\)<\/f>/); assert.match(summary, /<f>H10\+H9<\/f>/);
   const shows = strFromU8(files['xl/worksheets/sheet3.xml']); assert.match(shows, /<f>ROUND\(E9\*0.5,2\)<\/f><v>375000<\/v>/);
   const movements = strFromU8(files['xl/worksheets/sheet4.xml']);
   assert.match(movements, /<f>D6\*E6<\/f><v>90000.5<\/v>/);

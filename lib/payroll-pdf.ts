@@ -30,13 +30,17 @@ export async function payrollPdf(period: Period, employeeId?: string, allSlips =
       {label: 'ADICIONES', width: 84, align: 'right' as const}, {label: 'DESCUENTOS', width: 84, align: 'right' as const},
       {label: 'NETO', width: 84, align: 'right' as const}]
       : [{label: 'PERSONA', width: 260}, {label: 'GRUPO', width: 126}, {label: 'NETO A PAGAR', width: 130, align: 'right' as const}];
-    pdf.table(columns, snapshot.rows.map(row => review
+    const paymentRows = snapshot.rows.map(row => review
       ? [{text: row.name, detail: categoryNames[row.category]}, {text: money(row.gross)}, {text: money(row.reimbursements)}, {text: money(row.deductions)}, {text: money(row.net), bold: true}]
-      : [{text: row.name}, {text: categoryNames[row.category], muted: true}, {text: money(row.net), bold: true}]), 'Detalle de pagos · Continuación');
+      : [{text: row.name}, {text: categoryNames[row.category], muted: true}, {text: money(row.net), bold: true}]);
+    const commission = general.camilo === null ? 'Pendiente de revisión' : money(general.camilo);
+    paymentRows.push(review
+      ? [{text: 'Camilo Idarraga', detail: 'Comisión del 5%'}, {text: commission}, {text: money(0)}, {text: money(0)}, {text: commission, bold: true}]
+      : [{text: 'Camilo Idarraga'}, {text: 'Comisión del 5%', muted: true}, {text: commission, bold: true}]);
+    pdf.table(columns, paymentRows, 'Detalle de pagos · Continuación');
     // Keep the reconciliation together. If needed it starts on a fresh page.
-    pdf.ensure(205, 'Consolidado de nómina'); pdf.gap(18);
+    pdf.ensure(182, 'Consolidado de nómina'); pdf.gap(18);
     pdf.keyValue('NETO DEL EQUIPO', money(general.team), true);
-    pdf.keyValue('Camilo · comisión del 5%', general.camilo === null ? 'Pendiente de revisión' : money(general.camilo));
     pdf.gap(9);
     pdf.total('TOTAL GENERAL', general.total === null ? 'Pendiente de revisión' : money(general.total));
     pdf.gap(13);
