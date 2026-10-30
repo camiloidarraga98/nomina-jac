@@ -29,6 +29,8 @@ Los contratos generados ya utilizan el membrete de esta referencia: se conserva 
 
 ## Comprobación
 
+Ajuste posterior de Camilo dentro del listado:55 casos correctos de nómina, permisos, correo, exportación, composición y preliquidación/cierre, TypeScript y build completos. PDF.js verifica posición del nombre/grupo/importe en la misma fila y ausencia de superposiciones en PDF definitivo/preliquidación de varias páginas. PyMuPDF permitió revisar la página resultante; openpyxl confirma que el filtro incluye a Camilo, el subtotal del equipo lo excluye y la suma de las filas coincide con el general. Fuente `be201f2`; Worker `d251071b-314f-4914-afba-f7859c491109` activo al100% desde17:43 Colombia del30 de octubre,14 bindings y dos crons conservados, comprobación por API. Evidencia ficticia en `work/local/camilo-general-list/`; sin cambios nativos, datos reales ni envíos de prueba.
+
 82 casos aprobados en `payroll`, `payroll-auth`, `payroll-mail`, `payroll-export-general`, `payroll-preliquidation`, `payroll-document-layout`, `payroll-routes`, `payroll-mobile`, `payroll-mobile-oauth` y `contracts`; ejecutados por archivo con `--test-isolation=none`. TypeScript y build Cloudflare correctos.
 
 La nueva prueba de composición interpreta el PDF real: límites de texto, intersecciones entre textos y con los separadores, logo/pie/paginación en cada página, nombres y conceptos completos, personas con varias categorías, ZIP/agrupación e importes grandes. El caso extenso genera siete páginas sin superposiciones. Verifica también fórmulas desplazadas, logo y títulos de todas las hojas del Excel.
