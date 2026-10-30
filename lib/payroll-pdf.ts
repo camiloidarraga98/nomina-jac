@@ -34,7 +34,7 @@ export async function payrollPdf(period: Period, employeeId?: string, allSlips =
       ? [{text: row.name, detail: categoryNames[row.category]}, {text: money(row.gross)}, {text: money(row.reimbursements)}, {text: money(row.deductions)}, {text: money(row.net), bold: true}]
       : [{text: row.name}, {text: categoryNames[row.category], muted: true}, {text: money(row.net), bold: true}]), 'Detalle de pagos · Continuación');
     // Keep the reconciliation together. If needed it starts on a fresh page.
-    pdf.ensure(185, 'Consolidado de nómina'); pdf.gap(18);
+    pdf.ensure(205, 'Consolidado de nómina'); pdf.gap(18);
     pdf.keyValue('NETO DEL EQUIPO', money(general.team), true);
     pdf.keyValue('Camilo · comisión del 5%', general.camilo === null ? 'Pendiente de revisión' : money(general.camilo));
     pdf.gap(9);
@@ -62,7 +62,7 @@ export async function payrollPdf(period: Period, employeeId?: string, allSlips =
             {text: (item.kind === 'deduccion' ? '- ' : '') + money(item.amount), bold: item.kind !== 'deduccion'}]), person.name + ' · ' + categoryNames[row.category] + ' · Continuación', categoryNames[row.category].toUpperCase());
         pdf.gap(12); pdf.keyValue('Neto ' + categoryNames[row.category], money(row.net), true); pdf.gap(14);
       }
-      pdf.ensure(147, person.name + ' · Total del desprendible');
+      pdf.ensure(165, person.name + ' · Total del desprendible');
       pdf.total('TOTAL A PAGAR', money(rows.reduce((value, row) => value + row.net, 0)));
       pdf.gap(16); pdf.paragraph(generated, {size: 8, muted: true});
       pdf.paragraph('Responsable: ' + period.snapshot!.closedBy, {size: 8, muted: true});

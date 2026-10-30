@@ -36,7 +36,8 @@ async function inspectPdf(bytes) {
       const boxes = content.items.filter(item => item.str?.trim()).map(item => {
         const size = item.height, font = content.styles[item.fontName];
         return {text: item.str, x: item.transform[4], endX: item.transform[4] + item.width,
-          top: 792 - item.transform[5] - size * (font.ascent ?? .9), bottom: 792 - item.transform[5] - size * (font.descent ?? -.2)};
+          // Reserve the complete Helvetica font box used by print renderers too.
+          top: 792 - item.transform[5] - size * Math.max(font.ascent ?? 0, 1.075), bottom: 792 - item.transform[5] - size * Math.min(font.descent ?? 0, -.307)};
       });
       for (const box of boxes) {
         assert.ok(box.x >= 47.9 && box.endX <= 564.1, `p${n}: texto fuera del margen: ${box.text}`);

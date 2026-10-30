@@ -54,7 +54,7 @@ export async function createDocumentPdf(options: DocumentOptions) {
     rectangle(0, 7, palette.cyan, 0, 144);
     page.drawImage(mark, {x: left, y: pageHeight - 80, width: 116, height: 116 * mark.height / mark.width});
     let headingY = 47;
-    for (const text of wrap(options.title, 348, 18, bold)) { put(text, 216, headingY, {size: 18, bold: true}); headingY += 23; }
+    for (const text of wrap(options.title, 348, 18, bold)) { put(text, 216, headingY, {size: 18, bold: true}); headingY += 26; }
     put(options.period, 216, headingY + 1, {size: 10, muted: true});
     for (const text of wrap(options.status, 348, 7.5, bold)) { headingY += 15; put(text, 216, headingY, {size: 7.5, bold: true, muted: true}); }
     const divider = Math.max(105, headingY + 14);
@@ -88,12 +88,15 @@ export async function createDocumentPdf(options: DocumentOptions) {
     let size = 25;
     while (bold.widthOfTextAtSize(safe(value), size) > width - 32 && size > 12) size -= .5;
     const values = wrap(value, width - 32, size, bold), notes = note ? wrap(note, width - 32, 8) : [];
-    const height = 42 + values.length * (size + 5) + (notes.length ? 7 + notes.length * 11 : 0);
+    const firstValueBaseline = 36 + size, valueLeading = size * 1.4;
+    const lastValueBaseline = firstValueBaseline + (values.length - 1) * valueLeading;
+    const noteBaseline = lastValueBaseline + size * .32 + 14;
+    const height = notes.length ? noteBaseline + (notes.length - 1) * 12 + 17 : lastValueBaseline + size * .32 + 14;
     ensure(height);
     rectangle(y, height, palette.canvas); rectangle(y, height, palette.cyan, left, 3);
     put(label, left + 16, y + 21, {size: 8, bold: true, muted: true});
-    values.forEach((text, i) => put(text, left + 16, y + 39 + size + i * (size + 5), {size, bold: true}));
-    notes.forEach((text, i) => put(text, left + 16, y + 39 + values.length * (size + 5) + 8 + i * 11, {size: 8, muted: true}));
+    values.forEach((text, i) => put(text, left + 16, y + firstValueBaseline + i * valueLeading, {size, bold: true}));
+    notes.forEach((text, i) => put(text, left + 16, y + noteBaseline + i * 12, {size: 8, muted: true}));
     y += height;
   }
 
