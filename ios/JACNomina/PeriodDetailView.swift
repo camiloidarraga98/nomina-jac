@@ -200,7 +200,7 @@ struct PeriodDetailView: View {
     }
     private var confirmationTitle: String { action == "close" ? "¿Cerrar esta quincena?" : action == "reopen" ? "¿Reabrir este cierre?" : "¿Eliminar esta quincena y todos sus registros de correo?" }
     private var confirmationMessage: String {
-        action == "close" ? "Se guardará la liquidación definitiva. Podrás descargar sus documentos y enviar los desprendibles manualmente desde Correos."
+        action == "close" ? "Se guardará la liquidación definitiva y se enviarán automáticamente los desprendibles a los correos registrados. Podrás consultar su estado en Correos."
         : action == "reopen" ? "El cierre anterior se conserva. La corrección utiliza las condiciones históricas y requiere permiso para modificar cierres."
         : "No se puede deshacer. No retira correos ya enviados ni archivos descargados. Las demás quincenas se conservan."
     }

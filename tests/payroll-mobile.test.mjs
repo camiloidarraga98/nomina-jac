@@ -142,7 +142,7 @@ test('crear, previsualizar, editar y eliminar actividades reutiliza validación,
  assert.equal((await command(writer,'close',{periodId:p.id})).status,403);
  assert.equal((await command(writer,'deletePeriod',{periodId:p.id,confirmation:p.id})).status,403);
  assert.equal((await command(owner,'close',{periodId:p.id})).status,200);
- assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0,'Cerrar conserva la instantánea sin preparar correos');
+ assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,1,'El cierre definitivo prepara el desprendible del pago restante');
 });
 
 test('cierres, condiciones históricas y permisos independientes siguen protegidos desde la app',async()=>{
@@ -202,7 +202,7 @@ test('ensayos antiguos bloqueados se consultan y cierran como honorarios; consul
  const response=await m.webApi.POST(new Request(base+'/api/payroll',{method:'POST',headers:{origin:base,cookie:'__Host-jac_session='+owner,'content-type':'application/json'},body:JSON.stringify({action:'close',periodId:p.id,version:before.version})}));
  assert.equal(response.status,200);const closed=await response.json(),stored=closed.data.periods[0];
  assert.equal(stored.status,'cerrada');assert.equal(stored.movements[0].kind,'servicio');assert.equal(stored.movements[0].amount,87500);assert.equal(stored.movements[0].quantity,2);assert.equal(stored.movements[0].note,'Dato simulado anterior');assert.equal(JSON.stringify(p.movements),snapshotText);
- assert.equal(stored.snapshot.rows.find(r=>r.employeeId==='musica').gross,175000);const jobs=sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n;assert.equal(jobs,0,'La liquidación definitiva tampoco inicia correos sin acción de envío');
+ assert.equal(stored.snapshot.rows.find(r=>r.employeeId==='musica').gross,175000);const jobs=sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n;assert.equal(jobs,2,'El cierre prepara los desprendibles del ensayo y del salario fijo');
  assert.equal((await post({action:'close',periodId:p.id,version:before.version},owner)).status,409);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,jobs,'El reintento no duplica correos');
  const readClosed=await get('?period='+p.id,reader);assert.deepEqual(readClosed.body.calculation,withGeneral(stored.snapshot));
 });
