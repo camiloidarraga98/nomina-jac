@@ -1,7 +1,4 @@
 import {importCrmPeriods,crmLinkIssue,crmPayrollGuard} from '@/lib/crm-payroll';
-import {waitUntil} from 'cloudflare:workers';
-import {planMail} from '@/lib/payroll-mail-core';
-import {mailWrites,drainMail} from '@/lib/payroll-mail';
 import {payrollUser,payrollHeaders} from '@/lib/payroll-access';
 import {readPayroll,writePayroll,deletePayrollPeriod} from '@/lib/payroll-store';
 import {stateSchema} from '@/lib/payroll-schema';
@@ -42,10 +39,8 @@ export async function POST(req:Request){
    p.movements=normalizeRehearsalMovements(p).movements;
    const issues=closeIssues(current.data,p);if(issues.length)return reply({error:issues.join(' ')},400);
    p.snapshot={...calculate(current.data,p),employees:structuredClone(p.calculationBase?.employees||current.data.employees),closedAt:new Date().toISOString(),closedBy:user.email};p.status='cerrada';
-   const plan=planMail(p,current.data.employees);const saved=await writePayroll(current.data,body.version,user.email,(db,nonce)=>mailWrites(db,plan,{nonce}),undefined,guard);
-   let mailNotice='Consulta el estado de los desprendibles en Correos.';
-   try{waitUntil(drainMail(plan.id,undefined,{limit:3,retryErrors:false}).catch(()=>{console.error('Mail processing interrupted');}));}catch{console.error('Mail processing interrupted');}
-   return reply({...saved,mailNotice,mailBatchId:plan.id});
+   const saved=await writePayroll(current.data,body.version,user.email,undefined,undefined,guard);
+   return reply({...saved,mailNotice:'Descarga la liquidación y envía los desprendibles manualmente desde Correos.'});
   }
   if(body.action!=='save')return reply({error:'Acción inválida.'},400);
   const parsed=stateSchema.safeParse(body.data);if(!parsed.success)return reply({error:parsed.error.issues[0].message},400);

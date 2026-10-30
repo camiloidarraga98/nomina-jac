@@ -1,6 +1,6 @@
 import {sameValue} from './payroll-policy';
 import type {PayrollState} from './payroll';
-export const permissions={payroll:'Registrar shows, kilómetros, horas y novedades',staff:'Modificar personal y tarifas',rules:'Modificar conceptos y parámetros',close:'Cerrar quincenas y enviar sus desprendibles',modifyClosed:'Modificar cierres de quincena (reabrir, corregir y volver a cerrar)',send:'Enviar o reintentar desprendibles',export:'Descargar e imprimir documentos'} as const;
+export const permissions={payroll:'Registrar shows, kilómetros, horas y novedades',staff:'Modificar personal y tarifas',rules:'Modificar conceptos y parámetros',close:'Cerrar quincenas',modifyClosed:'Modificar cierres de quincena (reabrir, corregir y volver a cerrar)',send:'Enviar o reintentar desprendibles',export:'Descargar e imprimir documentos'} as const;
 export type Permission=keyof typeof permissions;
 export type AccessUser={id:string;email:string;username:string;displayName:string;fullName:string|null;isOwner:boolean;permissions:Permission[];itinerariesOnly?:boolean;mediaOnly?:boolean;sections?:SectionKey[];legacy?:boolean};
 export const sectionLabels={payroll:'Nómina y quincenas',calendar:'Agenda',itineraries:'Itinerarios',alerts:'Alertas',boarding:'Pases de abordar',media:'Fotografía y video',mediaUpload:'Subir fotos y videos',music:'Música · escuchar y descargar',musicUpload:'Subir audios',crm:'CRM (administradores)'} as const;

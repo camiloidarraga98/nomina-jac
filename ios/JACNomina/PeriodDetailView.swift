@@ -200,12 +200,15 @@ struct PeriodDetailView: View {
     }
     private var confirmationTitle: String { action == "close" ? "¿Cerrar esta quincena?" : action == "reopen" ? "¿Reabrir este cierre?" : "¿Eliminar esta quincena y todos sus registros de correo?" }
     private var confirmationMessage: String {
-        action == "close" ? "Se conservará una instantánea. Si Gmail está conectado, se enviarán automáticamente los desprendibles a las personas con correo registrado."
+        action == "close" ? "Se guardará la liquidación definitiva. Podrás descargar sus documentos y enviar los desprendibles manualmente desde Correos."
         : action == "reopen" ? "El cierre anterior se conserva. La corrección utiliza las condiciones históricas y requiere permiso para modificar cierres."
         : "No se puede deshacer. No retira correos ya enviados ni archivos descargados. Las demás quincenas se conservan."
     }
     @ViewBuilder private func operations(_ d: PeriodDetail) -> some View {
         Section("Acciones de la quincena") {
+            if !d.period.isClosed && user.can("export") {
+                Button("Preliquidación") { section = "documentos" }.accessibilityIdentifier("period.preliquidation")
+            }
             if d.period.isClosed {
                 if user.can("modifyClosed") { Button("Reabrir para corregir") { action = "reopen" }.disabled(!store.canWrite).accessibilityIdentifier("period.reopen") }
             } else if user.can(d.record["ownerOnly"].flag ? "modifyClosed" : "close") {

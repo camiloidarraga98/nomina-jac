@@ -14,7 +14,7 @@ class Query{
 }
 globalThis.__mobileEnv={DB:{prepare:s=>new Query(s),batch:async qs=>{sql.exec('BEGIN');try{const out=qs.map(q=>q.execute());sql.exec('COMMIT');return out;}catch(e){sql.exec('ROLLBACK');throw e;}}},PAYROLL_AUTH_KEY:'independent-mobile-test-key-at-least-32-characters'};
 globalThis.__mobileHeaders=new Headers();
-const bundle=await build({stdin:{contents:"export * as api from './app/api/mobile/payroll/route';export * as webApi from './app/api/payroll/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-store';export * from './lib/payroll';export * from './lib/payroll-mobile';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mobile-platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__mobileEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__mobileHeaders;',loader:'js'}));}}]});
+const bundle=await build({stdin:{contents:"export * as api from './app/api/mobile/payroll/route';export * as webApi from './app/api/payroll/route';export * from './lib/payroll-auth-store';export * from './lib/payroll-auth-crypto';export * from './lib/payroll-store';export * from './lib/payroll';export * from './lib/payroll-mobile';export {prepareMail} from './lib/payroll-mail';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'mobile-platform',setup(b){b.onResolve({filter:/^(cloudflare:workers|next\/headers)$/},a=>({path:a.path,namespace:'mock'}));b.onLoad({filter:/.*/,namespace:'mock'},a=>({contents:a.path==='cloudflare:workers'?'export const env=globalThis.__mobileEnv;export const waitUntil=p=>p.catch(()=>{});':'export const headers=async()=>globalThis.__mobileHeaders;',loader:'js'}));}}]});
 const m=await import('data:text/javascript;base64,'+Buffer.from(bundle.outputFiles[0].contents).toString('base64'));
 const withGeneral=value=>({...value,general:m.payrollGeneral(value)});
 const base='https://mobile.example.invalid';
@@ -142,7 +142,7 @@ test('crear, previsualizar, editar y eliminar actividades reutiliza validación,
  assert.equal((await command(writer,'close',{periodId:p.id})).status,403);
  assert.equal((await command(writer,'deletePeriod',{periodId:p.id,confirmation:p.id})).status,403);
  assert.equal((await command(owner,'close',{periodId:p.id})).status,200);
- assert.ok(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n>0,'El cierre sigue preparando sus registros idempotentes');
+ assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,0,'Cerrar conserva la instantánea sin preparar correos');
 });
 
 test('cierres, condiciones históricas y permisos independientes siguen protegidos desde la app',async()=>{
@@ -176,6 +176,7 @@ test('borrado móvil exige propietario, confirmación, revisión y protección d
  const owner=await ownerSession(),current=await m.readPayroll(),p=current.data.periods[0];
  assert.equal((await command(owner,'deletePeriod',{periodId:p.id})).status,400);
  assert.equal((await post({action:'deletePeriod',periodId:p.id,confirmation:p.id,version:current.version-1},owner)).status,409);
+ await m.prepareMail(p); // An explicit request, separate from closing.
  const job=sql.prepare('SELECT id FROM payroll_mail_jobs LIMIT 1').get();
  sql.prepare("UPDATE payroll_mail_jobs SET status='sending',started_at=? WHERE id=?").run(new Date().toISOString(),job.id);
  assert.equal((await command(owner,'deletePeriod',{periodId:p.id,confirmation:p.id})).status,409);
@@ -201,7 +202,7 @@ test('ensayos antiguos bloqueados se consultan y cierran como honorarios; consul
  const response=await m.webApi.POST(new Request(base+'/api/payroll',{method:'POST',headers:{origin:base,cookie:'__Host-jac_session='+owner,'content-type':'application/json'},body:JSON.stringify({action:'close',periodId:p.id,version:before.version})}));
  assert.equal(response.status,200);const closed=await response.json(),stored=closed.data.periods[0];
  assert.equal(stored.status,'cerrada');assert.equal(stored.movements[0].kind,'servicio');assert.equal(stored.movements[0].amount,87500);assert.equal(stored.movements[0].quantity,2);assert.equal(stored.movements[0].note,'Dato simulado anterior');assert.equal(JSON.stringify(p.movements),snapshotText);
- assert.equal(stored.snapshot.rows.find(r=>r.employeeId==='musica').gross,175000);const jobs=sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n;assert.ok(jobs>0);
+ assert.equal(stored.snapshot.rows.find(r=>r.employeeId==='musica').gross,175000);const jobs=sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n;assert.equal(jobs,0,'La liquidación definitiva tampoco inicia correos sin acción de envío');
  assert.equal((await post({action:'close',periodId:p.id,version:before.version},owner)).status,409);assert.equal(sql.prepare('SELECT count(*) AS n FROM payroll_mail_jobs').get().n,jobs,'El reintento no duplica correos');
  const readClosed=await get('?period='+p.id,reader);assert.deepEqual(readClosed.body.calculation,withGeneral(stored.snapshot));
 });

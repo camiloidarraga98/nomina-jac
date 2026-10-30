@@ -1,10 +1,19 @@
 import {PDFDocument,StandardFonts,rgb,type PDFPage,type PDFFont} from 'pdf-lib';
 import {zipSync,strToU8} from 'fflate';
-import {money,periodLabel,categoryNames,routeDrivers,payrollGeneral,showHonorarium,type Period,type Snapshot,type PayrollRow} from './payroll';
+import {calculate,closeIssues,normalizeRehearsalMovements,periodLabel,categoryNames,routeDrivers,payrollGeneral,showHonorarium,type Period,type Snapshot,type PayrollState} from './payroll';
+export type PayrollReview={calculation:Omit<Snapshot,'closedAt'|'closedBy'>;generatedAt:string;version:number;issues:string[]};
+/** An ephemeral review of saved inputs, never a closure or a mail batch. */
+export function payrollReview(state:PayrollState,period:Period,version:number,generatedAt=new Date().toISOString()){
+ if(period.status!=='abierta')throw new Error('La preliquidación requiere una quincena abierta.');
+ const p=normalizeRehearsalMovements(period),calculation=calculate(state,p);
+ const review:PayrollReview={calculation:{...calculation,employees:structuredClone(p.calculationBase?.employees??state.employees)},generatedAt,version,issues:[...new Set([...closeIssues(state,p),...(calculation.camiloCommission?.issues??[])])]};
+ return {period:p,review};
+}
 const safe=(v:unknown)=>String(v??'').replace(/[\u2010-\u2015\u2212]/g,'-').replace(/\u202f/g,' ').replace(/[^\u0009\u000a\u000d\u0020-\u00ff\u20ac]/g,'');
 const fmt=(n:number)=>new Intl.NumberFormat('es-CO',{style:'currency',currency:'COP',minimumFractionDigits:2,maximumFractionDigits:2}).format(n);
-export async function payrollPdf(p:Period,employeeId?:string,allSlips=false){
- const s=p.snapshot!;const doc=await PDFDocument.create();const regular=await doc.embedFont(StandardFonts.Helvetica),bold=await doc.embedFont(StandardFonts.HelveticaBold);let page!:PDFPage,y=0;
+export async function payrollPdf(p:Period,employeeId?:string,allSlips=false,review?:PayrollReview){
+ if(review&&(employeeId||allSlips))throw new Error('La preliquidación no genera desprendibles.');
+ const s=review?.calculation??p.snapshot!,summaryTitle=review?'Preliquidación de nómina':'Resumen de nómina';const doc=await PDFDocument.create();const regular=await doc.embedFont(StandardFonts.Helvetica),bold=await doc.embedFont(StandardFonts.HelveticaBold);let page!:PDFPage,y=0;
  const ink=rgb(22/255,52/255,73/255),muted=rgb(91/255,113/255,132/255),brand=rgb(0,111/255,189/255),pale=rgb(232/255,243/255,252/255);
  const text=(v:unknown,x:number,yy:number,size=10,font:PDFFont=regular,color=ink)=>page.drawText(safe(v),{x,y:yy,size,font,color});
  const right=(v:unknown,x:number,yy:number,size=10,font:PDFFont=regular)=>{const t=safe(v);text(t,x-font.widthOfTextAtSize(t,size),yy,size,font);};
@@ -14,15 +23,17 @@ export async function payrollPdf(p:Period,employeeId?:string,allSlips=false){
  const rule=()=>{page.drawLine({start:{x:38,y:y},end:{x:557,y:y},thickness:.5,color:rgb(217/255,229/255,238/255)});};
  const header=(labels:string[],positions:number[])=>{page.drawRectangle({x:38,y:y-8,width:519,height:25,color:pale});labels.forEach((l,i)=>text(l,positions[i],y,8,bold));y-=31;};
  if(!employeeId&&!allSlips){
-  addPage('Resumen de nómina','Cierre: '+new Date(s.closedAt).toLocaleString('es-CO',{timeZone:'America/Bogota'}));
+  addPage(summaryTitle,review?'Para revisión · '+new Date(review.generatedAt).toLocaleString('es-CO',{timeZone:'America/Bogota'})+' · Versión '+review.version:'Cierre: '+new Date(p.snapshot!.closedAt).toLocaleString('es-CO',{timeZone:'America/Bogota'}));
   const general=payrollGeneral(s);
   text('TOTAL GENERAL DE NÓMINA',38,y,8,bold,muted);text(general.total===null?'Pendiente de revisión':fmt(general.total),38,y-29,26,bold);y-=67;
   for(const [label,value] of [['Devengado del equipo',s.gross],['Adiciones y reintegros',s.reimbursements],['Descuentos',s.deductions],['Ventas de shows',s.sale]] as [string,number][]){text(label,38,y,10,regular,muted);right(fmt(value),557,y,10,bold);y-=21;}y-=12;
-  header(['PERSONA','GRUPO','NETO A PAGAR'],[46,305,453]);
-  for(const r of s.rows){const lines=wrap(r.name,245);const height=Math.max(27,lines.length*12+12);if(y-height<68){addPage('Resumen de nómina','Continuación');header(['PERSONA','GRUPO','NETO A PAGAR'],[46,305,453]);}lines.forEach((l,i)=>text(l,46,y-i*12,9));text(categoryNames[r.category],305,y,8);right(fmt(r.net),549,y,9,bold);y-=height;rule();}
-  ensure(130,'Resumen de nómina');y-=25;text('NETO DEL EQUIPO',46,y,10,bold);right(fmt(general.team),549,y,11,bold);y-=24;
+  const paymentHeader=()=>header(review?['PERSONA','DEVENGADO','ADICIONES','DESCUENTOS','NETO']:['PERSONA','GRUPO','NETO A PAGAR'],review?[46,211,302,389,500]:[46,305,453]);
+  paymentHeader();
+  for(const r of s.rows){const lines=wrap(r.name,review?153:245);const height=Math.max(review?39:27,lines.length*12+(review?24:12));if(y-height<68){addPage(summaryTitle,'Continuación');paymentHeader();}lines.forEach((l,i)=>text(l,46,y-i*12,9));if(review){text(categoryNames[r.category],46,y-lines.length*12,7,regular,muted);[r.gross,r.reimbursements,r.deductions,r.net].forEach((v,i)=>right(fmt(v),[286,373,460,549][i],y,7.5,i===3?bold:regular));}else{text(categoryNames[r.category],305,y,8);right(fmt(r.net),549,y,9,bold);}y-=height;rule();}
+  ensure(130,summaryTitle);y-=25;text('NETO DEL EQUIPO',46,y,10,bold);right(fmt(general.team),549,y,11,bold);y-=24;
   text('Camilo · comisión del 5%',46,y,10);right(general.camilo===null?'Pendiente de revisión':fmt(general.camilo),549,y,11,bold);y-=29;
-  text('TOTAL GENERAL',46,y,11,bold);right(general.total===null?'Pendiente de revisión':fmt(general.total),549,y,14,bold);y-=35;text('Cerrada por '+s.closedBy,38,y,8,regular,muted);
+  text('TOTAL GENERAL',46,y,11,bold);right(general.total===null?'Pendiente de revisión':fmt(general.total),549,y,14,bold);y-=35;text(review?'Para revisión. Quincena abierta; valores sujetos a cambios.':'Cerrada por '+p.snapshot!.closedBy,38,y,8,regular,muted);
+  if(review?.issues.length){y-=35;ensure(65,summaryTitle);text('PENDIENTES PARA REVISAR',38,y,10,bold);y-=24;for(const issue of review.issues){for(const line of wrap(issue,510)){ensure(18,summaryTitle);text(line,38,y,9);y-=14;}y-=10;}}
  }else{
   const ids=employeeId?[employeeId]:[...new Set(s.rows.map(r=>r.employeeId))];
   for(const eid of ids){const rows=s.rows.filter(r=>r.employeeId===eid);if(!rows.length)continue;const person=rows[0];addPage('Desprendible de pago');const nameLines=wrap(person.name,519,13,bold);nameLines.forEach(l=>{text(l,38,y,13,bold);y-=18;});text('Documento: '+(person.document||'Sin registrar'),38,y,9,regular,muted);y-=18;text(person.role,38,y,9,regular,muted);y-=31;
@@ -30,18 +41,18 @@ export async function payrollPdf(p:Period,employeeId?:string,allSlips=false){
     for(const item of r.items){const lines=wrap(item.concept+(item.reference?' ('+item.reference+')':''),330);const height=Math.max(26,lines.length*12+13);if(y-height<68){addPage('Desprendible de pago',person.name+' · Continuación');header(['CONCEPTO','CANT.','VALOR'],[46,391,488]);}lines.forEach((l,i)=>text(l,46,y-i*12,9));text(String(item.quantity),394,y,9);right((item.kind==='deduccion'?'- ':'')+fmt(item.amount),549,y,9,item.kind==='deduccion'?regular:bold);y-=height;rule();}
     ensure(85,'Desprendible de pago');y-=20;text('Neto '+categoryNames[r.category],46,y,10,bold);right(fmt(r.net),549,y,11,bold);y-=35;
    }
-   ensure(100,'Desprendible de pago');page.drawRectangle({x:38,y:y-40,width:519,height:62,color:pale});text('TOTAL A PAGAR',51,y-2,9,bold);right(fmt(rows.reduce((v,r)=>v+r.net,0)),544,y-23,20,bold);y-=75;text('Cierre: '+new Date(s.closedAt).toLocaleString('es-CO',{timeZone:'America/Bogota'}),38,y,8,regular,muted);y-=14;text('Responsable: '+s.closedBy,38,y,8,regular,muted);
+   ensure(100,'Desprendible de pago');page.drawRectangle({x:38,y:y-40,width:519,height:62,color:pale});text('TOTAL A PAGAR',51,y-2,9,bold);right(fmt(rows.reduce((v,r)=>v+r.net,0)),544,y-23,20,bold);y-=75;text('Cierre: '+new Date(p.snapshot!.closedAt).toLocaleString('es-CO',{timeZone:'America/Bogota'}),38,y,8,regular,muted);y-=14;text('Responsable: '+p.snapshot!.closedBy,38,y,8,regular,muted);
   }
  }
- doc.getPages().forEach((pg,i)=>{pg.drawText(`${i+1} / ${doc.getPageCount()}`,{x:515,y:30,size:8,font:regular,color:muted});pg.drawText('JAC Music · '+safe(p.start+' al '+p.end),{x:38,y:30,size:8,font:regular,color:muted});});
- doc.setTitle(employeeId||allSlips?'Desprendibles JAC Music':'Resumen de nómina JAC Music');doc.setAuthor(s.company);return doc.save();
+ doc.getPages().forEach((pg,i)=>{pg.drawText(`${i+1} / ${doc.getPageCount()}`,{x:515,y:30,size:8,font:regular,color:muted});pg.drawText((review?'PRELIQUIDACIÓN · PARA REVISIÓN · ':'JAC Music · ')+safe(p.start+' al '+p.end),{x:38,y:30,size:8,font:regular,color:muted});});
+ doc.setTitle(employeeId||allSlips?'Desprendibles JAC Music':summaryTitle+' JAC Music');doc.setAuthor(s.company);return doc.save();
 }
 type Cell=string|number|{formula:string;value:number;style?:number};
 type Sheet={name:string;rows:Cell[][];widths:number[];header:number;moneyCols:number[]};
 const xml=(v:unknown)=>String(v??'').replaceAll('&','&amp;').replaceAll('<','&lt;').replaceAll('>','&gt;').replaceAll('"','&quot;').replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/g,'');
 const col=(n:number)=>{let s='';for(n++;n;n=Math.floor((n-1)/26))s=String.fromCharCode(65+(n-1)%26)+s;return s;};
-export function payrollXlsx(p:Period){const s=p.snapshot!;
- const rows:Cell[][]=[[s.company+' - Resumen de nómina'],[p.start+' al '+p.end],['Cierre: '+s.closedAt+' | '+s.closedBy],['Persona','Documento','Cargo','Grupo','Devengado','Adiciones y reintegros','Descuentos','Neto a pagar']];
+export function payrollXlsx(p:Period,review?:PayrollReview){const s=review?.calculation??p.snapshot!;
+ const rows:Cell[][]=[[s.company+(review?' - PRELIQUIDACIÓN · PARA REVISIÓN':' - Resumen de nómina')],[p.start+' al '+p.end],[review?'Quincena abierta · Generada: '+review.generatedAt+' · Versión '+review.version:'Cierre: '+p.snapshot!.closedAt+' | '+p.snapshot!.closedBy],['Persona','Documento','Cargo','Grupo','Devengado','Adiciones y reintegros','Descuentos','Neto a pagar']];
  s.rows.forEach((r,i)=>rows.push([r.name,r.document,r.role,categoryNames[r.category],r.gross,r.reimbursements,r.deductions,{formula:`E${i+5}+F${i+5}-G${i+5}`,value:r.net}]));
  const last=rows.length,general=payrollGeneral(s),sum=(column:string,value:number)=>({formula:last<5?'0':`SUM(${column}5:${column}${last})`,value});
  rows.push(['TOTAL EQUIPO','','','',sum('E',s.gross),sum('F',s.reimbursements),sum('G',s.deductions),sum('H',s.total)]);
@@ -57,6 +68,7 @@ export function payrollXlsx(p:Period){const s=p.snapshot!;
  const routes:Cell[][]=[['Fecha','Conductor','Show / recorrido','Kilómetros','Tarifa por km','Valor bruto']];for(const r of p.routes)for(const d of routeDrivers(r))routes.push([r.date,s.employees.find(e=>e.id===d.employeeId)?.name||d.employeeId,'kind' in r?'Kilometraje extra · '+r.name:r.name,r.km,d.rate,{formula:`D${routes.length+1}*E${routes.length+1}`,value:r.km*d.rate}]);
  const params:Cell[][]=[['Parámetro','Valor'],['Empresa',s.company],['NIT',s.nit],['Divisor mensual de horas',s.settings.hourDivisor],...s.settings.hourFactors.map((v,i)=>[['Recargo nocturno','Dominical diurno','Dominical nocturno','Extra diurna','Extra nocturna','Extra dominical diurna','Extra dominical nocturna'][i],v] as Cell[]),[],['Persona','Documento','Tarifa show','Tarifa km','Fijo quincenal','Salario mensual','Auxilio mensual','Retención servicios','ReteICA','AFP','Frecuencia','Corte mensual','Movilización','Base aportes','Retención nómina','FSP']];s.employees.forEach(e=>params.push([e.name,e.document,e.showRate,e.kmRate,e.fixedService,e.salary,e.transport,e.withholding,e.ica,e.pension?'Sí':'No',e.cycle,e.monthlyHalf,e.nonSalary,e.contributionBase,e.incomeTax,e.solidarity]));
  const sheets:Sheet[]=[{name:'Resumen',rows,widths:[48,18,30,22,20,24,20,20],header:4,moneyCols:[4,5,6,7]},{name:'Detalle',rows:detail,widths:[48,18,22,52,18,15,20,20,20,20],header:1,moneyCols:[6,7,8,9]},{name:'Shows',rows:shows,widths:[15,35,20,48,20,15,23],header:1,moneyCols:[2,4,6]},{name:'Novedades',rows:movements,widths:[48,35,20,15,20,20,55],header:1,moneyCols:[4,5]},{name:'Horas',rows:hours,widths:[48,12,20,20,20,20,20,20,24,24,55],header:1,moneyCols:[2]},{name:'Recorridos',rows:routes,widths:[15,48,35,15,20,20],header:1,moneyCols:[4,5]},{name:'Parámetros',rows:params,widths:[48,24,20,20,20,20,20,20,15,12,18,15,20,15,20,20],header:1,moneyCols:[]}];
+ if(review)sheets.push({name:'Revisión',rows:[['PRELIQUIDACIÓN · PARA REVISIÓN'],['Quincena abierta; valores sujetos a cambios.'],['Versión',review.version],['Generada',review.generatedAt],['Pendientes',review.issues.length],...review.issues.map(issue=>[issue])],widths:[100,28],header:1,moneyCols:[]});
  const files:Record<string,Uint8Array>={};const add=(name:string,data:string)=>files[name]=strToU8(data);const ns='http://schemas.openxmlformats.org/spreadsheetml/2006/main';
  add('[Content_Types].xml',`<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/><Override PartName="/xl/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.styles+xml"/>${sheets.map((_,i)=>`<Override PartName="/xl/worksheets/sheet${i+1}.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>`).join('')}</Types>`);
  add('_rels/.rels','<?xml version="1.0"?><Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>');

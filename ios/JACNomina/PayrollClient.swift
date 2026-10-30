@@ -558,7 +558,8 @@ final class PayrollClient: ObservableObject {
         let url = resourceURL(path: path, query: query)
         let key = resourceKey(url, revision: cacheRevision)
         let scope = try offlineScope(), generation = cacheGeneration, crmReadGeneration = crmGeneration
-        let canCache = body == nil && cacheable(path, query: query)
+        let isPayrollReview = path == "api/payroll/export" && query.contains { $0.name == "mode" && $0.value == "preliquidation" }
+        let canCache = body == nil && !isPayrollReview && cacheable(path, query: query)
         let saved: OfflineResponse?
         if canCache, !forceNetwork, let scope {
             let cache = offlineCache
@@ -1814,10 +1815,15 @@ final class PayrollClient: ObservableObject {
         }
         return start
     }
-    func download(periodID: String, format: DocumentFormat, employeeID: String? = nil) async throws -> ExportedDocument {
+    func download(periodID: String, format: DocumentFormat, employeeID: String? = nil, reviewVersion: Int? = nil) async throws -> ExportedDocument {
         var query = [URLQueryItem(name: "period", value: periodID), URLQueryItem(name: "format", value: format.rawValue)]
+        if let reviewVersion {
+            guard reviewVersion >= 0, employeeID == nil, format == .pdf || format == .xlsx else { throw APIError.invalid("La preliquidación solo admite el reporte general PDF o Excel.") }
+            guard !usingOfflineCopy else { throw APIError.invalid("Conéctate para generar una preliquidación actualizada.") }
+            query += [URLQueryItem(name: "mode", value: "preliquidation"), URLQueryItem(name: "version", value: String(reviewVersion))]
+        }
         if let employeeID { query.append(URLQueryItem(name: "employee", value: employeeID)) }
-        let (data, response) = try await request(path: "api/payroll/export", query: query, document: true, cacheRevision: cachedWorkspace()?.version ?? 0)
+        let (data, response) = try await request(path: "api/payroll/export", query: query, document: true, forceNetwork: reviewVersion != nil, cacheRevision: reviewVersion ?? cachedWorkspace()?.version ?? 0)
         guard !data.isEmpty else { throw APIError.message("El documento llegó vacío. Intenta de nuevo.") }
         let expectedType = format == .xlsx ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : format == .zip ? "application/zip" : "application/pdf"
         guard response.mimeType == expectedType else { throw APIError.message("No se recibió un documento válido.") }

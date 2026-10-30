@@ -3209,6 +3209,41 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNil(vault.token)
     }
 
+    @MainActor func testPreliquidationUsesSavedRevisionFreshGETAndOnlyGeneralDocuments() async throws {
+        let vault = MemorySession(); vault.token = token
+        let client = makeClient(vault)
+        var requests = 0
+        MockProtocol.handler = { request in
+            requests += 1
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertEqual(request.url?.path, "/api/payroll/export")
+            let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+            XCTAssertEqual(query.first { $0.name == "mode" }?.value, "preliquidation")
+            XCTAssertEqual(query.first { $0.name == "version" }?.value, "17")
+            XCTAssertNil(query.first { $0.name == "employee" })
+            let excel = query.first { $0.name == "format" }?.value == "xlsx"
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Content-Type": excel ? "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" : "application/pdf", "Content-Disposition": "attachment; filename=\"preliquidacion-v17.\(excel ? "xlsx" : "pdf")\""])!, Data("Synthetic review document \(requests)".utf8))
+        }
+        for format in [DocumentFormat.pdf, .xlsx, .pdf] {
+            let result = try await client.download(periodID: "fixture-period", format: format, reviewVersion: 17)
+            XCTAssertEqual(result.url.pathExtension, format.fileExtension)
+            XCTAssertTrue(result.url.lastPathComponent.hasPrefix("preliquidacion-v17"))
+            TemporaryDocuments.remove(result)
+        }
+        XCTAssertEqual(requests, 3, "Cada revisión se valida por red, sin recuperar un reporte viejo")
+        for format in [DocumentFormat.slips, .zip] {
+            do { _ = try await client.download(periodID: "fixture-period", format: format, reviewVersion: 17); XCTFail("No hay desprendibles preliminares") } catch { }
+        }
+        do { _ = try await client.download(periodID: "fixture-period", format: .pdf, employeeID: "fixture-person", reviewVersion: 17); XCTFail("No hay desprendible individual preliminar") } catch { }
+        XCTAssertEqual(requests, 3)
+        MockProtocol.handler = { request in
+            (HTTPURLResponse(url: request.url!, statusCode: 409, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!, Data("{\"error\":\"La nómina cambió. Actualiza la quincena.\"}".utf8))
+        }
+        do { _ = try await client.download(periodID: "fixture-period", format: .pdf, reviewVersion: 17); XCTFail("Un conflicto no recupera el PDF previo") }
+        catch { XCTAssertTrue(error.localizedDescription.contains("La nómina cambió")) }
+        XCTAssertEqual(vault.token, token)
+    }
+
     @MainActor func testPermissionDenialPreservesSessionAndDoesNotWriteDocument() async throws {
         let vault = MemorySession(); vault.token = token
         let client = makeClient(vault)

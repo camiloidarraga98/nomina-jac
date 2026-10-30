@@ -1322,7 +1322,14 @@ final class LaunchTests: XCTestCase {
 
     @MainActor func testCloseArchiveAndReopenWithoutRealEmailsOrData() {
         let app = fixture()
-        tap(app, "period.fixture-period"); tap(app, "period.close")
+        tap(app, "period.fixture-period"); tap(app, "period.preliquidation")
+        XCTAssertTrue(app.buttons["Preliquidación PDF"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["Preliquidación Excel"].exists)
+        XCTAssertFalse(app.buttons["Todos los desprendibles PDF"].exists)
+        XCTAssertFalse(app.buttons["period.reopen"].exists)
+        XCTAssertTrue(app.staticTexts["En curso"].exists)
+        attachScreen(app, name: "preliquidacion-quincena-editable")
+        tap(app, "period.close")
         tap(app, "Cerrar quincena")
         XCTAssertTrue(app.staticTexts["Cerrada"].firstMatch.waitForExistence(timeout: 15))
         openSection(app, "Gestión"); tap(app, "management.archive"); tap(app, "period.fixture-period")

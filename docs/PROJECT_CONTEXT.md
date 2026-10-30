@@ -1,3 +1,7 @@
+## Preliquidación de nómina y envío manual ·30 de octubre de2026
+
+Camilo pidió revisar pagos mediante PDF/Excel mientras la quincena sigue abierta y editable, sin desprendibles ni correos. Preliquidación es una proyección del cálculo guardado, sin nuevo estado/snapshot/revisión ni escrituras. Reportes generales marcados, versión/hora y pendientes; permisos de exportación y revalidación concurrente. Tras revisión, cerrar guarda la liquidación definitiva y Enviar en Correos prepara/envía expresamente; esta decisión sustituye el correo automático al cerrar. Una acción individual solo prepara esa persona; lotes autorizados conservan procesamiento/idempotencia. No probar con quincenas o destinatarios reales. App/widget0.42.0(61), firma/grupo/APNs conservados. Ver `PAYROLL_PRELIQUIDATION.md` para contrato y entrega real.
+
 ## Pases Slack: silla y horas anotadas ·29 de octubre de2026
 
 Fuente `8c49835` en main;133 comprobaciones locales, TypeScript/build correctos. Worker `02000ec0-08ec-4c65-a4ea-c6a024f89a4b` verificado activo al100% desde15:37 Colombia con14 bindings y dos crons conservados. Completado únicamente el pase propio indicado con datos confirmados, CAS/revisión1→2; original/destinatario/snapshot de Slack intactos y sin nuevas entregas push. Actualizar listado en la app0.34.0(52)+, sin nueva compilación ni reenvío de PDF. No se repitieron compilaciones Apple por este cambio solo de servidor.

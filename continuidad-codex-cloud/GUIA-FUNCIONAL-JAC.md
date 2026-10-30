@@ -89,6 +89,7 @@ La primera quincena abarca del 1 al 15; la segunda del 16 al último día del me
 - **Recorridos de Andrés Rey:** en Recorridos → Agregar recorrido sin show → Solo Andrés Rey, indicar ruta o actividad, fecha y kilómetros. Se usa como base la tarifa por km de Mariano y solo se paga al seleccionarlo; no añadirlo a todos los shows o rutas. Conserva sus honorarios de técnico y sus retenciones. Las actividades externas no se asocian a un show ni reducen su comisión por coincidir en fecha. Cada recorrido guarda su tarifa y los cierres conservan sus valores. Ver [PAYROLL_ROUTES.md](../docs/PAYROLL_ROUTES.md).
 - La nómina dependiente de **Jenny se paga solo en la segunda quincena**, al cierre mensual; no incluirla en la primera.
 - Los campos COP permiten borrar el valor completo y escriben separadores de miles, por ejemplo `140.000.000`; no imponer un cero inicial imborrable.
+- **Preliquidación:** descargar PDF/Excel para revisión con la quincena abierta; editar y regenerar sin reabrir. No prepara ni envía desprendibles. Desde el30 de octubre, **Cerrar quincena** guarda la liquidación definitiva y **Correos → Enviar** inicia el envío manual. Esta decisión sustituye el envío automático al cerrar. Ver [preliquidación](../docs/PAYROLL_PRELIQUIDATION.md).
 - Los cierres guardan instantáneas y requieren reapertura/corrección autorizada para editar. No recalcular cierres antiguos con reglas o tarifas nuevas ni probar cerrando quincenas reales.
 
 Regla acordada:

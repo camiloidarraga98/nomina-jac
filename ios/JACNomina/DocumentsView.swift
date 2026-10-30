@@ -21,11 +21,13 @@ struct DocumentsSection: View {
     let user: PayrollUser
     @State private var search = ""
     var body: some View {
-        Section("Documentos de la quincena") {
-            if !detail.period.isClosed {
-                Text("Los documentos estarán disponibles cuando se cierre la quincena.").foregroundStyle(.secondary)
-            } else if !user.can("export") {
+        Section(detail.period.isClosed ? "Documentos de la quincena" : "Preliquidación") {
+            if !user.can("export") {
                 Text("Tu cuenta no tiene permiso para descargar documentos.").foregroundStyle(.secondary)
+            } else if !detail.period.isClosed {
+                Text("Reportes para revisión. La quincena sigue editable y no se envían desprendibles.").font(.footnote).foregroundStyle(.secondary)
+                ExportButton(periodID: detail.period.id, format: .pdf, title: "Preliquidación PDF", reviewVersion: detail.version)
+                ExportButton(periodID: detail.period.id, format: .xlsx, title: "Preliquidación Excel", reviewVersion: detail.version)
             } else {
                 ForEach(DocumentFormat.allCases) { format in
                     ExportButton(periodID: detail.period.id, format: format)
@@ -90,6 +92,7 @@ struct ExportButton: View {
     let format: DocumentFormat
     var employeeID: String? = nil
     var title: String? = nil
+    var reviewVersion: Int? = nil
     @State private var document: ExportedDocument?
     @State private var pendingDocument: ExportedDocument?
     @State private var downloading = false
@@ -101,14 +104,14 @@ struct ExportButton: View {
             Task {
                 defer { downloading = false }
                 do {
-                    let result = try await store.client.download(periodID: periodID, format: format, employeeID: employeeID)
+                    let result = try await store.client.download(periodID: periodID, format: format, employeeID: employeeID, reviewVersion: reviewVersion)
                     pendingDocument = result; document = result
                 } catch { self.error = error.localizedDescription; store.report(error) }
             }
         } label: {
             HStack { Label(title ?? format.title, systemImage: "doc.text"); Spacer(); if downloading { ProgressView() } else { Image(systemName: "arrow.down.circle") } }
         }
-        .disabled(downloading)
+        .disabled(downloading || (reviewVersion != nil && !store.canWrite))
         .sheet(item: $document, onDismiss: {
             if let pendingDocument { TemporaryDocuments.remove(pendingDocument); self.pendingDocument = nil }
         }) { file in
