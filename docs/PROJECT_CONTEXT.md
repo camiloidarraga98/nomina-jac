@@ -1,3 +1,7 @@
+## Documentos con identidad oficial JAC ·30 de octubre de2026
+
+Camilo aportó el contrato oficial para unificar preliquidaciones, resumen definitivo, desprendibles PDF/ZIP/correos, Excel e impresión. Logo original, banda azul/celeste, tablas claras y pie de contacto. Composición por alturas reales con margen entre filas, encabezados repetidos, importes a la derecha y saltos que protegen el pie; no reutilizar la línea separadora como posición del texto siguiente. Todas las hojas Excel con membrete, fórmulas ajustadas a sus nuevas filas, títulos repetidos y filtros sin totales. Conservar cálculos, instantáneas, contratos archivados y envío manual.82 pruebas, TypeScript/build y revisión local de PDF/Excel/impresión correctos. Ver [DOCUMENT_VISUAL_IDENTITY.md](DOCUMENT_VISUAL_IDENTITY.md); publicación pendiente de registrar al confirmar Cloudflare.
+
 ## Novedades web: valores y búsqueda de personas ·30 de octubre de2026
 
 Al abrir **Agregar novedad**, persona/concepto/tratamiento quedan sin seleccionar, concepto y observación vacíos, cantidad/valor/total en0. No cargar el primer concepto guardado ni sus80.000 automáticamente. Solo elegir expresamente un concepto carga su nombre, tratamiento y tarifa; modo libre limpia esos tres datos. Sugerencias de personas únicamente con texto escrito, nunca al recibir foco ni con una búsqueda vacía/espacios. Editar conserva los datos existentes. Cantidad admite borrado transitorio y requiere un valor positivo antes de guardar; el borrador sin tratamiento no llega al servidor.

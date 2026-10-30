@@ -48,6 +48,6 @@ test('Solo Andrés retira otros participantes y conserva su tarifa capturada aun
 });
 test('PDF individual y Excel incluyen la ruta pagada a Andrés, sus kilómetros y la tarifa capturada',async()=>{
  const {state,p,andres}=fixture();p.routes=[extra(p)];p.snapshot={...m.calculate(state,p),employees:structuredClone(state.employees),closedAt:'2026-10-29T20:00:00Z',closedBy:'test@example.invalid'};p.status='cerrada';
- const sheet=strFromU8(unzipSync(m.payrollXlsx(p))['xl/worksheets/sheet6.xml']);assert.match(sheet,/Andrés ficticio/);assert.match(sheet,/Pereira–Medellín/);assert.match(sheet,/<v>1250<\/v>/);assert.match(sheet,/<f>D2\*E2<\/f><v>125000<\/v>/);
+ const sheet=strFromU8(unzipSync(m.payrollXlsx(p))['xl/worksheets/sheet6.xml']);assert.match(sheet,/Andrés ficticio/);assert.match(sheet,/Pereira–Medellín/);assert.match(sheet,/<v>1250<\/v>/);assert.match(sheet,/<f>D6\*E6<\/f><v>125000<\/v>/);
  const task=getDocument({data:Uint8Array.from(await m.payrollPdf(p,andres.id)),isEvalSupported:false,disableFontFace:true,useSystemFonts:false});try{const pdf=await task.promise,text=(await (await pdf.getPage(1)).getTextContent()).items.map(x=>x.str??'').join(' ');assert.match(text,/Pereira-Medellín/);assert.match(text,/125\.000,00/);assert.match(text,/116\.250,00/);}finally{await task.destroy();}
 });

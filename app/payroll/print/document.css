@@ -1,0 +1,29 @@
+.print-slip{max-width:860px;margin:30px auto;padding:24px;color:#1f2b34;background:#fff;font:14px/1.5 Arial,Helvetica,sans-serif}
+.jac-letterhead{position:relative;border-top:7px solid #22394b;padding:36px 24px 0}
+.jac-letterhead::before{content:"";position:absolute;left:0;top:-7px;width:24%;height:7px;background:#299ed3}
+.print-slip .print-letterhead{display:grid;grid-template-columns:140px minmax(0,1fr);gap:28px;align-items:start;border-bottom:1px solid #d5e0e7;padding:0 0 22px;position:relative;break-inside:avoid}
+.print-letterhead::after{content:"";position:absolute;bottom:-1px;left:0;width:38px;height:2px;background:#299ed3}
+.print-letterhead img{width:116px;height:auto;display:block;margin-top:5px}
+.print-slip .print-letterhead>div{text-align:left;font-size:14px;min-width:0}
+.print-slip .print-letterhead h1{font-size:23px;font-weight:700;line-height:1.2;margin:0 0 8px;color:#22394b}
+.print-letterhead p{margin:0 0 4px;color:#5b7184}
+.print-slip .print-letterhead small{font-size:10px;font-weight:700}
+.print-company{font-size:11px;color:#5b7184;margin:14px 0 22px;font-weight:700;overflow-wrap:anywhere}
+.print-slip .print-person{padding:0 0 20px;break-inside:avoid}
+.print-slip h2{margin:0 0 6px;font-size:18px;font-weight:700;line-height:1.4;overflow-wrap:anywhere}
+.print-person p{margin:0;font-size:12px;color:#5b7184;overflow-wrap:anywhere}
+.print-slip h3{font-size:12px;font-weight:700;letter-spacing:.02em;text-transform:uppercase;background:#d6eff9;padding:9px 12px;margin:18px 0 8px;break-after:avoid}
+.print-slip table{table-layout:fixed;margin:0;width:100%;border-collapse:collapse}
+.print-slip td,.print-slip th{padding:12px 8px;border-bottom:1px solid #d5e0e7;vertical-align:top;overflow-wrap:anywhere;font-size:12px;line-height:1.45;white-space:normal}
+.print-slip .jac-letterhead th{background:#d6eff9!important;color:#22394b!important;font-size:10px!important;font-weight:700!important;padding:12px 8px!important;text-transform:uppercase}
+.print-slip td:nth-child(n+2),.print-slip th:nth-child(n+2){text-align:right;font-variant-numeric:tabular-nums}
+.print-slip td:last-child,.print-slip th:last-child{white-space:normal;overflow-wrap:anywhere}
+.print-slip small{font-size:10px;color:#5b7184;line-height:1.4;margin-top:3px}
+.print-slip .print-subtotal{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:16px;font-size:13px;padding:12px 8px;break-inside:avoid}
+.print-slip .print-total{display:flex;flex-direction:column;gap:7px;background:#f5f9fc;border-left:3px solid #299ed3;padding:16px 20px;margin:20px 0;font-size:11px;font-weight:700;break-inside:avoid}
+.print-slip .print-total strong{font-size:28px;line-height:1.25;color:#22394b;overflow-wrap:anywhere}
+.print-closure{font-size:11px;color:#5b7184;overflow-wrap:anywhere;break-inside:avoid}
+.print-slip footer{display:grid;grid-template-columns:1fr 1.4fr;gap:20px;border-top:1px solid #d5e0e7;padding-top:12px;font-size:9px;color:#5b7184;margin-top:32px;break-inside:avoid}
+@media(max-width:600px){.print-slip{padding:12px;margin:0}.jac-letterhead{padding:24px 12px 0}.print-slip .print-letterhead{grid-template-columns:90px minmax(0,1fr);gap:12px}.print-letterhead img{width:90px}.print-slip .print-letterhead h1{font-size:19px}.print-slip td,.print-slip th{font-size:10px;padding:10px 5px}.print-slip .jac-letterhead th{font-size:9px!important;padding:10px 5px!important}.print-slip col:nth-child(1){width:55%!important}.print-slip col:nth-child(2){width:15%!important}.print-slip col:nth-child(3){width:30%!important}.print-slip footer{grid-template-columns:1fr;gap:8px}.print-slip .print-total strong{font-size:25px}}
+@media print{@page{size:letter;margin:16mm}.print-slip{margin:0;padding:0;max-width:none;font-size:10pt}.jac-letterhead{padding:20pt 0 0}.print-slip .print-letterhead{grid-template-columns:125pt minmax(0,1fr);gap:0}.print-slip .print-letterhead h1{font-size:18pt}.print-letterhead img{width:116pt}.print-slip td,.print-slip th{font-size:8.5pt;padding:9pt 7pt}.print-slip th{font-size:7.5pt}.print-slip h2{font-size:13pt}.print-slip .print-total strong{font-size:25pt}.print-slip thead{display:table-header-group}.print-slip tr{break-inside:avoid}.print-slip h3{break-after:avoid}.print-slip footer{grid-template-columns:1fr 1.4fr;font-size:6.5pt}.jac-letterhead,.print-slip th,.print-slip h3,.print-slip .print-total{-webkit-print-color-adjust:exact;print-color-adjust:exact}.print-controls{display:none}}
+@media print{.print-slip .jac-letterhead th{font-size:7.5pt!important;padding:9pt 7pt!important}}
