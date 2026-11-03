@@ -1,3 +1,7 @@
+## Comunicado del cumpleaños en Movistar ·3 de noviembre de2026
+
+Camilo pidió una landing pública para medios en `/cumple-movistar`, con el texto exactamente igual al PDF adjunto y una estética inspirada en el KV: vino, dorado, trono, corona y firma. Mantener el comunicado íntegro, PDF original, material de apoyo y contactos; no confundir esta página con la generación de fotos en `/cumple`. No requiere sesión ni modifica CRM, nómina o apps. Ver [fuentes, diseño y comprobaciones](../docs/PRESS_MOVISTAR.md).
+
 ## Adaptación horizontal aprobada e itinerarios directos ·27 de octubre de2026
 
 Camilo aprobó las cinco maquetas de pantalla amplia para iPhone y pidió abrir directamente el PDF al tocar un itinerario. Distribución por ancho útil con menú compacto y dos paneles, conservando selección/estado y una columna para tamaños pequeños o texto de accesibilidad. Mantener permisos, privacidad de pases, documentos originales, sesiones/cachés, música/subidas y las seis guardas de fluidez. App/widget0.39.0, build fuente58; firma/grupo/APNs/cifrado exento conservados. Ver `../docs/IPHONE_WIDE_WORKSPACE.md` para alcance y resultados reales de CI; no inferir instalación física.

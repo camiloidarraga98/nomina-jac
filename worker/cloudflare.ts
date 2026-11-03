@@ -53,6 +53,22 @@ export default {
       }else fanPage.headers.set('Cache-Control',url.pathname.endsWith('.png')?'public, max-age=31536000, immutable':'public, max-age=300');
       return fanPage;
     }
+    // Public press release: static read-only assets, never CRM/session data.
+    if(url.pathname==='/cumple-movistar'||url.pathname.startsWith('/cumple-movistar/')){
+      if(!['GET','HEAD'].includes(request.method))return new Response(null,{status:405,headers:{Allow:'GET, HEAD'}});
+      if(url.pathname==='/cumple-movistar/'||url.pathname==='/cumple-movistar/index.html'){
+        url.pathname='/cumple-movistar';
+        return new Response(null,{status:308,headers:{Location:url.href,'Cache-Control':'public, max-age=300'}});
+      }
+      if(url.pathname==='/cumple-movistar')url.pathname='/cumple-movistar/';
+      const response=await env.ASSETS.fetch(new Request(url,request));
+      const press=new Response(response.body,response);
+      press.headers.set('X-Content-Type-Options','nosniff');
+      press.headers.set('Referrer-Policy','strict-origin-when-cross-origin');
+      press.headers.set('Content-Security-Policy',"default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; font-src 'self'; connect-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'");
+      press.headers.set('Cache-Control','public, max-age=300, stale-while-revalidate=3600');
+      return press;
+    }
     // The artist's rider is explicitly public. Keep its static namespace apart
     // from the application router and all authenticated API/document routes.
     if(url.pathname==='/rider'||url.pathname.startsWith('/rider/')||url.pathname==='/rider2'||url.pathname.startsWith('/rider2/')){

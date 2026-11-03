@@ -111,6 +111,31 @@ test('rider2 independiente conserva lectura pública, CSP, READY y límites de r
 });
 
 
+test('comunicado de prensa público conserva READY, límites de ruta y métodos de solo lectura',async()=>{
+ const before=globalThis.__cfCalls,seen=[];
+ const env={JAC_READY:'1',ASSETS:{async fetch(request){seen.push([request.method,new URL(request.url).pathname]);return new Response(request.method==='HEAD'?null:'press-static',{headers:{'Content-Type':'text/html'}});}}};
+ for(const path of ['/cumple-movistar','/cumple-movistar/style.css','/cumple-movistar/assets/corona.webp','/cumple-movistar/comunicado-de-prensa.pdf'])for(const method of ['GET','HEAD']){
+  const r=await m.worker.fetch(new Request('https://example.invalid'+path,{method}),env,{});
+  assert.equal(r.status,200);assert.equal(await r.text(),method==='HEAD'?'':'press-static');
+  assert.equal(r.headers.get('Set-Cookie'),null);assert.equal(r.headers.get('X-Content-Type-Options'),'nosniff');
+  assert.match(r.headers.get('Content-Security-Policy'),/frame-ancestors 'none'/);
+  assert.match(r.headers.get('Cache-Control'),/^public/);
+ }
+ assert.equal(seen[0][1],'/cumple-movistar/');assert.equal(globalThis.__cfCalls,before);
+ for(const path of ['/cumple-movistar/','/cumple-movistar/index.html']){
+  const r=await m.worker.fetch(new Request('https://example.invalid'+path+'?source=press'),env,{});
+  assert.equal(r.status,308);assert.equal(r.headers.get('Location'),'https://example.invalid/cumple-movistar?source=press');
+ }
+ for(const method of ['POST','PUT','DELETE']){
+  const r=await m.worker.fetch(new Request('https://example.invalid/cumple-movistar',{method}),env,{});assert.equal(r.status,405);
+ }
+ assert.equal(seen.length,8);
+ for(const path of ['/cumple-movistar-private','/cumple-movistar.json','/api/crm/file?id=private']){
+  const r=await m.worker.fetch(new Request('https://example.invalid'+path),env,{});assert.equal(await r.text(),'application');
+ }
+ const paused=await m.worker.fetch(new Request('https://example.invalid/cumple-movistar'),{ASSETS:env.ASSETS},{});assert.equal(paused.status,503);
+});
+
 test('cumpleaños público entrega solo sus recursos y su API sin entrar a CRM o sesiones administrativas',async()=>{
  const before=globalThis.__cfCalls,calls=[];const env={JAC_READY:'1',ASSETS:{async fetch(req){calls.push(new URL(req.url).pathname);return new Response(req.method==='HEAD'?null:'fan-public',{headers:{'Content-Type':new URL(req.url).pathname.endsWith('.png')?'image/png':'text/html'}});}}};
  for(const path of ['/cumple','/cumpleanos/master-v1.png','/cumpleanos/app.js']){
