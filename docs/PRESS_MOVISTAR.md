@@ -29,3 +29,8 @@ La comprobación visual y HTTP es local, incluido Chromium contra el Worker cons
 ## KV verde aplicado en la landing ·3 de noviembre de2026
 
 Por corrección de Camilo, el KV editado del traje verde sustituye el retrato rojo directamente en la portada y en la vista previa social. Ambas mesas completas, firma oficial independiente y encuadre conservado en10 anchos. Comunicado/copiar/PDF comprobados de nuevo; build final coincide con HTML/CSS/recursos publicados. Fuente `696bd6e` en main. Worker `be9b19a4-ffb5-4976-882c-84ae90a8fce7`, deployment `9174c609-0c67-4671-b336-2511e18f0abf`, al100% desde13:40 Colombia.14 bindings y dos crons idénticos; confirmado por API tras el error auxiliar de Wrangler. Enlace para renovar la caché de página: `https://jhonalexcastano.com/cumple-movistar?v=kv-2`.
+
+
+## Presentadores · JAC Music en blanco
+
+Camilo pidió añadir JAC Music junto a Breakfast Live bajo PRESENTA. Se reutiliza el logo oficial transparente del rider sin cambiar su geometría; CSS brightness(0) invert(1), opacidad1 y sin mezcla lo muestra totalmente blanco, incluida la flecha. Logos alineados con separador discreto; en anchos pequeños PRESENTA queda encima. Recurso propio jac-music.webp y revisión press-logos-3. Navegador en10 anchos, copia exacta del comunicado, descarga y build correctos; sin cambios de texto o servidor.

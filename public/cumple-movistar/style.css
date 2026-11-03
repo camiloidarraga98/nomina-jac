@@ -15,3 +15,7 @@
 
 /* Keep the full KV scene, including both side tables, at every viewport. */
 .hero-portrait{min-height:0;height:auto;aspect-ratio:1122 / 1402;align-self:center;background:#260506}.portrait{object-fit:contain;object-position:center}.portrait-signature{width:62%;left:19%;bottom:20px;transform:none}
+
+/* Official transparent JAC mark, rendered in pure white without changing its geometry. */
+.presenter-logos{display:flex;align-items:center;justify-content:center;gap:20px}.presenter-divider{width:1px;height:22px;background:#e3c49350;flex-shrink:0}.presenter .presenter-jac{width:78px;filter:brightness(0) invert(1);mix-blend-mode:normal;opacity:1}
+@media(max-width:1100px){.presenter{flex-direction:column;gap:11px}.presenter-logos{gap:16px}.presenter .presenter-jac{width:72px}}
