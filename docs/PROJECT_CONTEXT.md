@@ -1,5 +1,7 @@
 ## KV verde en la portada de prensa ·3 de noviembre de2026
 
+Actualización de presentadores13:45 Colombia: JAC Music completamente blanco junto a Breakfast Live, con geometría oficial y fila adaptable. Fuente fa6acd4; Worker af9532ad-bdd8-407c-8398-88d21ffb5f54 al100%,14 bindings/dos crons conservados. Navegador10 anchos y build correctos.
+
 Camilo pidió cambiar la imagen directamente en `/cumple-movistar`: traje verde del KV, ambas mesas, sin nombre dorado y con firma blanca oficial. Asset editado mediante ImageGen desde el KV adjunto, firma superpuesta por la página; encuadre completo y versión social nueva. Verificación de texto/descarga, diez anchos y build correctos. Fuente696bd6e; Worker be9b19a4-ffb5-4976-882c-84ae90a8fce7 al100% desde13:40 Colombia,14 bindings/dos crons conservados. Ver docs/PRESS_MOVISTAR.md. Sustituye la elección inicial del retrato rojo.
 
 ## Landing de prensa del cumpleaños en Movistar ·3 de noviembre de2026
