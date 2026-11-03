@@ -1,5 +1,7 @@
 ## PDF editorial del comunicado ·3 de noviembre de2026
 
+Publicado14:58 Colombia: fuente `13c6df2`; Worker `876b9b98-0252-4be5-b779-f071fe233ba7` al100%,14 bindings/dos crons intactos, confirmado por API. Descarga local con bytes exactos, diez anchos, TypeScript/build y50 pruebas correctos.
+
 Camilo pidió sustituir la descarga del PDF plano por una adaptación visual de `/cumple-movistar`. Ambos enlaces apuntan al documento diseñado de tres páginas A4: KV verde con ambas mesas, firma, corona y logos; texto íntegro; ficha del evento y contactos. Se compone desde el HTML con fuentes locales, enlaces activos y márgenes comprobados. Los33 bloques originales se conservan en orden; PDF real revisado visualmente y mediante extracción de texto. La descarga nueva usa `?v=diseno-1`; ver [PRESS_MOVISTAR.md](PRESS_MOVISTAR.md) para regeneración y entrega.
 
 ## KV verde en la portada de prensa ·3 de noviembre de2026
