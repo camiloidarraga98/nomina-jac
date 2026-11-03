@@ -1,0 +1,34 @@
+@font-face{font-family:Editorial;src:url('/cumple-movistar/assets/cormorant-garamond-latin-600-normal.woff2') format('woff2');font-weight:600}
+@font-face{font-family:DM;src:url('/cumple-movistar/assets/dm-sans-latin-400-normal.woff2') format('woff2');font-weight:400}
+@font-face{font-family:DM;src:url('/cumple-movistar/assets/dm-sans-latin-600-normal.woff2') format('woff2');font-weight:600 800}
+@page{size:A4;margin:0}
+*{box-sizing:border-box}
+:root{--wine:#290c12;--gold:#e3c493;--paper:#f7f3ea;--ink:#2d2422;--line:#d7cab7}
+html,body{margin:0;background:var(--paper);color:var(--ink);font-family:DM,Arial,sans-serif;font-size:14px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.pdf-page{width:210mm;height:297mm;position:relative;break-after:page;overflow:hidden;background:var(--paper)}
+.pdf-page:last-child{break-after:auto}
+img{display:block;max-width:100%;height:auto}a{color:inherit;text-decoration:none}.icon{width:13px;height:13px;fill:none;stroke:currentColor;stroke-width:1.5;flex-shrink:0;vertical-align:middle}
+.running-header{margin:0 44px;padding:28px 0 18px;display:flex;align-items:center;justify-content:space-between;border-bottom:1px solid var(--line);gap:25px}
+.brand-signature{width:125px;filter:brightness(0);height:auto}
+.running-header>span{font-size:8px;letter-spacing:.19em;color:#866647;font-weight:600}
+.running-header.light{border-color:#e3c49330;margin:0;padding:0 0 18px}.light .brand-signature{filter:none}.light>span{color:var(--gold)}
+.running-footer{position:absolute;left:44px;right:44px;bottom:28px;padding-top:15px;border-top:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;font-size:8px;color:#7a695a;gap:16px}
+.running-footer>span{letter-spacing:.12em;font-size:7px}.running-footer b{margin-left:20px;color:#6c342f;font-size:9px}
+.cover-visual{height:544px;background:radial-gradient(ellipse at 22% 45%,#641725,#290c12 80%);color:#f4e5c8;padding:25px 40px 22px}
+.hero-inner{display:grid;grid-template-columns:330px minmax(0,1fr);gap:30px;align-items:center;margin-top:20px}
+.hero-portrait{position:relative;width:330px;aspect-ratio:1122 / 1402;overflow:hidden;border-radius:48% 48% 2px 2px;border:1px solid #e3c49366;background:#260506}
+.portrait{width:100%;height:100%;object-fit:contain}.portrait-signature{position:absolute;width:62%;left:19%;bottom:15px}
+.hero-copy{text-align:center}.hero-crown{width:39px;margin:0 auto 10px}
+.campaign-title{margin:0}.campaign-title>span{display:block;font:600 24px/1.1 Editorial,Georgia,serif}.campaign-title strong{display:block;font:600 73px/.86 Editorial,Georgia,serif;letter-spacing:-.035em;margin-top:10px}
+.hero-date{display:flex;justify-content:center;align-items:center;gap:14px;margin:27px 0 25px}.date-day{font:600 57px/.9 Editorial,Georgia,serif}.hero-date>div{padding:4px 0 4px 14px;border-left:1px solid #e3c49355;text-align:left}.date-month{display:block;font-size:13px;font-weight:600;letter-spacing:.15em}.date-venue{display:block;font-size:10px;margin-top:8px;color:#d9c7b0}
+.presenter{display:flex;align-items:center;justify-content:center;gap:12px;margin-top:24px}.presenter>span{font-size:6px;letter-spacing:.12em;color:#d9c7b0}.presenter-logos{display:flex;align-items:center;gap:14px}.presenter-logos>img{width:111px;filter:grayscale(1) invert(1);mix-blend-mode:screen}.presenter-logos>.presenter-jac{width:62px;filter:brightness(0) invert(1);mix-blend-mode:normal}.presenter-divider{width:1px;height:18px;background:#e3c49355}
+.cover-copy{padding:27px 44px 0}.article-heading{display:flex;justify-content:space-between;gap:20px;font-size:7px;letter-spacing:.15em;color:#864535;font-weight:600;padding-bottom:12px;border-bottom:1px solid #c4a47e}
+h1{font:600 34px/1.08 Editorial,Georgia,serif;letter-spacing:-.014em;margin:20px 0 24px;text-wrap:pretty}
+.release-intro{border-left:2px solid #a67749;padding-left:18px}.release-intro p{font-size:12px;line-height:1.65;font-weight:600;letter-spacing:.015em;margin:0 0 16px}.release-intro p:last-child{margin-bottom:0}
+.material-link{display:flex;align-items:center;justify-content:space-between;gap:20px;color:#762b3b;background:#ede5d8;border:1px solid #dfd1bd;padding:12px 16px;font-size:11px;margin-top:18px}
+.story-content,.details-content{padding:27px 44px 0}.section-kicker{display:flex;align-items:center;justify-content:space-between;gap:22px;font-size:8px;letter-spacing:.16em;color:#8c583f;font-weight:600;margin:0 0 25px}
+.release-body{font-size:14px;line-height:1.85}.release-body p{margin:0 0 20px}.release-body strong{font-weight:600}.release-body .release-closing{font:600 25px/1.3 Editorial,Georgia,serif;color:#68303a;padding:22px 0;margin:26px 0 0;border-top:1px solid #c8b69e;border-bottom:1px solid #c8b69e;text-wrap:pretty}
+.event-sheet{background:#ede6da;border:1px solid #dfd1bd;padding:25px 28px}.event-heading{display:flex;align-items:center;justify-content:space-between;gap:24px;border-bottom:1px solid #cfb999;padding-bottom:18px;color:#653c2d}.event-heading h2{font-size:11px;letter-spacing:.17em;line-height:1.5;margin:0}.event-heading>span{font-size:13px;letter-spacing:.12em}
+.event-details{margin:20px 0}.event-details>div{display:grid;grid-template-columns:110px minmax(0,1fr);gap:12px;font-size:13px;line-height:1.6;padding:7px 0}.event-details dt{color:#79685b}.event-details dt span{display:none}.event-details dd{margin:0;font-weight:600}.ticket-link{display:flex;align-items:center;justify-content:space-between;gap:22px;border-top:1px solid #cfb999;padding-top:17px;font-size:11px;line-height:1.5}.ticket-link strong{text-decoration:underline;text-underline-offset:3px}
+.about-promoter{margin-top:28px}.about-promoter>img{width:165px;mix-blend-mode:multiply;margin-bottom:18px}.about-promoter h2{font-size:13px;margin:0 0 10px}.about-promoter p{font-size:12.5px;line-height:1.75;color:#655e55;margin:0}.end-mark{font-size:9px;letter-spacing:8px;text-align:center;color:#96754a;margin:20px 0}
+.contacts>h2{font:600 32px/1.1 Editorial,Georgia,serif;margin:0 0 22px;letter-spacing:-.02em}.contact-grid{display:grid;grid-template-columns:1fr 1fr;gap:23px 35px}.contact-person{position:relative;border-top:1px solid #c5b69f;padding:15px 0 0 28px;min-width:0}.contact-number{position:absolute;left:0;top:19px;font-size:7px;letter-spacing:.12em;color:#8a6d4d}.contact-person h3{font:600 23px/1.15 Editorial,Georgia,serif;margin:0 0 7px}.contact-person p{font-size:12px;line-height:1.6;color:#6c6257;margin:0 0 10px}.contact-person a{display:flex;align-items:center;justify-content:space-between;gap:6px;font-size:12px;line-height:1.5;overflow-wrap:anywhere}.contact-person .icon{width:11px;height:11px}

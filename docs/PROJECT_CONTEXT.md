@@ -1,3 +1,7 @@
+## PDF editorial del comunicado ·3 de noviembre de2026
+
+Camilo pidió sustituir la descarga del PDF plano por una adaptación visual de `/cumple-movistar`. Ambos enlaces apuntan al documento diseñado de tres páginas A4: KV verde con ambas mesas, firma, corona y logos; texto íntegro; ficha del evento y contactos. Se compone desde el HTML con fuentes locales, enlaces activos y márgenes comprobados. Los33 bloques originales se conservan en orden; PDF real revisado visualmente y mediante extracción de texto. La descarga nueva usa `?v=diseno-1`; ver [PRESS_MOVISTAR.md](PRESS_MOVISTAR.md) para regeneración y entrega.
+
 ## KV verde en la portada de prensa ·3 de noviembre de2026
 
 Actualización de presentadores13:45 Colombia: JAC Music completamente blanco junto a Breakfast Live, con geometría oficial y fila adaptable. Fuente fa6acd4; Worker af9532ad-bdd8-407c-8398-88d21ffb5f54 al100%,14 bindings/dos crons conservados. Navegador10 anchos y build correctos.
