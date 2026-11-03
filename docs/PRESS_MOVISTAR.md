@@ -19,4 +19,8 @@ El enlace **Accede acá a material de apoyo** conserva exactamente la carpeta de
 - TypeScript, build Cloudflare y50 pruebas Node: Cloudflare11, nómina20, permisos12 y correo7. Servicios simulados; sin correos, notificaciones o modificaciones de datos reales.
 - Worker construido en Workerd local: HTML, variantes de URL, CSS/JS, imagen social yPDF200, bytes idénticos al build, tipos/CSP correctos y HEAD vacío. La fecha local de compatibilidad se ajusta a2026-05-22 para el runtime instalado; producción conserva2026-10-17.
 
-La comprobación visual es local. El dominio de producción no está permitido por la política de red del ejecutor; acreditar la publicación por la API de Cloudflare sin afirmar una visita remota al sitio. Registrar aquí la versión y porcentaje reales después del despliegue, conservando los14 bindings y los dos crons existentes.
+## Publicación confirmada ·3 de noviembre de2026
+
+Fuente funcional `bb6aad3` en main. Cloudflare confirmó a las **13:32 de Colombia** el deployment `ba6e33e9-ae82-46d3-85b6-a429cecfa171`, versión `56d8a808-3f76-4738-b393-4440a44b6226`, al100%. Los14 bindings y los dos crons coinciden con la comprobación previa. Se cargaron14 recursos nuevos; publicación con `--keep-vars`, sin migraciones o cambios de datos. Wrangler terminó con el error auxiliar conocido al consultar subdomain/memberships después de cargar y activar: la API de deployments confirmó el resultado y no se repitió la publicación.
+
+La comprobación visual y HTTP es local, incluido Chromium contra el Worker construido bajo su CSP, sin errores. El dominio de producción no está permitido por la política de red del ejecutor; no se afirma una visita remota al sitio. Capturas y evidencias en `work/local/cumple-movistar/` (ignoradas en Git).
