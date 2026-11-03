@@ -12,3 +12,6 @@
 @media print{@page{size:A4;margin:18mm}body{background:white;color:black}.site-header,.hero,.press-tools,.site-footer,.toast,.skip-link,.contact-heading>.button,.about-promoter>img{display:none!important}.container{width:100%;max-width:none}.editorial{padding:0}.editorial-layout{display:block}.release h1{font-size:25pt}.release-body{font-size:11pt;line-height:1.65}.release-intro p{font-size:9pt}.release-body .release-closing{font-size:18pt}.event-sheet{break-inside:avoid}.press-contact{background:none;padding:28px 0 0}.contact-heading h2{font-size:23pt}.contact-grid{grid-template-columns:1fr 1fr;gap:20px}.contact-person{break-inside:avoid}.contact-person h3{font-size:17pt}.contact-person a,.contact-person p{font-size:9pt}.contact-number{display:none}.material-link{background:none}.about-promoter{break-inside:avoid}.end-mark{margin-top:20px}a{color:inherit}}
 
 .icon{width:14px;height:14px;fill:none;stroke:currentColor;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex-shrink:0;vertical-align:middle}.footer-inner a .icon{margin-left:12px}
+
+/* Keep the full KV scene, including both side tables, at every viewport. */
+.hero-portrait{min-height:0;height:auto;aspect-ratio:1122 / 1402;align-self:center;background:#260506}.portrait{object-fit:contain;object-position:center}.portrait-signature{width:62%;left:19%;bottom:20px;transform:none}
