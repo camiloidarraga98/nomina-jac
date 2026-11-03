@@ -24,3 +24,8 @@ El enlace **Accede acá a material de apoyo** conserva exactamente la carpeta de
 Fuente funcional `bb6aad3` en main. Cloudflare confirmó a las **13:32 de Colombia** el deployment `ba6e33e9-ae82-46d3-85b6-a429cecfa171`, versión `56d8a808-3f76-4738-b393-4440a44b6226`, al100%. Los14 bindings y los dos crons coinciden con la comprobación previa. Se cargaron14 recursos nuevos; publicación con `--keep-vars`, sin migraciones o cambios de datos. Wrangler terminó con el error auxiliar conocido al consultar subdomain/memberships después de cargar y activar: la API de deployments confirmó el resultado y no se repitió la publicación.
 
 La comprobación visual y HTTP es local, incluido Chromium contra el Worker construido bajo su CSP, sin errores. El dominio de producción no está permitido por la política de red del ejecutor; no se afirma una visita remota al sitio. Capturas y evidencias en `work/local/cumple-movistar/` (ignoradas en Git).
+
+
+## KV verde aplicado en la landing ·3 de noviembre de2026
+
+Por corrección de Camilo, el KV editado del traje verde sustituye el retrato rojo directamente en la portada y en la vista previa social. Ambas mesas completas, firma oficial independiente y encuadre conservado en10 anchos. Comunicado/copiar/PDF comprobados de nuevo; build final coincide con HTML/CSS/recursos publicados. Fuente `696bd6e` en main. Worker `be9b19a4-ffb5-4976-882c-84ae90a8fce7`, deployment `9174c609-0c67-4671-b336-2511e18f0abf`, al100% desde13:40 Colombia.14 bindings y dos crons idénticos; confirmado por API tras el error auxiliar de Wrangler. Enlace para renovar la caché de página: `https://jhonalexcastano.com/cumple-movistar?v=kv-2`.
