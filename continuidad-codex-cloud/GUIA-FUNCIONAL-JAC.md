@@ -1,6 +1,6 @@
 ## Comunicado del cumpleaños en Movistar ·3 de noviembre de2026
 
-Camilo pidió una landing pública para medios en `/cumple-movistar`, con el texto exactamente igual al PDF adjunto y una estética inspirada en el KV: vino, dorado, trono, corona y firma. Mantener el comunicado íntegro, material de apoyo y contactos. Por petición posterior, Descargar PDF entrega una adaptación de tres páginas con la estructura y estética de la landing, conservando todas las palabras del comunicado; no confundir esta página con la generación de fotos en `/cumple`. No requiere sesión ni modifica CRM, nómina o apps. Ver [fuentes, diseño y comprobaciones](../docs/PRESS_MOVISTAR.md).
+Camilo pidió una landing pública para medios en `/cumple-movistar`, con el texto exactamente igual al PDF adjunto y una estética inspirada en el KV: vino, dorado, trono, corona y firma. Mantener el comunicado íntegro, material de apoyo y contactos. Por petición posterior, Descargar PDF entrega una adaptación de tres páginas con la estructura y estética de la landing, conservando el comunicado salvo la edición expresamente pedida de reemplazar toda referencia a «popular» por «despecho», también en la web y al copiar el texto; no confundir esta página con la generación de fotos en `/cumple`. No requiere sesión ni modifica CRM, nómina o apps. Ver [fuentes, diseño y comprobaciones](../docs/PRESS_MOVISTAR.md).
 
 ## Adaptación horizontal aprobada e itinerarios directos ·27 de octubre de2026
 

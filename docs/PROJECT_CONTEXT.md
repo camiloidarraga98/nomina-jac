@@ -1,3 +1,7 @@
+## Comunicado: solo despecho
+
+Camilo pidió eliminar «popular» de la landing de prensa y del PDF. Cuatro frases adaptadas gramaticalmente al despecho; el resto del comunicado queda igual. PDF regenerado en tres páginas desde la misma fuente HTML y ambos enlaces con `?v=despecho-2`. Texto visible/copiable y extracción del PDF sin la palabra retirada; todos los33 bloques aprobados presentes. Esta edición autorizada sustituye la obligación anterior de reproducir literalmente esos cuatro pasajes del adjunto. Ver [PRESS_MOVISTAR.md](PRESS_MOVISTAR.md).
+
 ## PDF editorial del comunicado ·3 de noviembre de2026
 
 Publicado14:58 Colombia: fuente `13c6df2`; Worker `876b9b98-0252-4be5-b779-f071fe233ba7` al100%,14 bindings/dos crons intactos, confirmado por API. Descarga local con bytes exactos, diez anchos, TypeScript/build y50 pruebas correctos.
