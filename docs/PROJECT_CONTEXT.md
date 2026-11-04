@@ -1,5 +1,7 @@
 ## Nombre del recinto en prensa ·4 de noviembre de2026
 
+Publicado 04/11/2026 07:17 Colombia: fuente `b2ac115`; Worker `d937726d-2e2d-4f33-946c-c5a21c341b9a`, deployment `7a892856-93e4-4e70-a80d-1ccfc3508cf7`, al100%. Los14 bindings y dos crons conservados. Activación confirmada por API tras el error auxiliar conocido de Wrangler. Tres recursos publicados: HTML, PDF y tarjeta social; revisión `arena-4`.
+
 Camilo pidió «Movistar Arena (El Corazón de Bogotá - Arena)» en todas las referencias de la landing y PDF. Título/cuerpo/ficha/portada/pie/metadata y tarjeta social actualizados; PDF de tres páginas regenerado, links con revisión `arena-4`.33 bloques aprobados presentes, nombre completo y fechas comprobados; móvil/escritorio y PDF sin recortes, build y descarga correctos. Ver [PRESS_MOVISTAR.md](PRESS_MOVISTAR.md).
 
 ## Comunicado enfocado en cumpleaños ·4 de noviembre de2026
