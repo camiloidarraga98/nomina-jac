@@ -1,5 +1,7 @@
 ## Comunicado enfocado en cumpleaños ·4 de noviembre de2026
 
+Publicado 04/11/2026 07:05 Colombia: fuente `8b5c2fb`; Worker `1eb6a7b6-2c3d-4731-b443-84dcc3030d83`, deployment `3c23e9b6-fe2d-4cfc-90e9-5ac599db8739`, al100%. Los14 bindings y dos crons coinciden con la versión previa. API confirma activación tras el error auxiliar conocido de Wrangler. Página y PDF con revisión `cumple-3`; sin volver a desplegar.
+
 Camilo retiró el enfoque de20 años de carrera y pidió fecha de hoy. Landing/PDF ahora celebran su cumpleaños; sin20 años ni dos décadas en portada, bajadas, cuerpo o cierre. Fecha editorial4 de noviembre de2026; fecha del show10 de abril de2027 conservada. El PDF toma la fecha del HTML para evitar divergencias, ambos botones usan `?v=cumple-3`. Texto/copia/PDF y diseño comprobados,33 bloques aprobados y build correctos; ver [PRESS_MOVISTAR.md](PRESS_MOVISTAR.md).
 
 ## Comunicado: solo despecho
