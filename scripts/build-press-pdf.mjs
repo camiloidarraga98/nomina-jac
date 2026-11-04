@@ -62,7 +62,7 @@ try {
     </section>
     <section class="pdf-page story-page">
       ${header('EL CUMPLEAÑOS DEL REY DEL CHUPE')}
-      <main class="story-content"><div class="section-kicker"><span>EL COMUNICADO</span><span>10 ABRIL 2027 · MOVISTAR ARENA</span></div>${source.body}</main>
+      <main class="story-content"><div class="section-kicker"><span>EL COMUNICADO</span><span>10 ABRIL 2027 · MOVISTAR ARENA (EL CORAZÓN DE BOGOTÁ - ARENA)</span></div>${source.body}</main>
       ${footer(2)}
     </section>
     <section class="pdf-page details-page">
@@ -104,7 +104,7 @@ try {
   assert.equal(pdf.getPageCount(), 3, 'The composed document must be exactly three pages');
   pdf.setTitle('Jhon Alex Castaño · El Cumpleaños del Rey del Chupe · Comunicado de prensa');
   pdf.setAuthor('JAC Music · Breakfast Live');
-  pdf.setSubject('10 de abril de 2027 · Movistar Arena, Bogotá');
+  pdf.setSubject('10 de abril de 2027 · Movistar Arena (El Corazón de Bogotá - Arena), Bogotá');
   pdf.setLanguage('es-CO');
   await mkdir(dirname(output), {recursive:true});
   await writeFile(output, await pdf.save());
