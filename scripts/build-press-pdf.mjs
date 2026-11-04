@@ -45,10 +45,11 @@ try {
       hero: hero.outerHTML, title: html('#release-title'), intro: html('.release-intro'),
       material: html('.material-link'), body: html('.release-body'), event: html('.event-sheet'),
       about: html('.about-promoter'), end: html('.end-mark'), contactsTitle: html('#contact-title'),
-      contacts: html('.contact-grid'),
+      contacts: html('.contact-grid'), date: document.querySelector('.article-heading .issue').textContent.trim(),
       text: [...document.querySelectorAll('[data-press-copy]')].map(element => element.textContent.replace(/\s+/g, ' ').trim()),
     };
   });
+  assert.match(source.date, /^\d{2}\.\d{2}\.\d{4}$/, 'Use the release date shown on the landing');
   const css = await readFile(resolve(root, 'design/press-movistar/pdf.css'), 'utf8');
   const signature = '<img class="brand-signature" src="/cumple-movistar/assets/firma.webp" alt="Jhon Alex Castaño" width="850" height="249">';
   const header = (label, cover = false) => `<header class="running-header${cover ? ' light' : ''}">${signature}<span>${label}</span></header>`;
@@ -56,7 +57,7 @@ try {
   const html = `<!doctype html><html lang="es-CO"><head><meta charset="utf-8"><title>El Cumpleaños del Rey del Chupe · Comunicado de prensa</title><style>${css}</style></head><body>
     <section class="pdf-page cover-page">
       <div class="cover-visual">${header('SALA DE PRENSA', true)}${source.hero}</div>
-      <main class="cover-copy"><div class="article-heading"><span>COMUNICADO OFICIAL</span><span>02.11.2026 · BOGOTÁ, COLOMBIA</span></div>${source.title}${source.intro}${source.material}</main>
+      <main class="cover-copy"><div class="article-heading"><span>COMUNICADO OFICIAL</span><span>${source.date} · BOGOTÁ, COLOMBIA</span></div>${source.title}${source.intro}${source.material}</main>
       ${footer(1)}
     </section>
     <section class="pdf-page story-page">
