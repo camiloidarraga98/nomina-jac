@@ -1,5 +1,7 @@
 ## Comunicado: solo despecho
 
+Publicado 04/11/2026 06:47 Colombia: fuente `bae4dda`; Worker `50386477-3401-4782-b8fc-913c628e95d4`, deployment `6671dc69-1613-457a-89e3-fb1b101869a2`, al100%. Los14 bindings y dos crons coinciden con la versión previa. Activación confirmada por API tras el error auxiliar conocido de Wrangler; no se repitió despliegue. Enlace con revisión nueva: https://jhonalexcastano.com/cumple-movistar?v=despecho-2.
+
 Camilo pidió eliminar «popular» de la landing de prensa y del PDF. Cuatro frases adaptadas gramaticalmente al despecho; el resto del comunicado queda igual. PDF regenerado en tres páginas desde la misma fuente HTML y ambos enlaces con `?v=despecho-2`. Texto visible/copiable y extracción del PDF sin la palabra retirada; todos los33 bloques aprobados presentes. Esta edición autorizada sustituye la obligación anterior de reproducir literalmente esos cuatro pasajes del adjunto. Ver [PRESS_MOVISTAR.md](PRESS_MOVISTAR.md).
 
 ## PDF editorial del comunicado ·3 de noviembre de2026

@@ -58,3 +58,5 @@ Camilo pidió retirar cualquier mención de «popular» tanto de la landing como
 Verificado que no queda la palabra retirada en el HTML público, texto/metadata del PDF o los33 bloques aprobados. PDF de tres páginas, márgenes y enlaces conservados; revisión visual de las dos páginas afectadas. No cambia el diseño ni la información del evento y contactos.
 
 Comprobaciones adicionales: Chromium local en10 anchos, copia con los cambios autorizados y descarga con bytes idénticos al PDF nuevo; build Cloudflare correcto y recursos dist idénticos a fuente. Se conservan las comprobaciones TypeScript y50 casos Node anteriores, cuyas entradas no cambian en esta edición estática.
+
+Publicado 04/11/2026 06:47 Colombia: fuente `bae4dda`; Worker `50386477-3401-4782-b8fc-913c628e95d4`, deployment `6671dc69-1613-457a-89e3-fb1b101869a2`, al100%. Los14 bindings y dos crons coinciden con la versión previa. Activación confirmada por API tras el error auxiliar conocido de Wrangler; no se repitió despliegue. Enlace con revisión nueva: https://jhonalexcastano.com/cumple-movistar?v=despecho-2.
