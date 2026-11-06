@@ -1,5 +1,7 @@
 ## Galería interna de fotos con IA ·6 de noviembre de2026
 
+Publicado 06/11/2026 12:08 Colombia: fuente `38b356c`; Worker `6d72b0fb-5275-4b8f-9664-a592894c8682`, deployment `e081aae4-c56a-4ffd-b2f1-3535aff98457`, al100%. Cuatro recursos públicos actualizados;14 bindings y ambos crons coinciden con la configuración anterior. Sin migraciones, cambios del secreto, restablecimientos ni generaciones reales. La API confirma activación tras el error auxiliar conocido de Wrangler; no se repitió el despliegue. Verificación visual local con fixtures; el dominio sigue fuera de los destinos permitidos del entorno.
+
 Camilo pidió un panel en `/cumple` para consultar todas las creaciones, de más reciente a más antigua, con el código interno ya configurado. «Uso interno» → «Ver todas las creaciones» abre una galería adaptable con fecha/hora Colombia, miniaturas, páginas de12, Actualizar y foto completa. Incluye resultados conservados aunque estén archivados o haya vencido el acceso del participante. Excepción de lectura limitada a la nueva ruta interna autenticada; no modifica accesos públicos, fotos, cuotas ni otros módulos. Clave fuera del repositorio, reutilizando el ticket vigente. Ver [FANS_BIRTHDAY_PHOTO.md](FANS_BIRTHDAY_PHOTO.md).
 
 ## Fotos con IA:200 creaciones diarias ·6 de noviembre de2026
