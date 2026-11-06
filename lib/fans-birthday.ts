@@ -9,7 +9,7 @@ type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;interna
 type QuotaReset={sequence:number;request_id:string;actor_hash:string;created_at:string};
 const settings=()=>env as unknown as FanEnv;
 const HOUR=3600_000,DAY=24*HOUR;
-export const BIRTHDAY_LIMITS={photoBytes:8*1024*1024,retentionHours:24,metadataDays:7,dailyGlobal:25,dailyIP:5,dailyBrowser:5,waiting:10,concurrent:10,processingBatch:5} as const;
+export const BIRTHDAY_LIMITS={photoBytes:8*1024*1024,retentionHours:24,metadataDays:7,dailyGlobal:200,dailyIP:5,dailyBrowser:5,waiting:10,concurrent:10,processingBatch:5} as const;
 const UUID=/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const COOKIE=/^[A-Za-z0-9_-]{43}$/;
 const terminal=new Set(['ready','failed','uncertain','cancelled']);

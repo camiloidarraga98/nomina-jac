@@ -1,3 +1,7 @@
+## Fotos con IA:200 creaciones diarias ·6 de noviembre de2026
+
+Camilo pidió subir el límite global de25 a200 en `/cumple`. La constante compartida aplica a la validación previa, reserva atómica y aviso; día de Colombia, sin reiniciar contadores. Cuotas individuales5 y modo interno conservados.40 pruebas del módulo y1 integración Workerd correctas, incluida competencia por el cupo200 y rechazo del201; TypeScript/build correctos. Sin generaciones pagadas ni datos reales de prueba. Ver [FANS_BIRTHDAY_PHOTO.md](FANS_BIRTHDAY_PHOTO.md).
+
 ## Nombre del recinto en prensa ·4 de noviembre de2026
 
 Publicado 04/11/2026 07:17 Colombia: fuente `b2ac115`; Worker `d937726d-2e2d-4f33-946c-c5a21c341b9a`, deployment `7a892856-93e4-4e70-a80d-1ccfc3508cf7`, al100%. Los14 bindings y dos crons conservados. Activación confirmada por API tras el error auxiliar conocido de Wrangler. Tres recursos publicados: HTML, PDF y tarjeta social; revisión `arena-4`.
