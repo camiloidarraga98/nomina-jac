@@ -1,3 +1,4 @@
+import { createInternalGallery } from './gallery.js?v=internal-gallery-1';
 const API = '/api/fans/cumpleanos';
 const STORAGE_KEY = 'jac-birthday-job-v1';
 const RESET_STORAGE_KEY = 'jac-birthday-reset-v1';
@@ -21,7 +22,7 @@ const el = {
   internalPanel: $('internal-panel'), internalDetails: $('internal-details'), internalForm: $('internal-form'),
   internalCode: $('internal-code'), internalSubmit: $('internal-submit'), internalActive: $('internal-active'),
   internalExit: $('internal-exit'), internalFeedback: $('internal-feedback'), internalOpen: $('open-internal'), internalHelp: $('internal-help'),
-  internalReset: $('internal-reset'),
+  internalReset: $('internal-reset'), internalGallery: $('internal-gallery'),
 };
 const internalHelpText = el.internalHelp.textContent;
 let config = null;
@@ -65,6 +66,11 @@ let activeStatus = '';
 let resultLoading = false;
 let serverConfigured = false;
 let requestController = null;
+const gallery = createInternalGallery({ api: API, authorized: () => internalMode && !internalBusy, onExpired: () => {
+  internalMode = false; if (config) config.internalMode = false;
+  el.internalDetails.open = true; internalControls();
+  internalFeedback('La sesión de uso interno venció. Vuelve a introducir el código para ver las creaciones.', true);
+} });
 
 function storedJob() { try { return sessionStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; } }
 function rememberJob(id) { try { if (id) sessionStorage.setItem(STORAGE_KEY, id); else sessionStorage.removeItem(STORAGE_KEY); } catch { /* Photos remain usable when storage is disabled. */ } }
@@ -246,6 +252,8 @@ async function responseData(response) {
   return data;
 }
 function internalControls() {
+  if (!internalMode) gallery.close();
+  el.internalGallery.disabled = internalBusy || !internalMode;
   el.internalPanel.hidden = false;
   el.internalPanel.setAttribute('aria-busy', String(internalBusy || resetBusy));
   el.internalOpen.setAttribute('aria-expanded', String(internalMode || el.internalDetails.open));
@@ -264,7 +272,7 @@ function openInternalPanel() {
   el.internalPanel.hidden = false;
   el.internalDetails.open = true;
   internalControls();
-  const target = internalMode ? el.internalExit : el.internalCode.disabled ? el.internalDetails.querySelector('summary') : el.internalCode;
+  const target = internalMode ? el.internalGallery : el.internalCode.disabled ? el.internalDetails.querySelector('summary') : el.internalCode;
   target.focus({ preventScroll: true }); el.internalPanel.scrollIntoView({ block: 'nearest' });
 }
 function internalFeedback(message = '', failed = false) {
@@ -287,6 +295,7 @@ async function changeInternalMode(activate) {
   let code = activate ? el.internalCode.value : '';
   el.internalCode.value = '';
   if (activate && !code) { internalFeedback('Escribe el código de uso interno para continuar.', true); return; }
+  if (!activate) gallery.close();
   const body = activate ? JSON.stringify({ code }) : undefined;
   code = '';
   const ticket = ++internalRevision;
@@ -303,13 +312,13 @@ async function changeInternalMode(activate) {
     internalMode = data.internalMode;
     if (config) config.internalMode = internalMode;
     if (activate) {
-      // Unlocking changes only the daily budget. Selection, UUID,
+      // Selection, UUID,
       // captcha and an existing job retain their independent lifecycle.
       clearDailyBlock();
       el.internalDetails.open = false;
     }
     internalControls();
-    internalFeedback(activate ? 'Modo interno activado. Puedes continuar con tu foto.' : 'Modo interno cerrado. Se aplican los límites públicos.');
+    internalFeedback(activate ? 'Modo interno activado. Ya puedes ver todas las creaciones o crear tu foto.' : 'Modo interno cerrado. Se aplican los límites públicos.');
   } catch (error) {
     if (error.name === 'AbortError' || ticket !== internalRevision) return;
     internalFeedback(error.blocked ? 'No pudimos confirmar el acceso interno. Revisa tu conexión y vuelve a intentarlo.' : error.message || 'No pudimos cambiar el modo interno. Inténtalo otra vez.', true);
@@ -650,6 +659,7 @@ el.input.addEventListener('change', () => choosePhoto(el.input.files?.[0]));
 el.newPhoto.addEventListener('click', () => { void createAnotherPhoto(); });
 el.download.addEventListener('click', event => { if (newSessionBusy || revalidating || deleting) event.preventDefault(); });
 el.internalOpen.addEventListener('click', openInternalPanel);
+el.internalGallery.addEventListener('click', () => gallery.open());
 el.internalReset.addEventListener('click', () => { void resetCreations(); });
 el.internalForm.addEventListener('submit', event => { event.preventDefault(); void changeInternalMode(true); });
 el.internalExit.addEventListener('click', () => { void changeInternalMode(false); });

@@ -72,5 +72,16 @@ test('Workerd validates real File/cookie/D1/R2 flow, idempotent generation and p
   response=await mf.dispatchFetch(base+'/__fixture/process');assert.equal((await response.json()).generated,3,'Cleanup never regenerates an archive.');
   assert.equal((await db.prepare('SELECT result_key FROM jac_fan_birthday_jobs WHERE id=?').bind(internalID).first()).result_key,archivedResult.result_key,'Archive metadata survives the old seven-day cleanup.');
   assert.deepEqual(new Uint8Array(await (await bucket.get(archivedResult.result_key)).arrayBuffer()),png,'Private archives survive the old 24-hour expiry.');
+  // An independently authenticated internal browser can view all retained
+  // results through the explicit gallery, without broadening the public route.
+  response=await mf.dispatchFetch(endpoint+'?internal-gallery=1',{headers:{cookie:otherCookie}});assert.equal(response.status,403);
+  response=await mf.dispatchFetch(endpoint+'?internal=1',{method:'POST',headers:{cookie:otherCookie,Origin:base,'CF-Connecting-IP':'192.0.2.2','Content-Type':'application/json'},body:JSON.stringify({code:'4826'})});
+  assert.equal(response.status,200);const galleryCookie=otherCookie+'; '+response.headers.get('set-cookie').split(';')[0];
+  response=await mf.dispatchFetch(endpoint+'?internal-gallery=1',{headers:{cookie:galleryCookie}});body=await response.json();assert.equal(response.status,200);assert.equal(body.total,1);assert.deepEqual(body.items,[{id:internalID,createdAt:old}]);assert.equal(body.nextCursor,'');assert(body.sessionExpiresIn>0);assert.match(response.headers.get('cache-control'),/private, no-store/);
+  response=await mf.dispatchFetch(endpoint+'?internal-gallery=1&id='+internalID,{headers:{cookie:galleryCookie}});assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'image/png');assert.equal(response.headers.get('cross-origin-resource-policy'),'same-origin');assert.deepEqual(new Uint8Array(await response.arrayBuffer()),png);
+  response=await mf.dispatchFetch(endpoint+'?id='+internalID+'&image=1',{headers:{cookie:galleryCookie}});assert.equal(response.status,404);
+  response=await mf.dispatchFetch(endpoint+'?internal-gallery=1&id='+internalID,{method:'DELETE',headers:{cookie:galleryCookie,Origin:base}});assert.equal(response.status,405);assert(await bucket.get(archivedResult.result_key),'The gallery is read-only.');
+  response=await mf.dispatchFetch(endpoint+'?internal=1',{method:'DELETE',headers:{cookie:galleryCookie,Origin:base}});assert.equal(response.status,200);
+  response=await mf.dispatchFetch(endpoint+'?internal-gallery=1',{headers:{cookie:otherCookie}});assert.equal(response.status,403);
  }finally{await mf.dispose();}
 });

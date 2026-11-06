@@ -4,7 +4,8 @@ import {database} from '@/db/raw';
 import {generateBirthdayPhoto,normalizeBirthdayUpload} from './fans-birthday-image';
 import {isBirthdayHEIC} from './fans-image-format';
 
-type FanEnv={OPENAI_API_KEY?:string;JAC_FANS_ENABLED?:string;JAC_FANS_TURNSTILE_SITE_KEY?:string;JAC_FANS_TURNSTILE_SECRET?:string;JAC_FANS_INTERNAL_CODE?:string;PAYROLL_AUTH_KEY?:string;BUCKET:R2Bucket};
+type GalleryImages={input(stream:ReadableStream):{transform(options:Record<string,unknown>):{output(options:{format:string;quality:number}):Promise<{response():Response}>}}};
+type FanEnv={OPENAI_API_KEY?:string;JAC_FANS_ENABLED?:string;JAC_FANS_TURNSTILE_SITE_KEY?:string;JAC_FANS_TURNSTILE_SECRET?:string;JAC_FANS_INTERNAL_CODE?:string;PAYROLL_AUTH_KEY?:string;BUCKET:R2Bucket;IMAGES?:GalleryImages};
 type Job={id:string;owner_hash:string;ip_hash:string;payload_hash:string;internal_mode:number;quota_generation:number;archived_at:string;status:string;source_key:string;source_mime:string;result_key:string;claim:string;started_at:string;message:string;created_at:string;expires_at:string;updated_at:string};
 type QuotaReset={sequence:number;request_id:string;actor_hash:string;created_at:string};
 const settings=()=>env as unknown as FanEnv;
@@ -37,14 +38,15 @@ function internalCookie(req:Request,token='',maxAge=8*3600){
  return `${name}=${token}; Path=/; HttpOnly; ${local?'':'Secure; '}SameSite=Strict; Max-Age=${maxAge}`;
 }
 function internalSignature(owner:string,expires:string,nonce:string){return digest('internal-session',owner+'\0'+expires+'\0'+nonce+'\0'+digest('internal-code',settings().JAC_FANS_INTERNAL_CODE??''));}
-function internalMode(req:Request,owner:string){
- if(!owner||!internalAvailable())return false;
+function internalSessionExpiry(req:Request,owner:string){
+ if(!owner||!internalAvailable())return 0;
  const name=/^(localhost|127\.0\.0\.1)$/.test(new URL(req.url).hostname)?'jac_fan_internal':'__Host-jac_fan_internal',entries=(req.headers.get('cookie')??'').split(';').map(x=>x.trim()).filter(x=>x.startsWith(name+'='));
- if(entries.length!==1)return false;
- const token=entries[0].slice(name.length+1),match=/^v1\.([0-9]{13})\.([A-Za-z0-9_-]{32})\.([a-f0-9]{64})$/.exec(token);if(!match)return false;
- const [,expires,nonce,signature]=match,until=Number(expires);if(until<=Date.now()||until>Date.now()+8*HOUR)return false;
- return timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(internalSignature(owner,expires,nonce),'hex'));
+ if(entries.length!==1)return 0;
+ const token=entries[0].slice(name.length+1),match=/^v1\.([0-9]{13})\.([A-Za-z0-9_-]{32})\.([a-f0-9]{64})$/.exec(token);if(!match)return 0;
+ const [,expires,nonce,signature]=match,until=Number(expires);if(until<=Date.now()||until>Date.now()+8*HOUR)return 0;
+ return timingSafeEqual(Buffer.from(signature,'hex'),Buffer.from(internalSignature(owner,expires,nonce),'hex'))?until:0;
 }
+function internalMode(req:Request,owner:string){return internalSessionExpiry(req,owner)>0;}
 async function boundedInternalJSON(req:Request,message:string,code:string){
  if(!/^application\/json(?:\s*;|$)/i.test(req.headers.get('content-type')??''))throw new BirthdayFailure(message,400,code);
  const limit=1024;if(Number(req.headers.get('content-length')??0)>limit)throw new BirthdayFailure('La solicitud es demasiado grande.',413,code);
@@ -106,6 +108,74 @@ async function startNewSession(req:Request,owner:string){
  return {newSession:true};
 }
 function publicJob(job:Job){return {id:job.id,status:job.status==='uploading'?'queued':job.status,message:job.message,expiresAt:job.expires_at};}
+
+// This explicit, read-only internal route is the sole cross-owner exception.
+// Ordinary photo access retains its ownership, archive and expiry checks.
+const galleryPageSize=12;
+const galleryReady="status='ready' AND result_key='fans-birthday/result/'||id||'.png'";
+type GalleryRow={id:string;created_at:string;position:number};
+function requireInternalGallery(req:Request,owner:string){
+ if(!internalMode(req,owner))throw new BirthdayFailure('Vuelve a introducir el código de uso interno para ver las creaciones.',403,'internal_required');
+ if(req.headers.get('sec-fetch-site')==='cross-site'||(req.headers.has('origin')&&req.headers.get('origin')!==new URL(req.url).origin))throw new BirthdayFailure('Abre la galería desde la página original.',403);
+}
+function galleryCursor(item:GalleryRow,owner:string){
+ const payload=Buffer.from(JSON.stringify([item.created_at,item.position])).toString('base64url');
+ return payload+'.'+digest('internal-gallery-cursor',owner+'\0'+payload);
+}
+function readGalleryCursor(cursor:string,owner:string):[string,number]{
+ const invalid=()=>new BirthdayFailure('Actualiza la galería para continuar.',400,'gallery_cursor_invalid');
+ const match=cursor.length<=256?/^([A-Za-z0-9_-]+)\.([a-f0-9]{64})$/.exec(cursor):null;
+ if(!match||!timingSafeEqual(Buffer.from(match[2],'hex'),Buffer.from(digest('internal-gallery-cursor',owner+'\0'+match[1]),'hex')))throw invalid();
+ try{
+  const value=JSON.parse(Buffer.from(match[1],'base64url').toString('utf8'));
+  if(Array.isArray(value)&&value.length===2&&typeof value[0]==='string'&&new Date(value[0]).toISOString()===value[0]&&Number.isSafeInteger(value[1])&&value[1]>0)return value as [string,number];
+ }catch{/* Never echo a submitted cursor. */}
+ throw invalid();
+}
+async function internalGallery(req:Request,owner:string,url:URL){
+ requireInternalGallery(req,owner);
+ if(!url.searchParams.has('id')){
+  const cursor=url.searchParams.get('cursor'),before=cursor===null?null:readGalleryCursor(cursor,owner),db=database();
+  const query=db.prepare(`SELECT id,created_at,rowid AS position FROM jac_fan_birthday_jobs WHERE ${galleryReady}${before?' AND (created_at,rowid)<(?,?)':''} ORDER BY created_at DESC,rowid DESC LIMIT ?`);
+  const [page,count]=await Promise.all([
+   (before?query.bind(...before,galleryPageSize+1):query.bind(galleryPageSize+1)).all<GalleryRow>(),
+   db.prepare(`SELECT count(*) AS total FROM jac_fan_birthday_jobs WHERE ${galleryReady}`).first<{total:number}>(),
+  ]);
+  requireInternalGallery(req,owner);
+  const items=page.results.slice(0,galleryPageSize);
+  return reply({items:items.map(item=>({id:item.id,createdAt:item.created_at})),total:count?.total??0,nextCursor:page.results.length>galleryPageSize?galleryCursor(items[items.length-1],owner):'',sessionExpiresIn:Math.max(0,internalSessionExpiry(req,owner)-Date.now())});
+ }
+ const id=requireID(url.searchParams.get('id'));
+ const available=async()=>{
+  requireInternalGallery(req,owner);
+  const job=await row(id);
+  requireInternalGallery(req,owner);
+  if(!job||job.status!=='ready'||job.result_key!=='fans-birthday/result/'+id+'.png')throw new BirthdayFailure('Esta creación ya no está disponible.',404,'gallery_photo_unavailable');
+  return job;
+ };
+ const job=await available(),image=await settings().BUCKET.get(job.result_key);
+ if(!image)throw new BirthdayFailure('Esta creación ya no está disponible.',404,'gallery_photo_unavailable');
+ let body=image.body;
+ try{
+  if(image.size<=0||image.size>16*1024*1024)throw new BirthdayFailure('No pudimos abrir esta creación.',502);
+  await available();
+  if(url.searchParams.get('preview')==='1'){
+   const images=settings().IMAGES;
+   if(!images)throw new BirthdayFailure('La vista previa no está disponible. Inténtalo de nuevo.',503);
+   const preview=(await images.input(body).transform({width:480,height:600,fit:'scale-down'}).output({format:'image/jpeg',quality:76})).response();
+   if(!preview.ok||!preview.body)throw new BirthdayFailure('No pudimos preparar la vista previa.',502);
+   body=preview.body;
+   // Bound private previews; never fall back to downloading every original.
+   const reader=body.getReader(),parts:Uint8Array[]=[];let length=0;
+   try{for(;;){const next=await reader.read();if(next.done)break;length+=next.value.length;if(length>512*1024)throw new BirthdayFailure('No pudimos preparar la vista previa.',502);parts.push(next.value);}}
+   finally{await reader.cancel().catch(()=>{});reader.releaseLock();}
+   await available();
+   return new Response(new Blob(parts as BlobPart[]),{headers:{...privateHeaders,'Content-Type':'image/jpeg'}});
+  }
+  await available();
+  return new Response(body,{headers:{...privateHeaders,'Content-Type':'image/png','Content-Disposition':'inline; filename="Creacion-JAC.png"'}});
+ }catch(error){await body.cancel().catch(()=>{});throw error;}
+}
 async function boundedForm(req:Request){
  const type=req.headers.get('content-type')??'';
  if(!/^multipart\/form-data;\s*boundary=/i.test(type))throw new BirthdayFailure('Selecciona una foto para continuar.');
@@ -199,6 +269,10 @@ async function createJob(req:Request,owner:string,internal=false){
 export async function handleBirthdayApi(req:Request):Promise<Response>{
  try{
   const url=new URL(req.url),identity=browser(req,req.method==='GET'&&!url.searchParams.has('id'));
+  if(url.searchParams.has('internal-gallery')){
+   if(req.method!=='GET')return reply({error:'Método no disponible.'},405,{Allow:'GET'});
+   return await internalGallery(req,identity.owner,url);
+  }
   if(url.searchParams.get('new-session')==='1'){
    if(req.method!=='POST')return reply({error:'Método no disponible.'},405,{Allow:'POST'});
    writeOrigin(req);return reply(await startNewSession(req,identity.owner),200,identity.cookie?{'Set-Cookie':identity.cookie}:{});

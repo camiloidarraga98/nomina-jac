@@ -12,9 +12,9 @@
   <meta property="og:locale" content="es_CO">
   <link rel="canonical" href="https://jhonalexcastano.com/cumple">
   <link rel="icon" href="/favicon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="/cumpleanos/style.css?v=new-photo-1">
+  <link rel="stylesheet" href="/cumpleanos/style.css?v=internal-gallery-1">
   <title>Tu foto con el Rey · Cumpleaños de Jhon Alex Castaño</title>
-  <script type="module" src="/cumpleanos/app.js?v=new-photo-1"></script>
+  <script type="module" src="/cumpleanos/app.js?v=internal-gallery-1"></script>
 </head>
 <body>
   <header class="site-header">
@@ -89,6 +89,7 @@
         <div id="internal-active" class="internal-active" hidden>
           <p>Modo interno activo · Sin límite diario</p>
           <span>Se mantienen la verificación de cada foto y el turno de la cola.</span>
+          <button id="internal-gallery" class="primary-button internal-gallery-button" type="button" aria-haspopup="dialog">Ver todas las creaciones <span aria-hidden="true">↗</span></button>
           <button id="internal-reset" class="secondary-button internal-reset-button" type="button">Restablecer creaciones para todos</button>
           <button id="internal-exit" class="text-button" type="button">Salir del modo interno</button>
         </div>
@@ -96,6 +97,17 @@
       </section>
     </section>
   </main>
+  <dialog id="gallery-dialog" class="gallery-dialog" aria-labelledby="gallery-title">
+    <div class="gallery-heading"><div><p class="eyebrow">JAC · PANEL INTERNO</p><h2 id="gallery-title">Todas las creaciones</h2></div><button id="gallery-close" class="secondary-button" type="button" autofocus>Cerrar</button></div>
+    <div class="gallery-toolbar"><strong id="gallery-total">Creaciones terminadas</strong><button id="gallery-refresh" class="secondary-button" type="button">Actualizar</button></div>
+    <p id="gallery-status" class="gallery-status" role="status" aria-live="polite"></p>
+    <div id="gallery-grid" class="gallery-grid"></div>
+    <nav class="gallery-pagination" aria-label="Páginas de creaciones"><button id="gallery-previous" class="secondary-button" type="button" disabled>Anterior</button><span id="gallery-page">Página 1</span><button id="gallery-next" class="secondary-button" type="button" disabled>Siguiente</button></nav>
+  </dialog>
+  <dialog id="gallery-detail" class="gallery-detail" aria-label="Foto de la creación">
+    <div class="gallery-detail-heading"><span id="gallery-detail-date"></span><button id="gallery-detail-close" class="secondary-button" type="button" autofocus>Volver</button></div>
+    <p id="gallery-detail-status" role="status" aria-live="polite"></p><img id="gallery-detail-image" alt="Foto creada con Jhon Alex Castaño." hidden>
+  </dialog>
   <footer class="site-footer"><span>JHON ALEX CASTAÑO</span><p>El cumpleaños del Rey del Chupe · Movistar Arena, Bogotá</p></footer>
   <noscript><p class="noscript-message">Activa JavaScript en tu navegador para elegir tu foto y crear el brindis con el Rey.</p></noscript>
 </body>

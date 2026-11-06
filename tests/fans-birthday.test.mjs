@@ -32,7 +32,7 @@ beforeEach(()=>{
   async put(key,bytes){counts.put++;objects.set(key,new Uint8Array(bytes));if(onPut)await onPut(key);},
   async get(key){counts.get++;if(onGet)await onGet(key);const bytes=objects.get(key);return bytes?{size:bytes.length,body:new Blob([bytes]).stream(),async arrayBuffer(){return bytes.slice().buffer;}}:null;},
   async delete(key){if(onDelete)await onDelete(key);objects.delete(key);}
- },PAYROLL_AUTH_KEY:'birthday-independent-fictitious-authentication-key',OPENAI_API_KEY:'fixture-openai-never-real',JAC_FANS_ENABLED:'1',JAC_FANS_TURNSTILE_SITE_KEY:'fixture-turnstile-public',JAC_FANS_TURNSTILE_SECRET:'fixture-turnstile-private',JAC_FANS_INTERNAL_CODE:''});
+ },IMAGES:undefined,PAYROLL_AUTH_KEY:'birthday-independent-fictitious-authentication-key',OPENAI_API_KEY:'fixture-openai-never-real',JAC_FANS_ENABLED:'1',JAC_FANS_TURNSTILE_SITE_KEY:'fixture-turnstile-public',JAC_FANS_TURNSTILE_SECRET:'fixture-turnstile-private',JAC_FANS_INTERNAL_CODE:''});
  globalThis.__birthdayNormalize=async(bytes,mime)=>{counts.normalize++;if(normalizeHook)return normalizeHook(bytes,mime);return {bytes:bytes.slice(),mimeType:mime};};
  globalThis.__birthdayGenerate=async(bytes,mime)=>{counts.generate++;if(generateHook)return generateHook(bytes,mime);return png.slice();};
  globalThis.fetch=async(input,options={})=>{assert.equal(String(input),'https://challenges.cloudflare.com/turnstile/v0/siteverify','No actual image provider or other network destinations may be used.');counts.verify++;assert.equal(options.redirect,'manual');assert.equal(options.method,'POST');assert.equal(options.body.get('secret'),'fixture-turnstile-private');if(verifyHook)return verifyHook();return Response.json({success:true,hostname:'birthday.example.invalid',action:'birthday-photo'});};
@@ -50,6 +50,78 @@ async function config(cookie){return (await m.handleBirthdayApi(request('GET',co
 const dbJob=id=>sql.prepare('SELECT * FROM jac_fan_birthday_jobs WHERE id=?').get(id);
 const deferred=()=>{let resolve;const promise=new Promise(r=>{resolve=r;});return {promise,resolve};};
 const markedPhoto=marker=>{const bytes=png.slice();bytes[bytes.length-1]=marker;return bytes;};
+
+async function galleryFixture(){
+ globalThis.__birthdayEnv.JAC_FANS_INTERNAL_CODE='4826';
+ const fan=await browser(),admin=await browser(),access=await internalAccess(admin.cookie),cookie=admin.cookie+'; '+access.cookie;
+ const photo=await upload(fan.cookie);await m.processBirthdayJobs();
+ return {fan,admin,access,cookie,photo,job:dbJob(photo.id)};
+}
+const galleryRequest=(cookie,query='',extra={})=>m.handleBirthdayApi(request('GET',cookie,'?internal-gallery=1'+query,undefined,extra));
+function seedGallery(job,overrides={}){
+ const id=crypto.randomUUID(),record={...job,id,owner_hash:'fixture-owner-'+id,result_key:'fans-birthday/result/'+id+'.png',...overrides};
+ const columns=Object.keys(record);sql.prepare('INSERT INTO jac_fan_birthday_jobs('+columns.join(',')+') VALUES('+columns.map(()=>'?').join(',')+')').run(...columns.map(key=>record[key]));objects.set(record.result_key,png.slice());return record;
+}
+test('internal gallery requires a valid owner-bound ticket for every list, preview and original',async()=>{
+ const {fan,admin,access,cookie,photo}=await galleryFixture(),before=counts.get;
+ for(const query of ['', '&id='+photo.id, '&id='+photo.id+'&preview=1']){
+  for(const invalid of ['',fan.cookie,admin.cookie,fan.cookie+'; '+access.cookie,cookie+'; '+access.cookie,cookie.slice(0,-1)+'x']){
+   const response=await galleryRequest(invalid,query);assert.equal(response.status,403);assert.equal((await response.json()).code,'internal_required');assert.match(response.headers.get('cache-control'),/private, no-store/);
+  }
+  for(const extra of [{origin:'https://other.example.invalid'},{'sec-fetch-site':'cross-site'}])assert.equal((await galleryRequest(cookie,query,extra)).status,403);
+ }
+ assert.equal(counts.get,before,'Unauthorized requests never read R2.');
+ for(const method of ['POST','DELETE','PUT','HEAD'])assert.equal((await m.handleBirthdayApi(request(method,cookie,'?internal-gallery=1&id='+photo.id))).status,405);
+ assert.equal((await inspect(cookie,photo.id)).status,404,'The normal photo route does not inherit the gallery exception.');
+ assert.equal((await inspect(cookie,photo.id,'DELETE')).status,404,'Internal gallery cannot delete another owner’s photo.');
+ const image=await galleryRequest(cookie,'&id='+photo.id);assert.equal(image.status,200);assert.equal(image.headers.get('content-type'),'image/png');assert.equal(image.headers.get('cross-origin-resource-policy'),'same-origin');assert.deepEqual(new Uint8Array(await image.arrayBuffer()),png);
+ globalThis.__birthdayEnv.JAC_FANS_INTERNAL_CODE='different-fixture-code';assert.equal((await galleryRequest(cookie)).status,403);
+ globalThis.__birthdayEnv.JAC_FANS_INTERNAL_CODE='4826';mock.timers.setTime(clock+8*3600_000);assert.equal((await galleryRequest(cookie)).status,403);
+ assert.equal(counts.generate,1);
+});
+test('gallery paginates all retained creations newest first, including archives, with stable ties and private cursors',async()=>{
+ const {cookie,photo,job}=await galleryFixture();
+ sql.prepare('UPDATE jac_fan_birthday_jobs SET archived_at=?,expires_at=? WHERE id=?').run('2026-10-20T12:00:00.000Z','2026-10-20T12:00:00.000Z',photo.id);
+ const records=[job];for(let i=0;i<27;i++)records.push(seedGallery(job,{created_at:new Date(clock+Math.floor(i/3)*1000).toISOString(),archived_at:i%2?job.created_at:'',internal_mode:i%2}));
+ for(const status of ['uploading','queued','processing','cancelled','failed','uncertain'])seedGallery(job,{status});
+ seedGallery(job,{result_key:''});seedGallery(job,{result_key:'private/another-module.png'});
+ const expected=sql.prepare("SELECT id,created_at FROM jac_fan_birthday_jobs WHERE status='ready' AND result_key='fans-birthday/result/'||id||'.png' ORDER BY created_at DESC,rowid DESC").all();
+ let response=await galleryRequest(cookie),data=await response.json();assert.equal(data.total,28);assert.equal(data.sessionExpiresIn,8*3600_000);assert.equal(data.items.length,12);assert(data.nextCursor);const firstCursor=data.nextCursor,seen=[...data.items];
+ assert.deepEqual(Object.keys(data).sort(),['items','nextCursor','sessionExpiresIn','total']);for(const item of data.items)assert.deepEqual(Object.keys(item).sort(),['createdAt','id']);
+ // A new result between page requests belongs on refresh, never duplicates older pages.
+ const newest=seedGallery(job,{created_at:new Date(clock+100000).toISOString()});
+ while(data.nextCursor){response=await galleryRequest(cookie,'&cursor='+encodeURIComponent(data.nextCursor));assert.equal(response.status,200);data=await response.json();assert(data.items.length<=12);seen.push(...data.items);}
+ assert.deepEqual(seen,expected.map(item=>({id:item.id,createdAt:item.created_at})));assert.equal(new Set(seen.map(item=>item.id)).size,28);
+ data=await (await galleryRequest(cookie)).json();assert.equal(data.items[0].id,newest.id);assert.equal(data.total,29);
+ const other=await browser(),access=await internalAccess(other.cookie);assert.equal((await galleryRequest(other.cookie+'; '+access.cookie,'&cursor='+firstCursor)).status,400);
+ for(const cursor of ['',firstCursor+'x','x'.repeat(300),'../../private','e30.0000'])assert.equal((await galleryRequest(cookie,'&cursor='+encodeURIComponent(cursor))).status,400);
+ assert.equal((await galleryRequest(cookie,'&limit=999999')).status,200);assert.equal((await (await galleryRequest(cookie,'&limit=999999')).json()).items.length,12);
+ assert.equal((await galleryRequest(cookie,'&id='+photo.id)).status,200,'Archived and expired access does not remove the retained internal result.');
+ const plan=sql.prepare("EXPLAIN QUERY PLAN SELECT id,created_at,rowid FROM jac_fan_birthday_jobs WHERE status='ready' AND (created_at,rowid)<(?,?) ORDER BY created_at DESC,rowid DESC LIMIT 13").all(job.created_at,99999);assert(plan.some(row=>row.detail.includes('jac_fan_birthday_queue')),'Pagination uses the existing queue index.');
+});
+test('gallery revalidates access and deletion after reading private storage',async()=>{
+ const {cookie,photo,job}=await galleryFixture();
+ onGet=async()=>{globalThis.__birthdayEnv.JAC_FANS_INTERNAL_CODE='rotated-fixture';};assert.equal((await galleryRequest(cookie,'&id='+photo.id)).status,403);
+ globalThis.__birthdayEnv.JAC_FANS_INTERNAL_CODE='4826';onGet=async()=>{sql.prepare("UPDATE jac_fan_birthday_jobs SET status='cancelled' WHERE id=?").run(photo.id);};assert.equal((await galleryRequest(cookie,'&id='+photo.id)).status,404);
+ onGet=null;sql.prepare("UPDATE jac_fan_birthday_jobs SET status='ready',result_key='private/other-document' WHERE id=?").run(photo.id);let before=counts.get;assert.equal((await galleryRequest(cookie,'&id='+photo.id)).status,404);assert.equal(counts.get,before,'Only canonical generated result keys may be read.');
+ sql.prepare('UPDATE jac_fan_birthday_jobs SET result_key=? WHERE id=?').run(job.result_key,photo.id);objects.delete(job.result_key);assert.equal((await galleryRequest(cookie,'&id='+photo.id)).status,404);
+ objects.set(job.result_key,png);onGet=async()=>{mock.timers.setTime(clock+8*3600_000);};assert.equal((await galleryRequest(cookie,'&id='+photo.id)).status,403);
+});
+test('gallery previews are bounded transformations, revalidated after processing without generating a new image',async()=>{
+ const {cookie,photo}=await galleryFixture(),jpeg=Uint8Array.from([255,216,255,217]);let action='normal',transforms=0;
+ globalThis.__birthdayEnv.IMAGES={input(stream){return {transform(options){assert.deepEqual(options,{width:480,height:600,fit:'scale-down'});return {async output(format){
+  transforms++;assert.deepEqual(format,{format:'image/jpeg',quality:76});assert.deepEqual(new Uint8Array(await new Response(stream).arrayBuffer()),png);
+  if(action==='delete')sql.prepare("UPDATE jac_fan_birthday_jobs SET status='cancelled' WHERE id=?").run(photo.id);
+  if(action==='rotate')globalThis.__birthdayEnv.JAC_FANS_INTERNAL_CODE='rotated-fixture';
+  return {response:()=>new Response(action==='large'?new Uint8Array(512*1024+1):jpeg,{headers:{'content-type':'image/jpeg'}})};
+ }};}};}};
+ let response=await galleryRequest(cookie,'&id='+photo.id+'&preview=1');assert.equal(response.status,200);assert.equal(response.headers.get('content-type'),'image/jpeg');assert.match(response.headers.get('cache-control'),/private, no-store/);assert.deepEqual(new Uint8Array(await response.arrayBuffer()),jpeg);
+ action='large';assert.equal((await galleryRequest(cookie,'&id='+photo.id+'&preview=1')).status,502);
+ action='rotate';assert.equal((await galleryRequest(cookie,'&id='+photo.id+'&preview=1')).status,403);globalThis.__birthdayEnv.JAC_FANS_INTERNAL_CODE='4826';
+ action='delete';assert.equal((await galleryRequest(cookie,'&id='+photo.id+'&preview=1')).status,404);
+ assert.equal(transforms,4);assert.equal(counts.generate,1,'Viewing a gallery never calls the paid generation provider.');
+ sql.prepare("UPDATE jac_fan_birthday_jobs SET status='ready' WHERE id=?").run(photo.id);delete globalThis.__birthdayEnv.IMAGES;response=await galleryRequest(cookie,'&id='+photo.id+'&preview=1');assert.equal(response.status,503,'Missing preview service never falls back to originals.');
+});
 
 test('public configuration creates an isolated private browser cookie and never exposes credentials',async()=>{
  const b=await browser();assert.equal(b.config.enabled,true);assert.equal(b.config.internalAvailable,false);assert.equal(b.config.internalMode,false);assert.equal(b.config.quotaGeneration,0);assert.equal(b.config.retentionHours,24);assert.equal(b.config.turnstileSiteKey,'fixture-turnstile-public');assert.match(b.headers.get('set-cookie'),/^__Host-jac_fan=[\w-]{43}; Path=\/; HttpOnly; Secure; SameSite=Strict; Max-Age=86400$/);assert.match(b.headers.get('cache-control'),/private, no-store/);assert(!JSON.stringify(b.config).includes('fixture-openai'));assert(!JSON.stringify(b.config).includes('fixture-turnstile-private'));
