@@ -10,7 +10,7 @@ El selector «Ordenar por fecha» permite elegir Ascendente (más antiguos, por 
 
 Nota de conciliación: si OpenAI rechaza una lectura, se conserva el archivo para buscar manualmente. El mensaje distingue la categoría del rechazo y muestra una referencia `OCR_*` para resolverlo, sin exponer claves o datos bancarios en los diagnósticos. El usuario repitió e informó `OCR_CLAVE · HTTP 401`; queda pendiente revisar la clave/permisos del proyecto OpenAI con el propietario, sin acceso a ese panel desde la sesión conectada. Publicar el diagnóstico no confirma que la lectura ya funcione en producción; no se debe compartir la clave en chat.
 
-El aviso anterior agrupaba todos los401 como clave. La corrección distingue el permiso específico cuando OpenAI lo informa, la política de IP, una clave explícitamente inválida y autenticación sin causa reconocida. Mantener la sesión y búsqueda manual en todos los casos; no cambiar credenciales, ampliar permisos ni atribuir una causa concreta sin el nuevo resultado.
+Corrección de diagnóstico publicada el10/11/2026 a las15:18Colombia. El aviso anterior agrupaba todos los401 como clave. La corrección distingue el permiso específico cuando OpenAI lo informa, la política de IP, una clave explícitamente inválida y autenticación sin causa reconocida. Mantener la sesión y búsqueda manual en todos los casos; no cambiar credenciales, ampliar permisos ni atribuir una causa concreta sin el nuevo resultado.
 
 ## Comunicado del cumpleaños en Movistar ·3 de noviembre de2026
 
