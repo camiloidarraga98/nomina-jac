@@ -6,6 +6,8 @@ El formulario permite buscar por fecha, valor y texto; asignar show y empresario
 
 ## Delimitación de recibos y orientación · corrección10/11/2026
 
+Publicado el10/11/2026 a las17:15Colombia: fuente funcional `c9914a1`, Worker `a3733b71-57a6-408f-9179-55d50044be5a`, deployment `5f089eb1-a56c-43c7-a106-4552df68330f`, activo al100%. API confirmó código idéntico al build comprobado, SHA-256 `b79507edd36dfd98ea4134402a8919be832cb546ec57c8e8b048a5aa994346a9`, revisión `receipt-bounds-6`. Dos assets actualizados; los seis assets genéricos compilados coinciden con fuente y no contienen documentos privados. Conservados14bindings,2crons, DB, BUCKET y secreto OpenAI. Sin migraciones ni escrituras contables. El error auxiliar de Wrangler sobre subdomain/memberships ocurrió después de activar; se verificó por API sin repetir la publicación. Visita autenticada al dominio y precisión con la foto real pendientes por la restricción de red del entorno; las comprobaciones Chromium fueron locales.
+
 Camilo reportó que una foto girada con ocho recibos generó seis recortes; horizontal generó ocho, pero algunos contenían pie del papel superior y encabezado del inferior, perdiendo datos. El código anterior confiaba en una única respuesta de coordenadas. La captura acredita delimitación incorrecta, no un problema con los movimientos contables.
 
 - `POST /scan/layout` cuenta papeles y determina el giro horario para leerlos, con filas/columnas sólo cuando forman una cuadrícula completa. Usa la misma sesión/permiso CRM y reserva del lector. No recibe candidatos contables ni escribe registros.

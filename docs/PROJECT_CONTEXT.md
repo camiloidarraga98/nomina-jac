@@ -1,5 +1,7 @@
 ## Corrección de delimitación y orientación de recibos ·10 noviembre2026
 
+Publicado17:15Colombia: fuente `c9914a1`, Worker `a3733b71-57a6-408f-9179-55d50044be5a`, deployment `5f089eb1-a56c-43c7-a106-4552df68330f`, activo al100%; código idéntico al build verificado y revisión `receipt-bounds-6`.56pruebas focales,61comprobaciones Chromium, TypeScript y build correctos.14bindings,2crons y DB/BUCKET conservados. El error auxiliar conocido de Wrangler ocurrió después de activar; no se repitió el despliegue. Confirmación por API, sin visita autenticada al dominio ni medir precisión sobre la foto real.
+
 Camilo confirmó que la foto tiene ocho recibos: girada se obtenían seis, y horizontal se obtenían ocho recortes desplazados/incompletos. El nuevo flujo cuenta papeles y determina orientación antes de delimitar, usa bordes explícitos con guías y verifica la propuesta sobre la imagen completa. Las coordenadas se transforman de vuelta a la vista original para conservar compatibilidad con soportes y duplicados. Incluye vista de límites numerados, revisión obligatoria cuando se detectan inconsistencias y separación manual por filas/columnas con selección del área. El área de arrastre ahora coincide con la imagen visible en vertical y horizontal.
 
 Ver `CRM_RECONCILIATION.md` para comprobaciones y estado de publicación. Conserva modelo, secreto, originales y guardado financiero; sin migraciones. La precisión con la foto real no se infiere de pruebas con documentos sintéticos y respuestas interceptadas.

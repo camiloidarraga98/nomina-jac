@@ -4,6 +4,8 @@ Camilo reportó seis recortes de ocho recibos en una foto girada y ocho recortes
 
 Mostrar los recortes numerados sobre la foto completa. Conteo diferente, superposición o bordes inciertos requieren revisión antes de leer/guardar. «Separar por filas y columnas» ofrece recuperación manual; marcar el área conjunta y ajustar cada recorte, sin borrar lo ya guardado. El rectángulo de arrastre debe coincidir con el tamaño visible de la imagen, también en vertical. No afirmar que pruebas con coordenadas/proveedor simulados acreditan precisión del modelo sobre la foto real. Pruebas y publicación en `docs/CRM_RECONCILIATION.md`.
 
+Publicado17:15Colombia, fuente `c9914a1`, revisión `receipt-bounds-6`:56pruebas focales,61comprobaciones Chromium, TypeScript y build correctos. Código activo idéntico por API, configuración conservada; visita real/precisión con la foto del usuario pendientes.
+
 ## Comprobantes conjuntos, portapapeles y verificación de fechas ·10 noviembre2026
 
 Camilo pidió pegar soportes con ⌘V/botón, corregir una fecha mal transcrita y separar varios recibos contenidos en una misma fotografía. «Leer comprobante → Varios en una imagen» detecta hasta20recortes, permite ajustar/agregar/quitar, lee cada recibo y deja elegir un movimiento pendiente diferente por recibo. Show/fecha del show y empresario se completan una vez; las fechas bancarias individuales se conservan. Guardar identifica únicamente los seleccionados y permite completar el resto. No sumar los recibos en una nueva consignación ni modificar ingresos/saldos/Calendar/nómina. Mantener la revisión visual: un OCR, incluso con dos lecturas coincidentes, puede equivocarse.
