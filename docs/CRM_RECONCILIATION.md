@@ -47,6 +47,8 @@ Publicada a las 14:57 Colombia: fuente `b40944a`, versión `bb3f427f-3c05-4b0d-8
 
 ## Seguimiento del401 tras revisar permisos ·10/11/2026
 
+**Resultado posterior confirmado:** Camilo confirmó el10/11/2026 que el comprobante ya se lee y mostró la ficha encontrada automáticamente por valor y fecha en producción. Queda confirmada una lectura real exitosa y la coincidencia; el soporte de esa ficha sigue pendiente de Guardar, por lo que la captura no acredita aún su persistencia. No publicar el comprobante ni sus datos. La causa específica del401 anterior no se determinó: esta entrega corrigió su clasificación, sin cambiar la clave ni los permisos OpenAI desde aquí.
+
 Camilo volvió a obtener `OCR_CLAVE · HTTP401`. La clasificación anterior convertía cualquier401 en «clave», incluso si `error.code` era nulo y la razón estaba en un mensaje de permisos o en `error.type`. El envío ya usa el secreto del Worker como Bearer al endpoint fijo de Responses, con redirecciones rechazadas; no se encontró un cambio de destino ni de credencial en el lector.
 
 Se reconoce ahora exclusivamente el prefijo fijo de permisos del proveedor y los permisos conocidos de solicitud de modelos y escritura de Responses, sin reflejar ese mensaje ni scopes arbitrarios. `OCR_PERMISO_MODELO` / `OCR_PERMISO_RESPONSES` identifican permisos explícitos; `OCR_IP` reconoce `ip_not_authorized` en código o tipo; `OCR_CLAVE` requiere `invalid_api_key`; un401 desconocido muestra `OCR_AUTENTICACION` sin afirmar que la clave sea inválida. Ambos permisos se mencionan si OpenAI declara ambos ausentes. Se conservan el límite de64KiB, logs con categoría/estado, respuesta502 de JAC, archivo local, búsqueda manual y ausencia de reintentos automáticos.
