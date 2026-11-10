@@ -38,22 +38,39 @@ async function boundedProviderJSON(response:Response){
 }
 
 async function providerFailure(response:Response){
- // Read only bounded JSON and classify by known error codes. Never reflect or log
- // provider messages/parameters: they may contain keys, account IDs or receipt text.
- let code='',type='';
+ // Some authentication errors have no code. Recognize only the fixed permission
+ // prefix and known scopes, never reflect/log provider text, parameters or scopes.
+ let code='',type='',missingPermission=false,missingModelRequest=false,missingResponsesWrite=false;
  try{
   const body=await boundedProviderJSON(response);
   code=typeof body?.error?.code==='string'?body.error.code:'';
   type=typeof body?.error?.type==='string'?body.error.type:'';
+  if((response.status===401||response.status===403)&&typeof body?.error?.message==='string'){
+   const match=body.error.message.match(/^You have insufficient permissions for this operation\.\s*Missing scopes:\s*([^\r\n]+)/i);
+   missingPermission=Boolean(match);
+   const scopes=new Set<string>(match?match[1].split(/[\s,]+/).map((scope:string)=>scope.replace(/[.;]+$/,'')):[]);
+   missingModelRequest=scopes.has('api.model.request')||scopes.has('model.request');
+   missingResponsesWrite=scopes.has('api.responses.write')||scopes.has('responses.write');
+  }
  }catch{/* A non-JSON gateway error still has a useful HTTP status. */}
  const status=response.status;
  let reason='SERVICIO',message='OpenAI rechazó la lectura del comprobante. Puedes buscar por valor y fecha manualmente.';
  if(code==='insufficient_quota'||type==='insufficient_quota'||code==='billing_hard_limit_reached'){
   reason='CUOTA';message='La cuenta de OpenAI no tiene saldo o alcanzó su límite de uso. Revisa la facturación del proyecto conectado.';
- }else if(status===403||code==='insufficient_permissions'||code==='permission_denied'||code==='missing_scope'){
+ }else if(code==='ip_not_authorized'||type==='ip_not_authorized'){
+  reason='IP';message='OpenAI bloqueó la dirección IP del servidor por la política de acceso de la organización. Revisa la lista de IP permitidas en OpenAI.';
+ }else if(code==='invalid_api_key'||type==='invalid_api_key'){
+  reason='CLAVE';message='OpenAI indicó que la clave guardada en el servidor no es válida. Revisa el secreto OPENAI_API_KEY del Worker de JAC; cambiar permisos no corrige una clave inválida.';
+ }else if(missingModelRequest){
+  reason='PERMISO_MODELO';message=missingResponsesWrite
+   ?'OpenAI indicó que faltan Model capabilities → Request y Responses → Write. Revisa ambos permisos en la clave y en el rol de su propietario dentro del proyecto.'
+   :'OpenAI indicó que falta Model capabilities → Request. Revisa ese permiso tanto en la clave como en el rol de su propietario dentro del proyecto.';
+ }else if(missingResponsesWrite){
+  reason='PERMISO_RESPONSES';message='OpenAI indicó que falta Responses → Write. Revisa ese permiso dentro de Model capabilities en la clave y en el rol de su propietario dentro del proyecto.';
+ }else if(missingPermission||status===403||code==='insufficient_permissions'||code==='permission_denied'||code==='missing_scope'||type==='insufficient_permissions'){
   reason='PERMISOS';message='La conexión de OpenAI no tiene permiso para leer comprobantes. Revisa el permiso de escritura de Responses y el acceso al modelo en el proyecto conectado.';
- }else if(status===401||code==='invalid_api_key'){
-  reason='CLAVE';message='OpenAI no aceptó la clave configurada en JAC. Revisa que la clave esté activa y tenga permiso de escritura de Responses.';
+ }else if(status===401){
+  reason='AUTENTICACION';message='OpenAI rechazó la autenticación del servidor sin indicar una causa reconocida. Revisa que JAC use la clave del proyecto correcto y que su propietario conserve acceso. Este aviso no confirma que la clave sea inválida.';
  }else if(status===404||code==='model_not_found'){
   reason='MODELO';message='El modelo de lectura no está disponible para el proyecto de OpenAI conectado. Revisa su acceso al modelo.';
  }else if(status===429){

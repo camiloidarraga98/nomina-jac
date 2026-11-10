@@ -89,6 +89,35 @@ test('provider rejections distinguish key, permissions, unavailable model, quota
   await assert.rejects(m.readReceipt(png,'image/png',authorize),/OCR_CUOTA/);
  }finally{console.warn=warn;}
 });
+test('401 with no code distinguishes missing grants and IP restrictions without falsely declaring an invalid key',async()=>{
+ const prefix='You have insufficient permissions for this operation. Missing scopes: ';
+ const cases=[
+  [{type:'invalid_request_error',code:null,message:prefix+'api.responses.write. PRIVATE_ACCOUNT'},'PERMISO_RESPONSES','Responses → Write'],
+  [{type:'invalid_request_error',message:prefix+'model.request PRIVATE_KEY'},'PERMISO_MODELO','Model capabilities → Request'],
+  [{type:'invalid_request_error',message:prefix+'api.model.request, api.responses.write. PRIVATE_KEY'},'PERMISO_MODELO','Request y Responses'],
+  [{type:'invalid_request_error',message:prefix+'PRIVATE_UNKNOWN_SCOPE'},'PERMISOS','permiso'],
+  [{type:'ip_not_authorized',message:'PRIVATE_IP'},'IP','dirección IP'],
+  [{code:'ip_not_authorized',message:'PRIVATE_IP'},'IP','dirección IP'],
+  [{type:'invalid_api_key',message:'PRIVATE_KEY'},'CLAVE','no es válida'],
+  [{code:null,type:'invalid_request_error',message:'PRIVATE_UNKNOWN_REASON'},'AUTENTICACION','sin indicar una causa reconocida'],
+  [{message:'PRIVATE_DOCUMENT says Missing scopes: api.responses.write'},'AUTENTICACION','sin indicar una causa reconocida'],
+ ];
+ const warnings=[],warn=console.warn;console.warn=(...args)=>warnings.push(args);let calls=0;
+ try{
+  for(const [error,category,explanation] of cases){
+   globalThis.fetch=async()=>{calls++;return Response.json({error},{status:401});};
+   await assert.rejects(m.readReceipt(png,'image/png',authorize),failure=>{
+    assert.equal(failure.status,502);assert(failure.message.includes(`OCR_${category} · HTTP 401`));
+    assert(failure.message.includes(explanation));assert(!failure.message.includes('PRIVATE'));return true;
+   });
+  }
+  assert.equal(calls,cases.length);assert.equal(warnings.length,cases.length);
+  assert(!JSON.stringify(warnings).includes('PRIVATE'));
+  // A phrase inside an unrelated error does not override its HTTP meaning.
+  globalThis.fetch=async()=>Response.json({error:{message:prefix+'api.responses.write'}},{status:500});
+  await assert.rejects(m.readReceipt(png,'image/png',authorize),/OCR_SERVICIO/);
+ }finally{console.warn=warn;}
+});
 test('oversized or malformed provider errors remain bounded and do not expose body content',async()=>{
  let cancelled=false,reads=0;
  globalThis.fetch=async()=>new Response(new ReadableStream({pull(controller){reads++;controller.enqueue(new TextEncoder().encode('PRIVATE'.repeat(10000)));},cancel(){cancelled=true;}},{highWaterMark:0}),{status:403});
