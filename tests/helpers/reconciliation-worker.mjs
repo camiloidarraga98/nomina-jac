@@ -3,7 +3,7 @@ import {Miniflare} from 'miniflare';
 import {readFile,readdir} from 'node:fs/promises';
 
 // Only an isolated runtime uses this entry. No fixture routes enter the product.
-export async function reconciliationFixture(){
+export async function reconciliationFixture({readReceipt}={}){
  const compiled=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
   import {env} from 'cloudflare:workers';
   import * as api from './app/api/reconciliation/[...path]/route';
@@ -23,7 +23,7 @@ export async function reconciliationFixture(){
   }};
  `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*'],plugins:[{name:'fixture-context',setup(b){b.onResolve({filter:/^next\/headers$/},()=>({path:'headers',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const headers=async()=>globalThis.fixtureHeaders;',loader:'js'}));}}]});
  let outgoing=0;
- const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:compiled.outputFiles[0].text,d1Databases:{DB:'reconciliation-isolated'},r2Buckets:{BUCKET:'reconciliation-isolated'},bindings:{PAYROLL_AUTH_KEY:'reconciliation-fixture-not-a-production-secret'},outboundService:()=>{outgoing++;throw Error('External network forbidden in tests.');}});
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:compiled.outputFiles[0].text,d1Databases:{DB:'reconciliation-isolated'},r2Buckets:{BUCKET:'reconciliation-isolated'},bindings:{PAYROLL_AUTH_KEY:'reconciliation-fixture-not-a-production-secret',...(readReceipt?{OPENAI_API_KEY:'synthetic-ocr-fixture-key'}:{})},outboundService:request=>{outgoing++;if(readReceipt&&request.url==='https://api.openai.com/v1/responses')return readReceipt(request);throw Error('External network forbidden in tests.');}});
  try{
   const db=await mf.getD1Database('DB');
   for(const f of(await readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort())for(const sql of(await readFile('drizzle/'+f,'utf8')).split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(sql).run();

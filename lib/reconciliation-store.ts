@@ -5,6 +5,8 @@ import {guardActive} from './crm-store';
 import type {CrmGuard} from './crm-access';
 import type {AccessUser} from './payroll-permissions';
 import {payrollHeaders} from './payroll-access';
+import {matchReceiptPayments,receiptLookupSchema} from './reconciliation-receipt';
+import {readReceipt,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
 
 const stamp=()=>new Date().toISOString();
 const id=()=>crypto.randomUUID();
@@ -41,6 +43,21 @@ async function body(req:Request){
  return value as Record<string,unknown>;
 }
 
+async function receiptUpload(req:Request,max=20*1024*1024){
+ if(!req.headers.get('content-type')?.startsWith('multipart/form-data'))fail('Selecciona un archivo.',415);
+ const raw=await bounded(req,max+1024*1024);let form:FormData;
+ try{form=await new Request(req.url,{method:'POST',headers:{'Content-Type':req.headers.get('content-type')!},body:raw as BodyInit}).formData();}catch{fail('No se pudo leer el soporte.');}
+ const upload=form.get('file');if(!upload||typeof upload==='string')fail('Selecciona un archivo.');
+ if(upload.size===0||upload.size>max)fail(`El comprobante debe tener contenido y pesar máximo ${max/1024/1024} MB.`,413);
+ const bytes=new Uint8Array(await upload.arrayBuffer());let type='';
+ if(bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)type='image/jpeg';
+ else if(bytes[0]===0x89&&String.fromCharCode(...bytes.slice(1,4))==='PNG')type='image/png';
+ else if(new TextDecoder().decode(bytes.slice(0,5))==='%PDF-')type='application/pdf';
+ else if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')type='image/webp';
+ if(!type)fail('Adjunta una imagen JPG, PNG, WebP o un PDF.');
+ return {form,upload,bytes,type,hash:await digest(bytes)};
+}
+
 export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGuard){
  const db=database();
  // The current JAC cookie session and CRM permission are checked both in SQL
@@ -65,6 +82,11 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
   const manual=result[0].results as {id:string;data:string}[];
   return [...crm.map(r=>({id:r.id,name:r.title,date:r.show_date,city:r.municipality,entrepreneur:r.entrepreneur,source:'crm' as const})),...manual.map(r=>({id:r.id,...JSON.parse(r.data),source:'reconciliation' as const}))].sort((a,b)=>a.date.localeCompare(b.date)||a.name.localeCompare(b.name,'es'));
  }
+ async function receiptCandidates(criteria:{amount:number|null;date:string|null},autoEligible=false){
+  const rows=(await prepared(`SELECT * FROM jac_reconciliation_payments WHERE ${g.sql}`).all<PaymentRow>()).results;
+  await authorize();
+  return matchReceiptPayments(rows.map(row=>{const p=unpack(row);return {id:p.id,version:p.version,date:p.date,amount:p.amount,status:p.status,entrepreneur:p.entrepreneur,showId:p.showId};}),criteria,autoEligible);
+ }
  function showGate(showId:string){return showId?`(EXISTS(SELECT 1 FROM jac_reconciliation_shows WHERE id=?) OR EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND source_state NOT IN ('deleted','deleting')))`:'1';}
  const showArgs=(showId:string)=>showId?[showId,showId]:[];
  function audit(paymentId:string,action:string,data:unknown,changedOnly=false){
@@ -84,6 +106,24 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  }
  await authorize();
  const path=new URL(req.url).pathname.slice('/api/reconciliation'.length),method=req.method;
+ if(path==='/scan'&&method==='POST'){
+  const release=reserveReceiptReader(user.id);
+  try{
+   const {bytes,type,hash}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);await authorize();
+   const duplicate=await prepared(`SELECT * FROM jac_reconciliation_attachments WHERE hash=? AND state='ready' AND ${g.sql}`,[hash]).first<FileRow>();
+   await authorize();
+   if(duplicate){await payment(duplicate.payment_id);return json({existingPaymentId:duplicate.payment_id,reading:null,matches:[],total:0,autoMatchId:null});}
+   const reading=await readReceipt(bytes,type,authorize,req.signal);await authorize();
+   const result=reading.amount!==null||reading.date!==null?await receiptCandidates({amount:reading.amount,date:reading.date},reading.autoEligible):{matches:[],total:0,autoMatchId:null};
+   await authorize();return json({reading,...result});
+  }finally{release();}
+ }
+ if(path==='/scan/matches'&&method==='POST'){
+  const input=receiptLookupSchema.safeParse(await body(req));
+  if(!input.success)fail('Indica un valor positivo con máximo dos decimales y/o una fecha válida.');
+  // Correcting OCR fields only searches. It cannot attach, mark identified or alter originals.
+  const result=await receiptCandidates(input.data);await authorize();return json(result);
+ }
  if(path==='/state'&&method==='GET'){
   await cleanup();
   const out=await db.batch([
@@ -176,28 +216,20 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  match=path.match(/^\/payments\/([^/]+)\/files$/);
  if(match&&method==='POST'){
   const paymentId=match[1];await payment(paymentId);
-  if(!req.headers.get('content-type')?.startsWith('multipart/form-data'))fail('Selecciona un archivo.',415);
-  const raw=await bounded(req,21*1024*1024);let form:FormData;
-  try{form=await new Request(req.url,{method:'POST',headers:{'Content-Type':req.headers.get('content-type')!},body:raw as BodyInit}).formData();}catch{fail('No se pudo leer el soporte.');}
-  const upload=form.get('file');if(!upload||typeof upload==='string')fail('Selecciona un archivo.');
-  if(upload.size===0||upload.size>20*1024*1024)fail('El soporte debe tener contenido y pesar máximo 20 MB.',413);
-  const bytes=new Uint8Array(await upload.arrayBuffer());let type='';
-  if(bytes[0]===0xff&&bytes[1]===0xd8&&bytes[2]===0xff)type='image/jpeg';
-  else if(bytes[0]===0x89&&String.fromCharCode(...bytes.slice(1,4))==='PNG')type='image/png';
-  else if(new TextDecoder().decode(bytes.slice(0,5))==='%PDF-')type='application/pdf';
-  else if(new TextDecoder().decode(bytes.slice(0,4))==='RIFF'&&new TextDecoder().decode(bytes.slice(8,12))==='WEBP')type='image/webp';
-  if(!type)fail('Adjunta una imagen JPG, PNG, WebP o un PDF.');
-  const hash=await digest(bytes);await authorize();
+  const {form,upload,bytes,type,hash}=await receiptUpload(req);await authorize();
+  const rawVersion=form.get('paymentVersion'),version=rawVersion===null?null:Number(rawVersion);
+  if(version!==null&&(!Number.isSafeInteger(version)||version<1||(await payment(paymentId)).version!==version))fail('Este abono cambió. Revisa su ficha antes de adjuntar el comprobante.',409);
+  const versionGate=version===null?'':' AND version=?',versionArgs=version===null?[]:[version];
   const findDuplicate=()=>prepared(`SELECT * FROM jac_reconciliation_attachments WHERE hash=? AND state='ready' AND ${g.sql}`,[hash]).first<FileRow>();
   const duplicate=await findDuplicate();await authorize();
   if(duplicate){if(duplicate.payment_id===paymentId)return json(fileInfo(duplicate));fail('Este comprobante ya está adjunto a otro abono. Revisa la relación antes de repetirlo.',409);}
   const fileId=id(),key='crm/reconciliation/'+paymentId+'/'+fileId,time=stamp(),name=text(upload.name||'comprobante',240).replace(/[\x00-\x1f/\\]/g,'_');
   try{
-   const reservation=await prepared(`INSERT INTO jac_reconciliation_attachments (id,payment_id,object_key,hash,name,type,size,state,created_by,created_at) SELECT ?,?,?,?,?,?,?,'uploading',?,? WHERE EXISTS(SELECT 1 FROM jac_reconciliation_payments WHERE id=?) AND ${g.sql}`,[fileId,paymentId,key,hash,name,type,bytes.length,user.id,time,paymentId]).run();
+   const reservation=await prepared(`INSERT INTO jac_reconciliation_attachments (id,payment_id,object_key,hash,name,type,size,state,created_by,created_at) SELECT ?,?,?,?,?,?,?,'uploading',?,? WHERE EXISTS(SELECT 1 FROM jac_reconciliation_payments WHERE id=?${versionGate}) AND ${g.sql}`,[fileId,paymentId,key,hash,name,type,bytes.length,user.id,time,paymentId,...versionArgs]).run();
    await authorize();if(!reservation.meta.changes)fail('No se pudo preparar el soporte. Vuelve a intentar.',409);
    await authorize();await env.BUCKET.put(key,bytes,{httpMetadata:{contentType:type}});await authorize();await payment(paymentId);
    const results=await db.batch([
-    prepared(`UPDATE jac_reconciliation_attachments SET state='ready' WHERE id=? AND state='uploading' AND EXISTS(SELECT 1 FROM jac_reconciliation_payments WHERE id=?) AND ${g.sql}`,[fileId,paymentId]),
+    prepared(`UPDATE jac_reconciliation_attachments SET state='ready' WHERE id=? AND state='uploading' AND EXISTS(SELECT 1 FROM jac_reconciliation_payments WHERE id=?${versionGate}) AND ${g.sql}`,[fileId,paymentId,...versionArgs]),
     audit(paymentId,'attach',{id:fileId,name,hash},true)
    ]);
    if(!results[0].meta.changes){await authorize();fail('El abono cambió. El soporte no se guardó.',409);}

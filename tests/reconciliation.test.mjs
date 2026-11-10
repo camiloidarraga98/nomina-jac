@@ -92,6 +92,54 @@ async function upload(account, id, label = crypto.randomUUID()) { const response
 const revoke = account => sql.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').run(account.id);
 const expire = account => sql.prepare('UPDATE payroll_sessions SET expires_at=? WHERE id=?').run(new Date(Date.now() - 1).toISOString(), apiModule.tokenHash(account.token));
 
+const receiptPNG=Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64'));
+function receiptForm(){const form=new FormData();form.set('file',new File([receiptPNG],'comprobante-ficticio.png',{type:'image/png'}));return form;}
+const receiptReading={document:'single_payment',amountText:'$ 33.555.123,45',dateText:'10/11/2026',currency:'COP',transactionStatus:'completed',legible:true};
+const receiptResponse=()=>Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(receiptReading)}]}]});
+
+test('OCR locates an existing payment without storing the receipt, identifying it or changing accounting data',async()=>{
+ resetHooks();const account=await actor(),{payments:[p]}=await seed(account,[row(901,{amount:33555123.45,description:'ORIGINAL-ONLY-NOT-FOR-PROVIDER'})]);
+ const originalPayments=sql.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all(),originalObjects=objects.size,originalAudit=sql.prepare('SELECT count(*) n FROM jac_reconciliation_audit').get().n;
+ globalThis.__reconciliationTestEnv.OPENAI_API_KEY='synthetic-provider-credential';const savedFetch=globalThis.fetch;let calls=0;
+ try{
+  globalThis.fetch=async(url,options)=>{calls++;assert.equal(url,'https://api.openai.com/v1/responses');assert.equal(options.redirect,'manual');assert(!options.body.includes('ORIGINAL-ONLY-NOT-FOR-PROVIDER'));return receiptResponse();};
+  const response=await request(account,'/scan',{method:'POST',data:receiptForm()});assert.equal(response.status,200,await response.clone().text());assert.match(response.headers.get('cache-control'),/no-store/);
+  const result=await response.json();assert.equal(result.autoMatchId,p.id);assert.equal(result.reading.amount,33555123.45);assert.equal(result.matches[0].version,p.version);
+  assert.equal(objects.size,originalObjects);assert.deepEqual(sql.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all(),originalPayments);assert.equal(sql.prepare('SELECT count(*) n FROM jac_reconciliation_audit').get().n,originalAudit);
+  const manual=await request(account,'/scan/matches',{method:'POST',data:{amount:33555123.45,date:null}});assert.equal(manual.status,200);assert.equal((await manual.json()).autoMatchId,null);assert.equal(calls,1);
+  for(const data of [{amount:null,date:null},{amount:33555123.45,date:'2026-11-10',autoEligible:true},{amount:0,date:'2026-11-10'},{amount:33555123.45,date:'2026-02-30'}])assert.equal((await request(account,'/scan/matches',{method:'POST',data})).status,400);
+ }finally{globalThis.fetch=savedFetch;}
+});
+
+test('OCR requires the CRM session and same-origin request; permission revocation prevents returning the reading',async()=>{
+ resetHooks();const account=await actor(),viewer=await actor({administrator:false,sections:['calendar']}),savedFetch=globalThis.fetch;let calls=0;
+ try{
+  globalThis.fetch=async()=>{calls++;return receiptResponse();};
+  for(const who of [null,viewer])for(const [path,data]of [['/scan',receiptForm()],['/scan/matches',{amount:33555123.45,date:null}]])assert.ok([401,403].includes((await request(who,path,{method:'POST',data})).status));
+  for(const headers of [{origin:''},{origin:'https://foreign.example.invalid'},{'sec-fetch-site':'cross-site'}])assert.equal((await request(account,'/scan',{method:'POST',data:receiptForm(),headers})).status,403);
+  assert.equal(calls,0);
+  globalThis.fetch=async()=>{calls++;revoke(account);return receiptResponse();};
+  const response=await request(account,'/scan',{method:'POST',data:receiptForm()});assert.equal(response.status,403);assert(!JSON.stringify(await response.json()).includes('33.555.123'));assert.equal(calls,1);
+ }finally{globalThis.fetch=savedFetch;}
+});
+
+test('OCR reports an already attached receipt without paying for another reading or creating a second attachment',async()=>{
+ resetHooks();const account=await actor(),{payments:[p]}=await seed(account,[row(902,{amount:33777123.45})]);
+ const label='already-saved-for-ocr-'+crypto.randomUUID(),saved=await upload(account,p.id,label),count=objects.size,savedFetch=globalThis.fetch;
+ try{
+  globalThis.fetch=async()=>{throw Error('Duplicate must not reach provider');};
+  const response=await request(account,'/scan',{method:'POST',data:uploadForm(label)});assert.equal(response.status,200,await response.clone().text());const result=await response.json();assert.equal(result.existingPaymentId,p.id);assert.equal(result.reading,null);assert.equal(objects.size,count);assert.equal((await state(account)).payments.find(x=>x.id===p.id).attachments[0].id,saved.id);
+ }finally{globalThis.fetch=savedFetch;}
+});
+
+test('a receipt selected from OCR cannot attach over a stale or concurrently changed payment version',async()=>{
+ resetHooks();const account=await actor(),{payments:[p]}=await seed(account,[row(903,{amount:33999123.45})]);
+ const stale=uploadForm();stale.set('paymentVersion','2');assert.equal((await request(account,'/payments/'+p.id+'/files',{method:'POST',data:stale})).status,409);
+ const form=uploadForm();form.set('paymentVersion',String(p.version));const count=objects.size;
+ beforePut=()=>{sql.prepare('UPDATE jac_reconciliation_payments SET version=version+1 WHERE id=?').run(p.id);};
+ const response=await request(account,'/payments/'+p.id+'/files',{method:'POST',data:form});assert.equal(response.status,409);assert.equal(objects.size,count);assert.equal(sql.prepare("SELECT count(*) n FROM jac_reconciliation_attachments WHERE payment_id=? AND state='ready'").get(p.id).n,0);resetHooks();
+});
+
 test('only a current JAC CRM administrator can read or mutate; Sites headers cannot authenticate', async () => {
   resetHooks();
   const admin = await actor(), viewer = await actor({ administrator: false, sections: ['calendar'] }), media = await actor({ mediaOnly: true });

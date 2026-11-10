@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import {PDFDocument} from 'pdf-lib';
 import {reconciliationFixture,syntheticImport} from './helpers/reconciliation-worker.mjs';
 
 test('Workerd/D1/R2: 296 synthetic rows, CRM session, original data, save/retry, private supports and no financial side effects',async()=>{
@@ -29,5 +30,26 @@ test('Workerd/D1/R2: 296 synthetic rows, CRM session, original data, save/retry,
   assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_crm_payments').first()).n,0);
   assert.equal((await f.db.prepare('SELECT count(*) n FROM payroll_periods').first()).n,0);
   assert.equal(f.outgoing(),0);
+ }finally{await f.close();}
+});
+
+test('Workerd reads a synthetic receipt through an intercepted provider, matches existing cents/date and saves support only on request',async()=>{
+ let providerCalls=0;
+ const f=await reconciliationFixture({readReceipt:async req=>{
+  providerCalls++;const input=await req.json();assert.equal(input.store,false);assert.equal(input.text.format.strict,true);const document=input.input[0].content[1];if(document.type==='input_file')assert.match(document.file_data,/^data:application\/pdf;base64,/);else assert.match(document.image_url,/^data:image\/png;base64,/);
+  return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({document:'single_payment',amountText:'$ 1.250.000,25',dateText:'01/11/2026',currency:'COP',transactionStatus:'completed',legible:true})}]}]});
+ }});
+ try{
+  assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(3)})).status,200);
+  const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64');
+  const form=()=>{const form=new FormData();form.set('file',new File([png],'fixture.png',{type:'image/png'}));return form;};
+  const response=await f.request('/api/reconciliation/scan',{method:'POST',data:form()});assert.equal(response.status,200,await response.clone().text());const result=await response.json();assert.ok(result.autoMatchId);
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
+  assert.equal(result.matches[0].amount,1250000.25);assert.equal(result.matches[0].date,'2026-11-01');
+  const upload=form();upload.set('paymentVersion','1');assert.equal((await f.request('/api/reconciliation/payments/'+result.autoMatchId+'/files',{method:'POST',data:upload})).status,201);
+  const repeated=await(await f.request('/api/reconciliation/scan',{method:'POST',data:form()})).json();assert.equal(repeated.existingPaymentId,result.autoMatchId);assert.equal(providerCalls,1);
+  const pdf=await PDFDocument.create();pdf.addPage().drawText('SYNTHETIC PAYMENT RECEIPT');const pdfForm=new FormData();pdfForm.set('file',new File([await pdf.save()],'fixture.pdf',{type:'application/pdf'}));const pdfRead=await f.request('/api/reconciliation/scan',{method:'POST',data:pdfForm});assert.equal(pdfRead.status,200,await pdfRead.clone().text());assert.equal((await pdfRead.json()).autoMatchId,result.autoMatchId);assert.equal(providerCalls,2);
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_crm_payments').first()).n,0);assert.equal((await f.db.prepare('SELECT count(*) n FROM payroll_periods').first()).n,0);
+  const row=await f.db.prepare('SELECT annotation,version FROM jac_reconciliation_payments WHERE id=?').bind(result.autoMatchId).first();assert.equal(JSON.parse(row.annotation).status,'pending');assert.equal(row.version,1);
  }finally{await f.close();}
 });

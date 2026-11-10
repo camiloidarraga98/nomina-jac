@@ -11,6 +11,7 @@
   const namount = value => window.FileTools?.normalizeAmount(value) ?? null;
   const state = {payments:[],shows:[],imports:[],view:'payments',filter:'all',dateOrder:'asc',query:'',amount:'',from:'',to:'',showId:'',page:1,loaded:false,error:'',selected:null,overlay:null,busy:false,dirty:false};
   let importData = null;
+  let receiptScan = null;
   let stateRead = 0, accessEpoch = 0;
   const attachmentList = p => p.attachments || [];
   const ready = p => p.status==='identified' && attachmentList(p).length>0;
@@ -20,7 +21,7 @@
   const statusLabel = p => ready(p) ? 'Listo para contabilidad' : p.status==='identified' ? 'Identificado' : p.status==='review' ? 'En revisión' : 'Pendiente';
   const statusClass = p => ready(p)?'ready':p.status==='identified'?'identified':p.status==='review'?'review':'pending';
   const badge = p => `<span class="badge badge-${statusClass(p)}">${statusLabel(p)}</span>`;
-  function clearPrivateState(status){++accessEpoch;++stateRead;state.payments=[];state.shows=[];state.imports=[];state.loaded=false;state.error=status===401?'Tu sesión ha vencido. Ingresa de nuevo en JAC.':'Tu cuenta ya no tiene acceso a la conciliación del CRM.';state.dirty=false;closeOverlay(true);render();}
+  function clearPrivateState(status){++accessEpoch;++stateRead;state.payments=[];state.shows=[];state.imports=[];state.loaded=false;state.error=status===401?'Tu sesión ha vencido. Ingresa de nuevo en JAC.':'Tu cuenta ya no tiene acceso a la conciliación del CRM.';state.dirty=false;state.busy=false;closeOverlay(true);render();}
   window.addEventListener('jac-reconciliation-access-denied',event=>clearPrivateState(event.detail?.status||403));
   function notifyParent(){if(window.parent!==window)window.parent.postMessage({type:'jac-reconciliation-state',dirty:state.dirty,busy:state.busy},location.origin);}
   for(const key of ['dirty','busy']){let value=state[key];Object.defineProperty(state,key,{get:()=>value,set:next=>{value=next;notifyParent();},enumerable:true});}
@@ -72,14 +73,14 @@
     }));
   }
   const sum = rows => rows.reduce((a,p)=>a+Math.round(Number(p.amount||0)*100),0)/100;
-  function workflow(){return `<div class="workflow-strip"><div class="workflow-step"><span class="step-no">1</span><div><strong>Busca el comprobante en WhatsApp</strong><p>Consulta el chat del empresario y ubica el valor y la fecha del abono.</p></div></div><div class="workflow-step"><span class="step-no">2</span><div><strong>Relaciona y adjunta</strong><p>Asigna el show, confirma el empresario y guarda el soporte del pago.</p></div></div><div class="workflow-step"><span class="step-no">3</span><div><strong>Entrega a contabilidad</strong><p>Descarga la relación con los comprobantes organizados por abono.</p></div></div></div>`;}
+  function workflow(){return `<div class="workflow-strip"><div class="workflow-step"><span class="step-no">1</span><div><strong>Lee el comprobante de WhatsApp</strong><p>Sube una imagen o PDF para buscar el abono por valor y fecha.</p></div></div><div class="workflow-step"><span class="step-no">2</span><div><strong>Relaciona y adjunta</strong><p>Asigna el show, confirma el empresario y guarda el soporte del pago.</p></div></div><div class="workflow-step"><span class="step-no">3</span><div><strong>Entrega a contabilidad</strong><p>Descarga la relación con los comprobantes organizados por abono.</p></div></div></div>`;}
   function render(){
     $$('.nav-button').forEach(el=>el.classList.toggle('active',el.dataset.view===state.view));$('#nav-count').textContent=state.payments.length;
     if(!state.loaded && !state.error)return;
     const error=state.error?`<div class="error-banner" role="alert">${esc(state.error)} <button class="link-button" data-action="retry">Volver a intentar</button>${state.error.includes('sesión')?'<a href="/acceso?returnTo=%2Fcrm%3Fseccion%3Dconciliacion" target="_top">Ingresar</a>':''}</div>`:'';
     if(state.view==='shows'){renderShows(error);return;}
     const pending=state.payments.filter(p=>p.status!=='identified'),identified=state.payments.filter(p=>p.status==='identified'),complete=state.payments.filter(ready),percent=state.payments.length?Math.round(identified.length/state.payments.length*100):0;
-    $('#main').innerHTML=`${error}<div class="page-head"><div><div class="eyebrow">EL ORDEN DETRÁS DE CADA SHOW</div><h1>Conciliación de abonos</h1><p class="page-sub">Relaciona las consignaciones de contabilidad con los shows y comprobantes.</p></div><div class="head-actions"><button class="btn" data-action="export" ${!state.payments.length?'disabled':''}><span class="btn-icon">↓</span>Exportar contabilidad</button><button class="btn btn-primary" data-action="import"><span class="btn-icon">+</span>Importar archivo</button></div></div>
+    $('#main').innerHTML=`${error}<div class="page-head"><div><div class="eyebrow">EL ORDEN DETRÁS DE CADA SHOW</div><h1>Conciliación de abonos</h1><p class="page-sub">Relaciona las consignaciones de contabilidad con los shows y comprobantes.</p></div><div class="head-actions"><button class="btn btn-primary" data-action="scan-receipt" ${!state.payments.length?'disabled':''}><span class="btn-icon">⌕</span>Leer comprobante</button><button class="btn" data-action="export" ${!state.payments.length?'disabled':''}><span class="btn-icon">↓</span>Exportar contabilidad</button><button class="btn" data-action="import"><span class="btn-icon">+</span>Importar archivo</button></div></div>
       <div class="stat-grid"><div class="stat-card"><div class="stat-top">Total de abonos<span class="stat-symbol">↙</span></div><div class="stat-value">${money(sum(state.payments))}</div><div class="stat-bottom">${state.payments.length} consignaciones importadas</div></div><div class="stat-card"><div class="stat-top">Por identificar<span class="stat-symbol">◷</span></div><div class="stat-value">${money(sum(pending))}</div><div class="stat-bottom">${pending.length} abonos pendientes o en revisión</div></div><div class="stat-card"><div class="stat-top">Identificados<span class="stat-symbol">✓</span></div><div class="stat-value">${money(sum(identified))}</div><div class="stat-bottom">${identified.length} abonos relacionados con un show</div></div><div class="stat-card highlight"><div class="stat-top">Listos para contabilidad<span class="stat-symbol">▤</span></div><div class="stat-value">${complete.length}<span style="font-size:13px;font-weight:500;color:#60734b"> / ${state.payments.length}</span></div><div class="stat-bottom">Identificados y con comprobante</div><div class="progress-track"><div class="progress-fill" style="width:${state.payments.length?complete.length/state.payments.length*100:0}%"></div></div></div></div>
       ${state.showId?`<div class="show-focus"><span>Abonos del show: <strong>${esc(state.shows.find(s=>s.id===state.showId)?.name||'Show')}</strong></span><button class="link-button" data-action="clear-show">Ver todos los abonos ×</button></div>`:''}
       <section class="table-card" aria-label="Listado de abonos"><div class="section-top"><div><h2>Tu relación de consignaciones</h2><p>${state.payments.length?`${percent}% de los abonos identificados. Continúa donde quedaste.`:'Tu archivo de contabilidad es el punto de partida.'}</p></div><span class="pill-muted">COP · Pesos colombianos</span></div>
@@ -98,7 +99,81 @@
     $('#main').innerHTML=`${error}<div class="page-head"><div><div class="eyebrow">CADA FECHA TIENE SU HISTORIA</div><h1>Shows y sus abonos</h1><p class="page-sub">Reúne todas las consignaciones de un mismo negocio.</p></div><button class="btn btn-primary" data-action="new-show"><span class="btn-icon">+</span>Agregar referencia</button></div>${state.shows.length?`<div class="show-grid">${[...state.shows].sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(s=>{const payments=state.payments.filter(p=>p.showId===s.id);return `<article class="show-card" tabindex="0" data-action="show-payments" data-id="${esc(s.id)}"><div class="show-date">${s.source==='crm'?'CRM · ':'Histórico · '}${esc(date(s.date))}${s.city?` · ${esc(s.city)}`:''}</div><h3>${esc(s.name)}</h3><p>${esc(s.entrepreneur||'Empresario por definir')}</p><div class="show-bottom"><div><small>Total de abonos relacionados</small><div class="show-total">${money(sum(payments))}</div></div><small>${payments.length} abonos ↗</small></div></article>`;}).join('')}</div>`:`<section class="table-card"><div class="empty-state"><div class="empty-icon">▦</div><h3>Un lugar para cada show</h3><p>Crea la fecha con el nombre del empresario. Después podrás relacionar todos los abonos de ese negocio.</p><button class="btn btn-primary" data-action="new-show">Agregar referencia histórica</button></div></section>`}<div class="notice" style="margin-top:22px">La fecha del show es diferente a la fecha bancaria del abono. El total corresponde únicamente a los pagos relacionados; no representa el valor del contrato ni su saldo.</div>`;
   }
   function openOverlay(html,type){state.overlay=type;$('#overlay-root').innerHTML=html;document.body.style.overflow='hidden';requestAnimationFrame(()=>$('#overlay-root .icon-close')?.focus());}
-  function closeOverlay(force=false){if(state.busy&&!force)return;if(state.dirty&&!force&&!confirm('Tienes cambios sin guardar. ¿Quieres cerrar sin guardarlos?'))return;state.selected=null;state.overlay=null;state.dirty=false;$('#overlay-root').innerHTML='';document.body.style.overflow='';}
+  function closeOverlay(force=false){if(state.busy&&!force)return;if(state.dirty&&!force&&!confirm('Tienes cambios sin guardar. ¿Quieres cerrar sin guardarlos?'))return;discardReceipt();state.selected=null;state.overlay=null;state.dirty=false;$('#overlay-root').innerHTML='';document.body.style.overflow='';}
+
+  function discardReceipt(){const scan=receiptScan;receiptScan=null;scan?.controller?.abort();if(scan?.url)URL.revokeObjectURL(scan.url);}
+  function receiptPreview(scan){
+    if(!scan?.url)return '';
+    return scan.file.type==='application/pdf'?`<div class="receipt-pdf"><span aria-hidden="true">▤</span><strong>Comprobante PDF</strong><a class="btn" href="${esc(scan.url)}" target="_blank" rel="noopener">Consultar PDF</a></div>`:`<a href="${esc(scan.url)}" target="_blank" rel="noopener" aria-label="Ver comprobante completo"><img class="receipt-image" src="${esc(scan.url)}" alt="Comprobante seleccionado para lectura"></a>`;
+  }
+  function renderReceipt(){
+    const scan=receiptScan,loading=!!scan?.loading;
+    const reading=scan?.result?.reading;
+    openOverlay(`<div class="overlay modal-overlay"><section class="modal receipt-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">Leer comprobante</h2><p>Sube el soporte para encontrar su abono por valor y fecha.</p></div><button class="icon-close" data-action="${loading?'cancel-scan':'close'}" aria-label="${loading?'Cancelar lectura':'Cerrar lectura'}">×</button></div><div class="modal-body"><input id="scan-file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden>
+      ${!scan?`<button class="drop-zone receipt-upload" data-action="choose-scan"><strong>↑ Seleccionar comprobante</strong><p>Imagen o PDF de WhatsApp · Hasta 10 MB y 5 páginas.<br>También puedes arrastrar el archivo o pegar una imagen aquí.</p></button><p class="small-note">JAC usa OpenAI para leer el valor y la fecha. El soporte se guarda de forma privada al guardar la ficha.</p>`:`<div class="receipt-layout"><div class="receipt-original">${receiptPreview(scan)}<p class="small-note">${esc(scan.file.name)}</p>${!loading?'<button class="link-button" data-action="choose-scan">Elegir otro comprobante</button>':''}</div><div class="receipt-details">${loading?'<div class="loading-state" role="status"><span class="spinner"></span>Leyendo valor y fecha…</div><button class="btn" data-action="cancel-scan">Cancelar lectura</button>':`
+        <div id="receipt-error" role="alert">${scan.error?`<div class="error-banner">${esc(scan.error)}</div>`:''}</div>
+        ${reading?.warnings?.length?`<div class="notice warning">${reading.warnings.map(esc).join('<br>')}</div>`:''}
+        <form id="receipt-search" class="receipt-search"><div class="form-grid"><div class="form-field"><label for="scan-amount">Valor leído (COP)</label><input class="input" id="scan-amount" inputmode="decimal" autocomplete="off" value="${esc(scan.amount)}" placeholder="Escribe el valor">${reading?.amountText?`<small>En el comprobante: ${esc(reading.amountText)}</small>`:''}</div><div class="form-field"><label for="scan-date">Fecha leída</label><input class="input" id="scan-date" type="date" value="${esc(scan.date)}">${reading?.dateText?`<small>En el comprobante: ${esc(reading.dateText)}</small>`:''}</div></div><button type="submit" class="btn" ${state.busy?'disabled':''}>${state.busy?'Buscando…':'Buscar coincidencias'}</button><small>Corrige los datos si hace falta. Puedes buscar solo por valor o por fecha.</small></form>
+        <div id="receipt-candidates" aria-live="polite">${receiptCandidatesMarkup(scan)}</div>`}</div></div>`}
+      </div></section></div>`,'receipt');
+    const zone=$('.receipt-upload');
+    if(zone){zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('dragover');});zone.addEventListener('dragleave',()=>zone.classList.remove('dragover'));zone.addEventListener('drop',e=>{e.preventDefault();if(e.dataTransfer.files.length!==1)return toast('Selecciona un comprobante a la vez.',true);readReceiptFile(e.dataTransfer.files[0]);});}
+  }
+  function receiptCandidatesMarkup(scan){
+    if(!scan?.result||!scan.matchesCurrent)return '<p class="secondary">Busca el movimiento con los datos del comprobante.</p>';
+    const matches=scan.result.matches||[];
+    if(!matches.length)return '<div class="notice">No hay abonos con estos datos. Revisa el valor y la fecha, o borra uno de los campos para ampliar la búsqueda.</div>';
+    return `<h3 class="receipt-match-title">${scan.result.total} coincidencia${scan.result.total===1?'':'s'} · Elige el abono</h3>${matches.map(p=>`<button class="receipt-match" data-action="select-scan-payment" data-id="${esc(p.id)}"><span><strong>${money(p.amount)}</strong><span>${esc(date(p.date))} · ${p.kind==='exact'?'Coinciden valor y fecha':p.kind==='amount'?'Mismo valor · revisa la fecha':'Misma fecha · revisa el valor'}</span><small>${esc(state.shows.find(s=>s.id===p.showId)?.name||'Sin show asignado')} · ${esc(p.entrepreneur||'Empresario por identificar')}</small>${p.status==='identified'?'<small>Ya identificado · revisa antes de añadir otro soporte</small>':''}</span><span class="receipt-use">Usar este abono →</span></button>`).join('')}${scan.result.total>matches.length?'<p class="secondary">Se muestran las primeras 100 coincidencias. Añade el valor para acotar la búsqueda.</p>':''}`;
+  }
+  async function readReceiptFile(file){
+    if(!file||state.busy)return;
+    if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)||!file.size||file.size>10*1024*1024)return toast('Usa un JPG, PNG, WebP o PDF de hasta 10 MB.',true);
+    discardReceipt();
+    const scan=receiptScan={file,url:URL.createObjectURL(file),controller:new AbortController(),loading:true,error:'',amount:'',date:'',result:null,matchesCurrent:false,paymentId:null,attached:false,draft:null};
+    state.busy=true;state.dirty=true;renderReceipt();
+    try{
+      const body=new FormData();body.append('file',file);
+      const result=await api('/api/reconciliation/scan',{method:'POST',body,signal:scan.controller.signal});
+      if(receiptScan!==scan)return;
+      scan.result=result;scan.amount=result.reading?.amount==null?'':new Intl.NumberFormat('es-CO',{maximumFractionDigits:2}).format(result.reading.amount);scan.date=result.reading?.date||'';scan.matchesCurrent=true;scan.loading=false;
+      if(result.existingPaymentId){
+        await reload();if(receiptScan!==scan)return;
+        const p=state.payments.find(p=>p.id===result.existingPaymentId);if(!p)throw new Error('El abono del comprobante ya no está disponible.');
+        discardReceipt();renderEditor(p);toast('Este comprobante ya está guardado en este abono.');return;
+      }
+      if(result.autoMatchId){await selectReceiptPayment(result.autoMatchId,true);return;}
+    }catch(error){if(receiptScan===scan){scan.loading=false;scan.error=error.message;}}
+    finally{if(receiptScan===scan){state.busy=false;if(state.overlay==='receipt')renderReceipt();}else if(!receiptScan)state.busy=false;}
+  }
+  async function searchReceiptMatches(){
+    const scan=receiptScan;if(!scan||state.busy)return;
+    const amount=scan.amount.trim()?namount(scan.amount):null,date=scan.date||null;
+    if((scan.amount.trim()&&(!Number.isFinite(amount)||amount<=0))||(!amount&&!date)){scan.error='Escribe un valor positivo y/o una fecha.';renderReceipt();return;}
+    state.busy=true;scan.error='';renderReceipt();
+    try{const result=await api('/api/reconciliation/scan/matches',{method:'POST',body:JSON.stringify({amount,date}),signal:scan.controller.signal});if(receiptScan!==scan)return;scan.result={...scan.result,...result};scan.matchesCurrent=true;}
+    catch(error){if(receiptScan===scan)scan.error=error.message;}
+    finally{if(receiptScan===scan){state.busy=false;renderReceipt();}}
+  }
+  async function selectReceiptPayment(id,automatic=false){
+    const scan=receiptScan;if(!scan||(!automatic&&state.busy)||!scan.matchesCurrent)return;
+    const candidate=scan.result.matches.find(p=>p.id===id);if(!candidate)return;
+    state.busy=true;
+    try{
+      await reload();if(receiptScan!==scan)return;
+      const p=state.payments.find(p=>p.id===id);if(!p)throw new Error('El abono ya no está disponible. Busca de nuevo.');
+      if(p.version!==candidate.version){scan.error='Este abono cambió durante la lectura. Busca de nuevo para revisar su estado actual.';scan.matchesCurrent=false;renderReceipt();return;}
+      scan.paymentId=p.id;scan.automatic=automatic;renderEditor(p);
+      if(scan.draft?.id===p.id){for(const [key,value]of Object.entries(scan.draft.values)){const el=$(`[name="${key}"]`,$('#payment-form'));if(el&&key!=='version')el.value=value;}}
+      state.dirty=true;
+    }catch(error){if(receiptScan===scan){scan.error=error.message;renderReceipt();}}
+    finally{if(receiptScan===scan){state.busy=false;if(state.overlay==='receipt')renderReceipt();}}
+  }
+  function renderReceiptPending(p){
+    $('#receipt-pending')?.remove();const scan=receiptScan;if(!scan||scan.paymentId!==p.id)return;
+    const div=document.createElement('div');div.id='receipt-pending';div.className='receipt-pending';
+    div.innerHTML=`<div class="receipt-pending-preview">${receiptPreview(scan)}</div><div><strong>${scan.attached?'Comprobante guardado':scan.automatic?'Encontramos este abono por valor y fecha':'Comprobante listo para relacionar'}</strong><p>${scan.attached?'Completa los datos y guarda la identificación.':'Completa el show y el empresario. El comprobante se adjuntará a este abono al guardar.'}</p>${!scan.attached?'<button type="button" class="link-button" data-action="review-scan">Revisar coincidencias / cambiar abono</button>':''}</div>`;
+    $('#editor-status').after(div);if(!scan.attached)state.dirty=true;
+  }
   function editorStatus(p){const docs=[p.thirdParty,p.receipt,p.invoice].filter(originalValueKnown).length;return `${badge(p)} <span class="support-label" style="margin-left:7px">${docs===3?'Tercero, recibo y factura en origen':docs?'Datos contables parciales':'Sin datos contables en origen'}</span>`;}
   function renderEditor(p){
     state.selected=p.id;state.dirty=false;
@@ -110,7 +185,7 @@
       <div class="form-section"><div class="form-field"><label for="p-notes">Observaciones</label><textarea id="p-notes" name="notes" placeholder="Detalles del negocio, diferencias o datos por confirmar…" maxlength="5000">${esc(p.notes)}</textarea></div></div></form>
       <details class="original-data"><summary>Ver datos originales de contabilidad · ${esc(p.sheet||'Hoja')} / fila ${esc(p.sourceRow||'—')}</summary><div class="source-grid">${[['Fecha bancaria',date(p.date)],['Valor',money(p.amount)],['Tercero',p.thirdParty],['Recibo de caja',p.receipt],['Factura',p.invoice],['Referencia',p.reference],['Descripción',p.description],['Archivo de origen',p.importName]].map(([k,v])=>`<div class="source-item"><label>${esc(k)}</label><div>${esc(v===null||v===undefined||v===''?'—':v)}</div></div>`).join('')}${Object.entries(p.original||{}).map(([k,v])=>`<div class="source-item"><label>${esc(k)}</label><div>${esc(v===null||v===undefined||v===''?'—':v)}</div></div>`).join('')}</div></details>
       <p class="secondary" style="white-space:normal;max-width:none;margin-top:15px">«Identificado» confirma el show y el empresario. «Listo para contabilidad» requiere además un comprobante adjunto. Revisa el contenido del soporte antes de entregarlo.</p></div><div class="drawer-footer"><button class="btn" data-action="save-payment">Guardar cambios</button><button class="btn btn-primary" data-action="identify-payment">✓ Guardar e identificar</button></div></section></div>`,'editor');
-    renderAttachments(p);setupDropZone();
+    renderAttachments(p);setupDropZone();renderReceiptPending(p);
   }
   function renderAttachments(p){const el=$('#attachments');if(!el)return;el.innerHTML=attachmentList(p).map(f=>{const url=f.url||`/api/reconciliation/files/${encodeURIComponent(f.id)}`;return `<div class="attachment">${String(f.type||f.mimeType||'').startsWith('image/')?`<img class="attachment-thumb" src="${esc(url)}" alt="Miniatura del comprobante">`:'<span class="attachment-thumb">PDF</span>'}<div class="attachment-info"><a href="${esc(url)}" target="_blank" rel="noopener">${esc(f.name)}</a><small>${Math.round((f.size||0)/1024)} KB · Guardado</small></div><button type="button" class="btn btn-quiet btn-small" data-action="preview-file" data-id="${esc(f.id)}">Ver</button><button type="button" class="remove-attachment" data-action="delete-file" data-id="${esc(f.id)}" aria-label="Eliminar ${esc(f.name)}">×</button></div>`;}).join('');}
   function setupDropZone(){const zone=$('#drop-zone');if(!zone)return;zone.addEventListener('dragover',e=>{e.preventDefault();zone.classList.add('dragover');});zone.addEventListener('dragleave',()=>zone.classList.remove('dragover'));zone.addEventListener('drop',e=>{e.preventDefault();zone.classList.remove('dragover');uploadFiles([...e.dataTransfer.files]);});}
@@ -124,7 +199,16 @@
     if(state.busy)return;const form=$('#payment-form'),data=Object.fromEntries(new FormData(form));data.version=Number(data.version);if(identify)data.status='identified';
     if(data.status==='identified'&&(!data.showId||!data.entrepreneur.trim())){$('#editor-error').innerHTML='<div class="error-banner">Selecciona un show y escribe el nombre del empresario para identificar este abono.</div>';$('#p-show').focus();return;}
     state.busy=true;$$('.drawer-footer button').forEach(b=>b.disabled=true);
-    try{await api(`/api/reconciliation/payments/${encodeURIComponent(state.selected)}`,{method:'PATCH',body:JSON.stringify(data)});state.dirty=false;await reload();toast(identify?'Abono identificado. Los cambios quedaron guardados.':'Cambios guardados.');}
+    try{
+      const scan=receiptScan;
+      if(scan&&scan.paymentId===state.selected&&!scan.attached){
+        const body=new FormData();body.append('file',scan.file);body.append('paymentVersion',String(data.version));
+        await api(`/api/reconciliation/payments/${encodeURIComponent(state.selected)}/files`,{method:'POST',body});
+        if(receiptScan!==scan)throw new Error('Tu acceso cambió. Vuelve a abrir la ficha.');
+        scan.attached=true;await reload({keepDraft:true});renderReceiptPending(state.payments.find(p=>p.id===state.selected));
+      }
+      await api(`/api/reconciliation/payments/${encodeURIComponent(state.selected)}`,{method:'PATCH',body:JSON.stringify(data)});discardReceipt();state.dirty=false;await reload();toast(identify?'Abono identificado. Los cambios quedaron guardados.':'Cambios guardados.');
+    }
     catch(error){if($('#editor-error')){$('#editor-error').innerHTML=`<div class="error-banner">${esc(error.message)}</div>`;$('.drawer-body').scrollTop=0;}else toast(error.message,true);}
     finally{state.busy=false;$$('.drawer-footer button').forEach(b=>b.disabled=false);}
   }
@@ -169,6 +253,11 @@
   document.addEventListener('click',event=>{
     const target=event.target.closest('[data-action]');if(!target||target.disabled)return;const action=target.dataset.action;
     if(action==='nav'){state.view=target.dataset.view;render();}
+    else if(action==='scan-receipt'){if(!state.busy){discardReceipt();state.selected=null;state.dirty=false;renderReceipt();}}
+    else if(action==='choose-scan'){if(!state.busy)$('#scan-file')?.click();}
+    else if(action==='cancel-scan'){state.busy=false;state.dirty=false;closeOverlay(true);}
+    else if(action==='select-scan-payment')selectReceiptPayment(target.dataset.id);
+    else if(action==='review-scan'){if(receiptScan&&!state.busy){receiptScan.draft={id:state.selected,values:Object.fromEntries(new FormData($('#payment-form')))};state.selected=null;renderReceipt();}}
     else if(action==='import')$('#import-file').click();
     else if(action==='filter'){state.filter=target.dataset.filter;state.page=1;render();}
     else if(action==='page'){state.page+=Number(target.dataset.offset);renderTable();}
@@ -191,11 +280,11 @@
     else if(action==='close-preview')$('#file-preview')?.remove();
     else if(action==='retry')reload().catch(()=>{});
   });
-  document.addEventListener('input',event=>{const el=event.target;if(el.closest('#payment-form'))state.dirty=true;const keys={'search':'query','amount-filter':'amount','date-from':'from','date-to':'to'};if(keys[el.id]){state[keys[el.id]]=el.value;state.page=1;renderTable();}});
-  document.addEventListener('change',event=>{const el=event.target;if(el.id==='date-order'){state.dateOrder=el.value==='asc'?'asc':'desc';state.page=1;renderTable();}if(el.id==='import-file')loadImport(el.files[0]);if(el.id==='support-files')uploadFiles([...el.files]);if(el.id==='p-show'){const show=state.shows.find(s=>s.id===el.value);if(show?.entrepreneur&&!$('#p-entrepreneur').value)$('#p-entrepreneur').value=show.entrepreneur;state.dirty=true;}if(el.id==='import-sheet'){importData.sheet=Number(el.value);importData.skipInvalid=false;guessHeader();renderImport();}if(el.id==='import-header'){const value=Number(el.value);if(!Number.isInteger(value)||value<1||value>importData.sheets[importData.sheet].rows.length){toast('Selecciona un número de fila válido.',true);return;}importData.header=value-1;importData.skipInvalid=false;guessMapping();renderImport();}if(el.dataset.map){importData.mapping[el.dataset.map]=el.value;importData.skipInvalid=false;renderImportPreview();}if(el.id==='skip-invalid'){importData.skipInvalid=el.checked;renderImportPreview();}});
-  document.addEventListener('submit',event=>{if(event.target.id==='show-form'){event.preventDefault();saveShow(event.target);}if(event.target.id==='payment-form'){event.preventDefault();savePayment(false);}});
-  document.addEventListener('paste',event=>{if(state.overlay!=='editor')return;const files=[...(event.clipboardData?.items||[])].filter(x=>x.kind==='file'&&x.type.startsWith('image/')).map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();uploadFiles(files);}});
-  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.overlay){if(state.overlay==='show')returnToEditor();else closeOverlay();}if(event.key==='Enter'&&event.target.matches('[data-action="edit"],[data-action="show-payments"],#drop-zone')){event.preventDefault();event.target.click();}if(event.key==='Tab'&&state.overlay){const items=$$('button:not([disabled]),input:not([hidden]):not([disabled]),select:not([disabled]),textarea,a[href],[tabindex="0"]',$('#overlay-root')).filter(el=>el.offsetParent!==null);const first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){last?.focus();event.preventDefault();}else if(!event.shiftKey&&document.activeElement===last){first?.focus();event.preventDefault();}}});
+  document.addEventListener('input',event=>{const el=event.target;if(el.closest('#payment-form'))state.dirty=true;if(receiptScan&&['scan-amount','scan-date'].includes(el.id)){receiptScan[el.id==='scan-amount'?'amount':'date']=el.value;receiptScan.matchesCurrent=false;const candidates=$('#receipt-candidates');if(candidates)candidates.innerHTML='<p class="secondary">Pulsa Buscar coincidencias para aplicar los datos corregidos.</p>';}const keys={'search':'query','amount-filter':'amount','date-from':'from','date-to':'to'};if(keys[el.id]){state[keys[el.id]]=el.value;state.page=1;renderTable();}});
+  document.addEventListener('change',event=>{const el=event.target;if(el.id==='scan-file')readReceiptFile(el.files[0]);if(el.id==='date-order'){state.dateOrder=el.value==='asc'?'asc':'desc';state.page=1;renderTable();}if(el.id==='import-file')loadImport(el.files[0]);if(el.id==='support-files')uploadFiles([...el.files]);if(el.id==='p-show'){const show=state.shows.find(s=>s.id===el.value);if(show?.entrepreneur&&!$('#p-entrepreneur').value)$('#p-entrepreneur').value=show.entrepreneur;state.dirty=true;}if(el.id==='import-sheet'){importData.sheet=Number(el.value);importData.skipInvalid=false;guessHeader();renderImport();}if(el.id==='import-header'){const value=Number(el.value);if(!Number.isInteger(value)||value<1||value>importData.sheets[importData.sheet].rows.length){toast('Selecciona un número de fila válido.',true);return;}importData.header=value-1;importData.skipInvalid=false;guessMapping();renderImport();}if(el.dataset.map){importData.mapping[el.dataset.map]=el.value;importData.skipInvalid=false;renderImportPreview();}if(el.id==='skip-invalid'){importData.skipInvalid=el.checked;renderImportPreview();}});
+  document.addEventListener('submit',event=>{if(event.target.id==='receipt-search'){event.preventDefault();searchReceiptMatches();}if(event.target.id==='show-form'){event.preventDefault();saveShow(event.target);}if(event.target.id==='payment-form'){event.preventDefault();savePayment(false);}});
+  document.addEventListener('paste',event=>{if(!['editor','receipt'].includes(state.overlay))return;const files=[...(event.clipboardData?.items||[])].filter(x=>x.kind==='file'&&x.type.startsWith('image/')).map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();if(state.overlay==='receipt'){if(files.length!==1)return toast('Pega un comprobante a la vez.',true);readReceiptFile(files[0]);}else uploadFiles(files);}});
+  document.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.overlay){if(state.overlay==='receipt'&&receiptScan?.loading){state.busy=false;state.dirty=false;closeOverlay(true);}else if(state.overlay==='show')returnToEditor();else closeOverlay();}if(event.key==='Enter'&&event.target.matches('[data-action="edit"],[data-action="show-payments"],#drop-zone')){event.preventDefault();event.target.click();}if(event.key==='Tab'&&state.overlay){const items=$$('button:not([disabled]),input:not([hidden]):not([disabled]),select:not([disabled]),textarea,a[href],[tabindex="0"]',$('#overlay-root')).filter(el=>el.offsetParent!==null);const first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){last?.focus();event.preventDefault();}else if(!event.shiftKey&&document.activeElement===last){first?.focus();event.preventDefault();}}});
   if(window.parent===window)window.addEventListener('beforeunload',event=>{if(state.dirty||state.busy){event.preventDefault();event.returnValue='';}});
   window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===window.parent&&event.data?.type==='jac-reconciliation-discard'){state.dirty=false;notifyParent();}});
   const revalidate=()=>{if(!state.busy&&document.visibilityState==='visible')reload({keepDraft:state.dirty}).catch(()=>{});};
