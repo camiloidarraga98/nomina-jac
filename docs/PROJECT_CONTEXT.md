@@ -1,6 +1,8 @@
 ## Comprobantes conjuntos y pegado ·10 noviembre2026
 
-Se preparó la lectura de varios recibos de una foto para asociarlos individualmente a movimientos pendientes y a un mismo show/empresario. Incluye revisión de recortes, datos bancarios editables, guardado parcial/idempotente con soportes privados PDF y original adjunto. Portapapeles por botón/⌘V y segunda lectura independiente para retirar fechas/importes contradictorios. No requiere migración ni cambios de claves/modelo/datos reales. Ver alcance, pruebas y publicación en [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+Publicado el10/11/2026 a las16:51Colombia: fuente funcional `8c004dc`, Worker `77bd5cb1-f1cd-4e07-9831-3470b6c25523`, deployment `e8bc9046-6a9b-448e-adb4-2e4201200c82`, activo al100%. Código remoto idéntico al build comprobado (SHA-256 `fb0710f90acfdc2814a6a7b849891d8e6ec101b75ce3c99f7fa407120bff8cb8`), revisión de recursos `receipt-batch-5`;14bindings,2crons y DB/BUCKET conservados. Se cargaron los recursos nuevos y la versión activa se verificó por API. Sin migraciones, cambios de secretos/modelo ni escrituras contables. Wrangler mostró el error auxiliar conocido de subdomain/memberships después de activar; no se repitió el despliegue.
+
+Se publicó la lectura de varios recibos de una foto para asociarlos individualmente a movimientos pendientes y a un mismo show/empresario. Incluye revisión de recortes, datos bancarios editables, guardado parcial/idempotente con soportes privados PDF y original adjunto. Portapapeles por botón/⌘V y segunda lectura independiente para retirar fechas/importes contradictorios. No requiere migración ni cambios de claves/modelo/datos reales. Ver alcance, pruebas y publicación en [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
 
 ## Diagnóstico del rechazo OCR · 10 noviembre 2026
 
