@@ -12,6 +12,8 @@
   const state = {payments:[],shows:[],imports:[],view:'payments',filter:'all',dateOrder:'asc',query:'',amount:'',from:'',to:'',showId:'',page:1,loaded:false,error:'',selected:null,overlay:null,busy:false,dirty:false};
   let importData = null;
   let receiptScan = null;
+  let receiptBatch = null, receiptMode = 'single';
+  let clipboardRead = 0, clipboardBusy = false;
   let stateRead = 0, accessEpoch = 0;
   const attachmentList = p => p.attachments || [];
   const ready = p => p.status==='identified' && attachmentList(p).length>0;
@@ -39,7 +41,7 @@
     const read = ++stateRead;
     let timeout;
     try {
-      if(!window.FileTools || !window.JSZip)throw new Error('No se cargaron todos los componentes de la herramienta. Vuelve a abrir la versión corregida.');
+      if(!window.FileTools || !window.JSZip || !window.JacReceiptBatch)throw new Error('No se cargaron todos los componentes de la herramienta. Vuelve a abrir la versión corregida.');
       const data=await Promise.race([
         api('/api/reconciliation/state'),
         new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('La carga está tardando demasiado. Vuelve a intentar; tus datos guardados se conservan.')),20000);})
@@ -98,10 +100,45 @@
   function renderShows(error=''){
     $('#main').innerHTML=`${error}<div class="page-head"><div><div class="eyebrow">CADA FECHA TIENE SU HISTORIA</div><h1>Shows y sus abonos</h1><p class="page-sub">Reúne todas las consignaciones de un mismo negocio.</p></div><button class="btn btn-primary" data-action="new-show"><span class="btn-icon">+</span>Agregar referencia</button></div>${state.shows.length?`<div class="show-grid">${[...state.shows].sort((a,b)=>String(b.date).localeCompare(String(a.date))).map(s=>{const payments=state.payments.filter(p=>p.showId===s.id);return `<article class="show-card" tabindex="0" data-action="show-payments" data-id="${esc(s.id)}"><div class="show-date">${s.source==='crm'?'CRM · ':'Histórico · '}${esc(date(s.date))}${s.city?` · ${esc(s.city)}`:''}</div><h3>${esc(s.name)}</h3><p>${esc(s.entrepreneur||'Empresario por definir')}</p><div class="show-bottom"><div><small>Total de abonos relacionados</small><div class="show-total">${money(sum(payments))}</div></div><small>${payments.length} abonos ↗</small></div></article>`;}).join('')}</div>`:`<section class="table-card"><div class="empty-state"><div class="empty-icon">▦</div><h3>Un lugar para cada show</h3><p>Crea la fecha con el nombre del empresario. Después podrás relacionar todos los abonos de ese negocio.</p><button class="btn btn-primary" data-action="new-show">Agregar referencia histórica</button></div></section>`}<div class="notice" style="margin-top:22px">La fecha del show es diferente a la fecha bancaria del abono. El total corresponde únicamente a los pagos relacionados; no representa el valor del contrato ni su saldo.</div>`;
   }
-  function openOverlay(html,type){state.overlay=type;$('#overlay-root').innerHTML=html;document.body.style.overflow='hidden';requestAnimationFrame(()=>$('#overlay-root .icon-close')?.focus());}
+  function openOverlay(html,type){state.overlay=type;$('#overlay-root').innerHTML=html;document.body.style.overflow='hidden';requestAnimationFrame(()=>$(type==='receipt'&&!receiptScan?'#receipt-paste-button':'#overlay-root .icon-close')?.focus());}
   function closeOverlay(force=false){if(state.busy&&!force)return;if(state.dirty&&!force&&!confirm('Tienes cambios sin guardar. ¿Quieres cerrar sin guardarlos?'))return;discardReceipt();state.selected=null;state.overlay=null;state.dirty=false;$('#overlay-root').innerHTML='';document.body.style.overflow='';}
 
-  function discardReceipt(){const scan=receiptScan;receiptScan=null;scan?.controller?.abort();if(scan?.url)URL.revokeObjectURL(scan.url);}
+  function discardReceipt(){++clipboardRead;clipboardBusy=false;const scan=receiptScan;receiptScan=null;scan?.controller?.abort();if(scan?.url)URL.revokeObjectURL(scan.url);const batch=receiptBatch;receiptBatch=null;batch?.dispose();}
+  function startReceiptBatch(file){
+    if(!['image/jpeg','image/png','image/webp'].includes(file.type))return toast('Para varios comprobantes juntos, elige una imagen JPG, PNG o WebP.',true);
+    if(file.size>10*1024*1024)return toast('La imagen supera el máximo de 10 MB.',true);
+    if(receiptBatch&&state.dirty&&!confirm('Hay comprobantes sin guardar. ¿Quieres sustituir la imagen del grupo?'))return;
+    discardReceipt();receiptMode='batch';
+    const batch=new window.JacReceiptBatch({esc,money,date,amount:namount,api,
+      open:html=>{if(receiptBatch===batch)openOverlay(html,'receipt');},
+      busy:value=>{if(receiptBatch===batch)state.busy=value;},dirty:value=>{if(receiptBatch===batch)state.dirty=value;},isDirty:()=>state.dirty,
+      shows:()=>state.shows,reload:()=>reload(),close:()=>{if(receiptBatch===batch){state.busy=false;state.dirty=false;closeOverlay(true);}}
+    });receiptBatch=batch;batch.start(file);
+  }
+  function receiptClipboard(){return `<div class="receipt-clipboard"><button type="button" class="btn" id="receipt-paste-button" data-action="paste-scan" aria-describedby="receipt-paste-hint">Pegar del portapapeles</button><p id="receipt-paste-hint" class="small-note">Copia la imagen del comprobante y pulsa <kbd>⌘ V</kbd> en Mac o <kbd>Ctrl V</kbd> en Windows.</p><p id="receipt-paste-message" class="small-note" role="status"></p><textarea id="receipt-paste-target" class="input" rows="2" hidden aria-label="Pegar imagen del comprobante" placeholder="Pega aquí con ⌘V, Ctrl+V o el menú Pegar" autocomplete="off"></textarea></div>`;}
+  function receiptPasteHelp(message){
+    const note=$('#receipt-paste-message'),target=$('#receipt-paste-target');
+    if(note)note.textContent=message;
+    if(target){target.hidden=false;target.value='';target.focus();}
+  }
+  async function pasteReceipt(){
+    if(state.overlay!=='receipt'||state.busy||clipboardBusy)return;
+    if(!navigator.clipboard?.read){receiptPasteHelp('Haz clic en el campo de abajo y usa ⌘V, Ctrl+V o el menú Pegar para pegar la imagen.');return;}
+    const dialog=$('.receipt-modal'),epoch=accessEpoch,attempt=++clipboardRead,button=$('#receipt-paste-button');
+    const current=()=>attempt===clipboardRead&&epoch===accessEpoch&&state.overlay==='receipt'&&dialog===$('.receipt-modal')&&!state.busy;
+    clipboardBusy=true;if(button){button.disabled=true;button.textContent='Leyendo portapapeles…';}
+    try{
+      // Read only after this explicit click, never on opening or focusing the page.
+      const items=await navigator.clipboard.read();if(!current())return;
+      const formats=['application/pdf','image/png','image/jpeg','image/webp'];
+      const documents=items.map(item=>({item,type:formats.find(type=>item.types.includes(type))})).filter(item=>item.type);
+      if(documents.length!==1){receiptPasteHelp(documents.length?'Pega un solo comprobante a la vez.':'No hay una imagen o PDF compatible. Copia la imagen del comprobante; si tienes un enlace o un PDF, también puedes seleccionar el archivo.');return;}
+      const {item,type}=documents[0],blob=await item.getType(type);if(!current())return;
+      const extension={'application/pdf':'pdf','image/png':'png','image/jpeg':'jpg','image/webp':'webp'}[type];
+      readReceiptFile(new File([blob],`comprobante-pegado.${extension}`,{type}));
+    }catch{if(current())receiptPasteHelp('El navegador no permitió leer el portapapeles con el botón. Pega la imagen en el campo de abajo con ⌘V, Ctrl+V o el menú Pegar.');}
+    finally{if(attempt===clipboardRead){clipboardBusy=false;if(button?.isConnected){button.disabled=false;button.textContent='Pegar del portapapeles';}}}
+  }
   function receiptPreview(scan){
     if(!scan?.url)return '';
     return scan.file.type==='application/pdf'?`<div class="receipt-pdf"><span aria-hidden="true">▤</span><strong>Comprobante PDF</strong><a class="btn" href="${esc(scan.url)}" target="_blank" rel="noopener">Consultar PDF</a></div>`:`<a href="${esc(scan.url)}" target="_blank" rel="noopener" aria-label="Ver comprobante completo"><img class="receipt-image" src="${esc(scan.url)}" alt="Comprobante seleccionado para lectura"></a>`;
@@ -110,10 +147,11 @@
     const scan=receiptScan,loading=!!scan?.loading;
     const reading=scan?.result?.reading;
     openOverlay(`<div class="overlay modal-overlay"><section class="modal receipt-modal" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">Leer comprobante</h2><p>Sube el soporte para encontrar su abono por valor y fecha.</p></div><button class="icon-close" data-action="${loading?'cancel-scan':'close'}" aria-label="${loading?'Cancelar lectura':'Cerrar lectura'}">×</button></div><div class="modal-body"><input id="scan-file" type="file" accept="image/jpeg,image/png,image/webp,application/pdf" hidden>
-      ${!scan?`<button class="drop-zone receipt-upload" data-action="choose-scan"><strong>↑ Seleccionar comprobante</strong><p>Imagen o PDF de WhatsApp · Hasta 10 MB y 5 páginas.<br>También puedes arrastrar el archivo o pegar una imagen aquí.</p></button><p class="small-note">JAC usa OpenAI para leer el valor y la fecha. El soporte se guarda de forma privada al guardar la ficha.</p>`:`<div class="receipt-layout"><div class="receipt-original">${receiptPreview(scan)}<p class="small-note">${esc(scan.file.name)}</p>${!loading?'<button class="link-button" data-action="choose-scan">Elegir otro comprobante</button>':''}</div><div class="receipt-details">${loading?'<div class="loading-state" role="status"><span class="spinner"></span>Leyendo valor y fecha…</div><button class="btn" data-action="cancel-scan">Cancelar lectura</button>':`
+      ${!scan?`<div class="receipt-mode" role="group" aria-label="Tipo de imagen"><button class="btn ${receiptMode==='single'?'btn-primary':''}" data-action="receipt-mode" data-mode="single" aria-pressed="${receiptMode==='single'}">Un comprobante</button><button class="btn ${receiptMode==='batch'?'btn-primary':''}" data-action="receipt-mode" data-mode="batch" aria-pressed="${receiptMode==='batch'}">Varios en una imagen</button></div><button class="drop-zone receipt-upload" data-action="choose-scan"><strong>↑ ${receiptMode==='batch'?'Seleccionar imagen con varios recibos':'Seleccionar comprobante'}</strong><p>O arrastra ${receiptMode==='batch'?'la imagen':'una imagen o PDF'} aquí.<br>${receiptMode==='batch'?'Hasta 20 comprobantes en una imagen de 10 MB.':'Hasta 10 MB y 5 páginas.'}</p></button>${receiptClipboard()}<p class="small-note">JAC usa OpenAI para leer los comprobantes que elijas. Los soportes se guardan de forma privada al confirmar su asignación.</p>`:`<div class="receipt-layout"><div class="receipt-original">${receiptPreview(scan)}<p class="small-note">${esc(scan.file.name)}</p>${!loading?`<button class="link-button" data-action="choose-scan">Elegir otro comprobante</button>${receiptClipboard()}`:''}</div><div class="receipt-details">${loading?'<div class="loading-state" role="status"><span class="spinner"></span>Leyendo y comprobando valor y fecha…</div><button class="btn" data-action="cancel-scan">Cancelar lectura</button>':`
         <div id="receipt-error" role="alert">${scan.error?`<div class="error-banner">${esc(scan.error)}</div>`:''}</div>
         ${reading?.warnings?.length?`<div class="notice warning">${reading.warnings.map(esc).join('<br>')}</div>`:''}
-        <form id="receipt-search" class="receipt-search"><div class="form-grid"><div class="form-field"><label for="scan-amount">Valor leído (COP)</label><input class="input" id="scan-amount" inputmode="decimal" autocomplete="off" value="${esc(scan.amount)}" placeholder="Escribe el valor">${reading?.amountText?`<small>En el comprobante: ${esc(reading.amountText)}</small>`:''}</div><div class="form-field"><label for="scan-date">Fecha leída</label><input class="input" id="scan-date" type="date" value="${esc(scan.date)}">${reading?.dateText?`<small>En el comprobante: ${esc(reading.dateText)}</small>`:''}</div></div><button type="submit" class="btn" ${state.busy?'disabled':''}>${state.busy?'Buscando…':'Buscar coincidencias'}</button><small>Corrige los datos si hace falta. Puedes buscar solo por valor o por fecha.</small></form>
+        ${reading?.document==='multiple_payments'&&scan.file.type!=='application/pdf'?'<button class="btn btn-primary" data-action="split-scan">Separar los comprobantes de esta imagen</button>':''}
+        <form id="receipt-search" class="receipt-search"><div class="form-grid"><div class="form-field"><label for="scan-amount">Valor leído (COP)</label><input class="input" id="scan-amount" inputmode="decimal" autocomplete="off" value="${esc(scan.amount)}" placeholder="Escribe el valor">${reading?.amountText?`<small>Texto leído: ${esc(reading.amountText)}</small>`:''}</div><div class="form-field"><label for="scan-date">Fecha leída</label><input class="input" id="scan-date" type="date" value="${esc(scan.date)}">${reading?.dateText?`<small>Texto leído: ${esc(reading.dateText)}</small>`:''}</div></div><button type="submit" class="btn" ${state.busy?'disabled':''}>${state.busy?'Buscando…':'Buscar coincidencias'}</button><small>Corrige los datos si hace falta. Puedes buscar solo por valor o por fecha.</small></form>
         <div id="receipt-candidates" aria-live="polite">${receiptCandidatesMarkup(scan)}</div>`}</div></div>`}
       </div></section></div>`,'receipt');
     const zone=$('.receipt-upload');
@@ -128,6 +166,7 @@
   async function readReceiptFile(file){
     if(!file||state.busy)return;
     if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)||!file.size||file.size>10*1024*1024)return toast('Usa un JPG, PNG, WebP o PDF de hasta 10 MB.',true);
+    if(receiptMode==='batch')return startReceiptBatch(file);
     discardReceipt();
     const scan=receiptScan={file,url:URL.createObjectURL(file),controller:new AbortController(),loading:true,error:'',amount:'',date:'',result:null,matchesCurrent:false,paymentId:null,attached:false,draft:null};
     state.busy=true;state.dirty=true;renderReceipt();
@@ -143,7 +182,7 @@
       }
       if(result.autoMatchId){await selectReceiptPayment(result.autoMatchId,true);return;}
     }catch(error){if(receiptScan===scan){scan.loading=false;scan.error=error.message;}}
-    finally{if(receiptScan===scan){state.busy=false;if(state.overlay==='receipt')renderReceipt();}else if(!receiptScan)state.busy=false;}
+    finally{if(receiptScan===scan){state.busy=false;if(state.overlay==='receipt')renderReceipt();}else if(!receiptScan&&!receiptBatch)state.busy=false;}
   }
   async function searchReceiptMatches(){
     const scan=receiptScan;if(!scan||state.busy)return;
@@ -255,6 +294,9 @@
     if(action==='nav'){state.view=target.dataset.view;render();}
     else if(action==='scan-receipt'){if(!state.busy){discardReceipt();state.selected=null;state.dirty=false;renderReceipt();}}
     else if(action==='choose-scan'){if(!state.busy)$('#scan-file')?.click();}
+    else if(action==='paste-scan')pasteReceipt();
+    else if(action==='receipt-mode'&&!state.busy){receiptMode=target.dataset.mode==='batch'?'batch':'single';renderReceipt();}
+    else if(action==='split-scan'&&receiptScan&&!state.busy)startReceiptBatch(receiptScan.file);
     else if(action==='cancel-scan'){state.busy=false;state.dirty=false;closeOverlay(true);}
     else if(action==='select-scan-payment')selectReceiptPayment(target.dataset.id);
     else if(action==='review-scan'){if(receiptScan&&!state.busy){receiptScan.draft={id:state.selected,values:Object.fromEntries(new FormData($('#payment-form')))};state.selected=null;renderReceipt();}}
@@ -283,7 +325,14 @@
   document.addEventListener('input',event=>{const el=event.target;if(el.closest('#payment-form'))state.dirty=true;if(receiptScan&&['scan-amount','scan-date'].includes(el.id)){receiptScan[el.id==='scan-amount'?'amount':'date']=el.value;receiptScan.matchesCurrent=false;const candidates=$('#receipt-candidates');if(candidates)candidates.innerHTML='<p class="secondary">Pulsa Buscar coincidencias para aplicar los datos corregidos.</p>';}const keys={'search':'query','amount-filter':'amount','date-from':'from','date-to':'to'};if(keys[el.id]){state[keys[el.id]]=el.value;state.page=1;renderTable();}});
   document.addEventListener('change',event=>{const el=event.target;if(el.id==='scan-file')readReceiptFile(el.files[0]);if(el.id==='date-order'){state.dateOrder=el.value==='asc'?'asc':'desc';state.page=1;renderTable();}if(el.id==='import-file')loadImport(el.files[0]);if(el.id==='support-files')uploadFiles([...el.files]);if(el.id==='p-show'){const show=state.shows.find(s=>s.id===el.value);if(show?.entrepreneur&&!$('#p-entrepreneur').value)$('#p-entrepreneur').value=show.entrepreneur;state.dirty=true;}if(el.id==='import-sheet'){importData.sheet=Number(el.value);importData.skipInvalid=false;guessHeader();renderImport();}if(el.id==='import-header'){const value=Number(el.value);if(!Number.isInteger(value)||value<1||value>importData.sheets[importData.sheet].rows.length){toast('Selecciona un número de fila válido.',true);return;}importData.header=value-1;importData.skipInvalid=false;guessMapping();renderImport();}if(el.dataset.map){importData.mapping[el.dataset.map]=el.value;importData.skipInvalid=false;renderImportPreview();}if(el.id==='skip-invalid'){importData.skipInvalid=el.checked;renderImportPreview();}});
   document.addEventListener('submit',event=>{if(event.target.id==='receipt-search'){event.preventDefault();searchReceiptMatches();}if(event.target.id==='show-form'){event.preventDefault();saveShow(event.target);}if(event.target.id==='payment-form'){event.preventDefault();savePayment(false);}});
-  document.addEventListener('paste',event=>{if(!['editor','receipt'].includes(state.overlay))return;const files=[...(event.clipboardData?.items||[])].filter(x=>x.kind==='file'&&x.type.startsWith('image/')).map(x=>x.getAsFile()).filter(Boolean);if(files.length){event.preventDefault();if(state.overlay==='receipt'){if(files.length!==1)return toast('Pega un comprobante a la vez.',true);readReceiptFile(files[0]);}else uploadFiles(files);}});
+  document.addEventListener('paste',event=>{
+    if(!['editor','receipt'].includes(state.overlay))return;
+    const items=[...(event.clipboardData?.items||[])].filter(x=>x.kind==='file').map(x=>x.getAsFile()).filter(Boolean);
+    const files=items.length?items:[...(event.clipboardData?.files||[])];
+    if(files.length){event.preventDefault();if(state.busy)return;if(state.overlay==='receipt'){if(files.length!==1)return toast('Pega un comprobante a la vez.',true);readReceiptFile(files[0]);}else uploadFiles(files);}
+    else if(state.overlay==='receipt'&&(event.target.id==='receipt-paste-target'||!event.target.closest?.('input,textarea,[contenteditable="true"]'))){event.preventDefault();receiptPasteHelp('Copia la imagen del comprobante, no su enlace ni el texto del mensaje. También puedes seleccionar o arrastrar el archivo.');}
+  });
+  document.addEventListener('input',event=>{if(event.target.id==='receipt-paste-target')event.target.value='';});
   document.addEventListener('keydown',event=>{if(event.key==='Escape'&&state.overlay){if(state.overlay==='receipt'&&receiptScan?.loading){state.busy=false;state.dirty=false;closeOverlay(true);}else if(state.overlay==='show')returnToEditor();else closeOverlay();}if(event.key==='Enter'&&event.target.matches('[data-action="edit"],[data-action="show-payments"],#drop-zone')){event.preventDefault();event.target.click();}if(event.key==='Tab'&&state.overlay){const items=$$('button:not([disabled]),input:not([hidden]):not([disabled]),select:not([disabled]),textarea,a[href],[tabindex="0"]',$('#overlay-root')).filter(el=>el.offsetParent!==null);const first=items[0],last=items.at(-1);if(event.shiftKey&&document.activeElement===first){last?.focus();event.preventDefault();}else if(!event.shiftKey&&document.activeElement===last){first?.focus();event.preventDefault();}}});
   if(window.parent===window)window.addEventListener('beforeunload',event=>{if(state.dirty||state.busy){event.preventDefault();event.returnValue='';}});
   window.addEventListener('message',event=>{if(event.origin===location.origin&&event.source===window.parent&&event.data?.type==='jac-reconciliation-discard'){state.dirty=false;notifyParent();}});

@@ -5,6 +5,8 @@ import { build } from 'esbuild';
 import { readFile, readdir, writeFile, mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import {PDFDocument,PDFDict,PDFArray,PDFName,PDFRawStream,decodePDFRawStream} from 'pdf-lib';
+import {receiptJPEG} from './helpers/reconciliation-image.mjs';
 
 // These tests use synthetic records, an isolated SQLite database and in-memory
 // private objects. No request is allowed to reach a real external service.
@@ -106,7 +108,7 @@ test('OCR locates an existing payment without storing the receipt, identifying i
   const response=await request(account,'/scan',{method:'POST',data:receiptForm()});assert.equal(response.status,200,await response.clone().text());assert.match(response.headers.get('cache-control'),/no-store/);
   const result=await response.json();assert.equal(result.autoMatchId,p.id);assert.equal(result.reading.amount,33555123.45);assert.equal(result.matches[0].version,p.version);
   assert.equal(objects.size,originalObjects);assert.deepEqual(sql.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all(),originalPayments);assert.equal(sql.prepare('SELECT count(*) n FROM jac_reconciliation_audit').get().n,originalAudit);
-  const manual=await request(account,'/scan/matches',{method:'POST',data:{amount:33555123.45,date:null}});assert.equal(manual.status,200);assert.equal((await manual.json()).autoMatchId,null);assert.equal(calls,1);
+  const manual=await request(account,'/scan/matches',{method:'POST',data:{amount:33555123.45,date:null}});assert.equal(manual.status,200);assert.equal((await manual.json()).autoMatchId,null);assert.equal(calls,2);
   for(const data of [{amount:null,date:null},{amount:33555123.45,date:'2026-11-10',autoEligible:true},{amount:0,date:'2026-11-10'},{amount:33555123.45,date:'2026-02-30'}])assert.equal((await request(account,'/scan/matches',{method:'POST',data})).status,400);
  }finally{globalThis.fetch=savedFetch;}
 });
@@ -313,4 +315,64 @@ test('unfinished upload cleanup is durable even when both storage calls fail',as
  assert.equal(reserved.state,'deleted');assert.ok(reserved.object_key);
  resetHooks();await state(account);
  assert.equal(sql.prepare('SELECT object_key FROM jac_reconciliation_attachments WHERE id=?').get(reserved.id).object_key,'');
+});
+
+function batchForm(payments,showId,{operationId=crypto.randomUUID(),label=crypto.randomUUID(),parts,entrepreneur='Empresario del grupo ficticio'}={}){
+ const form=new FormData(),source=new Uint8Array([...receiptJPEG,...new TextEncoder().encode(label)]);
+ const selection=parts||payments.map((p,i)=>({paymentId:p.id,version:p.version,index:i,bounds:{x:i%4*250,y:Math.floor(i/4)*200,width:240,height:190}}));
+ form.set('file',new File([source],'grupo-ficticio.jpg',{type:'image/jpeg'}));form.set('preview',new File([receiptJPEG],'vista.jpg',{type:'image/jpeg'}));form.set('plan',JSON.stringify({operationId,showId,entrepreneur,parts:selection}));return {form,source,operationId,selection};
+}
+async function batchFixture(count=2){resetHooks();const account=await actor(),{payments}=await seed(account,Array.from({length:count},(_,i)=>row(1000+i,{amount:1980000.5+i}))),showId=crmShow();return {account,payments,showId};}
+
+test('group identifies eight separate existing movements with private individual PDFs, exact source attachment, and one shared show; retry is idempotent',async()=>{
+ const {account,payments,showId}=await batchFixture(8),before=sql.prepare('SELECT * FROM jac_crm_shows ORDER BY id').all(),originals=payments.map(p=>sql.prepare('SELECT original FROM jac_reconciliation_payments WHERE id=?').get(p.id).original);
+ const batch=batchForm(payments,showId),response=await request(account,'/batch',{method:'POST',data:batch.form});assert.equal(response.status,200,await response.clone().text());const result=await response.json();assert.equal(result.saved,8);assert.equal(result.files.length,8);
+ const out=await state(account);for(const [i,p] of payments.entries()){const saved=out.payments.find(r=>r.id===p.id);assert.equal(saved.status,'identified');assert.equal(saved.showId,showId);assert.equal(saved.entrepreneur,'Empresario del grupo ficticio');assert.equal(saved.version,2);assert.equal(saved.attachments.length,1);assert.equal(sql.prepare('SELECT original FROM jac_reconciliation_payments WHERE id=?').get(p.id).original,originals[i]);}
+ const download=await request(account,result.files[0].url.replace('/api/reconciliation',''));assert.equal(download.status,200);assert.match(download.headers.get('cache-control'),/no-store/);
+ const pdf=await PDFDocument.load(await download.arrayBuffer());assert.equal(pdf.getPageCount(),2);
+ const names=pdf.catalog.lookup(PDFName.of('Names'),PDFDict).lookup(PDFName.of('EmbeddedFiles'),PDFDict).lookup(PDFName.of('Names'),PDFArray),attached=names.lookup(1,PDFDict).lookup(PDFName.of('EF'),PDFDict).lookup(PDFName.of('F'),PDFRawStream);
+ assert.deepEqual(new Uint8Array(decodePDFRawStream(attached).decode()),batch.source);
+ const retried=await request(account,'/batch',{method:'POST',data:batch.form});assert.equal(retried.status,200);assert.equal((await retried.json()).alreadySaved,true);
+ assert.equal(sql.prepare("SELECT count(*) n FROM jac_reconciliation_audit WHERE id=? AND action='identify-receipt-batch'").get(batch.operationId).n,1);
+ const conflict=new FormData();for(const [key,value]of batch.form)conflict.set(key,value);conflict.set('plan',JSON.stringify({...JSON.parse(conflict.get('plan')),entrepreneur:'Otro'}));assert.equal((await request(account,'/batch',{method:'POST',data:conflict})).status,409);
+ assert.deepEqual(sql.prepare('SELECT * FROM jac_crm_shows ORDER BY id').all(),before);
+ assert.equal((await request(null,result.files[0].url.replace('/api/reconciliation',''))).status,401);
+});
+
+test('group rejects repeated movements and overlapping crops before any attachment; stale member prevents the entire group',async()=>{
+ const {account,payments,showId}=await batchFixture(),objectsBefore=objects.size;
+ for(const parts of [payments.map((p,i)=>({paymentId:payments[0].id,version:1,index:i,bounds:{x:i*500,y:0,width:400,height:900}})),payments.map((p,i)=>({paymentId:p.id,version:1,index:i,bounds:{x:0,y:0,width:500,height:900}}))]){
+  assert.equal((await request(account,'/batch',{method:'POST',data:batchForm(payments,showId,{parts}).form})).status,400);
+ }
+ assert.equal(objects.size,objectsBefore);
+ const stale=batchForm(payments,showId);sql.prepare('UPDATE jac_reconciliation_payments SET version=version+1 WHERE id=?').run(payments[1].id);
+ assert.equal((await request(account,'/batch',{method:'POST',data:stale.form})).status,409);assert.equal(objects.size,objectsBefore);
+ assert.equal((await state(account)).payments.find(p=>p.id===payments[0].id).status,'pending');
+});
+
+test('interrupted group storage and commit races leave no partial identification or ready supports; exact retry can complete',async()=>{
+ const {account,payments,showId}=await batchFixture(),batch=batchForm(payments,showId),objectsBefore=objects.size;let puts=0;
+ beforePut=()=>{if(++puts===2)throw Error('Synthetic second upload failure');};
+ assert.equal((await request(account,'/batch',{method:'POST',data:batch.form})).status,502);resetHooks();assert.equal(objects.size,objectsBefore);
+ for(const p of payments)assert.equal(sql.prepare("SELECT count(*) n FROM jac_reconciliation_attachments WHERE payment_id=? AND state='ready'").get(p.id).n,0);
+ // A record changes after all staging, immediately before the transaction gate.
+ beforeQuery=query=>{if(query.includes("SELECT ?,'',?,'identify-receipt-batch'")){beforeQuery=null;sql.prepare('UPDATE jac_reconciliation_payments SET version=version+1 WHERE id=?').run(payments[1].id);}};
+ assert.equal((await request(account,'/batch',{method:'POST',data:batch.form})).status,409);resetHooks();assert.equal(objects.size,objectsBefore);
+ for(const p of payments)assert.equal(JSON.parse(sql.prepare('SELECT annotation FROM jac_reconciliation_payments WHERE id=?').get(p.id).annotation).status,'pending');
+ const plan=JSON.parse(batch.form.get('plan'));plan.parts[1].version=2;batch.form.set('plan',JSON.stringify(plan));
+ assert.equal((await request(account,'/batch',{method:'POST',data:batch.form})).status,200);
+});
+
+test('lost group acknowledgement preserves committed supports; a committed crop cannot be assigned to another movement even with a new operation',async()=>{
+ const {account,payments,showId}=await batchFixture(3),batch=batchForm(payments.slice(0,2),showId);
+ afterBatch=queries=>{if(queries.some(q=>q.text.includes("'identify-receipt-batch'"))){afterBatch=null;throw Error('Synthetic lost acknowledgement');}};
+ const response=await request(account,'/batch',{method:'POST',data:batch.form});assert.equal(response.status,200,await response.clone().text());assert.equal((await response.json()).alreadySaved,true);
+ const plan=JSON.parse(batch.form.get('plan'));plan.operationId=crypto.randomUUID();plan.parts=[{...plan.parts[0],paymentId:payments[2].id}];batch.form.set('plan',JSON.stringify(plan));assert.equal((await request(account,'/batch',{method:'POST',data:batch.form})).status,409);
+ assert.equal((await state(account)).payments.find(p=>p.id===payments[2].id).version,1);
+});
+
+test('session revocation during group staging retires only unfinished private files and identifies nothing',async()=>{
+ const {account,payments,showId}=await batchFixture(),batch=batchForm(payments,showId),size=objects.size;
+ beforePut=()=>revoke(account);const response=await request(account,'/batch',{method:'POST',data:batch.form});resetHooks();assert.equal(response.status,403);assert.equal(objects.size,size);
+ for(const p of payments){assert.equal(sql.prepare('SELECT version FROM jac_reconciliation_payments WHERE id=?').get(p.id).version,1);assert.equal(sql.prepare("SELECT count(*) n FROM jac_reconciliation_attachments WHERE payment_id=? AND state='ready'").get(p.id).n,0);}
 });

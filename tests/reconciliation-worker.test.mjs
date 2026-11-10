@@ -47,10 +47,31 @@ test('Workerd reads a synthetic receipt through an intercepted provider, matches
   assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
   assert.equal(result.matches[0].amount,1250000.25);assert.equal(result.matches[0].date,'2026-11-01');
   const upload=form();upload.set('paymentVersion','1');assert.equal((await f.request('/api/reconciliation/payments/'+result.autoMatchId+'/files',{method:'POST',data:upload})).status,201);
-  const repeated=await(await f.request('/api/reconciliation/scan',{method:'POST',data:form()})).json();assert.equal(repeated.existingPaymentId,result.autoMatchId);assert.equal(providerCalls,1);
-  const pdf=await PDFDocument.create();pdf.addPage().drawText('SYNTHETIC PAYMENT RECEIPT');const pdfForm=new FormData();pdfForm.set('file',new File([await pdf.save()],'fixture.pdf',{type:'application/pdf'}));const pdfRead=await f.request('/api/reconciliation/scan',{method:'POST',data:pdfForm});assert.equal(pdfRead.status,200,await pdfRead.clone().text());assert.equal((await pdfRead.json()).autoMatchId,result.autoMatchId);assert.equal(providerCalls,2);
+  const repeated=await(await f.request('/api/reconciliation/scan',{method:'POST',data:form()})).json();assert.equal(repeated.existingPaymentId,result.autoMatchId);assert.equal(providerCalls,2);
+  const pdf=await PDFDocument.create();pdf.addPage().drawText('SYNTHETIC PAYMENT RECEIPT');const pdfForm=new FormData();pdfForm.set('file',new File([await pdf.save()],'fixture.pdf',{type:'application/pdf'}));const pdfRead=await f.request('/api/reconciliation/scan',{method:'POST',data:pdfForm});assert.equal(pdfRead.status,200,await pdfRead.clone().text());assert.equal((await pdfRead.json()).autoMatchId,result.autoMatchId);assert.equal(providerCalls,4);
   assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_crm_payments').first()).n,0);assert.equal((await f.db.prepare('SELECT count(*) n FROM payroll_periods').first()).n,0);
   const row=await f.db.prepare('SELECT annotation,version FROM jac_reconciliation_payments WHERE id=?').bind(result.autoMatchId).first();assert.equal(JSON.parse(row.annotation).status,'pending');assert.equal(row.version,1);
+ }finally{await f.close();}
+});
+
+test('a disputed OCR date cannot auto-open even a unique value/date match and correcting it creates no income',async()=>{
+ let calls=0;
+ const f=await reconciliationFixture({readReceipt:async req=>{
+  calls++;const request=await req.json();
+  const reading={document:'single_payment',amountText:'1.250.000,25',dateText:request.instructions.startsWith('Perform an independent verification')?'19/03/2026':'01/11/2026',currency:'COP',transactionStatus:'completed',legible:true};
+  return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(reading)}]}]});
+ }});
+ try{
+  assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(3)})).status,200);
+  const before=(await f.db.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all()).results;
+  const form=new FormData();form.set('file',new File([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64')],'synthetic.png',{type:'image/png'}));
+  const response=await f.request('/api/reconciliation/scan',{method:'POST',data:form});assert.equal(response.status,200);
+  const result=await response.json();assert.equal(calls,2);assert.equal(result.reading.date,null);assert.equal(result.reading.dateText,null);assert.equal(result.autoMatchId,null);
+  assert.equal(result.matches.length,1);assert.equal(result.matches[0].kind,'amount');assert.match(result.reading.warnings.join(' '),/no coinciden en la fecha/);
+  const manual=await f.request('/api/reconciliation/scan/matches',{method:'POST',data:{amount:1250000.25,date:'2026-11-01'}});assert.equal(manual.status,200);assert.equal((await manual.json()).matches[0].kind,'exact');assert.equal(calls,2);
+  assert.deepEqual((await f.db.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all()).results,before);
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_crm_payments').first()).n,0);
  }finally{await f.close();}
 });
 
@@ -79,5 +100,24 @@ test('upstream authorization failure preserves the JAC session, receipt privacy 
   assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
   assert.deepEqual((await f.db.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all()).results,before);
   assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_crm_payments').first()).n,0);
+ }finally{await f.close();}
+});
+
+test('Workerd group: twenty individual supports commit once; detector stays read-only and all original columns and financial tables remain unchanged',async()=>{
+ const {receiptJPEG}=await import('./helpers/reconciliation-image.mjs');
+ const regions=Array.from({length:20},(_,i)=>({x:i%4*250,y:Math.floor(i/4)*200,width:240,height:190}));
+ const f=await reconciliationFixture({readReceipt:async request=>{const body=await request.json();assert.equal(body.text.format.name,'jac_receipt_regions');assert.equal(body.store,false);return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({receipts:regions,moreReceipts:false})}]}]});}});
+ try{
+  const data=syntheticImport(20);assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data})).status,200);
+  const original=(await f.db.prepare('SELECT id,original FROM jac_reconciliation_payments ORDER BY id').all()).results,crm=(await f.db.prepare('SELECT * FROM jac_crm_shows').all()).results;
+  const form=new FormData();form.set('file',new File([receiptJPEG],'grupo-ficticio.jpg',{type:'image/jpeg'}));
+  const detection=await f.request('/api/reconciliation/scan/regions',{method:'POST',data:form});assert.equal(detection.status,200,await detection.clone().text());assert.deepEqual((await detection.json()).regions,regions);assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
+  form.set('preview',new File([receiptJPEG],'vista.jpg',{type:'image/jpeg'}));const operationId=crypto.randomUUID();form.set('plan',JSON.stringify({operationId,showId:'fixture-show',entrepreneur:'Empresario de prueba',parts:original.map((p,i)=>({paymentId:p.id,version:1,index:i,bounds:regions[i]}))}));
+  const first=await f.request('/api/reconciliation/batch',{method:'POST',data:form});assert.equal(first.status,200,await first.clone().text());const result=await first.json();assert.equal(result.saved,20);assert.equal(result.files.length,20);
+  const retry=await f.request('/api/reconciliation/batch',{method:'POST',data:form});assert.equal(retry.status,200);assert.equal((await retry.json()).alreadySaved,true);assert.equal(f.outgoing(),1);
+  const state=await(await f.request('/api/reconciliation/state')).json();assert.equal(state.payments.length,20);for(const p of state.payments){assert.equal(p.version,2);assert.equal(p.showId,'fixture-show');assert.equal(p.status,'identified');assert.equal(p.attachments.length,1);}
+  const download=await f.request(result.files[0].url);assert.equal(download.status,200);assert.match(download.headers.get('cache-control'),/no-store/);assert.equal((await PDFDocument.load(await download.arrayBuffer())).getPageCount(),2);assert.equal((await f.request(result.files[0].url,{authenticated:false})).status,401);
+  assert.deepEqual((await f.db.prepare('SELECT id,original FROM jac_reconciliation_payments ORDER BY id').all()).results,original);assert.deepEqual((await f.db.prepare('SELECT * FROM jac_crm_shows').all()).results,crm);
+  for(const table of ['jac_crm_payments','payroll_periods'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+table).first()).n,0);
  }finally{await f.close();}
 });

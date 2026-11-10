@@ -1,3 +1,7 @@
+## Comprobantes conjuntos y pegado ·10 noviembre2026
+
+Se preparó la lectura de varios recibos de una foto para asociarlos individualmente a movimientos pendientes y a un mismo show/empresario. Incluye revisión de recortes, datos bancarios editables, guardado parcial/idempotente con soportes privados PDF y original adjunto. Portapapeles por botón/⌘V y segunda lectura independiente para retirar fechas/importes contradictorios. No requiere migración ni cambios de claves/modelo/datos reales. Ver alcance, pruebas y publicación en [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+
 ## Diagnóstico del rechazo OCR · 10 noviembre 2026
 
 **Lectura real confirmada por el usuario:** Camilo confirmó el10/11/2026 que el comprobante ya se lee y mostró la ficha encontrada automáticamente por valor y fecha en producción. Queda confirmada una lectura real exitosa y la coincidencia; el soporte de esa ficha sigue pendiente de Guardar, por lo que la captura no acredita aún su persistencia. No publicar el comprobante ni sus datos. La causa específica del401 anterior no se determinó: esta entrega corrigió su clasificación, sin cambiar la clave ni los permisos OpenAI desde aquí.

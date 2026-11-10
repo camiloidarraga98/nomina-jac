@@ -45,6 +45,6 @@ export default function CrmReconciliation({onStateChange}: {onStateChange: (stat
       <p>Relaciona el archivo de contabilidad con los comprobantes de WhatsApp. Los abonos conciliados no se registran de nuevo en los saldos del CRM.</p>
       <a href="/crm/reconciliation" target="_blank" rel="noopener noreferrer">Abrir en pantalla completa ↗</a>
     </div>
-    <iframe ref={frame} className="crm-reconciliation-frame" src="/crm/reconciliation?embedded=1" title="Herramienta de conciliación de abonos" referrerPolicy="same-origin" />
+    <iframe ref={frame} className="crm-reconciliation-frame" src="/crm/reconciliation?embedded=1" title="Herramienta de conciliación de abonos" referrerPolicy="same-origin" allow="clipboard-read 'self'" />
   </section>;
 }

@@ -1,3 +1,11 @@
+## Recibos de un mismo show en una fotografía ·10 noviembre2026
+
+En Conciliación, abrir **Leer comprobante → Varios en una imagen** y seleccionar, arrastrar o pegar la foto. JAC propone los recortes; revisar que haya uno por recibo, ajustar/agregar/quitar si hace falta y pulsar **Leer comprobantes pendientes**. Cada recibo tiene valor, fecha bancaria y su propio movimiento pendiente. Una coincidencia exacta y única se preselecciona; los demás se eligen manualmente. Elegir el show y empresario común, y **Guardar e identificar seleccionados**. Se pueden guardar los ya revisados y completar los restantes. La fecha del show es común; las fechas bancarias no se reescriben. Hasta20recibos por imagen de10MiB.
+
+Cada abono conserva un PDF privado con el recorte, la foto completa y el archivo original adjunto. Se recupera al volver y forma parte del ZIP habitual para contabilidad. No crea ingresos ni suma recibos en una consignación nueva. Los campos fiscales individuales siguen en cada ficha. Cambios sin guardar se descartan al cerrar con confirmación; resultados guardados sobreviven a reintentos.
+
+El botón **Pegar del portapapeles** sólo lee al pulsarlo; también funcionan ⌘V/Ctrl+V y el campo alternativo si el navegador no permite el botón. Se pega la imagen, no el enlace del mensaje. El lector ahora contrasta dos lecturas independientes del valor/fecha; si difieren, solicita corregir ese dato. Revisar siempre el recibo: el reconocimiento no garantiza precisión total ni autenticidad bancaria. Ver la publicación real y límites de verificación en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
 ## Conciliación de abonos de contabilidad ·10 de noviembre de2026
 
 Camilo pidió una subpestaña web en CRM para identificar las consignaciones del archivo de contabilidad mientras revisa comprobantes manualmente en WhatsApp. Se encuentra en `/crm?seccion=conciliacion`: buscar fecha/valor, asignar show y empresario, adjuntar soporte y registrar datos para facturación manual posterior. Los originales se conservan y el resultado se exporta para contabilidad. Usa los shows CRM ya guardados y permite referencias históricas independientes.

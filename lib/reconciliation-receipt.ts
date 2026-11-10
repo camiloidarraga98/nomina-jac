@@ -67,6 +67,22 @@ export function normalizeReceiptReading(input:unknown){
  return {...r,amount,date,warnings,autoEligible};
 }
 
+/** Independent readings must agree before a value can locate a payment automatically. */
+export function verifyReceiptReadings(first:ReceiptReading,second:ReceiptReading):ReceiptReading {
+ const sameAmount=first.amount!==null&&first.amount===second.amount;
+ const sameDate=first.date!==null&&first.date===second.date;
+ const result=normalizeReceiptReading({
+  document:first.document===second.document?first.document:'unreadable',
+  amountText:sameAmount?first.amountText:null,dateText:sameDate?first.dateText:null,
+  currency:first.currency===second.currency?first.currency:'unknown',
+  transactionStatus:first.transactionStatus===second.transactionStatus?first.transactionStatus:'unknown',
+  legible:first.legible&&second.legible,
+ });
+ if(!sameDate&&(first.date!==null||second.date!==null))result.warnings.unshift('Las dos lecturas no coinciden en la fecha. Compruébala en el original y escríbela antes de buscar.');
+ if(!sameAmount&&(first.amount!==null||second.amount!==null))result.warnings.unshift('Las dos lecturas no coinciden en el valor. Compruébalo en el original antes de buscar.');
+ return result;
+}
+
 export const receiptLookupSchema=z.object({
  amount:z.number().positive().max(1e12).refine(n=>{try{cents(n);return true;}catch{return false;}}).nullable(),
  date:z.string().refine(v=>/^\d{4}-\d{2}-\d{2}$/.test(v)&&receiptDate(v)===v).nullable(),
