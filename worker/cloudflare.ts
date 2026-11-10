@@ -4,6 +4,8 @@ import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
 const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js','/file.svg','/globe.svg','/window.svg']);
+// Generic application code only. Financial rows and documents stay behind API/session guards.
+const reconciliationAssets=new Set(['/reconciliation/app.js','/reconciliation/files.js','/reconciliation/style.css','/reconciliation/jszip.min.js','/reconciliation/JSZip-LICENSE.md']);
 const fanAssetRevision='internal-gallery-1';
 
 export default {
@@ -84,7 +86,7 @@ export default {
     }
     // run_worker_first sends even CSS/JS here. Only public build files bypass
     // the application; APIs and private documents always retain their guards.
-    if(['GET','HEAD'].includes(request.method)&&(url.pathname.startsWith('/assets/')||url.pathname.startsWith('/licenses/')||publicFiles.has(url.pathname)))return env.ASSETS.fetch(request);
+    if(['GET','HEAD'].includes(request.method)&&(url.pathname.startsWith('/assets/')||url.pathname.startsWith('/licenses/')||publicFiles.has(url.pathname)||reconciliationAssets.has(url.pathname)))return env.ASSETS.fetch(request);
     const response=await application.fetch(request,env,ctx);
     if(url.pathname.startsWith('/compartir/')){const protectedResponse=new Response(response.body,response);protectedResponse.headers.set('Cache-Control','private, no-store');protectedResponse.headers.set('Referrer-Policy','no-referrer');protectedResponse.headers.set('X-Robots-Tag','noindex, nofollow, noarchive');return protectedResponse;}
     return response;

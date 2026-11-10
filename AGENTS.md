@@ -1,3 +1,7 @@
+## Conciliación de abonos ·10 de noviembre de2026
+
+Camilo autorizó integrar y publicar la conciliación contable en CRM, conservando la sesión y el permiso administrativo. Migración0039 aditiva, importación idempotente y originales inmutables, avances con versión, soportes privados en BUCKET y exportación CSV/ZIP. Relacionar shows existentes o referencias históricas nunca crea ingresos ni modifica saldos, nómina o Calendar; abrir la subpestaña no dispara sincronizaciones comerciales. El paquete de contabilidad, seed, SQL de carga, comprobantes y exportaciones permanecen fuera del repositorio público y de Assets. Ver `docs/CRM_RECONCILIATION.md` para pruebas y estado de producción.
+
 ## Galería interna de creaciones de fans ·6 de noviembre de2026
 
 Camilo pidió ver todas las creaciones de `/cumple`, de más reciente a más antigua, con el mismo código de uso interno configurado en el servidor. Autoriza esta excepción de lectura entre propietarios exclusivamente en `GET ?internal-gallery=1`; no ampliar las rutas públicas ni permisos de otros módulos. Incluir resultados listos conservados, archivados y con acceso público vencido, nunca fotos fuente. Mantener ticket firmado ligado al navegador, límite de intentos, paginación acotada, claves R2 canónicas y revalidación tras R2/transformación; retirar imágenes locales al cerrar/vencer el acceso. El código sigue siendo secreto, fuera de fuente/documentación. Ver `docs/FANS_BIRTHDAY_PHOTO.md`.

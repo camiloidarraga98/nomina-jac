@@ -1,0 +1,39 @@
+import {build} from 'esbuild';
+import {Miniflare} from 'miniflare';
+import {readFile,readdir} from 'node:fs/promises';
+
+// Only an isolated runtime uses this entry. No fixture routes enter the product.
+export async function reconciliationFixture(){
+ const compiled=await build({stdin:{resolveDir:process.cwd(),loader:'ts',contents:`
+  import {env} from 'cloudflare:workers';
+  import * as api from './app/api/reconciliation/[...path]/route';
+  import {GET as view} from './app/crm/reconciliation/route';
+  import {bootstrapOwner,makeSession} from './lib/payroll-auth-store';
+  export default {async fetch(req:Request){
+   globalThis.fixtureHeaders=req.headers;
+   const path=new URL(req.url).pathname;
+   if(path==='/fixture/setup'){
+    const owner=await bootstrapOwner('reconciliation-fixture','only-a-synthetic-password'),token=await makeSession(owner);
+    await env.DB.prepare("INSERT INTO jac_crm_shows (id,calendar_id,event_id,title,municipality,show_date,sale_cents,paid_cents,entrepreneur,created_at,updated_at) VALUES ('fixture-show','fixture-calendar','fixture-event','SHOW FICTICIO · PEREIRA','Pereira','2027-01-15',9000000000,100000000,'Empresario ficticio','fixture','fixture')").run();
+    return Response.json({token,owner});
+   }
+   if(path==='/crm/reconciliation')return view(req);
+   if(path.startsWith('/api/reconciliation/'))return api[req.method](req);
+   return new Response('Not found',{status:404});
+  }};
+ `},bundle:true,platform:'browser',format:'esm',write:false,external:['cloudflare:workers','node:*'],plugins:[{name:'fixture-context',setup(b){b.onResolve({filter:/^next\/headers$/},()=>({path:'headers',namespace:'fixture'}));b.onLoad({filter:/.*/,namespace:'fixture'},()=>({contents:'export const headers=async()=>globalThis.fixtureHeaders;',loader:'js'}));}}]});
+ let outgoing=0;
+ const mf=new Miniflare({modules:true,compatibilityDate:'2026-05-15',compatibilityFlags:['nodejs_compat'],script:compiled.outputFiles[0].text,d1Databases:{DB:'reconciliation-isolated'},r2Buckets:{BUCKET:'reconciliation-isolated'},bindings:{PAYROLL_AUTH_KEY:'reconciliation-fixture-not-a-production-secret'},outboundService:()=>{outgoing++;throw Error('External network forbidden in tests.');}});
+ try{
+  const db=await mf.getD1Database('DB');
+  for(const f of(await readdir('drizzle')).filter(f=>f.endsWith('.sql')).sort())for(const sql of(await readFile('drizzle/'+f,'utf8')).split('--> statement-breakpoint').map(s=>s.trim()).filter(Boolean))await db.prepare(sql).run();
+  const {token,owner}=await(await mf.dispatchFetch('http://localhost/fixture/setup')).json();
+  const request=async(path,{method='GET',data,authenticated=true}={})=>{
+   const req=new Request('http://localhost'+path,{method,headers:{host:'localhost',origin:'http://localhost',...(authenticated?{cookie:'jac_session='+token}:{}),...(data&&!(data instanceof FormData)?{'Content-Type':'application/json'}:{})},...(data?{body:data instanceof FormData?data:JSON.stringify(data)}:{})});
+   return mf.dispatchFetch(req.url,{method,headers:Object.fromEntries(req.headers),...(req.body?{body:new Uint8Array(await req.arrayBuffer())}:{})});
+  };
+  return {mf,db,request,owner,token,outgoing:()=>outgoing,close:()=>mf.dispose()};
+ }catch(error){await mf.dispose();throw error;}
+}
+
+export const syntheticImport=(count=296)=>({name:'MOVIMIENTOS FICTICIOS.xlsx',fileHash:'f'.repeat(64),rows:Array.from({length:count},(_,i)=>({sourceRow:i+2,sheet:'PRUEBA',date:`2026-11-${String(i%28+1).padStart(2,'0')}`,amount:1250000.25+i,description:'Consignación ficticia '+i,reference:'REF-'+i,thirdParty:'Tercero ficticio '+i,receipt:'RC-PRUEBA-'+i,invoice:i%2?'':'FV-PRUEBA-'+i,original:{CUENTA:'FICTICIA',MES:'NOVIEMBRE',FECHA:`${i%28+1}/11/2026`,'VALOR [D]':1250000.25+i,DETALLE:'Solo pruebas','LUGAR DEL SHOW':'Referencia original ficticia',RECIBO:'RC-PRUEBA-'+i,'TERCERO [H]':'Tercero ficticio '+i,'TERCERO [I]':'Ficticio','FAC.SIIGO':i%2?'':'FV-PRUEBA-'+i,'VALOR [K]':0}}))});

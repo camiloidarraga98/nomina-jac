@@ -1,4 +1,5 @@
 import {sql} from 'drizzle-orm';
+export * from './reconciliation-schema';
 import {sqliteTable,text,integer,real,index,uniqueIndex} from 'drizzle-orm/sqlite-core';
 export const registrations=sqliteTable('registrations',{id:text('id').primaryKey(),name:text('name').notNull(),phone:text('phone').notNull().default(''),birth:text('birth').notNull(),section:text('section').notNull(),row:text('row').notNull(),seat:text('seat').notNull(),photoKey:text('photo_key').notNull(),consent:text('consent').notNull(),createdAt:text('created_at').notNull()});
 export const payrollState=sqliteTable('payroll_state',{id:text('id').primaryKey(),data:text('data').notNull(),version:integer('version').notNull().default(1),updatedAt:text('updated_at').notNull(),updatedBy:text('updated_by').notNull(),writeNonce:text('write_nonce').notNull().default('')});
