@@ -2,7 +2,9 @@
 
 Camilo pidió una subpestaña web en CRM para identificar las consignaciones del archivo de contabilidad mientras revisa comprobantes manualmente en WhatsApp. Se encuentra en `/crm?seccion=conciliacion`: buscar fecha/valor, asignar show y empresario, adjuntar soporte y registrar datos para facturación manual posterior. Los originales se conservan y el resultado se exporta para contabilidad. Usa los shows CRM ya guardados y permite referencias históricas independientes.
 
-Esta conciliación documental no agrega pagos al saldo de los shows ni modifica Calendar, nómina o facturas. Mantiene los permisos administrativos del CRM y guarda soportes privados. No subir archivos contables ni datos iniciales a la fuente pública. Implementación y pruebas focales terminadas; publicación en Cloudflare e importación inicial pendientes de ejecución. Ver [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+Esta conciliación documental no agrega pagos al saldo de los shows ni modifica Calendar, nómina o facturas. Mantiene los permisos administrativos del CRM y guarda soportes privados. No subir archivos contables ni datos iniciales a la fuente pública. Publicación e importación inicial verificadas el10/11/2026. Ver [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
+El selector «Ordenar por fecha» permite elegir Ascendente (más antiguos) o Descendente (más recientes, por defecto), usando la fecha bancaria. Cambiarlo vuelve a la primera página y conserva las búsquedas y filtros. Las exportaciones respetan ese orden; no cambia los datos guardados.
 
 ## Comunicado del cumpleaños en Movistar ·3 de noviembre de2026
 

@@ -13,3 +13,5 @@ html:root{--ink:#163449;--muted:#5b7184;--line:#d9e5ee;--paper:#f3f7fb;--green:#
 
 /* Keep short feedback clear of the drawer actions. */
 .jac-embedded .toast-root{bottom:120px;pointer-events:none}
+
+.sort-field{display:flex;align-items:center;gap:8px;max-width:100%}.sort-field label{font-size:12px;color:var(--muted);white-space:nowrap}.sort-field select{width:235px;min-width:0;font-size:12px}@media(max-width:600px){.sort-field{flex:1 1 100%;flex-direction:column;align-items:stretch}.sort-field select{width:100%}}

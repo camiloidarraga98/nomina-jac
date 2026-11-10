@@ -4,6 +4,10 @@ Camilo pidió relacionar consignaciones del archivo de contabilidad con los comp
 
 El formulario permite buscar por fecha, valor y texto; asignar show y empresario; registrar pagador, necesidad de factura, NIT y razón social; adjuntar imágenes o PDF; identificar el abono; y descargar CSV/ZIP con soportes para contabilidad. La identificación requiere show y empresario. Un abono listo para contabilidad requiere identificación y soporte. No se emiten facturas ni se automatizan chats.
 
+## Orden del listado
+
+«Ordenar por fecha» permite elegir Descendente · Más recientes (inicial) o Ascendente · Más antiguos según la fecha bancaria. Ordena todos los resultados antes de paginar y vuelve a la primera página al cambiarlo, conservando los filtros. La elección se mantiene durante la consulta, las actualizaciones y los cambios de pestaña internos; al abrir de nuevo la página empieza en descendente. Las exportaciones respetan el mismo orden. El desempate por identificador se conserva. No escribe datos en el servidor ni guarda datos privados en el navegador.
+
 ## Datos y acceso
 
 - Usa la sesión propia de JAC y el permiso administrativo CRM. La vista, los datos y cada soporte validan esos permisos. No se acepta la cabecera de identidad del proveedor anterior.
