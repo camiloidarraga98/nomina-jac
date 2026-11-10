@@ -1,5 +1,7 @@
 ## Corrección413 de formularios de conciliación ·10 noviembre2026
 
+Publicado17:34Colombia: fuente `3f8cc02`, Worker `dd7327f6-dd8d-4fd0-b410-864babdafee3`, deployment `233242c3-73bb-4cb8-8e41-6226eece930f`, activo al100%. Código idéntico a la compilación verificada y revisión `receipt-upload-7`;14bindings,2crons y DB/BUCKET conservados.57pruebas de conciliación,65comprobaciones Chromium con Worker completo, regresiones de nómina/autenticación/correo y TypeScript/build correctos. Verificación real por API; cargas y navegador locales con datos sintéticos. No se repitió el despliegue tras el error auxiliar conocido de Wrangler.
+
 El usuario mostró conteo completo, cero recortes y413genérico. Se reprodujo con el Worker anterior descargado por API y hash verificado: la capa de Server Actions de vinext0.0.50 limita todos los multipart POST a1MiB antes de despachar la API. Conciliación ahora entra por un handler HTTP compartido entre Worker y ruta, conservando cookie/sesión/CRM/origen, guardas y límites de archivos. No se aumenta el límite de páginas, no se cambian modelo/secreto, dependencias ni datos. Nueva prueba sobre la compilación completa y botón explícito para reintentar separación conservando foto/conteo. Detalles, resultados y publicación en [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
 
 ## Corrección de delimitación y orientación de recibos ·10 noviembre2026

@@ -2,6 +2,8 @@
 
 Corrección de cargas grandes: un error413tras terminar el conteo provenía de un límite de1MiB del router de páginas, anterior al lector. La API de Conciliación conserva sus límites propios y permisos. Si falla la separación, **Reintentar separación** utiliza la misma foto y el conteo ya obtenido; no hace reintentos automáticos ni vuelve a guardar pagos. También se puede usar la separación manual. Los originales adjuntos no se comprimen para eludir el límite.
 
+Corrección413publicada el10/11/2026 a las17:34Colombia, revisión `receipt-upload-7`, activa por API. Recargar la página para obtenerla; la prueba de archivos grandes y el guardado usó la compilación completa con datos ficticios.
+
 La detección ahora cuenta los papeles y endereza una copia para analizarlos; después contrasta los bordes antes de leer. **Revisar separación** muestra todos los recortes numerados sobre la foto original. Si faltan recibos o no se pudo comprobar su separación, la lectura/guardado espera a que se revisen. Tocar un cuadro permite ajustarlo incluyendo encabezado, fecha y valor del mismo recibo.
 
 Mejora publicada el10/11/2026 a las17:15Colombia y versión activa confirmada por API. Recargar Conciliación para usarla. Las comprobaciones con fotos sintéticas no sustituyen revisar la detección en la foto real.

@@ -4,6 +4,8 @@ La foto del usuario terminó el conteo y falló al pedir los recortes con413sinJ
 
 `worker/index.ts` despacha `/api/reconciliation/` hacia `handleReconciliationHttp` después de la guarda de origen congelado, antes del router de páginas. La ruta de framework usa el mismo handler: cookie JAC según URL, sesión activa y CRM, origen y guardas SQL, límites propios conservados; nunca identidad legado ni omitir autorización. No ampliar límites globales ni modificar dependencias para corregirlo. Probar la entrada compilada completa con formularios mayores a1MiB; invocar sólo route.ts no cubre el fallo. «Reintentar separación» conserva foto/conteo y sólo reintenta por acción explícita. Estado real en `docs/CRM_RECONCILIATION.md`.
 
+Publicado17:34Colombia, fuente `3f8cc02`, revisión `receipt-upload-7`.57pruebas focales,65comprobaciones Chromium y regresiones requeridas correctas. API confirmó versión activa idéntica al build y configuración conservada; las cargas grandes se comprobaron con Worker completo local, no con la foto real.
+
 ## Delimitación de recibos y fotos giradas ·10 noviembre2026
 
 Camilo reportó seis recortes de ocho recibos en una foto girada y ocho recortes incompletos al enderezarla. La detección anterior aceptaba una sola propuesta de coordenadas, sin comprobar conteo ni geometría. Se añade conteo/orientación separado, giro temporal del análisis, guías de coordenadas sobre una segunda copia y verificación de bordes completos en la foto. No fijar ocho como cantidad ni dividir siempre en partes iguales: las fotos pueden tener otra distribución. Conservar los límites canónicos sobre la vista original para PDF, duplicados y reintentos; sólo girar las copias de análisis y lectura. Misma conexión/modelo, sin migración ni cambios financieros.
