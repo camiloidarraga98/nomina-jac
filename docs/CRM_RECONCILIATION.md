@@ -6,7 +6,7 @@ El formulario permite buscar por fecha, valor y texto; asignar show y empresario
 
 ## Orden del listado
 
-«Ordenar por fecha» permite elegir Descendente · Más recientes (inicial) o Ascendente · Más antiguos según la fecha bancaria. Ordena todos los resultados antes de paginar y vuelve a la primera página al cambiarlo, conservando los filtros. La elección se mantiene durante la consulta, las actualizaciones y los cambios de pestaña internos; al abrir de nuevo la página empieza en descendente. Las exportaciones respetan el mismo orden. El desempate por identificador se conserva. No escribe datos en el servidor ni guarda datos privados en el navegador.
+«Ordenar por fecha» permite elegir Ascendente · Más antiguos (inicial) o Descendente · Más recientes según la fecha bancaria. Por petición posterior de Camilo, siempre inicia con los más antiguos al abrir o recargar la página. Ordena todos los resultados antes de paginar y vuelve a la primera página al cambiarlo, conservando los filtros. La elección manual se mantiene durante la consulta, las actualizaciones y los cambios de pestaña internos. Las exportaciones respetan el mismo orden. El desempate por identificador se conserva. No escribe datos en el servidor ni guarda datos privados en el navegador.
 
 ## Datos y acceso
 

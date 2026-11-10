@@ -4,7 +4,7 @@ Camilo pidió una subpestaña web en CRM para identificar las consignaciones del
 
 Esta conciliación documental no agrega pagos al saldo de los shows ni modifica Calendar, nómina o facturas. Mantiene los permisos administrativos del CRM y guarda soportes privados. No subir archivos contables ni datos iniciales a la fuente pública. Publicación e importación inicial verificadas el10/11/2026. Ver [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
 
-El selector «Ordenar por fecha» permite elegir Ascendente (más antiguos) o Descendente (más recientes, por defecto), usando la fecha bancaria. Cambiarlo vuelve a la primera página y conserva las búsquedas y filtros. Las exportaciones respetan ese orden; no cambia los datos guardados.
+El selector «Ordenar por fecha» permite elegir Ascendente (más antiguos, por defecto) o Descendente (más recientes), usando la fecha bancaria. Camilo pidió después que siempre abra con los más antiguos, también al recargar la página. Cambiarlo vuelve a la primera página y conserva las búsquedas y filtros. Las exportaciones respetan ese orden; no cambia los datos guardados.
 
 ## Comunicado del cumpleaños en Movistar ·3 de noviembre de2026
 
