@@ -1,3 +1,7 @@
+## Abonos más antiguos por defecto ·10 noviembre2026
+
+Publicado13:57Colombia: fuente `929f82e`, Worker `b18a2231-c26c-4533-a19f-f3f98a6590d9`, deployment `b5728882-589e-4fa6-88bc-4b2724e23290`, al100%. Por petición de Camilo, Conciliación abre y recarga siempre en Ascendente · Más antiguos; conserva el selector manual y los filtros durante la consulta. TypeScript/build, suites existentes y26comprobaciones Chromium locales correctos, incluida la recarga tras elegir descendente. Revisión `oldest-default-2`; código activo idéntico a la compilación.14bindings,2crons y DB/BUCKET conservados; sin cambios contables. Ver [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+
 ## Orden ascendente y descendente de abonos ·10 noviembre2026
 
 Publicado13:52Colombia: fuente `7824cc5`, Worker `c233965e-85b6-41df-8edb-91d1c1e32bab`, deployment `2ee61510-51e6-4bf2-a953-f1a871cac1ba`, al100%. Selector de fecha bancaria en Conciliación; conserva filtros, vuelve a la primera página y aplica también a exportaciones. TypeScript/build, suites existentes de nómina/autenticación/correo/vista/assets y24comprobaciones Chromium locales correctos. Dos assets actualizados con revisión `date-order-1`; el código activo coincide byte por byte con la compilación verificada.14bindings,2crons y DB/BUCKET conservados. Sin migración, reimportación ni escrituras contables. Activación confirmada por API tras el error auxiliar conocido de Wrangler; no se repitió el despliegue. Ver [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).

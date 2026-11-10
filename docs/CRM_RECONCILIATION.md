@@ -23,6 +23,8 @@ El HTML independiente anterior se generaba con cadenas de reemplazo de `String.r
 
 ## Verificación y publicación
 
+**Más antiguos por defecto ·10/11/2026,13:57 Colombia:** fuente `929f82e`, Worker `b18a2231-c26c-4533-a19f-f3f98a6590d9`, deployment `b5728882-589e-4fa6-88bc-4b2724e23290`, activo al100%. TypeScript/build, suites existentes de nómina/autenticación/correo/vista/assets y26comprobaciones Chromium locales correctos. Abrir y recargar vuelven a ascendente incluso después de seleccionar descendente. Se actualizó un asset y la revisión del shell a `oldest-default-2`. API confirma código idéntico a la compilación,14bindings,2crons y DB/BUCKET conservados. Sin migración, reimportación ni escrituras contables. El error auxiliar conocido de Wrangler ocurrió después de activar; no se repitió el despliegue. La verificación visual fue local por la restricción de red del dominio.
+
 Las suites `reconciliation.test.mjs`, `reconciliation-view.test.mjs`, `reconciliation-assets.test.mjs` y `reconciliation-worker.test.mjs` comprueban sesión/CRM, origen, originales, concurrencia, reimportación, catálogo, revalidación de soportes y entrega estática. Usan SQLite y R2 simulado. No se prueban escrituras con registros reales.
 
 La fuente se prepara para el Worker propio `jac-nomina` en `jhonalexcastano.com`, conservando DB/BUCKET y secretos mediante `--keep-vars`. Aplicar únicamente la migración nueva revisada y cargar el archivo contable por la importación privada o por el paquete local de importación inicial autorizado. El paquete con los datos de contabilidad permanece fuera de este repositorio público.
