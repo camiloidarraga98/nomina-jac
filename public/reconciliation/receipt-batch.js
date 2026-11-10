@@ -18,7 +18,7 @@
       const c=canvas.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,canvas.width,canvas.height);c.translate(canvas.width/2,canvas.height/2);c.rotate(rotation*Math.PI/180);c.drawImage(source,-source.width/2,-source.height/2);return canvas;
     }
     constructor(host){
-      this.h=host;this.active=true;this.busy=false;this.parts=[];this.shared={showId:'',entrepreneur:'',name:'',date:'',city:''};this.error='';this.phase='preparing';this.operation=null;this.rotation=0;this.needsReview=false;this.geometryWarnings=[];
+      this.h=host;this.active=true;this.busy=false;this.parts=[];this.shared={showId:'',entrepreneur:'',name:'',date:'',city:''};this.error='';this.phase='preparing';this.operation=null;this.rotation=0;this.needsReview=false;this.geometryWarnings=[];this.detectionFailed=false;
       this.click=event=>{const button=event.target.closest('[data-action^="batch-"]');if(button&&!button.disabled)this.action(button.dataset.action,button.dataset.index);};
       this.change=event=>this.input(event.target,event.type);
       document.addEventListener('click',this.click);document.addEventListener('input',this.change);document.addEventListener('change',this.change);
@@ -33,18 +33,24 @@
         const context=canvas.getContext('2d');context.fillStyle='#fff';context.fillRect(0,0,canvas.width,canvas.height);context.drawImage(bitmap,0,0,canvas.width,canvas.height);bitmap.close();
         const blob=await blobFromCanvas(canvas);if(!this.active)return;if(blob.size>5*1024*1024)throw Error('La imagen es demasiado grande. Usa una copia de menor tamaño.');
         this.preview=new File([blob],'vista-comprobantes.jpg',{type:'image/jpeg'});this.image=await createImageBitmap(blob);if(!this.active){this.image.close();return;}this.url=URL.createObjectURL(blob);
-        this.phase='counting';this.render();this.controller=new AbortController();
-        const layoutForm=new FormData();layoutForm.set('file',this.preview);
-        this.layout=await this.h.api('/api/reconciliation/scan/layout',{method:'POST',body:layoutForm,signal:this.controller.signal});if(!this.active)return;
-        this.rotation=this.layout.rotation;this.phase='detecting';this.render();
-        const oriented=this.constructor.rotatedCanvas(this.image,this.rotation),imageBlob=await blobFromCanvas(oriented),grid=await this.coordinateGuide(oriented);if(!this.active)return;
-        const form=new FormData();form.set('file',new File([imageBlob],'comprobantes.jpg',{type:'image/jpeg'}));form.set('grid',new File([grid],'guias.jpg',{type:'image/jpeg'}));form.set('expectedCount',String(this.layout.count));
-        const result=await this.h.api('/api/reconciliation/scan/regions',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
-        this.needsReview=!!result.needsReview;this.geometryWarnings=result.warnings||[];
-        for(const [index,viewBounds] of result.regions.entries()){const bounds=this.constructor.originalBounds(viewBounds,this.rotation),part=this.newPart(index,bounds);this.parts.push(part);await this.crop(part);if(!this.active)return;}
-        if(!this.parts.length)this.error='No se delimitaron comprobantes automáticamente. Puedes agregar los recortes manualmente.';
-      }catch(error){if(this.active){this.error=error.message;this.needsReview=true;}}
+        await this.detectRegions();
+      }catch(error){if(this.active){this.error=error.message;this.needsReview=true;this.detectionFailed=true;}}
       finally{if(this.active){this.phase='review';this.setBusy(false);this.render();}}
+    }
+    async detectRegions(){
+      this.controller=new AbortController();
+      if(!this.layout){
+        this.phase='counting';this.render();const form=new FormData();form.set('file',this.preview);
+        this.layout=await this.h.api('/api/reconciliation/scan/layout',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
+      }
+      this.rotation=this.layout.rotation;this.phase='detecting';this.render();
+      const oriented=this.constructor.rotatedCanvas(this.image,this.rotation),imageBlob=await blobFromCanvas(oriented),grid=await this.coordinateGuide(oriented);if(!this.active)return;
+      const form=new FormData();form.set('file',new File([imageBlob],'comprobantes.jpg',{type:'image/jpeg'}));form.set('grid',new File([grid],'guias.jpg',{type:'image/jpeg'}));form.set('expectedCount',String(this.layout.count));
+      const result=await this.h.api('/api/reconciliation/scan/regions',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
+      for(const part of this.parts)if(part.url)URL.revokeObjectURL(part.url);this.parts=[];this.operation=null;
+      this.needsReview=!!result.needsReview;this.geometryWarnings=result.warnings||[];
+      for(const [index,viewBounds] of result.regions.entries()){const bounds=this.constructor.originalBounds(viewBounds,this.rotation),part=this.newPart(index,bounds);this.parts.push(part);await this.crop(part);if(!this.active)return;}
+      this.detectionFailed=false;if(!this.parts.length)this.error='No se delimitaron comprobantes automáticamente. Puedes agregar los recortes manualmente.';
     }
     newPart(index,bounds){return {index,bounds,amount:'',date:'',matches:[],paymentId:'',version:null,read:false,saved:false,error:'',warnings:[]};}
     async coordinateGuide(source){
@@ -72,7 +78,7 @@
       const {esc,money,date}=this.h,working=this.busy,locked=working||this.parts.some(p=>p.saved),top=$('.receipt-batch .modal-body')?.scrollTop||0;
       const show=this.h.shows().find(s=>s.id===this.shared.showId);
       this.h.open(`<div class="overlay modal-overlay"><section class="modal receipt-batch" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">Varios comprobantes de un show</h2><p>Un movimiento por recibo, con el mismo show y empresario.</p></div><button class="icon-close" data-action="batch-close" aria-label="Cerrar grupo" ${this.phase==='saving'?'disabled':''}>×</button></div><div class="modal-body">
-        ${this.error?`<div class="error-banner" role="alert">${esc(this.error)}</div>`:''}
+        ${this.error?`<div class="error-banner" role="alert">${esc(this.error)}${this.detectionFailed&&this.image&&!this.parts.some(p=>p.saved)?`<p><button class="btn" data-action="batch-detect" ${working?'disabled':''}>Reintentar separación</button></p>`:''}</div>`:''}
         ${this.url?`<details class="batch-original" ${this.needsReview?'open':''}><summary>Revisar separación · ${this.parts.length} recortes${this.layout?` · Conteo: ${this.layout.count}`:''}</summary><div class="batch-map" style="--image-ratio:${this.image.width/this.image.height}"><img src="${esc(this.url)}" alt="Foto completa con los límites de cada comprobante">${this.parts.map(p=>`<button class="batch-map-box" data-action="batch-crop" data-index="${p.index}" style="left:${p.bounds.x/10}%;top:${p.bounds.y/10}%;width:${p.bounds.width/10}%;height:${p.bounds.height/10}%" aria-label="Ajustar comprobante ${p.index+1}" ${working||p.saved?'disabled':''}><span>${p.index+1}</span></button>`).join('')}</div></details>`:''}
         ${['preparing','counting','detecting'].includes(this.phase)?`<div class="loading-state" role="status"><span class="spinner"></span>${this.phase==='preparing'?'Preparando imagen…':this.phase==='counting'?'Contando los recibos y revisando su orientación…':'Delimitando y verificando los recortes completos…'}</div>`:`
         ${this.needsReview?`<div class="notice warning" role="alert">${this.geometryWarnings.map(esc).join('<br>')||'Revisa la separación antes de leer. Cada cuadro debe incluir un recibo completo.'}<br><button class="btn" data-action="batch-confirm-crops" ${working||!this.parts.length?'disabled':''}>Ya revisé: un recibo completo por recorte</button></div>`:''}
@@ -105,10 +111,16 @@
       if(action==='batch-close'){if(this.phase==='saving')return;if(this.h.isDirty()&&!confirm('Hay comprobantes o cambios sin guardar. ¿Quieres cerrar el grupo?'))return;this.h.close();return;}
       if(action==='batch-stop'){this.stopRequested=true;this.controller?.abort();return;}
       if(this.busy)return;
+      if(action==='batch-detect'&&this.image&&!this.parts.some(p=>p.saved)){
+        if(this.parts.some(p=>p.read||p.paymentId)&&!confirm('Reintentar retirará las lecturas y selecciones sin guardar si consigue nuevos recortes. ¿Continuar?'))return;
+        this.setBusy(true);this.error='';this.render();
+        try{await this.detectRegions();}catch(error){if(this.active){this.error=error.message;this.needsReview=true;this.detectionFailed=true;}}
+        finally{if(this.active){this.phase='review';this.setBusy(false);this.render();}}return;
+      }
       if(action==='batch-confirm-crops'){
         const overlap=this.parts.some((p,i)=>this.parts.slice(i+1).some(q=>{const a=p.bounds,b=q.bounds,area=Math.max(0,Math.min(a.x+a.width,b.x+b.width)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.height,b.y+b.height)-Math.max(a.y,b.y));return area>.8*Math.min(a.width*a.height,b.width*b.height);}));
         if(overlap){this.error='Hay recortes repetidos o superpuestos. Ajústalos antes de confirmar.';this.render();return;}
-        this.needsReview=false;this.geometryWarnings=[];this.error='';this.render();return;
+        this.needsReview=false;this.detectionFailed=false;this.geometryWarnings=[];this.error='';this.render();return;
       }
       if(action==='batch-grid'&&!this.parts.some(p=>p.saved)){
         if(this.parts.some(p=>p.read||p.paymentId)&&!confirm('Separar de nuevo retirará las lecturas y selecciones sin guardar. ¿Continuar?'))return;

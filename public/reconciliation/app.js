@@ -34,7 +34,7 @@
     let response;try {response=await fetch(url,{...options,headers,credentials:'same-origin'});} catch {throw new Error('No se pudo conectar. Revisa tu conexión y vuelve a intentar. No se confirmó el guardado. Conserva el formulario y vuelve a intentar.');}
     let data;try {data=await response.json();} catch {data={};}
     if(epoch!==accessEpoch)throw new Error(state.error||'Tu acceso cambió. Vuelve a ingresar.');
-    if(!response.ok) {if([401,403].includes(response.status)){clearPrivateState(response.status);throw new Error(state.error);}if(response.status===409)throw new Error(data.error||'Este abono cambió en otra pestaña. Cierra el detalle, actualiza y revisa los datos antes de guardar.');throw new Error(data.error||data.message||`No se pudo completar la operación (${response.status}).`);}
+    if(!response.ok) {if([401,403].includes(response.status)){clearPrivateState(response.status);throw new Error(state.error);}if(response.status===409)throw new Error(data.error||'Este abono cambió en otra pestaña. Cierra el detalle, actualiza y revisa los datos antes de guardar.');const error=new Error(data.error||data.message||(response.status===413?'La imagen y sus datos superan el tamaño permitido para esta solicitud. Conservamos la foto para que puedas reintentar la separación o ajustar los recortes.':`No se pudo completar la operación (${response.status}).`));error.status=response.status;throw error;}
     return data;
   }
   async function reload({keepDraft=false}={}) {

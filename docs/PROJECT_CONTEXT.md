@@ -1,3 +1,7 @@
+## Corrección413 de formularios de conciliación ·10 noviembre2026
+
+El usuario mostró conteo completo, cero recortes y413genérico. Se reprodujo con el Worker anterior descargado por API y hash verificado: la capa de Server Actions de vinext0.0.50 limita todos los multipart POST a1MiB antes de despachar la API. Conciliación ahora entra por un handler HTTP compartido entre Worker y ruta, conservando cookie/sesión/CRM/origen, guardas y límites de archivos. No se aumenta el límite de páginas, no se cambian modelo/secreto, dependencias ni datos. Nueva prueba sobre la compilación completa y botón explícito para reintentar separación conservando foto/conteo. Detalles, resultados y publicación en [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+
 ## Corrección de delimitación y orientación de recibos ·10 noviembre2026
 
 Publicado17:15Colombia: fuente `c9914a1`, Worker `a3733b71-57a6-408f-9179-55d50044be5a`, deployment `5f089eb1-a56c-43c7-a106-4552df68330f`, activo al100%; código idéntico al build verificado y revisión `receipt-bounds-6`.56pruebas focales,61comprobaciones Chromium, TypeScript y build correctos.14bindings,2crons y DB/BUCKET conservados. El error auxiliar conocido de Wrangler ocurrió después de activar; no se repitió el despliegue. Confirmación por API, sin visita autenticada al dominio ni medir precisión sobre la foto real.

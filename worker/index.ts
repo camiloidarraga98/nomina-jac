@@ -4,6 +4,7 @@ import handler from "vinext/server/app-router-entry";
 import {payrollRoute} from "../lib/payroll-navigation";
 import type {TransferEnv} from '../lib/hosting-transfer';
 import {frozenOriginResponse} from '../lib/hosting-cutover';
+import {handleReconciliationHttp} from '../lib/reconciliation-http';
 
 interface Env extends TransferEnv {
   JAC_ORIGIN_FROZEN?:string;
@@ -47,7 +48,13 @@ const worker = {
       }, allowedWidths);
     }
 
-    const response = await handler.fetch(request, env, ctx);
+    // vinext 0.0.50 attempts to parse every multipart POST as a Server Action
+    // before matching API routes, imposing its unrelated 1 MiB action limit.
+    // Reconciliation is a session-guarded HTTP API with its own bounded readers.
+    // Dispatch it first without widening Server Action limits for other pages.
+    const response = url.pathname.startsWith('/api/reconciliation/')
+      ? await handleReconciliationHttp(request)
+      : await handler.fetch(request, env, ctx);
     if (payrollRoute(url.pathname) !== null || url.pathname === '/acceso' || url.pathname.startsWith('/payroll/') || url.pathname === '/admin' || url.pathname.startsWith('/admin/') || url.pathname.startsWith('/api/')) {
       const secured = new Response(response.body, response);
       secured.headers.set('Cache-Control', 'private, no-store, max-age=0');
