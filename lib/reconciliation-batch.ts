@@ -15,6 +15,15 @@ export const receiptRegionsOverlap=(a:ReceiptBounds,b:ReceiptBounds)=>{
  return intersection/Math.min(a.width*a.height,b.width*b.height)>.8;
 };
 export const receiptRegionsSchema=z.object({receipts:z.array(receiptBoundsSchema).max(RECEIPT_BATCH_LIMIT),moreReceipts:z.boolean()}).strict();
+export const receiptLayoutSchema=z.object({
+ count:z.number().int().min(0).max(RECEIPT_BATCH_LIMIT),moreReceipts:z.boolean(),
+ rotation:z.union([z.literal(0),z.literal(90),z.literal(180),z.literal(270)]),
+ rows:z.number().int().min(0).max(RECEIPT_BATCH_LIMIT),columns:z.number().int().min(0).max(RECEIPT_BATCH_LIMIT),
+}).strict().refine(v=>(v.rows===0&&v.columns===0)||(v.rows*v.columns===v.count),'El conteo y la disposición deben coincidir.');
+export const receiptEdgesSchema=z.object({
+ receipts:z.array(z.object({left:z.number().int().min(0).max(999),top:z.number().int().min(0).max(999),right:z.number().int().min(1).max(1000),bottom:z.number().int().min(1).max(1000)}).strict().refine(v=>v.right-v.left>=10&&v.bottom-v.top>=10)).max(RECEIPT_BATCH_LIMIT),
+ moreReceipts:z.boolean(),complete:z.boolean(),
+}).strict();
 export const receiptBatchPlanSchema=z.object({
  operationId:z.string().uuid(),showId:z.string().trim().min(1).max(200),entrepreneur:z.string().trim().min(1).max(300),
  parts:z.array(z.object({paymentId:z.string().min(1).max(200),version:z.number().int().positive(),index:z.number().int().min(0).max(RECEIPT_BATCH_LIMIT-1),bounds:receiptBoundsSchema}).strict()).min(1).max(RECEIPT_BATCH_LIMIT),

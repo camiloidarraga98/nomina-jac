@@ -1,3 +1,9 @@
+## Corrección de delimitación y orientación de recibos ·10 noviembre2026
+
+Camilo confirmó que la foto tiene ocho recibos: girada se obtenían seis, y horizontal se obtenían ocho recortes desplazados/incompletos. El nuevo flujo cuenta papeles y determina orientación antes de delimitar, usa bordes explícitos con guías y verifica la propuesta sobre la imagen completa. Las coordenadas se transforman de vuelta a la vista original para conservar compatibilidad con soportes y duplicados. Incluye vista de límites numerados, revisión obligatoria cuando se detectan inconsistencias y separación manual por filas/columnas con selección del área. El área de arrastre ahora coincide con la imagen visible en vertical y horizontal.
+
+Ver `CRM_RECONCILIATION.md` para comprobaciones y estado de publicación. Conserva modelo, secreto, originales y guardado financiero; sin migraciones. La precisión con la foto real no se infiere de pruebas con documentos sintéticos y respuestas interceptadas.
+
 ## Comprobantes conjuntos y pegado ·10 noviembre2026
 
 Publicado el10/11/2026 a las16:51Colombia: fuente funcional `8c004dc`, Worker `77bd5cb1-f1cd-4e07-9831-3470b6c25523`, deployment `e8bc9046-6a9b-448e-adb4-2e4201200c82`, activo al100%. Código remoto idéntico al build comprobado (SHA-256 `fb0710f90acfdc2814a6a7b849891d8e6ec101b75ce3c99f7fa407120bff8cb8`), revisión de recursos `receipt-batch-5`;14bindings,2crons y DB/BUCKET conservados. Se cargaron los recursos nuevos y la versión activa se verificó por API. Sin migraciones, cambios de secretos/modelo ni escrituras contables. Wrangler mostró el error auxiliar conocido de subdomain/memberships después de activar; no se repitió el despliegue.

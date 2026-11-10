@@ -103,10 +103,25 @@ test('upstream authorization failure preserves the JAC session, receipt privacy 
  }finally{await f.close();}
 });
 
+test('Workerd layout and coordinate guide use private CRM routes and reject malformed requests before the provider',async()=>{
+ const {receiptJPEG}=await import('./helpers/reconciliation-image.mjs');
+ const f=await reconciliationFixture({readReceipt:async request=>{const body=await request.json();assert.equal(body.store,false);const layout=body.text.format.name==='jac_receipt_layout';assert.equal(body.input[0].content.length,layout?2:3);const result=layout?{count:1,rotation:270,rows:1,columns:1,moreReceipts:false}:{receipts:[{left:10,top:20,right:990,bottom:980}],moreReceipts:false,complete:true};return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(result)}]}]});}});
+ try{
+  const form=new FormData();form.set('file',new File([receiptJPEG],'recibo-ficticio.jpg',{type:'image/jpeg'}));
+  assert.equal((await f.request('/api/reconciliation/scan/layout',{method:'POST',data:form,authenticated:false})).status,401);assert.equal(f.outgoing(),0);
+  const layout=await f.request('/api/reconciliation/scan/layout',{method:'POST',data:form});assert.equal(layout.status,200);assert.match(layout.headers.get('cache-control'),/no-store/);assert.equal((await layout.json()).rotation,270);
+  form.set('expectedCount','1');form.set('grid',new File([receiptJPEG],'guias.jpg',{type:'image/jpeg'}));
+  const result=await f.request('/api/reconciliation/scan/regions',{method:'POST',data:form});assert.equal(result.status,200);assert.deepEqual(await result.json(),{regions:[{x:10,y:20,width:980,height:960}],expectedCount:1,needsReview:false,warnings:[]});assert.equal(f.outgoing(),3);
+  for(const invalid of ['8.1','21','-1','8 extra']){form.set('expectedCount',invalid);assert.equal((await f.request('/api/reconciliation/scan/regions',{method:'POST',data:form})).status,400);}
+  form.set('expectedCount','1');form.set('grid',new File(['not-a-jpeg'],'guias.jpg',{type:'image/jpeg'}));assert.equal((await f.request('/api/reconciliation/scan/regions',{method:'POST',data:form})).status,400);assert.equal(f.outgoing(),3);
+  for(const table of ['jac_reconciliation_payments','jac_reconciliation_attachments','jac_crm_payments','payroll_periods'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+table).first()).n,0);
+ }finally{await f.close();}
+});
+
 test('Workerd group: twenty individual supports commit once; detector stays read-only and all original columns and financial tables remain unchanged',async()=>{
  const {receiptJPEG}=await import('./helpers/reconciliation-image.mjs');
  const regions=Array.from({length:20},(_,i)=>({x:i%4*250,y:Math.floor(i/4)*200,width:240,height:190}));
- const f=await reconciliationFixture({readReceipt:async request=>{const body=await request.json();assert.equal(body.text.format.name,'jac_receipt_regions');assert.equal(body.store,false);return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({receipts:regions,moreReceipts:false})}]}]});}});
+ const f=await reconciliationFixture({readReceipt:async request=>{const body=await request.json();assert.equal(body.text.format.name,'jac_receipt_regions');assert.equal(body.store,false);return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({receipts:regions.map(r=>({left:r.x,top:r.y,right:r.x+r.width,bottom:r.y+r.height})),moreReceipts:false,complete:true})}]}]});}});
  try{
   const data=syntheticImport(20);assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data})).status,200);
   const original=(await f.db.prepare('SELECT id,original FROM jac_reconciliation_payments ORDER BY id').all()).results,crm=(await f.db.prepare('SELECT * FROM jac_crm_shows').all()).results;
@@ -114,7 +129,7 @@ test('Workerd group: twenty individual supports commit once; detector stays read
   const detection=await f.request('/api/reconciliation/scan/regions',{method:'POST',data:form});assert.equal(detection.status,200,await detection.clone().text());assert.deepEqual((await detection.json()).regions,regions);assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
   form.set('preview',new File([receiptJPEG],'vista.jpg',{type:'image/jpeg'}));const operationId=crypto.randomUUID();form.set('plan',JSON.stringify({operationId,showId:'fixture-show',entrepreneur:'Empresario de prueba',parts:original.map((p,i)=>({paymentId:p.id,version:1,index:i,bounds:regions[i]}))}));
   const first=await f.request('/api/reconciliation/batch',{method:'POST',data:form});assert.equal(first.status,200,await first.clone().text());const result=await first.json();assert.equal(result.saved,20);assert.equal(result.files.length,20);
-  const retry=await f.request('/api/reconciliation/batch',{method:'POST',data:form});assert.equal(retry.status,200);assert.equal((await retry.json()).alreadySaved,true);assert.equal(f.outgoing(),1);
+  const retry=await f.request('/api/reconciliation/batch',{method:'POST',data:form});assert.equal(retry.status,200);assert.equal((await retry.json()).alreadySaved,true);assert.equal(f.outgoing(),2);
   const state=await(await f.request('/api/reconciliation/state')).json();assert.equal(state.payments.length,20);for(const p of state.payments){assert.equal(p.version,2);assert.equal(p.showId,'fixture-show');assert.equal(p.status,'identified');assert.equal(p.attachments.length,1);}
   const download=await f.request(result.files[0].url);assert.equal(download.status,200);assert.match(download.headers.get('cache-control'),/no-store/);assert.equal((await PDFDocument.load(await download.arrayBuffer())).getPageCount(),2);assert.equal((await f.request(result.files[0].url,{authenticated:false})).status,401);
   assert.deepEqual((await f.db.prepare('SELECT id,original FROM jac_reconciliation_payments ORDER BY id').all()).results,original);assert.deepEqual((await f.db.prepare('SELECT * FROM jac_crm_shows').all()).results,crm);

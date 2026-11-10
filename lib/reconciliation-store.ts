@@ -6,7 +6,7 @@ import type {CrmGuard} from './crm-access';
 import type {AccessUser} from './payroll-permissions';
 import {payrollHeaders} from './payroll-access';
 import {matchReceiptPayments,receiptLookupSchema} from './reconciliation-receipt';
-import {readReceipt,detectReceiptRegions,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
+import {readReceipt,inspectReceiptLayout,detectReceiptRegions,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
 import {receiptBatchPlanSchema,receiptPartPDF,receiptRegionsOverlap,type ReceiptBounds} from './reconciliation-batch';
 
 const stamp=()=>new Date().toISOString();
@@ -107,9 +107,20 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  }
  await authorize();
  const path=new URL(req.url).pathname.slice('/api/reconciliation'.length),method=req.method;
+ if(path==='/scan/layout'&&method==='POST'){
+  const release=reserveReceiptReader(user.id);
+  try{const {bytes,type}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);const layout=await inspectReceiptLayout(bytes,type,authorize,req.signal);await authorize();return json(layout);}
+  finally{release();}
+ }
  if(path==='/scan/regions'&&method==='POST'){
   const release=reserveReceiptReader(user.id);
-  try{const {bytes,type}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);const regions=await detectReceiptRegions(bytes,type,authorize,req.signal);await authorize();return json({regions});}
+  try{
+   const {bytes,type,form}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES,16*1024*1024),count=form.get('expectedCount'),guide=form.get('grid');
+   if(count!==null&&(typeof count!=='string'||!/^([0-9]|1[0-9]|20)$/.test(count)))fail('Revisa el número de comprobantes.');
+   let grid:Uint8Array|undefined;
+   if(guide!==null){if(typeof guide==='string'||guide.size>5*1024*1024)fail('Las guías de la imagen no son válidas.');grid=new Uint8Array(await guide.arrayBuffer());if(grid.length<3||grid[0]!==255||grid[1]!==216||grid[2]!==255)fail('Las guías deben ser una imagen JPEG.');}
+   const result=await detectReceiptRegions(bytes,type,authorize,req.signal,{expectedCount:count===null?undefined:Number(count),grid});await authorize();return json(result);
+  }
   finally{release();}
  }
  if(path==='/batch'&&method==='POST'){

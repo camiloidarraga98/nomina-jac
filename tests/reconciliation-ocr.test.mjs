@@ -166,11 +166,30 @@ test('missing configuration, limits and revoked access stop before sending a doc
  const releases=['a','b','c'].map(m.reserveReceiptReader);assert.throws(()=>m.reserveReceiptReader('d'),e=>e.status===429);releases.forEach(release=>release());m.reserveReceiptReader('d')();
 });
 
-test('region detection sends only the selected photo and returns bounded independent receipt crops without reading bank candidates',async()=>{
- let calls=0,auth=0;const regions=[{x:10,y:10,width:470,height:970},{x:510,y:10,width:470,height:970}];
- globalThis.fetch=async(url,options)=>{calls++;assert.equal(url,'https://api.openai.com/v1/responses');const body=JSON.parse(options.body);assert.equal(body.store,false);assert.equal(body.text.format.name,'jac_receipt_regions');assert.equal(body.text.format.strict,true);assert.equal(body.input[0].content[1].image_url,'data:image/png;base64,'+Buffer.from(png).toString('base64'));assert.match(body.instructions,/untrusted/);return provider({receipts:regions,moreReceipts:false});};
- assert.deepEqual(await m.detectReceiptRegions(png,'image/png',async()=>{auth++;}),regions);assert.equal(calls,1);assert.equal(auth,1);
- globalThis.fetch=async()=>provider({receipts:[{x:900,y:0,width:500,height:1000}],moreReceipts:false});await assert.rejects(m.detectReceiptRegions(png,'image/png',authorize),e=>e.status===422);
- globalThis.fetch=async()=>provider({receipts:regions,moreReceipts:true});await assert.rejects(m.detectReceiptRegions(png,'image/png',authorize),e=>e.status===422);
+const edges=regions=>regions.map(r=>({left:r.x,top:r.y,right:r.x+r.width,bottom:r.y+r.height}));
+const eightRegions=Array.from({length:8},(_,i)=>({x:i%4*250+5,y:Math.floor(i/4)*500+5,width:240,height:490}));
+test('region detection uses coordinate edges and verifies incomplete proposals against the full photo before returning corrected rectangles',async()=>{
+ let calls=0,auth=0;
+ globalThis.fetch=async(url,options)=>{calls++;assert.equal(url,'https://api.openai.com/v1/responses');const body=JSON.parse(options.body);assert.equal(body.store,false);assert.equal(body.text.format.name,'jac_receipt_regions');assert.equal(body.text.format.strict,true);assert.equal(body.input[0].content[1].image_url,'data:image/png;base64,'+Buffer.from(png).toString('base64'));assert.match(body.instructions,/untrusted/);
+  if(calls===2){assert.match(body.input[0].content[0].text,/CORRIGE/);assert.match(body.input[0].content[0].text,/left/);}
+  return provider({receipts:edges(calls===1?eightRegions.slice(0,6):eightRegions),moreReceipts:false,complete:true});};
+ const result=await m.detectReceiptRegions(png,'image/png',async()=>{auth++;},undefined,{expectedCount:8});assert.deepEqual(result.regions,eightRegions);assert.equal(result.needsReview,false);assert.equal(calls,2);assert.equal(auth,3);
+});
+test('mismatched receipt counts, overlapping regions and incomplete paper remain explicitly unverified; malformed edges and excess receipts are rejected',async()=>{
+ for(const [regions,complete] of [[eightRegions.slice(0,6),true],[[eightRegions[0],eightRegions[0]],true],[eightRegions,false]]){
+  globalThis.fetch=async()=>provider({receipts:edges(regions),moreReceipts:false,complete});const result=await m.detectReceiptRegions(png,'image/png',authorize,undefined,{expectedCount:8});assert.equal(result.needsReview,true);assert.ok(result.warnings.length);
+ }
+ globalThis.fetch=async()=>provider({receipts:[{left:900,top:0,right:500,bottom:1000}],moreReceipts:false,complete:true});await assert.rejects(m.detectReceiptRegions(png,'image/png',authorize),e=>e.status===422);
+ globalThis.fetch=async()=>provider({receipts:edges(eightRegions),moreReceipts:true,complete:true});await assert.rejects(m.detectReceiptRegions(png,'image/png',authorize),e=>e.status===422);
  await assert.rejects(m.detectReceiptRegions(png,'application/pdf',authorize),e=>e.status===415);
+});
+test('count and orientation are read independently from bounds and receipt data; cancellation and revocation prevent geometry verification',async()=>{
+ let calls=0;
+ globalThis.fetch=async(url,options)=>{calls++;const body=JSON.parse(options.body);assert.equal(body.text.format.name,'jac_receipt_layout');assert.equal(body.store,false);assert.equal(body.input[0].content.length,2);return provider({count:8,rotation:270,rows:2,columns:4,moreReceipts:false});};
+ const layout=await m.inspectReceiptLayout(png,'image/png',authorize);assert.equal(layout.count,8);assert.equal(layout.rotation,270);assert.equal(calls,1);
+ globalThis.fetch=async()=>provider({count:8,rotation:270,rows:2,columns:3,moreReceipts:false});await assert.rejects(m.inspectReceiptLayout(png,'image/png',authorize),e=>e.status===422);
+ let auth=0;calls=0;globalThis.fetch=async()=>{calls++;return provider({receipts:edges(eightRegions),moreReceipts:false,complete:true});};
+ await assert.rejects(m.detectReceiptRegions(png,'image/png',async()=>{if(++auth===2)throw Error('revoked');}),/revoked/);assert.equal(calls,1);
+ const controller=new AbortController();calls=0;globalThis.fetch=async()=>{calls++;controller.abort();return provider({receipts:edges(eightRegions),moreReceipts:false,complete:true});};
+ await assert.rejects(m.detectReceiptRegions(png,'image/png',authorize,controller.signal),e=>e.status===502);assert.equal(calls,1);
 });
