@@ -53,3 +53,21 @@ test('Workerd reads a synthetic receipt through an intercepted provider, matches
   const row=await f.db.prepare('SELECT annotation,version FROM jac_reconciliation_payments WHERE id=?').bind(result.autoMatchId).first();assert.equal(JSON.parse(row.annotation).status,'pending');assert.equal(row.version,1);
  }finally{await f.close();}
 });
+
+test('upstream authorization failure preserves the JAC session, receipt privacy and manual lookup without writes or retries',async()=>{
+ let calls=0;
+ const f=await reconciliationFixture({readReceipt:async()=>{calls++;return Response.json({error:{code:'insufficient_permissions',message:'PRIVATE_RECEIPT_KEY_OR_ACCOUNT'}},{status:403});}});
+ try{
+  assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(3)})).status,200);
+  const before=(await f.db.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all()).results;
+  const form=new FormData();form.set('file',new File([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64')],'synthetic.png',{type:'image/png'}));
+  const response=await f.request('/api/reconciliation/scan',{method:'POST',data:form});
+  assert.equal(response.status,502);const result=await response.json();assert.match(result.error,/OCR_PERMISOS · HTTP 403/);assert(!JSON.stringify(result).includes('PRIVATE'));
+  assert.equal((await f.request('/api/reconciliation/state')).status,200);
+  const lookup=await f.request('/api/reconciliation/scan/matches',{method:'POST',data:{amount:1250000.25,date:'2026-11-01'}});
+  assert.equal(lookup.status,200);assert.equal((await lookup.json()).matches.length,1);assert.equal(calls,1);
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
+  assert.deepEqual((await f.db.prepare('SELECT * FROM jac_reconciliation_payments ORDER BY id').all()).results,before);
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_crm_payments').first()).n,0);
+ }finally{await f.close();}
+});

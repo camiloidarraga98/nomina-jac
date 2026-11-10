@@ -66,6 +66,39 @@ test('provider failures, redirects, refusal, incomplete output and response over
  for(const body of [{status:'incomplete',output:[]},{status:'completed',output:[{type:'message',content:[{type:'refusal',refusal:'no'}]}]},{status:'completed',output:[]},{status:'completed',output:[{type:'message',content:[{type:'output_text',text:'not json'}]}]}]){globalThis.fetch=async()=>Response.json(body);await assert.rejects(m.readReceipt(png,'image/png',authorize),e=>e.status===422);}
  globalThis.fetch=async()=>new Response('x'.repeat(65537));await assert.rejects(m.readReceipt(png,'image/png',authorize),e=>e.status===502);
 });
+test('provider rejections distinguish key, permissions, unavailable model, quota and invalid document without reflecting sensitive text',async()=>{
+ const cases=[
+  [401,'invalid_api_key','CLAVE'],[401,'insufficient_permissions','PERMISOS'],[403,null,'PERMISOS'],
+  [404,'model_not_found','MODELO'],[429,'insufficient_quota','CUOTA'],[429,'rate_limit_exceeded','LIMITE'],
+  [400,'invalid_image_format','ARCHIVO'],[400,'invalid_json_schema','SOLICITUD'],[413,null,'TAMANO'],
+  [503,'PRIVATE_UNKNOWN_CODE','SERVICIO'],
+ ];
+ const warnings=[],warn=console.warn;console.warn=(...args)=>warnings.push(args);
+ let calls=0;
+ try{
+  for(const [status,code,category] of cases){
+   globalThis.fetch=async()=>{calls++;return Response.json({error:{code,type:'invalid_request_error',message:'PRIVATE_KEY_AND_BANK_RECEIPT',param:'PRIVATE_ACCOUNT'}},{status});};
+   await assert.rejects(m.readReceipt(png,'image/png',authorize),error=>{
+    assert.equal(error.status,status===429?429:502);assert.match(error.message,new RegExp(`OCR_${category} · HTTP ${status}`));assert(!error.message.includes('PRIVATE'));return true;
+   });
+  }
+  assert.equal(calls,cases.length,'A rejected request is never retried automatically');
+  assert.equal(warnings.length,cases.length);
+  assert(!JSON.stringify(warnings).includes('PRIVATE'),'Diagnostics contain only a fixed category and status');
+  globalThis.fetch=async()=>Response.json({error:{code:null,type:'insufficient_quota',message:'PRIVATE'}},{status:429});
+  await assert.rejects(m.readReceipt(png,'image/png',authorize),/OCR_CUOTA/);
+ }finally{console.warn=warn;}
+});
+test('oversized or malformed provider errors remain bounded and do not expose body content',async()=>{
+ let cancelled=false,reads=0;
+ globalThis.fetch=async()=>new Response(new ReadableStream({pull(controller){reads++;controller.enqueue(new TextEncoder().encode('PRIVATE'.repeat(10000)));},cancel(){cancelled=true;}},{highWaterMark:0}),{status:403});
+ await assert.rejects(m.readReceipt(png,'image/png',authorize),e=>e.status===502&&e.message.includes('OCR_PERMISOS')&&!e.message.includes('PRIVATE'));
+ assert.equal(cancelled,true);assert.equal(reads,1);
+ for(const body of ['null','[]','{"error":"PRIVATE"}','PRIVATE HTML ERROR']){
+  globalThis.fetch=async()=>new Response(body,{status:502});
+  await assert.rejects(m.readReceipt(png,'image/png',authorize),e=>e.status===502&&e.message.includes('OCR_SERVICIO')&&!e.message.includes('PRIVATE'));
+ }
+});
 test('missing configuration, limits and revoked access stop before sending a document; reader slots release explicitly',async()=>{
  let calls=0;globalThis.fetch=async()=>{calls++;return provider();};
  const key=globalThis.__receiptEnv.OPENAI_API_KEY;delete globalThis.__receiptEnv.OPENAI_API_KEY;

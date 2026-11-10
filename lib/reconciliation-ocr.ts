@@ -21,6 +21,58 @@ const schema={type:'object',additionalProperties:false,properties:{
  transactionStatus:{type:'string',enum:['completed','pending','failed','unknown']},legible:{type:'boolean'},
 },required:['document','amountText','dateText','currency','transactionStatus','legible']};
 
+async function boundedProviderJSON(response:Response){
+ const reader=response.body?.getReader();if(!reader)throw new Error('missing-body');
+ const chunks:Uint8Array[]=[];let size=0;
+ try{
+  while(true){
+   const {done,value}=await reader.read();if(done)break;
+   size+=value.length;if(size>65536)throw new Error('response-limit');
+   chunks.push(value);
+  }
+ }catch(error){await reader.cancel().catch(()=>{});throw error;}
+ finally{reader.releaseLock();}
+ const raw=new Uint8Array(size);let offset=0;
+ for(const chunk of chunks){raw.set(chunk,offset);offset+=chunk.length;}
+ return JSON.parse(new TextDecoder().decode(raw));
+}
+
+async function providerFailure(response:Response){
+ // Read only bounded JSON and classify by known error codes. Never reflect or log
+ // provider messages/parameters: they may contain keys, account IDs or receipt text.
+ let code='',type='';
+ try{
+  const body=await boundedProviderJSON(response);
+  code=typeof body?.error?.code==='string'?body.error.code:'';
+  type=typeof body?.error?.type==='string'?body.error.type:'';
+ }catch{/* A non-JSON gateway error still has a useful HTTP status. */}
+ const status=response.status;
+ let reason='SERVICIO',message='OpenAI rechazó la lectura del comprobante. Puedes buscar por valor y fecha manualmente.';
+ if(code==='insufficient_quota'||type==='insufficient_quota'||code==='billing_hard_limit_reached'){
+  reason='CUOTA';message='La cuenta de OpenAI no tiene saldo o alcanzó su límite de uso. Revisa la facturación del proyecto conectado.';
+ }else if(status===403||code==='insufficient_permissions'||code==='permission_denied'||code==='missing_scope'){
+  reason='PERMISOS';message='La conexión de OpenAI no tiene permiso para leer comprobantes. Revisa el permiso de escritura de Responses y el acceso al modelo en el proyecto conectado.';
+ }else if(status===401||code==='invalid_api_key'){
+  reason='CLAVE';message='OpenAI no aceptó la clave configurada en JAC. Revisa que la clave esté activa y tenga permiso de escritura de Responses.';
+ }else if(status===404||code==='model_not_found'){
+  reason='MODELO';message='El modelo de lectura no está disponible para el proyecto de OpenAI conectado. Revisa su acceso al modelo.';
+ }else if(status===429){
+  reason='LIMITE';message='OpenAI alcanzó temporalmente su límite de solicitudes. Espera un momento antes de volver a intentar.';
+ }else if(['invalid_image','invalid_image_format','invalid_base64_image','image_parse_error','unsupported_image','invalid_file','file_parse_error','unsupported_file'].includes(code)){
+  reason='ARCHIVO';message='OpenAI no pudo abrir este archivo. Prueba con una copia JPG o PNG, o con un PDF sin contraseña.';
+ }else if(status===413){
+  reason='TAMANO';message='OpenAI rechazó el tamaño del archivo. Prueba con una imagen más pequeña o un PDF de menos páginas.';
+ }else if(status===400||status===422){
+  reason='SOLICITUD';message='OpenAI rechazó el formato de la solicitud de lectura. Es necesario revisar la configuración del lector en JAC.';
+ }else if(status>=300&&status<400){
+  reason='REDIRECCION';message='El servicio de lectura devolvió una dirección inesperada. JAC detuvo la solicitud para proteger el comprobante.';
+ }
+ // Safe, fixed diagnostic vocabulary only. No document, key, provider body or user ID.
+ console.warn('jac_receipt_ocr_error',{category:reason,status});
+ // An upstream 401/403 must not clear the user's independent JAC session.
+ return new CrmFailure(`${message} [OCR_${reason} · HTTP ${status}]`,status===429?429:502);
+}
+
 export async function readReceipt(bytes:Uint8Array,type:string,authorize:()=>Promise<void>,signal?:AbortSignal){
  if(!bytes.length||bytes.length>RECEIPT_OCR_MAX_BYTES)throw new CrmFailure('Para la lectura automática usa un comprobante de hasta 10 MB.',413);
  const key=(env as unknown as {OPENAI_API_KEY?:string}).OPENAI_API_KEY;
@@ -44,15 +96,11 @@ export async function readReceipt(bytes:Uint8Array,type:string,authorize:()=>Pro
    text:{format:{type:'json_schema',name:'jac_payment_receipt',strict:true,schema}},
   })});
  }catch{throw new CrmFailure('La lectura no terminó. Vuelve a intentar o escribe el valor y la fecha manualmente.',502);}
- if(!response.ok){await response.body?.cancel().catch(()=>{});throw new CrmFailure(response.status===429?'La lectura automática está ocupada. Intenta de nuevo en un momento.':'El servicio no pudo leer el comprobante. Puedes completar los datos manualmente.',response.status===429?429:502);}
- // Do not log provider bodies: they can contain private receipt text.
- const reader=response.body?.getReader();if(!reader)throw new CrmFailure('No recibimos una lectura del comprobante.',502);
- const chunks:Uint8Array[]=[];let size=0;
- try{while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>65536){await reader.cancel();throw new Error('response-limit');}chunks.push(value);}}
+ if(!response.ok)throw await providerFailure(response);
+ let body;
+ try{body=await boundedProviderJSON(response);}
  catch{throw new CrmFailure('La respuesta de lectura no fue válida. Puedes escribir los datos manualmente.',502);}
- const raw=new Uint8Array(size);let offset=0;for(const chunk of chunks){raw.set(chunk,offset);offset+=chunk.length;}
  try{
-  const body=JSON.parse(new TextDecoder().decode(raw));
   if(body.status!=='completed'||!Array.isArray(body.output))throw new Error('incomplete');
   const output=body.output.flatMap((item:{type:string;content?:{type:string;text?:string}[]})=>item.type==='message'&&Array.isArray(item.content)?item.content:[]);
   if(output.some((item:{type:string})=>item.type==='refusal'))throw new Error('refusal');

@@ -33,6 +33,14 @@ No requiere migración ni modifica los cálculos del CRM, Calendar o nómina. La
 
 Verificación local:37pruebas focales (9de lectura/normalización/coincidencias,20de almacenamiento/API,4de vista,2de assets y2de Workerd), regresiones de nómina/autenticación/correo/CRM y TypeScript/build correctos. Chromium comprobó32recorridos, escritorio/móvil, y comparó los296originales ficticios sin cambios; sin errores JS. Proveedor interceptado, PDF e imágenes sintéticos, D1/R2 desechables. La clave existe como binding en producción, pero no se hizo una lectura real de OpenAI ni una visita autenticada al dominio desde este entorno; no confundir la prueba del flujo con una medición real de precisión OCR.
 
+### Rechazo del proveedor y diagnóstico
+
+El 10/11/2026 Camilo reportó un comprobante legible con el aviso genérico «El servicio no pudo leer el comprobante». Ese texto corresponde a una respuesta HTTP no exitosa del proveedor; no acredita un problema de legibilidad ni permite distinguir permisos, clave, modelo o formato. La versión original descartaba el cuerpo de error. La configuración consultada no tiene observabilidad habilitada; no se recuperó el motivo del intento anterior.
+
+El lector ahora clasifica códigos conocidos del error y el estado HTTP, con mensajes accionables y una referencia fija `OCR_*`. Distingue clave, permisos, modelo, cuota, límite temporal, archivo y solicitud. No refleja mensajes, parámetros, identificadores o códigos desconocidos del proveedor; tanto respuestas exitosas como errores se limitan a 64 KiB. El registro técnico contiene exclusivamente la categoría fija y el estado HTTP. Un 401/403 de OpenAI se devuelve como 502 de JAC para conservar la sesión independiente, la imagen local y la búsqueda manual. No se cambian permisos del proyecto OpenAI, secretos ni modelo por suposición, y nunca se reenvía el archivo automáticamente.
+
+Esta corrección mejora el diagnóstico; la causa concreta y la lectura real siguen pendientes de un nuevo intento desde la sesión del usuario. No afirmar que el rechazo original quedó resuelto únicamente por publicar estos mensajes. Pruebas focales ampliadas a 40 casos, incluidos errores de autorización, saldo, esquema, archivo, cuerpos demasiado grandes y búsqueda manual posterior sin escrituras contables; proveedor interceptado.
+
 ## Corrección de arranque
 
 El HTML independiente anterior se generaba con cadenas de reemplazo de `String.replace`. Las secuencias `$'` y `$$` del JavaScript eran interpretadas al empaquetarlo, creando errores de sintaxis. El generador independiente usa reemplazos por función y comprueba todos los scripts resultantes. La versión integrada sirve scripts separados sin ese paso de sustitución. La carga inicial tiene límite de20segundos, error visible y reintento. Una respuesta atrasada no restaura datos después de perder el permiso. Las anotaciones pendientes se conservan durante la carga de soportes y el panel protege la salida con cambios sin guardar.
