@@ -1,3 +1,7 @@
+## OCR de conciliación preparado; publicación pendiente ·10 noviembre2026
+
+Fuente funcional `0290a58` en main: «Leer comprobante» lee valor/fecha de un archivo seleccionado, busca abonos existentes y deja el soporte pendiente hasta guardar show/empresario.37pruebas focales,32recorridos Chromium con296originales sintéticos intactos, regresiones y TypeScript/build correctos. Proveedor OpenAI interceptado en pruebas; no se hizo una lectura real. La revisión automática rechazó ejecutar el despliegue por falta de autorización explícita del usuario para enviar comprobantes potencialmente bancarios a OpenAI. No reintentar la publicación de esa integración sin esa aprobación. La versión publicada continúa siendo la de más antiguos por defecto; ver [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+
 ## Abonos más antiguos por defecto ·10 noviembre2026
 
 Publicado13:57Colombia: fuente `929f82e`, Worker `b18a2231-c26c-4533-a19f-f3f98a6590d9`, deployment `b5728882-589e-4fa6-88bc-4b2724e23290`, al100%. Por petición de Camilo, Conciliación abre y recarga siempre en Ascendente · Más antiguos; conserva el selector manual y los filtros durante la consulta. TypeScript/build, suites existentes y26comprobaciones Chromium locales correctos, incluida la recarga tras elegir descendente. Revisión `oldest-default-2`; código activo idéntico a la compilación.14bindings,2crons y DB/BUCKET conservados; sin cambios contables. Ver [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).

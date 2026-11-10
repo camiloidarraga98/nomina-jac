@@ -19,6 +19,8 @@ El formulario permite buscar por fecha, valor y texto; asignar show y empresario
 
 ## Lectura de comprobantes
 
+**Estado10/11/2026: implementada y verificada en fuente `0290a58`, todavía sin publicar.** La revisión automática rechazó ejecutar el despliegue porque el usuario pidió OCR, pero no ha autorizado explícitamente el envío de comprobantes potencialmente sensibles a OpenAI. El comando no se ejecutó; no se enviaron comprobantes ni se hicieron lecturas reales. La publicación requiere esa aprobación específica del usuario. El resto de la conciliación ya publicada continúa disponible.
+
 El botón «Leer comprobante» acepta JPG/PNG/WebP/PDF de hasta10MiB; PDF sin contraseña, máximo5páginas. Se puede seleccionar, arrastrar o pegar una imagen. La pantalla muestra el original, el valor y la fecha leídos, y permite corregirlos. «Buscar coincidencias» reutiliza esos campos sin volver a llamar al lector.
 
 - `POST /api/reconciliation/scan` valida el archivo y la sesión/CRM/origen, detecta por SHA-256 un soporte ya adjunto y, si es nuevo, llama al endpoint fijo de OpenAI Responses con la clave existente del servidor. Modelo `gpt-4.1-mini-2025-04-14`, `store:false`, JSON Schema estricto, sin herramientas ni redirecciones; timeout45s y respuesta máxima64KiB. Solo envía el comprobante seleccionado, con un nombre genérico para PDF. No envía la relación de abonos, notas o credenciales de JAC. Las instrucciones impresas se tratan como datos no confiables y nunca determinan IDs ni operaciones.
