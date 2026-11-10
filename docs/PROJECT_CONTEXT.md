@@ -1,3 +1,7 @@
+## Conciliación de abonos ·10 noviembre2026
+
+Publicado13:30Colombia: fuente `e95d9a2`, Worker `3e299874-34ad-4710-a399-048dd792c672`, deployment `3f4d0dea-8571-4db1-ae9b-2ec539744b34`, al100%. `CRM → Conciliación de abonos`, `/crm?seccion=conciliacion`, con la misma sesión administrativa; búsqueda, referencias CRM/históricas, soportes privados, facturación manual y CSV/ZIP. Migración0039 aditiva y carga contable privada completas, originales y total comprobados en D1, sin cambios en saldos.14bindings y2crons conservados; R2 sin acceso público. TypeScript/build,23pruebas del módulo,103regresiones y28comprobaciones Chromium locales correctos. El dominio está bloqueado por la red del entorno: no se verificó una sesión visual de producción. No publicar el paquete, seed, SQL contable, exportaciones ni soportes. Ver [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+
 ## Galería interna de fotos con IA ·6 de noviembre de2026
 
 Publicado 06/11/2026 12:08 Colombia: fuente `38b356c`; Worker `6d72b0fb-5275-4b8f-9664-a592894c8682`, deployment `e081aae4-c56a-4ffd-b2f1-3535aff98457`, al100%. Cuatro recursos públicos actualizados;14 bindings y ambos crons coinciden con la configuración anterior. Sin migraciones, cambios del secreto, restablecimientos ni generaciones reales. La API confirma activación tras el error auxiliar conocido de Wrangler; no se repitió el despliegue. Verificación visual local con fixtures; el dominio sigue fuera de los destinos permitidos del entorno.
