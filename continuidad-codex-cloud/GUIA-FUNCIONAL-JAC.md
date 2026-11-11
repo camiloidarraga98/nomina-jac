@@ -2,7 +2,7 @@
 
 Antes de leer el valor y la fecha, JAC compara cuatro orientaciones visibles y comprueba cuál muestra el texto derecho. Si no logra confirmarlo, muestra **Girar izquierda**, **Girar derecha** y **Así se lee correctamente**. También puedes abrir **Revisar orientación** desde la vista previa o la ficha de un comprobante aún sin guardar.
 
-Al confirmar se vuelve a leer y buscar el abono. Para grupos, cambiar el giro vuelve a separar y leer la foto, por lo que se pide confirmar antes de retirar selecciones pendientes. Los soportes ya guardados y el archivo original se conservan. Publicación pendiente; el resultado de las verificaciones se registra en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+Al confirmar se vuelve a leer y buscar el abono. Para grupos, cambiar el giro vuelve a separar y leer la foto, por lo que se pide confirmar antes de retirar selecciones pendientes. Los soportes ya guardados y el archivo original se conservan. Publicado el 11/11/2026 a las 12:33 Colombia, revisión `receipt-orientation-10`. Recarga la página y vuelve a elegir la foto. Código activo confirmado por API; pruebas con recibos ficticios. El resultado de las verificaciones se registra en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
 
 ## Lectura automática y abonos ya facturados · 11 noviembre 2026
 
