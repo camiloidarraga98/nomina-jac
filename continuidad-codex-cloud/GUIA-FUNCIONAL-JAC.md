@@ -4,6 +4,8 @@ Al subir, pegar o arrastrar una imagen, la API lee todos sus comprobantes desde 
 
 Si un recorte no se puede confirmar, se muestra la foto completa y se conservan los datos que sí se pudieron leer. **Ver original** está siempre disponible. El soporte individual incluye la referencia, la foto completa y el archivo original. No se giran las fotos automáticamente y no se duplican ingresos. **Volver a analizar la imagen** sustituye las lecturas sin guardar tras confirmación; no se vuelve a llamar a la IA automáticamente por un error.
 
+Publicado el 11/11/2026 a las 13:32 Colombia, revisión `receipt-collection-13`. Verificado con imágenes ficticias y proveedor simulado; precisión de OCR sobre documentos reales no certificada.
+
 Esta pantalla sustituye el flujo que exigía separar y confirmar recortes antes de leer las imágenes. Los PDF conservan su lector anterior. Ver detalles y estado de publicación en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
 
 ## Revisar la separación de comprobantes · 11 noviembre 2026
