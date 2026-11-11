@@ -1,5 +1,7 @@
 ## Lectura automática y abonos ya facturados · 11 noviembre 2026
 
+Actualización publicada el 11/11/2026 a las 12:07 Colombia, revisión `receipt-auto-9`. Recarga Conciliación y vuelve a seleccionar o pegar la foto para usar el nuevo flujo. Se conservan los soportes y asignaciones que ya guardaste. Versión activa confirmada por API; orientación, recortes, lectura y guardado comprobados con recibos ficticios.
+
 Antes de leer fecha y valor, JAC endereza automáticamente las imágenes de lado o invertidas. La vista previa muestra la copia orientada y el soporte guardado conserva el archivo original. Esto aplica tanto a un recibo individual como a varios recibos en una foto.
 
 En **Leer comprobante** ya no se elige entre dos pestañas: seleccionar, arrastrar o pegar una imagen inicia el conteo. Un recibo se lee completo; varios pasan a la separación y lectura conjunta. Las coincidencias se buscan solas. Si los cuadros son dudosos, revisarlos y confirmar inicia la lectura. Una coincidencia exacta única se selecciona; si hay varias posibles, elegir la correcta. En una ficha abierta desde el lector, completar show/empresario y **Guardar identificación** adjunta el archivo y deja Identificado en un solo paso. En un grupo se guardan juntos los seleccionados.
