@@ -114,7 +114,7 @@
     const batch=new Reader({esc,money,date,amount:namount,api,
       open:html=>{if(receiptBatch===batch)openOverlay(html,'receipt');},
       busy:value=>{if(receiptBatch===batch)state.busy=value;},dirty:value=>{if(receiptBatch===batch)state.dirty=value;},isDirty:()=>state.dirty,
-      forceGroup,reviewOrientation,layout,shows:()=>state.shows,reload:()=>reload(),single:(file,manual=false,readingImage,layout)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,manual,readingImage,layout,draft});},singleReady:(file,result,readingImage)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,preRead:result,readingImage,draft});},close:()=>{if(receiptBatch===batch){state.busy=false;state.dirty=false;closeOverlay(true);}}
+      forceGroup,reviewOrientation,layout,shows:()=>state.shows,reload:()=>reload(),single:(file,manual=false,readingImage,layout)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,manual,readingImage,layout,draft});},singleReady:(file,result,readingImage)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,preRead:result,readingImage,draft});},singleWhole:(file,readingImage,common)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,forceSingle:true,readingImage,draft,common});},close:()=>{if(receiptBatch===batch){state.busy=false;state.dirty=false;closeOverlay(true);}}
     });receiptBatch=batch;batch.start(file);
   }
   function receiptClipboard(){return `<div class="receipt-clipboard"><button type="button" class="btn" id="receipt-paste-button" data-action="paste-scan" aria-describedby="receipt-paste-hint">Pegar del portapapeles</button><p id="receipt-paste-hint" class="small-note">Copia la imagen del comprobante y pulsa <kbd>⌘ V</kbd> en Mac o <kbd>Ctrl V</kbd> en Windows.</p><p id="receipt-paste-message" class="small-note" role="status"></p><textarea id="receipt-paste-target" class="input" rows="2" hidden aria-label="Pegar imagen del comprobante" placeholder="Pega aquí con ⌘V, Ctrl+V o el menú Pegar" autocomplete="off"></textarea></div>`;}
@@ -165,18 +165,18 @@
     if(!matches.length)return '<div class="notice">No hay abonos con estos datos. Revisa el valor y la fecha, o borra uno de los campos para ampliar la búsqueda.</div>';
     return `<h3 class="receipt-match-title">${scan.result.total} coincidencia${scan.result.total===1?'':'s'} · Elige el abono</h3>${matches.map(p=>`<button class="receipt-match" data-action="select-scan-payment" data-id="${esc(p.id)}"><span><strong>${money(p.amount)}</strong><span>${esc(date(p.date))} · ${p.kind==='exact'?'Coinciden valor y fecha':p.kind==='amount'?'Mismo valor · revisa la fecha':'Misma fecha · revisa el valor'}</span><small>${esc(state.shows.find(s=>s.id===p.showId)?.name||'Sin show asignado')} · ${esc(p.entrepreneur||'Empresario por identificar')}</small>${p.status==='identified'?'<small>Ya identificado · revisa antes de añadir otro soporte</small>':''}</span><span class="receipt-use">Usar este abono →</span></button>`).join('')}${scan.result.total>matches.length?'<p class="secondary">Se muestran las primeras 100 coincidencias. Añade el valor para acotar la búsqueda.</p>':''}`;
   }
-  async function readReceiptFile(file,{single=false,manual=false,readingImage=null,layout=null,draft=null,preRead=null}={}){
+  async function readReceiptFile(file,{single=false,manual=false,readingImage=null,layout=null,draft=null,preRead=null,forceSingle=false,common=null}={}){
     if(!file||state.busy)return;
     if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)||!file.size||file.size>10*1024*1024)return toast('Usa un JPG, PNG, WebP o PDF de hasta 10 MB.',true);
     if(!single&&file.type!=='application/pdf')return startReceiptBatch(file);
     discardReceipt();
-    const scan=receiptScan={file,url:URL.createObjectURL(readingImage||file),controller:new AbortController(),loading:true,error:'',amount:'',date:'',result:null,matchesCurrent:false,paymentId:null,attached:false,layout,draft};
+    const scan=receiptScan={file,url:URL.createObjectURL(readingImage||file),controller:new AbortController(),loading:true,error:'',amount:'',date:'',result:null,matchesCurrent:false,paymentId:null,attached:false,layout,draft,common};
     state.busy=!manual;scan.loading=!manual;state.dirty=true;renderReceipt();if(manual)return;
     try{
       const body=new FormData();body.append('file',file);if(readingImage)body.append('readingImage',readingImage);
       const result=preRead||await api('/api/reconciliation/scan',{method:'POST',body,signal:scan.controller.signal});
       if(receiptScan!==scan)return;
-      if(result.reading?.document==='multiple_payments'&&file.type!=='application/pdf'){state.busy=false;startReceiptBatch(file,{forceGroup:true});return;}
+      if(!forceSingle&&result.reading?.document==='multiple_payments'&&file.type!=='application/pdf'){state.busy=false;startReceiptBatch(file,{forceGroup:true});return;}
       scan.result=result;scan.amount=result.reading?.amount==null?'':new Intl.NumberFormat('es-CO',{maximumFractionDigits:2}).format(result.reading.amount);scan.date=result.reading?.date||'';scan.matchesCurrent=true;scan.loading=false;
       if(result.existingPaymentId){
         await reload();if(receiptScan!==scan)return;
@@ -205,6 +205,7 @@
       const p=state.payments.find(p=>p.id===id);if(!p)throw new Error('El abono ya no está disponible. Busca de nuevo.');
       if(p.version!==candidate.version){scan.error='Este abono cambió durante la lectura. Busca de nuevo para revisar su estado actual.';scan.matchesCurrent=false;renderReceipt();return;}
       scan.paymentId=p.id;scan.automatic=automatic;renderEditor(p);
+      if(scan.common)for(const key of ['showId','entrepreneur']){const el=$(`[name="${key}"]`,$('#payment-form'));if(el&&!el.value&&scan.common[key])el.value=scan.common[key];}
       if(scan.draft?.id===p.id){for(const [key,value]of Object.entries(scan.draft.values)){const el=$(`[name="${key}"]`,$('#payment-form'));if(el&&key!=='version')el.value=value;}}
       state.dirty=true;
     }catch(error){if(receiptScan===scan){scan.error=error.message;renderReceipt();}}

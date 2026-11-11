@@ -9,7 +9,7 @@ import {matchReceiptPayments,receiptLookupSchema} from './reconciliation-receipt
 import {readReceipt,inspectReceiptLayout,inspectReceiptOrientation,detectReceiptRegions,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
 import {receiptBatchPlanSchema,receiptPartPDF,receiptRegionsOverlap,type ReceiptBounds} from './reconciliation-batch';
 import {hasAccountingIdentification} from './reconciliation-status';
-import {readReceiptCollection,signCollection,verifyCollection,collectionPlanSchema,type CollectionEvidence} from './reconciliation-collection';
+import {readReceiptCollection,signCollection,verifyCollection,collectionPlanSchema,cropReviewPlanSchema,verifyReceiptCrops,relocateReceiptCrops,type CollectionEvidence} from './reconciliation-collection';
 
 const stamp=()=>new Date().toISOString();
 const id=()=>crypto.randomUUID();
@@ -121,15 +121,53 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  if(path==='/scan/collection'&&method==='POST'){
   const release=reserveReceiptReader(user.id);
   try{
-   const {form,bytes,type,hash}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES,17*1024*1024),previewFile=form.get('preview');
+   const {form,bytes,type,hash}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES,19*1024*1024),previewFile=form.get('preview');
    if(type==='application/pdf'||!previewFile||typeof previewFile==='string'||!previewFile.size||previewFile.size>5*1024*1024)fail('Usa una imagen y su vista de lectura de hasta 5 MB.');
    const preview=new Uint8Array(await previewFile.arrayBuffer());if(preview[0]!==255||preview[1]!==216||preview[2]!==255)fail('La vista de lectura no es JPEG.');
    const duplicate=await prepared(`SELECT payment_id FROM jac_reconciliation_attachments WHERE hash=? AND state='ready' AND ${g.sql}`,[hash]).first<{payment_id:string}>();await authorize();
    if(duplicate){await payment(duplicate.payment_id);return json({existingPaymentId:duplicate.payment_id,reading:null,matches:[],total:0,autoMatchId:null});}
-   const result=await readReceiptCollection(preview,'image/jpeg',authorize,req.signal),receipts=[];
-   for(const r of result.receipts){const matches=r.reading.amount!==null||r.reading.date!==null?await receiptCandidates({amount:r.reading.amount,date:r.reading.date},r.reading.autoEligible):{matches:[],total:0,autoMatchId:null};receipts.push({...r,...matches});}
-   const evidence=signCollection({actor:user.id,sourceHash:hash,previewHash:await digest(preview),receipts:result.receipts.map(r=>({index:r.index,row:r.row,column:r.column,reference:r.reference,amount:r.reading.amount,date:r.reading.date,bounds:r.bounds,key:r.reference?'reference:'+r.reference:'position:'+r.row+':'+r.column}))});
-   await authorize();void bytes;return json({...result,receipts,evidence});
+   const detailFiles=[0,1,2,3].map(i=>form.get('detail-'+i)),details:Uint8Array[]=[];
+   if(detailFiles.some(Boolean)){
+    if(detailFiles.some(f=>!f||typeof f==='string'||!f.size||f.size>512*1024))fail('Las vistas ampliadas no son válidas.');
+    for(const f of detailFiles){const data=new Uint8Array(await (f as File).arrayBuffer());if(data[0]!==255||data[1]!==216||data[2]!==255)fail('Las vistas ampliadas deben ser JPEG.');details.push(data);}
+   }
+   const result=await readReceiptCollection(preview,'image/jpeg',authorize,req.signal,details),receipts=[];
+   let records=result.receipts.map(r=>({index:r.index,row:r.row,column:r.column,reference:r.reference,candidateReference:r.candidateReference,candidateBounds:r.bounds||r.suggestedBounds,canVerify:!r.referenceNeedsReview&&r.reading.currency==='COP'&&r.reading.transactionStatus==='completed'&&r.reading.legible&&r.reading.amount!==null&&r.reading.date!==null,amount:r.reading.amount,date:r.reading.date,bounds:null,key:r.reference?'reference:'+r.reference:'position:'+r.row+':'+r.column+':'+r.index}));
+   if(result.receipts.length>1&&form.get('locateMissing')==='true'){
+    const missing=records.filter(r=>!r.candidateBounds&&(r.reference||r.candidateReference));
+    if(missing.length){try{const located=await relocateReceiptCrops(preview,missing,authorize,req.signal);records=records.map(r=>{const p=located.find(p=>p.index===r.index);return p?{...r,candidateBounds:p.bounds}:r;});}catch{await authorize();}}
+   }
+   for(const r of result.receipts){const matches=r.reading.amount!==null||r.reading.date!==null?await receiptCandidates({amount:r.reading.amount,date:r.reading.date},r.reading.autoEligible):{matches:[],total:0,autoMatchId:null};receipts.push({...r,cropProposal:records.find(p=>p.index===r.index)!.candidateBounds,bounds:null,suggestedBounds:null,...matches});}
+   const evidence=signCollection({actor:user.id,sourceHash:hash,previewHash:await digest(preview),receipts:records});
+   await authorize();void bytes;return json({...result,receipts,evidence,sourceHash:hash});
+  }finally{release();}
+ }
+ if(path==='/scan/collection/crops'&&method==='POST'){
+  const release=reserveReceiptReader(user.id);
+  try{
+   const {form,bytes:preview,type}=await receiptUpload(req,5*1024*1024,13*1024*1024);if(type!=='image/jpeg')fail('La vista completa debe ser JPEG.');
+   let input:unknown;const planText=form.get('plan');if(typeof planText!=='string'||planText.length>40000)fail('Revisa la solicitud de recortes.');try{input=JSON.parse(planText);}catch{fail('Revisa la solicitud de recortes.');}
+   const parsed=cropReviewPlanSchema.safeParse(input);if(!parsed.success)fail('Revisa los límites de los recortes.');
+   const plan=parsed.data,previewHash=await digest(preview),records=verifyCollection(plan.evidence,user.id,plan.sourceHash,previewHash),parts=[];let total=0;
+   for(const p of plan.parts){
+    const record=records.find(r=>r.index===p.index);if(!record?.candidateBounds||canonical(record.candidateBounds)!==canonical(p.bounds))fail('El recorte no corresponde a los límites propuestos en esta lectura.');
+    const file=form.get('crop-'+p.index);if(!file||typeof file==='string'||!file.size||file.size>384*1024)fail('Cada vista individual debe ser JPEG de hasta 384 KB.');
+    total+=file.size;if(total>6*1024*1024)fail('Las vistas individuales superan 6 MB.',413);
+    const bytes=new Uint8Array(await file.arrayBuffer());if(bytes[0]!==255||bytes[1]!==216||bytes[2]!==255)fail('La vista individual no es JPEG.');parts.push({...p,bytes});
+   }
+   const reviewed=await verifyReceiptCrops(parts,records,authorize,req.signal),receipts=[];
+   let updated=records.map(r=>{const c=reviewed.find(c=>c.index===r.index);return c?.approved?{...r,bounds:c.bounds,reference:c.reference,key:'reference:'+c.reference}:r;});
+   if((plan.attempt||1)===1){
+    const rejected=updated.filter(r=>reviewed.some(c=>c.index===r.index&&!c.approved));
+    if(rejected.length){
+     let proposals:Awaited<ReturnType<typeof relocateReceiptCrops>>=[];
+     try{proposals=await relocateReceiptCrops(preview,rejected,authorize,req.signal);}catch{await authorize();}
+     updated=updated.map(r=>{const p=proposals.find(p=>p.index===r.index);return p?{...r,candidateBounds:p.bounds}:r;});
+     for(const c of reviewed)if(!c.approved&&!proposals.some(p=>p.index===c.index))updated=updated.map(r=>r.index===c.index?{...r,candidateBounds:null}:r);
+    }
+   }
+   for(const c of reviewed){const r=updated.find(r=>r.index===c.index)!;receipts.push({...c,cropProposal:!c.approved&&(plan.attempt||1)===1?r.candidateBounds:null,...await receiptCandidates({amount:r.amount,date:r.date},c.autoEligible)});}
+   const evidence=signCollection({actor:user.id,sourceHash:plan.sourceHash,previewHash,receipts:updated});await authorize();return json({receipts,evidence});
   }finally{release();}
  }
  if(path==='/scan/layout'&&method==='POST'){
