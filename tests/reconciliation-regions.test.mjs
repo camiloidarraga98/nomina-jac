@@ -51,6 +51,7 @@ test('count conflicts, uncertain grids, blank cells and separators crossing ink 
  assert.equal(Batch.partitionRegions(p,{rows:1,columns:2,count:2},proposals).needsReview,true,'Blank paper is not evidence of two receipts');
  assert.equal(Batch.partitionRegions(p,{rows:0,columns:0,count:2},proposals).needsReview,true);
  assert.equal(Batch.partitionRegions(p,{rows:1,columns:3,count:3},proposals).needsReview,true);
+ assert.deepEqual(plain(Batch.partitionRegions(p,{rows:1,columns:3,count:3},proposals).regions),[],'Count mismatch never exposes raw AI crops');
  p.mark(10,150,780,20);p.mark(10,250,780,20);
  assert.equal(Batch.partitionRegions(p,{rows:1,columns:2,count:2},proposals).needsReview,true,'Continuous text across the proposed gap requires review');
 });
@@ -66,11 +67,22 @@ test('light table and paper edges are not mistaken for payment text in regular r
 });
 test('single-receipt count hands off the original without region requests, and reviewing crops starts pending reads',async()=>{
  const source={name:'synthetic.jpg'},calls=[];
- const b=new Batch({single:file=>calls.push(file)});b.source=source;b.preview={size:100};b.layout={count:1,rows:1,columns:1,rotation:0};b.orientationVerified=true;
+ class FlowBatch extends Batch {static rotatedCanvas(image){return image;}analysisPixels(){return pixels(10,10);}}
+ const b=new FlowBatch({single:file=>calls.push(file)});b.source=source;b.preview={size:100};b.layout={count:1,rows:1,columns:1,rotation:0};b.orientationVerified=true;
  await b.detectRegions();assert.deepEqual(calls,[source]);
  b.parts=[{index:0,bounds:{x:0,y:0,width:400,height:1000},read:false},{index:1,bounds:{x:600,y:0,width:400,height:1000},read:true}];b.needsReview=true;b.render=()=>{};
  b.readParts=async parts=>{assert.equal(b.needsReview,false);assert.deepEqual(parts.map(p=>p.index),[0]);calls.push('read');};
  await b.action('batch-confirm-crops');assert.deepEqual(calls,[source,'read']);
+});
+test('local ten-receipt separation overrides an unsafe eleven-piece estimate and cannot be read until the conflict is reviewed',async()=>{
+ const boxes=Array.from({length:10},(_,i)=>({x:i%5*200,y:Math.floor(i/5)*500,width:190,height:490}));
+ context.window.JacReceiptSegmentation={detect:()=>({regions:boxes,needsReview:false})};
+ class FlowBatch extends Batch {static rotatedCanvas(image){return image;}analysisPixels(){return pixels(10,10);}render(){}async crop(){}async readParts(){throw Error('Conflicting count must be reviewed first');}}
+ try{for(const count of [1,11]){
+  const b=new FlowBatch({single:()=>{throw Error('Ten receipts must not use the single-reader');},api:()=>{throw Error('Safe local geometry does not need model rectangles');}});
+  b.layout={count,rows:0,columns:0,rotation:0};b.orientationVerified=true;
+  await b.detectRegions();assert.equal(b.parts.length,10);assert.equal(b.needsReview,true);assert.deepEqual(plain(b.parts.map(p=>p.bounds)),boxes);
+ }}finally{delete context.window.JacReceiptSegmentation;}
 });
 
 test('verified orientation replaces an incorrect angle and swaps grid axes only for a quarter turn',async()=>{

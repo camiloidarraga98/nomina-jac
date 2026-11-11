@@ -182,20 +182,30 @@ test('missing configuration, limits and revoked access stop before sending a doc
 
 const edges=regions=>regions.map(r=>({left:r.x,top:r.y,right:r.x+r.width,bottom:r.y+r.height}));
 const eightRegions=Array.from({length:8},(_,i)=>({x:i%4*250+5,y:Math.floor(i/4)*500+5,width:240,height:490}));
-test('region detection uses coordinate edges and verifies incomplete proposals against the full photo before returning corrected rectangles',async()=>{
+test('independent region readings with different counts never expose incomplete rectangles',async()=>{
  let calls=0,auth=0;
  globalThis.fetch=async(url,options)=>{calls++;assert.equal(url,'https://api.openai.com/v1/responses');const body=JSON.parse(options.body);assert.equal(body.store,false);assert.equal(body.text.format.name,'jac_receipt_regions');assert.equal(body.text.format.strict,true);assert.equal(body.input[0].content[1].image_url,'data:image/png;base64,'+Buffer.from(png).toString('base64'));assert.match(body.instructions,/untrusted/);
-  if(calls===2){assert.match(body.input[0].content[0].text,/CORRIGE/);assert.match(body.input[0].content[0].text,/left/);}
+  if(calls===2){assert.match(body.input[0].content[0].text,/independiente/);assert.doesNotMatch(body.input[0].content[0].text,/left|right|\b8\b/);}assert.doesNotMatch(body.instructions,/independent count found/);
   return provider({receipts:edges(calls===1?eightRegions.slice(0,6):eightRegions),moreReceipts:false,complete:true});};
- const result=await m.detectReceiptRegions(png,'image/png',async()=>{auth++;},undefined,{expectedCount:8});assert.deepEqual(result.regions,eightRegions);assert.equal(result.needsReview,false);assert.equal(calls,2);assert.equal(auth,3);
+ const result=await m.detectReceiptRegions(png,'image/png',async()=>{auth++;},undefined,{expectedCount:8});assert.deepEqual(result.regions,[]);assert.equal(result.needsReview,true);assert.equal(calls,2);assert.equal(auth,3);
 });
 test('mismatched receipt counts, overlapping regions and incomplete paper remain explicitly unverified; malformed edges and excess receipts are rejected',async()=>{
  for(const [regions,complete] of [[eightRegions.slice(0,6),true],[[eightRegions[0],eightRegions[0]],true],[eightRegions,false]]){
-  globalThis.fetch=async()=>provider({receipts:edges(regions),moreReceipts:false,complete});const result=await m.detectReceiptRegions(png,'image/png',authorize,undefined,{expectedCount:8});assert.equal(result.needsReview,true);assert.ok(result.warnings.length);
+  globalThis.fetch=async()=>provider({receipts:edges(regions),moreReceipts:false,complete});const result=await m.detectReceiptRegions(png,'image/png',authorize,undefined,{expectedCount:8});assert.equal(result.needsReview,true);assert.ok(result.warnings.length);assert.deepEqual(result.regions,[]);
  }
  globalThis.fetch=async()=>provider({receipts:[{left:900,top:0,right:500,bottom:1000}],moreReceipts:false,complete:true});await assert.rejects(m.detectReceiptRegions(png,'image/png',authorize),e=>e.status===422);
  globalThis.fetch=async()=>provider({receipts:edges(eightRegions),moreReceipts:true,complete:true});await assert.rejects(m.detectReceiptRegions(png,'image/png',authorize),e=>e.status===422);
  await assert.rejects(m.detectReceiptRegions(png,'application/pdf',authorize),e=>e.status===415);
+});
+test('matching counts alone cannot accept shifted rectangles and independent readings cannot anchor to the initial estimate',async()=>{
+ let calls=0;
+ const shifted=eightRegions.map(r=>({...r,x:Math.round(r.x*.6),width:Math.round(r.width*.6),height:Math.round(r.height*.6)}));
+ globalThis.fetch=async(url,options)=>{const body=JSON.parse(options.body);assert.doesNotMatch(body.instructions,/count found/);return provider({receipts:edges(++calls===1?eightRegions:shifted),moreReceipts:false,complete:true});};
+ let result=await m.detectReceiptRegions(png,'image/png',authorize,undefined,{expectedCount:8});
+ assert.deepEqual(result.regions,[]);assert.equal(result.needsReview,true);assert.equal(calls,2);
+ calls=0;globalThis.fetch=async()=>provider({receipts:edges(++calls===1?eightRegions:[...eightRegions].reverse()),moreReceipts:false,complete:true});
+ result=await m.detectReceiptRegions(png,'image/png',authorize,undefined,{expectedCount:8});
+ assert.equal(result.regions.length,8);assert.equal(result.needsReview,false,'Ordering alone does not change physical regions');
 });
 test('count and orientation are read independently from bounds and receipt data; cancellation and revocation prevent geometry verification',async()=>{
  let calls=0;

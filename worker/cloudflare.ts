@@ -5,7 +5,7 @@ import application from './index';
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
 const publicFiles=new Set(['/favicon.svg','/manifest.webmanifest','/jac-music-logo.png','/jac-app-icon.png','/jac-push-sw.js','/jac-media-offline.js','/fotografia-offline.html','/musica-offline.html','/jac-music-offline.js','/jac-music-offline-shell.js','/file.svg','/globe.svg','/window.svg']);
 // Generic application code only. Financial rows and documents stay behind API/session guards.
-const reconciliationAssets=new Set(['/reconciliation/receipt-batch.js','/reconciliation/app.js','/reconciliation/files.js','/reconciliation/style.css','/reconciliation/jszip.min.js','/reconciliation/JSZip-LICENSE.md']);
+const reconciliationAssets=new Set(['/reconciliation/receipt-segmentation.js','/reconciliation/receipt-batch.js','/reconciliation/app.js','/reconciliation/files.js','/reconciliation/style.css','/reconciliation/jszip.min.js','/reconciliation/JSZip-LICENSE.md']);
 const fanAssetRevision='internal-gallery-1';
 
 export default {

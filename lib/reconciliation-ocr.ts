@@ -161,19 +161,23 @@ export async function inspectReceiptOrientation(bytes:Uint8Array,type:string,aut
 export async function detectReceiptRegions(bytes:Uint8Array,type:string,authorize:()=>Promise<void>,signal?:AbortSignal,options:{expectedCount?:number;grid?:Uint8Array}={}){
  const content=[regionSource(bytes,type),...(options.grid?[regionSource(options.grid,'image/jpeg')]:[])],key=readerKey();await authorize();
  const abort=AbortSignal.any([AbortSignal.timeout(45000),...(signal?[signal]:[])]);
- const expected=options.expectedCount===undefined?'':` An independent count found ${options.expectedCount} receipts. Verify this against the visible paper; do not invent rectangles to reach that number.`;
  const parse=(input:unknown)=>{const value=receiptEdgesSchema.safeParse(input);if(!value.success)throw new CrmFailure('Los bordes propuestos no son válidos. Revisa la separación en la imagen completa.',422);checkRegionCount(value.data.moreReceipts);return value.data;};
- const first=parse(await requestReceiptJSON(key,content,abort,{instructions:regionsInstructions+expected,prompt:'Delimita cada recibo completo usando los bordes y las guías de coordenadas.',name:'jac_receipt_regions',schema:regionsSchema,maxTokens:4000}));
+ const first=parse(await requestReceiptJSON(key,content,abort,{instructions:regionsInstructions,prompt:'Delimita cada recibo completo usando los bordes y las guías de coordenadas.',name:'jac_receipt_regions',schema:regionsSchema,maxTokens:4000}));
  await authorize();if(abort.aborted)throw new CrmFailure('La separación se canceló.',502);
- // Verify geometry against the full image before any pixels are discarded. These
- // proposals contain coordinates only, never accounting rows or payment choices.
- const checked=parse(await requestReceiptJSON(key,content,abort,{instructions:regionsInstructions+expected,prompt:'Verifica y CORRIGE estos rectángulos propuestos: '+JSON.stringify(first.receipts)+'. Revisa uno por uno en la imagen completa: encabezado/fecha, valor y pie deben pertenecer al MISMO recibo. Corrige recortes desplazados, agrega papeles omitidos y elimina duplicados. Devuelve la lista completa corregida; marca complete=false si no puedes delimitarla con seguridad.',name:'jac_receipt_regions',schema:regionsSchema,maxTokens:4000}));
+ // Independent geometry: neither a prior count nor prior rectangles are shown
+ // to the verifier. Agreement is only a prerequisite, not proof of pixel coverage.
+ const checked=parse(await requestReceiptJSON(key,content,abort,{instructions:regionsInstructions,prompt:'Delimita de forma independiente todos los papeles visibles, recorriendo cada fila de izquierda a derecha. Incluye encabezado, fecha, valor completo y pie de cada recibo; no inventes un conteo ni dividas un mismo recibo. Marca complete=false si algún límite es dudoso.',name:'jac_receipt_regions',schema:regionsSchema,maxTokens:4000}));
  await authorize();
  const regions=checked.receipts.map(r=>({x:r.left,y:r.top,width:r.right-r.left,height:r.bottom-r.top}));
  const overlap=regions.some((r,i)=>regions.slice(i+1).some(other=>receiptRegionsOverlap(r,other)));
+ const used=new Set<number>();
+ const agreement=first.receipts.length===checked.receipts.length&&first.receipts.every(a=>{
+  const matches=checked.receipts.map((b,index)=>{const area=Math.max(0,Math.min(a.right,b.right)-Math.max(a.left,b.left))*Math.max(0,Math.min(a.bottom,b.bottom)-Math.max(a.top,b.top));return {index,score:area/((a.right-a.left)*(a.bottom-a.top)+(b.right-b.left)*(b.bottom-b.top)-area)};}).filter(m=>m.score>=.65&&!used.has(m.index));
+  if(matches.length!==1)return false;used.add(matches[0].index);return true;
+ });
  const warnings=[];if(options.expectedCount!==undefined&&regions.length!==options.expectedCount)warnings.push(`El conteo encontró ${options.expectedCount} recibos, pero se delimitaron ${regions.length}. Revisa o separa la foto por filas y columnas.`);
- if(!checked.complete||overlap)warnings.push('No se pudo confirmar que cada recorte incluya un solo recibo completo. Revisa los cuadros sobre la imagen antes de leer.');
- return {regions,expectedCount:options.expectedCount??null,needsReview:warnings.length>0,warnings};
+ if(!first.complete||!checked.complete||overlap||!agreement)warnings.push('Las comprobaciones no confirman una separación completa. Se conserva la foto sin aplicar los recortes dudosos.');
+ return {regions:warnings.length?[]:regions,expectedCount:options.expectedCount??null,needsReview:warnings.length>0,warnings};
 }
 
 export async function readReceipt(bytes:Uint8Array,type:string,authorize:()=>Promise<void>,signal?:AbortSignal){
