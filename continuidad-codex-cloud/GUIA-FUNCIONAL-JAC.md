@@ -2,7 +2,7 @@
 
 Un número repetido por la IA no demuestra que haya pagos duplicados. La herramienta conserva las fichas y las coincidencias encontradas. Sólo las fichas con referencia dudosa muestran un aviso y piden elegir el abono; las demás continúan seleccionadas. Después se usa **Guardar e identificar seleccionados**, sin volver a subir todos los comprobantes ni perder el grupo. Se mantienen los soportes privados y la protección contra asignar un mismo recibo a varios movimientos.
 
-Ver el estado de publicación y comprobaciones de `receipt-reference-14` en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+Publicado el 11/11/2026 a las 13:55 Colombia. Ver comprobaciones y límites de `receipt-reference-14` en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
 
 ## Leer uno o varios comprobantes con IA · 11 noviembre 2026
 
