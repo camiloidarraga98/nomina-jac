@@ -9,7 +9,7 @@ function upload(bytes=receiptJPEG,type='image/jpeg'){
  const form=new FormData();form.set('file',new File([bytes],'SOURCE_FILENAME_MUST_NOT_LEAVE.jpg',{type}));return form;
 }
 
-test('orientation selects each labeled rendering only after independent agreement, without accounting or financial writes',async()=>{
+test('orientation preserves the original even when independent readers agree on a nonzero proposal, without accounting or financial writes',async()=>{
  let choices=[],requests=[];
  const f=await reconciliationFixture({readReceipt:async request=>{
   const body=await request.json();requests.push(body);
@@ -26,7 +26,7 @@ test('orientation selects each labeled rendering only after independent agreemen
   for(const [choice,rotation] of [['A',0],['B',90],['C',180],['D',270]]){
    choices=[choice,choice];requests=[];const form=upload();form.set('previousRotation','PREVIOUS_ROTATION_MUST_NOT_LEAVE');form.set('candidates','ACCOUNTING_MUST_NOT_LEAVE');
    const response=await f.request(path,{method:'POST',data:form});assert.equal(response.status,200,await response.clone().text());assert.match(response.headers.get('cache-control'),/no-store/);
-   assert.deepEqual(await response.json(),{rotation,needsReview:false});assert.equal(requests.length,2);
+   assert.deepEqual(await response.json(),{rotation:0,suggestedRotation:rotation,needsReview:rotation!==0},'Only retaining the original may proceed without visual confirmation');assert.equal(requests.length,2);
    assert.deepEqual(requests[0].input[0].content[1],requests[1].input[0].content[1],'Both readers see the same labeled renderings');
    assert.notEqual(requests[0].input[0].content[0].text,requests[1].input[0].content[0].text,'Verification uses its own instruction, not the first answer');
   }
@@ -42,9 +42,9 @@ test('unknown, disagreement and invalid orientation answers never silently choos
  try{
   for(const replies of [['unknown'],['B','D'],['D','unknown']]){
    choices=[...replies];calls=0;const response=await f.request(path,{method:'POST',data:upload()});assert.equal(response.status,200,await response.clone().text());
-   assert.deepEqual(await response.json(),{rotation:null,needsReview:true});assert.equal(calls,replies.length);assert.equal(choices.length,0);
+   assert.deepEqual(await response.json(),{rotation:0,suggestedRotation:null,needsReview:true});assert.equal(calls,replies.length);assert.equal(choices.length,0);
   }
-  choices=['90'];calls=0;const invalid=await f.request(path,{method:'POST',data:upload()});assert.equal(invalid.status,200);assert.deepEqual(await invalid.json(),{rotation:null,needsReview:true});assert.equal(calls,1);
+  choices=['90'];calls=0;const invalid=await f.request(path,{method:'POST',data:upload()});assert.equal(invalid.status,200);assert.deepEqual(await invalid.json(),{rotation:0,suggestedRotation:null,needsReview:true});assert.equal(calls,1);
  }finally{await f.close();}
 });
 
@@ -71,7 +71,25 @@ test('session revocation after the first orientation choice prevents the second 
  }});
  try{
   const response=await f.request(path,{method:'POST',data:upload()});assert([401,403].includes(response.status));assert.equal(calls,1);
-  const body=await response.json();assert.equal(body.rotation,undefined);assert.equal(body.needsReview,undefined);
+  const body=await response.json();assert.equal(body.rotation,undefined);assert.equal(body.suggestedRotation,undefined);assert.equal(body.needsReview,undefined);
+  for(const table of ['jac_reconciliation_payments','jac_reconciliation_attachments','jac_crm_payments','payroll_periods'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+table).first()).n,0);
+ }finally{await f.close();}
+});
+
+test('layout API returns the original orientation and transforms row/column counts without reading payment data',async()=>{
+ let rotation=0,calls=0;
+ const f=await reconciliationFixture({readReceipt:async request=>{
+  calls++;const body=await request.json();assert.equal(body.text.format.name,'jac_receipt_layout','Counting never starts payment OCR');assert.equal(body.store,false);
+  const result={count:8,rotation,rows:2,columns:4,moreReceipts:false};
+  return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify(result)}]}]});
+ }});
+ try{
+  for(const turn of [0,270,90,180]){
+   rotation=turn;const before=calls,response=await f.request('/api/reconciliation/scan/layout',{method:'POST',data:upload()});
+   assert.equal(response.status,200,await response.clone().text());assert.match(response.headers.get('cache-control'),/no-store/);
+   assert.deepEqual(await response.json(),{count:8,rotation:0,rows:turn===90||turn===270?4:2,columns:turn===90||turn===270?2:4,moreReceipts:false});
+   assert.equal(calls,before+1,'One count request, with no implicit reading or retry');
+  }
   for(const table of ['jac_reconciliation_payments','jac_reconciliation_attachments','jac_crm_payments','payroll_periods'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+table).first()).n,0);
  }finally{await f.close();}
 });

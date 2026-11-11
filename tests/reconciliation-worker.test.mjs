@@ -149,7 +149,7 @@ test('Workerd layout and coordinate guide use private CRM routes and reject malf
  try{
   const form=new FormData();form.set('file',new File([receiptJPEG],'recibo-ficticio.jpg',{type:'image/jpeg'}));
   assert.equal((await f.request('/api/reconciliation/scan/layout',{method:'POST',data:form,authenticated:false})).status,401);assert.equal(f.outgoing(),0);
-  const layout=await f.request('/api/reconciliation/scan/layout',{method:'POST',data:form});assert.equal(layout.status,200);assert.match(layout.headers.get('cache-control'),/no-store/);assert.equal((await layout.json()).rotation,270);
+  const layout=await f.request('/api/reconciliation/scan/layout',{method:'POST',data:form});assert.equal(layout.status,200);assert.match(layout.headers.get('cache-control'),/no-store/);assert.equal((await layout.json()).rotation,0);
   form.set('expectedCount','1');form.set('grid',new File([receiptJPEG],'guias.jpg',{type:'image/jpeg'}));
   const result=await f.request('/api/reconciliation/scan/regions',{method:'POST',data:form});assert.equal(result.status,200);assert.deepEqual(await result.json(),{regions:[{x:10,y:20,width:980,height:960}],expectedCount:1,needsReview:false,warnings:[]});assert.equal(f.outgoing(),3);
   for(const invalid of ['8.1','21','-1','8 extra']){form.set('expectedCount',invalid);assert.equal((await f.request('/api/reconciliation/scan/regions',{method:'POST',data:form})).status,400);}

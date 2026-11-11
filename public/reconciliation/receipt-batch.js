@@ -123,17 +123,24 @@
       if(!this.layout){
         this.phase='counting';this.render();const form=new FormData();form.set('file',this.preview);
         this.layout=await this.h.api('/api/reconciliation/scan/layout',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
+        // Older servers may still return a model-proposed angle. Restore the
+        // original frame before any image is rendered for reading.
+        this.setOrientation(0);
       }
       if(this.manualRotation!==undefined)this.setOrientation(this.manualRotation);
       if(!this.orientationVerified){
-        if(this.h.reviewOrientation){this.h.reviewOrientation=false;this.orientationManual=true;await this.beginOrientationReview(this.layout.rotation);return;}
+        if(this.h.reviewOrientation){this.h.reviewOrientation=false;this.orientationManual=true;const confirmed=this.layout.userConfirmedRotation;await this.beginOrientationReview([0,90,180,270].includes(confirmed)?confirmed:0);return;}
         this.phase='orienting';this.render();
         const sheet=await blobFromCanvas(this.constructor.orientationSheet(this.image));if(!this.active)return;
         if(sheet.size>5*1024*1024)throw Error('La comparación de orientación supera 5 MB. Usa una copia de menor tamaño.');
         const form=new FormData();form.set('file',new File([sheet],'orientaciones.jpg',{type:'image/jpeg'}));
         const checked=await this.h.api('/api/reconciliation/scan/orientation',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
-        if(checked.needsReview||![0,90,180,270].includes(checked.rotation)){await this.beginOrientationReview(this.layout.rotation);return;}
-        this.setOrientation(checked.rotation);this.orientationVerified=true;
+        // An AI choice can be wrong even when both readings agree. Any
+        // non-zero angle is only a suggestion, including older API responses.
+        this.suggestedRotation=[90,180,270].includes(checked.suggestedRotation)?checked.suggestedRotation:[90,180,270].includes(checked.rotation)?checked.rotation:null;
+        this.setOrientation(0);
+        if(checked.needsReview||checked.rotation!==0||this.suggestedRotation!==null){await this.beginOrientationReview(0);return;}
+        this.orientationVerified=true;
       }
       // One upload entry point. Reuse this count for groups; a single receipt
       // goes to the full-original reader without region requests or cropping.
@@ -168,8 +175,8 @@
       if(this.orientationUrl)URL.revokeObjectURL(this.orientationUrl);this.orientationUrl=URL.createObjectURL(blob);this.orientationPreviewRotation=this.orientationDraft;this.render();
     }
     renderOrientation(){
-      const esc=this.h.esc;
-      this.h.open(`<div class="overlay modal-overlay"><section class="modal receipt-batch" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">Revisar orientación</h2><p>Deja el texto derecho antes de leer la fecha y el valor.</p></div><button class="icon-close" data-action="batch-close" aria-label="Cerrar revisión">×</button></div><div class="modal-body">${!this.orientationVerified&&!this.orientationManual?'<div class="notice warning">No se pudo confirmar la orientación automáticamente. Gira la imagen hasta poder leerla normalmente.</div>':''}${this.error?`<div class="error-banner" role="alert">${esc(this.error)}</div>`:''}<div style="text-align:center">${this.orientationUrl?`<img id="batch-orientation-preview" src="${esc(this.orientationUrl)}" alt="Comprobante para revisar la orientación del texto" style="display:block;max-width:100%;max-height:42vh;width:auto;height:auto;margin:auto">`:'<p role="status">Preparando vista previa…</p>'}</div><div class="batch-tools" style="justify-content:center;margin-top:20px"><button class="btn" data-action="batch-turn-left" ${this.busy?'disabled':''}>↶ Girar izquierda</button><button class="btn" data-action="batch-turn-right" ${this.busy?'disabled':''}>↷ Girar derecha</button></div></div><div class="modal-footer">${this.orientationVerified?'<button class="btn" data-action="batch-orientation-cancel">Volver</button>':''}<button class="btn btn-primary" data-action="batch-orientation-confirm" ${this.busy||!this.orientationUrl||this.orientationPreviewRotation!==this.orientationDraft?'disabled':''}>Así se lee correctamente</button></div></section></div>`);
+      const esc=this.h.esc,previewReady=!this.busy&&!!this.orientationUrl&&this.orientationPreviewRotation===this.orientationDraft;
+      this.h.open(`<div class="overlay modal-overlay"><section class="modal receipt-batch" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">Revisar orientación</h2><p>Deja el texto derecho antes de leer la fecha y el valor.</p></div><button class="icon-close" data-action="batch-close" aria-label="Cerrar revisión">×</button></div><div class="modal-body"><div class="notice">${this.orientationManual&&[90,180,270].includes(this.layout?.userConfirmedRotation)?'Esta es la orientación que confirmaste. Puedes conservarla, ajustarla o volver a la imagen original.':'Conservamos la orientación original de la imagen. Si ya se lee bien, mantenla para continuar. Sólo aplicaremos un giro cuando lo confirmes.'}</div>${this.error?`<div class="error-banner" role="alert">${esc(this.error)}</div>`:''}<div style="text-align:center">${this.orientationUrl?`<img id="batch-orientation-preview" src="${esc(this.orientationUrl)}" alt="Comprobante para revisar la orientación del texto" style="display:block;max-width:100%;max-height:42vh;width:auto;height:auto;margin:auto">`:'<p role="status">Preparando vista previa…</p>'}</div><div class="batch-tools" style="justify-content:center;margin-top:20px">${[90,180,270].includes(this.suggestedRotation)?`<button class="btn" data-action="batch-orientation-suggested" ${this.busy?'disabled':''}>Ver giro sugerido</button>`:''}<button class="btn" data-action="batch-turn-left" ${this.busy?'disabled':''}>↶ Girar izquierda</button><button class="btn" data-action="batch-turn-right" ${this.busy?'disabled':''}>↷ Girar derecha</button></div></div><div class="modal-footer" style="flex-wrap:wrap">${this.orientationVerified?'<button class="btn" data-action="batch-orientation-cancel">Volver</button>':''}<button class="btn ${this.orientationDraft===0?'btn-primary':''}" data-action="batch-orientation-keep" ${previewReady?'':'disabled'}>Mantener original y leer</button>${this.orientationDraft!==0?`<button class="btn btn-primary" data-action="batch-orientation-confirm" ${previewReady?'':'disabled'}>Así se lee correctamente</button>`:''}</div></section></div>`);
     }
     newPart(index,bounds){return {index,bounds,amount:'',date:'',matches:[],paymentId:'',version:null,read:false,saved:false,error:'',warnings:[]};}
     async coordinateGuide(source){
@@ -230,15 +237,21 @@
       if(action==='batch-close'){if(this.phase==='saving')return;if(this.h.isDirty()&&!confirm('Hay comprobantes o cambios sin guardar. ¿Quieres cerrar el grupo?'))return;this.h.close();return;}
       if(action==='batch-stop'){this.stopRequested=true;this.controller?.abort();return;}
       if(this.busy)return;
-      if(action==='batch-turn-left'||action==='batch-turn-right'){
-        if(!this.orientationEditing)return;this.orientationDraft=(this.orientationDraft+(action==='batch-turn-left'?270:90))%360;this.setBusy(true);this.render();try{await this.refreshOrientationPreview();}catch(error){if(this.active)this.error=error.message;}finally{if(this.active){this.setBusy(false);this.render();}}return;
+      if(action==='batch-turn-left'||action==='batch-turn-right'||action==='batch-orientation-suggested'){
+        if(!this.orientationEditing)return;if(action==='batch-orientation-suggested'){if(![90,180,270].includes(this.suggestedRotation))return;this.orientationDraft=this.suggestedRotation;}else this.orientationDraft=(this.orientationDraft+(action==='batch-turn-left'?270:90))%360;this.setBusy(true);this.render();try{await this.refreshOrientationPreview();}catch(error){if(this.active)this.error=error.message;}finally{if(this.active){this.setBusy(false);this.render();}}return;
       }
       if(action==='batch-orientation-cancel'&&this.orientationVerified){this.orientationEditing=false;++this.orientationUpdate;if(this.orientationUrl)URL.revokeObjectURL(this.orientationUrl);this.orientationUrl=null;this.render();return;}
-      if(action==='batch-orientation'&&this.image&&!this.parts.some(p=>p.saved))return this.beginOrientationReview(this.rotation);
+      if(action==='batch-orientation'&&this.image&&!this.parts.some(p=>p.saved)){this.orientationManual=true;return this.beginOrientationReview(this.rotation);}
+      if(action==='batch-orientation-keep'&&this.orientationEditing){
+        this.orientationDraft=0;this.setBusy(true);this.render();
+        try{await this.refreshOrientationPreview();}catch(error){if(this.active)this.error=error.message;}
+        finally{if(this.active){this.setBusy(false);this.render();}}
+        if(this.active&&this.orientationPreviewRotation===0)return this.action('batch-orientation-confirm');return;
+      }
       if(action==='batch-orientation-confirm'&&this.orientationEditing){
         if(!this.orientationUrl||this.orientationPreviewRotation!==this.orientationDraft)return;
         if(this.parts.some(p=>p.read||p.paymentId)&&!confirm('Se volverán a separar y leer los comprobantes. Las selecciones sin guardar se retirarán. ¿Continuar?'))return;
-        this.manualRotation=this.orientationDraft;this.setOrientation(this.manualRotation);this.orientationVerified=true;this.orientationEditing=false;++this.orientationUpdate;
+        this.manualRotation=this.orientationDraft;this.setOrientation(this.manualRotation);if(this.layout)this.layout.userConfirmedRotation=this.manualRotation;this.orientationVerified=true;this.orientationEditing=false;++this.orientationUpdate;
         if(this.orientationUrl)URL.revokeObjectURL(this.orientationUrl);this.orientationUrl=null;
         for(const part of this.parts)if(part.url)URL.revokeObjectURL(part.url);this.parts=[];this.operation=null;this.needsReview=false;this.geometryWarnings=[];this.error='';this.setBusy(true);this.render();
         try{await this.detectRegions();}catch(error){if(this.active){this.error=error.message;this.needsReview=true;this.detectionFailed=true;}}

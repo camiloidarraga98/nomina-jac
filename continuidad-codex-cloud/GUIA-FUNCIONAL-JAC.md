@@ -1,3 +1,9 @@
+## La imagen original se conserva · 11 noviembre 2026
+
+JAC conserva la orientación de la imagen que subes. Si el lector propone girarla, muestra primero el original: **Mantener original y leer** continúa sin girarlo. **Ver giro sugerido** sólo muestra una propuesta; **Así se lee correctamente** confirma el cambio antes de leer. Si confirma que no hace falta girar, la lectura y búsqueda continúan automáticamente. Puedes usar también Girar izquierda/derecha.
+
+Esta regla evita que una sugerencia equivocada cambie una foto que ya se lee bien. Se conserva el archivo original y lo ya guardado. Publicación pendiente; consultar [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
 ## Corregir una foto que quedó invertida · 11 noviembre 2026
 
 Antes de leer el valor y la fecha, JAC compara cuatro orientaciones visibles y comprueba cuál muestra el texto derecho. Si no logra confirmarlo, muestra **Girar izquierda**, **Girar derecha** y **Así se lee correctamente**. También puedes abrir **Revisar orientación** desde la vista previa o la ficha de un comprobante aún sin guardar.

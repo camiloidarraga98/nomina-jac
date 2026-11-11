@@ -150,10 +150,13 @@ export async function inspectReceiptOrientation(bytes:Uint8Array,type:string,aut
  };
  // The second choice never receives the first answer, the layout's angle or
  // payment candidates. Uncertainty blocks automatic reading in the client.
- const first=await choose(false);if(!first)return {rotation:null,needsReview:true};
+ const first=await choose(false);if(!first)return {rotation:0,suggestedRotation:null,needsReview:true};
  const second=await choose(true);
- if(first!==second)return {rotation:null,needsReview:true};
- return {rotation:({A:0,B:90,C:180,D:270} as Record<string,number>)[first],needsReview:false};
+ if(first!==second)return {rotation:0,suggestedRotation:null,needsReview:true};
+ // Agreement is not proof: the model may confidently rotate upright text.
+ // Only keeping the original can proceed without a visible user confirmation.
+ const suggestedRotation=({A:0,B:90,C:180,D:270} as Record<string,number>)[first];
+ return {rotation:0,suggestedRotation,needsReview:suggestedRotation!==0};
 }
 export async function detectReceiptRegions(bytes:Uint8Array,type:string,authorize:()=>Promise<void>,signal?:AbortSignal,options:{expectedCount?:number;grid?:Uint8Array}={}){
  const content=[regionSource(bytes,type),...(options.grid?[regionSource(options.grid,'image/jpeg')]:[])],key=readerKey();await authorize();

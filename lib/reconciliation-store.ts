@@ -113,7 +113,7 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  const path=new URL(req.url).pathname.slice('/api/reconciliation'.length),method=req.method;
  if(path==='/scan/layout'&&method==='POST'){
   const release=reserveReceiptReader(user.id);
-  try{const {bytes,type}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);const layout=await inspectReceiptLayout(bytes,type,authorize,req.signal);await authorize();return json(layout);}
+  try{const {bytes,type}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);const layout=await inspectReceiptLayout(bytes,type,authorize,req.signal);await authorize();const quarter=layout.rotation===90||layout.rotation===270;return json({...layout,rotation:0,rows:quarter?layout.columns:layout.rows,columns:quarter?layout.rows:layout.columns});}
   finally{release();}
  }
  if(path==='/scan/orientation'&&method==='POST'){
