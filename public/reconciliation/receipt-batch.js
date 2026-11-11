@@ -17,6 +17,75 @@
       canvas.width=turn?source.height:source.width;canvas.height=turn?source.width:source.height;
       const c=canvas.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,canvas.width,canvas.height);c.translate(canvas.width/2,canvas.height/2);c.rotate(rotation*Math.PI/180);c.drawImage(source,-source.width/2,-source.height/2);return canvas;
     }
+    /** Locate whitespace between receipts, rather than trust estimated paper edges.
+     * The outer image edges are retained: a model cannot truncate the final digits
+     * of an amount by proposing a narrow right edge. No image leaves the browser.
+     * Uncertain separators require visual review, even if the model said complete.
+     */
+    static partitionRegions(pixels,layout,proposals){
+      const {width:w,height:h,data}=pixels,{rows,columns,count}=layout;
+      const valid=Number.isInteger(rows)&&Number.isInteger(columns)&&rows>0&&columns>0&&rows*columns===count&&count===proposals.length&&count<=limit;
+      if(!valid)return {regions:proposals,needsReview:true};
+      const gray=new Uint8Array(w*h),tile=32,tw=Math.ceil(w/tile),bright=new Uint8Array(tw*Math.ceil(h/tile));
+      for(let y=0;y<h;y++)for(let x=0;x<w;x++){
+        const i=y*w+x,v=Math.round(.299*data[i*4]+.587*data[i*4+1]+.114*data[i*4+2]);gray[i]=v;
+        const t=Math.floor(y/tile)*tw+Math.floor(x/tile);bright[t]=Math.max(bright[t],v);
+      }
+      const ink=new Uint8Array(w*h);
+      // Local contrast ignores uneven lighting and blank grey paper. A small
+      // analysis copy bounds CPU/memory; the saved crop still uses the full image.
+      for(let y=0;y<h;y++)for(let x=0;x<w;x++)ink[y*w+x]=gray[y*w+x]<180&&gray[y*w+x]+40<bright[Math.floor(y/tile)*tw+Math.floor(x/tile)]?1:0;
+      const ordered=[...proposals].sort((a,b)=>(a.y+a.height/2)-(b.y+b.height/2));
+      const matrix=Array.from({length:rows},(_,r)=>ordered.slice(r*columns,(r+1)*columns).sort((a,b)=>(a.x+a.width/2)-(b.x+b.width/2)));
+      let needsReview=false;
+      const split=(hist,centers,orthogonal)=>{
+        const n=hist.length,prefix=new Float64Array(n+1),cuts=[0],band=Math.max(3,Math.round(n*.006));
+        for(let i=0;i<n;i++)prefix[i+1]=prefix[i]+hist[i];
+        for(let k=1;k<centers.length;k++){
+          const left=centers[k-1]*n/1000,right=centers[k]*n/1000,target=(left+right)/2;
+          // Coarse centers constrain the search to the gap between two papers;
+          // whitespace between lines inside a receipt is never a free candidate.
+          const low=Math.max(cuts.at(-1)+band*2,Math.ceil(left+(right-left)*.28)),high=Math.min(n-band*2,Math.floor(right-(right-left)*.28));
+          let chosen=Math.round(target),best=Infinity,activity=Infinity;
+          for(let p=low;p<=high;p++){
+            const a=Math.max(0,p-band),b=Math.min(n,p+band+1),density=(prefix[b]-prefix[a])/(b-a);
+            const score=density+Math.abs(p-target)/n*.15;
+            if(score<best){best=score;chosen=p;activity=density;}
+          }
+          // A dark separator can be a shadow or a character. Never silently
+          // call it safe; retain a review gate before reading or assigning.
+          if(high<low||activity>Math.max(1,orthogonal*.002))needsReview=true;
+          cuts.push(clamp(chosen,cuts.at(-1)+1,n-(centers.length-k)));
+        }
+        cuts.push(n);return cuts;
+      };
+      const columnCenters=Array.from({length:columns},(_,c)=>matrix.reduce((sum,row)=>sum+row[c].x+row[c].width/2,0)/rows);
+      const xHistogram=new Uint32Array(w);
+      for(let y=0;y<h;y++)for(let x=0;x<w;x++)xHistogram[x]+=ink[y*w+x];
+      const xs=split(xHistogram,columnCenters,h),cells=[];
+      for(let c=0;c<columns;c++){
+        const yHistogram=new Uint32Array(h);
+        for(let y=0;y<h;y++)for(let x=xs[c];x<xs[c+1];x++)yHistogram[y]+=ink[y*w+x];
+        const ys=split(yHistogram,matrix.map(row=>row[c].y+row[c].height/2),xs[c+1]-xs[c]);
+        for(let r=0;r<rows;r++){
+          // Keep a few extra pixels at internal boundaries for antialiasing and
+          // small skew. Outer edges always reach the original image boundary.
+          const pad=3,x=Math.max(0,xs[c]-pad),y=Math.max(0,ys[r]-pad),right=Math.min(w,xs[c+1]+pad),bottom=Math.min(h,ys[r+1]+pad);
+          const b={x:Math.floor(x*1000/w),y:Math.floor(y*1000/h)};
+          b.width=Math.ceil(right*1000/w)-b.x;b.height=Math.ceil(bottom*1000/h)-b.y;
+          let marks=0;for(let p=ys[r];p<ys[r+1];p++)marks+=yHistogram[p];
+          const anchor=matrix[r][c],cx=(anchor.x+anchor.width/2)*w/1000,cy=(anchor.y+anchor.height/2)*h/1000;
+          if(marks<30||cx<xs[c]||cx>xs[c+1]||cy<ys[r]||cy>ys[r+1]||b.width<10||b.height<10)needsReview=true;
+          cells[r*columns+c]=b;
+        }
+      }
+      return {regions:cells,needsReview};
+    }
+    safeRegions(source,result){
+      const canvas=document.createElement('canvas'),scale=Math.min(1,1600/Math.max(source.width,source.height));canvas.width=Math.round(source.width*scale);canvas.height=Math.round(source.height*scale);
+      const c=canvas.getContext('2d',{willReadFrequently:true});c.drawImage(source,0,0,canvas.width,canvas.height);
+      return this.constructor.partitionRegions(c.getImageData(0,0,canvas.width,canvas.height),this.layout,result.regions);
+    }
     constructor(host){
       this.h=host;this.active=true;this.busy=false;this.parts=[];this.shared={showId:'',entrepreneur:'',name:'',date:'',city:''};this.error='';this.phase='preparing';this.operation=null;this.rotation=0;this.needsReview=false;this.geometryWarnings=[];this.detectionFailed=false;
       this.click=event=>{const button=event.target.closest('[data-action^="batch-"]');if(button&&!button.disabled)this.action(button.dataset.action,button.dataset.index);};
@@ -43,14 +112,25 @@
         this.phase='counting';this.render();const form=new FormData();form.set('file',this.preview);
         this.layout=await this.h.api('/api/reconciliation/scan/layout',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
       }
+      // One upload entry point. Reuse this count for groups; a single receipt
+      // goes to the full-original reader without region requests or cropping.
+      if(this.layout.count===1&&this.h.single&&!this.h.forceGroup){
+        const readingImage=this.layout.rotation?new File([await blobFromCanvas(this.constructor.rotatedCanvas(this.image,this.layout.rotation))],'comprobante-orientado.jpg',{type:'image/jpeg'}):this.preview;
+        if(!this.active)return;if(readingImage.size>5*1024*1024)throw Error('La vista para lectura supera 5 MB. Usa una copia de menor tamaño.');
+        return this.h.single(this.source,false,readingImage);
+      }
       this.rotation=this.layout.rotation;this.phase='detecting';this.render();
       const oriented=this.constructor.rotatedCanvas(this.image,this.rotation),imageBlob=await blobFromCanvas(oriented),grid=await this.coordinateGuide(oriented);if(!this.active)return;
       const form=new FormData();form.set('file',new File([imageBlob],'comprobantes.jpg',{type:'image/jpeg'}));form.set('grid',new File([grid],'guias.jpg',{type:'image/jpeg'}));form.set('expectedCount',String(this.layout.count));
       const result=await this.h.api('/api/reconciliation/scan/regions',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
       for(const part of this.parts)if(part.url)URL.revokeObjectURL(part.url);this.parts=[];this.operation=null;
-      this.needsReview=!!result.needsReview;this.geometryWarnings=result.warnings||[];
-      for(const [index,viewBounds] of result.regions.entries()){const bounds=this.constructor.originalBounds(viewBounds,this.rotation),part=this.newPart(index,bounds);this.parts.push(part);await this.crop(part);if(!this.active)return;}
+      const safe=this.safeRegions(oriented,result);
+      this.needsReview=!!result.needsReview||safe.needsReview||!!this.h.forceGroup;this.geometryWarnings=[...(result.warnings||[])];
+      if(this.h.forceGroup)this.geometryWarnings.push('Las lecturas no coinciden en el número de recibos. Revisa la separación antes de continuar.');
+      if(safe.needsReview)this.geometryWarnings.push('Revisa la separación: no se encontró espacio libre suficiente entre todos los recibos. Ajusta los cuadros para conservar la fecha y el valor completos.');
+      for(const [index,viewBounds] of safe.regions.entries()){const bounds=this.constructor.originalBounds(viewBounds,this.rotation),part=this.newPart(index,bounds);this.parts.push(part);await this.crop(part);if(!this.active)return;}
       this.detectionFailed=false;if(!this.parts.length)this.error='No se delimitaron comprobantes automáticamente. Puedes agregar los recortes manualmente.';
+      if(this.parts.length&&!this.needsReview)await this.readParts(this.parts);
     }
     newPart(index,bounds){return {index,bounds,amount:'',date:'',matches:[],paymentId:'',version:null,read:false,saved:false,error:'',warnings:[]};}
     async coordinateGuide(source){
@@ -77,20 +157,20 @@
       if(!this.active)return;if(this.gridEditing){this.renderGrid();return;}if(this.editing!==undefined){this.renderCrop();return;}
       const {esc,money,date}=this.h,working=this.busy,locked=working||this.parts.some(p=>p.saved),top=$('.receipt-batch .modal-body')?.scrollTop||0;
       const show=this.h.shows().find(s=>s.id===this.shared.showId);
-      this.h.open(`<div class="overlay modal-overlay"><section class="modal receipt-batch" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">Varios comprobantes de un show</h2><p>Un movimiento por recibo, con el mismo show y empresario.</p></div><button class="icon-close" data-action="batch-close" aria-label="Cerrar grupo" ${this.phase==='saving'?'disabled':''}>×</button></div><div class="modal-body">
-        ${this.error?`<div class="error-banner" role="alert">${esc(this.error)}${this.detectionFailed&&this.image&&!this.parts.some(p=>p.saved)?`<p><button class="btn" data-action="batch-detect" ${working?'disabled':''}>Reintentar separación</button></p>`:''}</div>`:''}
+      this.h.open(`<div class="overlay modal-overlay"><section class="modal receipt-batch" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">${this.layout?.count>1?'Varios comprobantes de un show':'Analizando comprobantes'}</h2><p>${this.layout?.count>1?'Un movimiento por recibo, con el mismo show y empresario.':'Detectamos cuántos recibos hay y buscamos sus abonos.'}</p></div><button class="icon-close" data-action="batch-close" aria-label="Cerrar grupo" ${this.phase==='saving'?'disabled':''}>×</button></div><div class="modal-body">
+        ${this.error?`<div class="error-banner" role="alert">${esc(this.error)}${this.h.single&&!(this.layout?.count>1)?'<p><button class="btn" data-action="batch-manual">Buscar abono manualmente</button></p>':''}${this.detectionFailed&&this.image&&!this.parts.some(p=>p.saved)?`<p><button class="btn" data-action="batch-detect" ${working?'disabled':''}>Reintentar separación</button></p>`:''}</div>`:''}
         ${this.url?`<details class="batch-original" ${this.needsReview?'open':''}><summary>Revisar separación · ${this.parts.length} recortes${this.layout?` · Conteo: ${this.layout.count}`:''}</summary><div class="batch-map" style="--image-ratio:${this.image.width/this.image.height}"><img src="${esc(this.url)}" alt="Foto completa con los límites de cada comprobante">${this.parts.map(p=>`<button class="batch-map-box" data-action="batch-crop" data-index="${p.index}" style="left:${p.bounds.x/10}%;top:${p.bounds.y/10}%;width:${p.bounds.width/10}%;height:${p.bounds.height/10}%" aria-label="Ajustar comprobante ${p.index+1}" ${working||p.saved?'disabled':''}><span>${p.index+1}</span></button>`).join('')}</div></details>`:''}
         ${['preparing','counting','detecting'].includes(this.phase)?`<div class="loading-state" role="status"><span class="spinner"></span>${this.phase==='preparing'?'Preparando imagen…':this.phase==='counting'?'Contando los recibos y revisando su orientación…':'Delimitando y verificando los recortes completos…'}</div>`:`
         ${this.needsReview?`<div class="notice warning" role="alert">${this.geometryWarnings.map(esc).join('<br>')||'Revisa la separación antes de leer. Cada cuadro debe incluir un recibo completo.'}<br><button class="btn" data-action="batch-confirm-crops" ${working||!this.parts.length?'disabled':''}>Ya revisé: un recibo completo por recorte</button></div>`:''}
         <div class="notice">Revisa que haya un recorte por comprobante y que todos estén incluidos. Puedes ajustar, quitar o agregar recortes antes de leerlos.</div>
-        <div class="batch-tools"><button class="btn" data-action="batch-add" ${working||!this.image||this.parts.length>=limit?'disabled':''}>+ Agregar recorte</button><button class="btn" data-action="batch-grid" ${working||!this.image||this.parts.some(p=>p.saved)?'disabled':''}>Separar por filas y columnas</button><button class="btn btn-primary" data-action="batch-read" ${working||this.needsReview||!this.parts.some(p=>!p.saved&&!p.read)?'disabled':''}>Leer comprobantes pendientes</button>${this.phase==='reading'?'<button class="btn" data-action="batch-stop">Detener lectura</button>':''}</div>
+        <div class="batch-tools"><button class="btn" data-action="batch-add" ${working||!this.image||this.parts.length>=limit?'disabled':''}>+ Agregar recorte</button><button class="btn" data-action="batch-grid" ${working||!this.image||this.parts.some(p=>p.saved)?'disabled':''}>Separar por filas y columnas</button><button class="btn btn-primary" data-action="batch-read" ${working||this.needsReview||!this.parts.some(p=>!p.saved&&!p.read)?'disabled':''}>${this.parts.length&&this.parts.every(p=>p.read||p.saved)?'Lectura completada':'Leer comprobantes pendientes'}</button>${this.phase==='reading'?'<button class="btn" data-action="batch-stop">Detener lectura</button>':''}</div>
         <section class="batch-shared"><h3>Datos comunes del grupo</h3><div class="form-grid"><div class="form-field full"><label for="batch-show">Show y fecha del show</label><select id="batch-show" data-common="showId" ${locked?'disabled':''}><option value="">Selecciona el show</option>${[...this.h.shows()].sort((a,b)=>b.date.localeCompare(a.date)).map(s=>`<option value="${esc(s.id)}" ${this.shared.showId===s.id?'selected':''}>${esc(date(s.date))} · ${esc(s.name)}</option>`).join('')}<option value="__new" ${this.shared.showId==='__new'?'selected':''}>+ Agregar show histórico</option></select></div><div class="form-field full"><label for="batch-entrepreneur">Empresario</label><input id="batch-entrepreneur" class="input" data-common="entrepreneur" value="${esc(this.shared.entrepreneur)}" maxlength="300" ${locked?'disabled':''}></div>${this.shared.showId==='__new'?`<div class="form-field full"><label for="batch-name">Nombre del show histórico</label><input id="batch-name" class="input" data-common="name" value="${esc(this.shared.name)}" maxlength="200" ${locked?'disabled':''}></div><div class="form-field"><label for="batch-date">Fecha del show</label><input type="date" id="batch-date" data-common="date" value="${esc(this.shared.date)}" ${locked?'disabled':''}></div><div class="form-field"><label for="batch-city">Ciudad</label><input class="input" id="batch-city" data-common="city" value="${esc(this.shared.city)}" maxlength="100" ${locked?'disabled':''}></div>`:''}</div><p class="small-note">${show?`Fecha del show: ${esc(date(show.date))}. `:''}Cada recibo conserva su propia fecha bancaria. Los pagos siguen siendo movimientos separados.</p></section>
         <div class="batch-cards">${this.parts.map(p=>`<article class="batch-card" id="batch-part-${p.index}"><div class="batch-preview">${p.url?`<a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="Recorte del comprobante ${p.index+1}"></a>`:''}<strong>Comprobante ${p.index+1}</strong><div class="batch-tools"><button class="link-button" data-action="batch-crop" data-index="${p.index}" ${working||p.saved?'disabled':''}>Ajustar recorte</button><button class="link-button" data-action="batch-remove" data-index="${p.index}" ${working||p.saved?'disabled':''}>Quitar</button></div></div><div class="batch-fields">${p.saved?`<div class="notice"><strong>Guardado e identificado</strong>${p.supportUrl?`<p><a href="${esc(p.supportUrl)}" target="_blank" rel="noopener">Consultar soporte PDF</a></p>`:''}</div>`:`
           ${this.readingIndex===p.index?'<div class="loading-state" role="status"><span class="spinner"></span>Leyendo y comprobando este recibo…</div>':''}
           ${p.error?`<div class="error-banner" role="alert">${esc(p.error)}</div>`:''}${p.warnings.length?`<div class="notice warning">${p.warnings.map(esc).join('<br>')}</div>`:''}
-          <div class="form-grid"><div class="form-field"><label for="batch-amount-${p.index}">Valor (COP)</label><input class="input" id="batch-amount-${p.index}" data-part="${p.index}" data-key="amount" inputmode="decimal" value="${esc(p.amount)}" ${working?'disabled':''}></div><div class="form-field"><label for="batch-bank-date-${p.index}">Fecha bancaria</label><input class="input" type="date" id="batch-bank-date-${p.index}" data-part="${p.index}" data-key="date" value="${esc(p.date)}" ${working?'disabled':''}></div></div>
-          <div class="batch-tools"><button class="btn btn-small" data-action="batch-search" data-index="${p.index}" ${working?'disabled':''}>Buscar coincidencias</button><button class="link-button" data-action="batch-reread" data-index="${p.index}" ${working||this.needsReview?'disabled':''}>${p.read?'Volver a leer':'Leer este recibo'}</button></div>
-          <label for="batch-payment-${p.index}">Movimiento pendiente</label><select id="batch-payment-${p.index}" data-part="${p.index}" data-key="paymentId" ${working?'disabled':''}>${this.options(p)}</select><p class="small-note" id="batch-match-note-${p.index}">${p.matches.length?`${p.matches.length} coincidencias; confirma el valor y la fecha.`:'Busca por valor y/o fecha para elegir el registro.'}</p>`}</div></article>`).join('')}</div>`}
+          <div class="form-grid"><div class="form-field"><label for="batch-amount-${p.index}">Valor (COP)</label><input class="input" id="batch-amount-${p.index}" data-part="${p.index}" data-key="amount" inputmode="decimal" value="${esc(p.amount)}" ${working?'disabled':''}></div><div class="form-field"><label for="batch-bank-date-${p.index}">Fecha bancaria</label><input class="input" type="date" id="batch-bank-date-${p.index}" data-part="${p.index}" data-key="date" value="${esc(p.date)}" ${working?'disabled':''}>${p.date?`<small>${esc(date(p.date))}</small>`:''}</div></div>
+          <div class="batch-tools"><button class="btn btn-small" data-action="batch-search" data-index="${p.index}" ${working?'disabled':''}>${p.read?'Actualizar coincidencias':'Buscar coincidencias'}</button><button class="link-button" data-action="batch-reread" data-index="${p.index}" ${working||this.needsReview?'disabled':''}>${p.read?'Volver a leer':'Leer este recibo'}</button></div>
+          <label for="batch-payment-${p.index}">Movimiento pendiente</label><select id="batch-payment-${p.index}" data-part="${p.index}" data-key="paymentId" ${working?'disabled':''}>${this.options(p)}</select><p class="small-note" id="batch-match-note-${p.index}">${p.paymentId?'Abono seleccionado. Quedará identificado al guardar.':p.matches.length?`${p.matches.length} coincidencias; elige el abono correcto.`:p.read?'No hay coincidencias. Revisa el valor y la fecha.':'Las coincidencias aparecerán al terminar la lectura.'}</p>`}</div></article>`).join('')}</div>`}
         </div><div class="modal-footer batch-footer"><span id="batch-summary" role="status">${esc(this.phase==='saving'?'Guardando soportes e identificación…':this.summary())}</span><button class="btn btn-primary" data-action="batch-save" id="batch-save" ${working||this.needsReview||!this.selected().length?'disabled':''}>Guardar e identificar seleccionados</button></div></section></div>`);
       const body=$('.receipt-batch .modal-body');if(body)body.scrollTop=top;
     }
@@ -111,6 +191,7 @@
       if(action==='batch-close'){if(this.phase==='saving')return;if(this.h.isDirty()&&!confirm('Hay comprobantes o cambios sin guardar. ¿Quieres cerrar el grupo?'))return;this.h.close();return;}
       if(action==='batch-stop'){this.stopRequested=true;this.controller?.abort();return;}
       if(this.busy)return;
+      if(action==='batch-manual'&&this.h.single&&!(this.layout?.count>1))return this.h.single(this.source,true);
       if(action==='batch-detect'&&this.image&&!this.parts.some(p=>p.saved)){
         if(this.parts.some(p=>p.read||p.paymentId)&&!confirm('Reintentar retirará las lecturas y selecciones sin guardar si consigue nuevos recortes. ¿Continuar?'))return;
         this.setBusy(true);this.error='';this.render();
@@ -120,7 +201,7 @@
       if(action==='batch-confirm-crops'){
         const overlap=this.parts.some((p,i)=>this.parts.slice(i+1).some(q=>{const a=p.bounds,b=q.bounds,area=Math.max(0,Math.min(a.x+a.width,b.x+b.width)-Math.max(a.x,b.x))*Math.max(0,Math.min(a.y+a.height,b.y+b.height)-Math.max(a.y,b.y));return area>.8*Math.min(a.width*a.height,b.width*b.height);}));
         if(overlap){this.error='Hay recortes repetidos o superpuestos. Ajústalos antes de confirmar.';this.render();return;}
-        this.needsReview=false;this.detectionFailed=false;this.geometryWarnings=[];this.error='';this.render();return;
+        this.needsReview=false;this.detectionFailed=false;this.geometryWarnings=[];this.error='';this.render();return this.readParts(this.parts.filter(p=>!p.saved&&!p.read));
       }
       if(action==='batch-grid'&&!this.parts.some(p=>p.saved)){
         if(this.parts.some(p=>p.read||p.paymentId)&&!confirm('Separar de nuevo retirará las lecturas y selecciones sin guardar. ¿Continuar?'))return;

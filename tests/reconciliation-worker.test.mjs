@@ -3,6 +3,46 @@ import assert from 'node:assert/strict';
 import {PDFDocument} from 'pdf-lib';
 import {reconciliationFixture,syntheticImport} from './helpers/reconciliation-worker.mjs';
 
+test('single receipt reads the oriented JPEG while retaining the original hash for duplicate detection and private support',async()=>{
+ const {receiptJPEG}=await import('./helpers/reconciliation-image.mjs');
+ const original=Uint8Array.from(Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9Zl1sAAAAASUVORK5CYII=','base64'));
+ let calls=0;const f=await reconciliationFixture({readReceipt:async request=>{
+  calls++;const body=await request.json();assert.equal(body.input[0].content[1].image_url,'data:image/jpeg;base64,'+Buffer.from(receiptJPEG).toString('base64'));
+  return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({document:'single_payment',amountText:'1.250.000,25',dateText:'01/11/2026',currency:'COP',transactionStatus:'completed',legible:true})}]}]});
+ }});
+ try{
+  assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(1)})).status,200);
+  const form=new FormData();form.set('file',new File([original],'original-ficticio.png',{type:'image/png'}));form.set('readingImage',new File([receiptJPEG],'vista-orientada.jpg',{type:'image/jpeg'}));
+  const result=await(await f.request('/api/reconciliation/scan',{method:'POST',data:form})).json();assert.ok(result.autoMatchId);assert.equal(calls,2);
+  form.set('readingImage',new File([original],'falso.jpg',{type:'image/jpeg'}));assert.equal((await f.request('/api/reconciliation/scan',{method:'POST',data:form})).status,400);assert.equal(calls,2);
+  form.set('readingImage',new File([new Uint8Array(5*1024*1024+1)],'grande.jpg',{type:'image/jpeg'}));assert.equal((await f.request('/api/reconciliation/scan',{method:'POST',data:form})).status,400);
+  form.delete('readingImage');form.set('paymentVersion','1');const attachment=await(await f.request('/api/reconciliation/payments/'+result.autoMatchId+'/files',{method:'POST',data:form})).json();
+  assert.deepEqual(new Uint8Array(await(await f.request(attachment.url)).arrayBuffer()),original);
+  form.set('readingImage',new File([receiptJPEG],'vista-orientada.jpg',{type:'image/jpeg'}));const duplicate=await(await f.request('/api/reconciliation/scan',{method:'POST',data:form})).json();assert.equal(duplicate.existingPaymentId,result.autoMatchId);assert.equal(calls,2);
+ }finally{await f.close();}
+});
+
+test('invoiced original rows are already resolved, excluded from automatic assignments, and can explicitly return to review without rewriting accounting',async()=>{
+ const {receiptJPEG}=await import('./helpers/reconciliation-image.mjs');
+ const f=await reconciliationFixture({readReceipt:async()=>Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({document:'single_payment',amountText:'1.250.000,25',dateText:'01/11/2026',currency:'COP',transactionStatus:'completed',legible:true})}]}]})});
+ try{
+  const data=syntheticImport(1,{invoiced:true});assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data})).status,200);
+  const list=async()=>(await(await f.request('/api/reconciliation/state')).json()).payments;
+  const p=(await list())[0],original=await f.db.prepare('SELECT original,annotation,version FROM jac_reconciliation_payments WHERE id=?').bind(p.id).first();
+  assert.equal(p.accountingIdentified,true);assert.equal(p.status,'pending');assert.equal(p.attachments.length,0);
+  const form=new FormData();form.set('file',new File([receiptJPEG],'comprobante-ficticio.jpg',{type:'image/jpeg'}));
+  const scan=await(await f.request('/api/reconciliation/scan',{method:'POST',data:form})).json();assert.equal(scan.autoMatchId,null);assert.equal(scan.matches[0].status,'identified');
+  assert.deepEqual(await f.db.prepare('SELECT original,annotation,version FROM jac_reconciliation_payments WHERE id=?').bind(p.id).first(),original,'Reading classification changes no original row or annotation');
+  form.set('preview',new File([receiptJPEG],'vista-ficticia.jpg',{type:'image/jpeg'}));form.set('plan',JSON.stringify({operationId:crypto.randomUUID(),showId:'fixture-show',entrepreneur:'Empresario ficticio',parts:[{paymentId:p.id,version:1,index:0,bounds:{x:0,y:0,width:1000,height:1000}}]}));
+  assert.equal((await f.request('/api/reconciliation/batch',{method:'POST',data:form})).status,409,'Stale clients cannot assign an already invoiced row as pending');
+  assert.equal((await f.request('/api/reconciliation/payments/'+p.id,{method:'PATCH',data:{version:1,status:'review'}})).status,200);assert.equal((await list())[0].accountingIdentified,false);
+  assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data})).status,200);assert.equal((await list())[0].status,'review','Idempotent import preserves explicit review');
+  assert.equal((await f.request('/api/reconciliation/payments/'+p.id,{method:'PATCH',data:{version:2,status:'pending'}})).status,200);assert.equal((await list())[0].accountingIdentified,true);
+  assert.equal((await f.db.prepare('SELECT original FROM jac_reconciliation_payments WHERE id=?').bind(p.id).first()).original,original.original);
+  for(const table of ['jac_reconciliation_attachments','jac_crm_payments','payroll_periods'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+table).first()).n,0);
+ }finally{await f.close();}
+});
+
 test('Workerd/D1/R2: 296 synthetic rows, CRM session, original data, save/retry, private supports and no financial side effects',async()=>{
  const f=await reconciliationFixture();
  try{

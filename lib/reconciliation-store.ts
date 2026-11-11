@@ -8,6 +8,7 @@ import {payrollHeaders} from './payroll-access';
 import {matchReceiptPayments,receiptLookupSchema} from './reconciliation-receipt';
 import {readReceipt,inspectReceiptLayout,detectReceiptRegions,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
 import {receiptBatchPlanSchema,receiptPartPDF,receiptRegionsOverlap,type ReceiptBounds} from './reconciliation-batch';
+import {hasAccountingIdentification} from './reconciliation-status';
 
 const stamp=()=>new Date().toISOString();
 const id=()=>crypto.randomUUID();
@@ -23,7 +24,10 @@ type ImportRow={id:string;name:string;hash:string;manifest_hash:string;count:num
 type FileRow={id:string;payment_id:string;object_key:string;hash:string;name:string;type:string;size:number;state:string;created_at:string};
 type Show={id:string;name:string;date:string;city:string;entrepreneur:string;source:'crm'|'reconciliation';existing?:boolean};
 const fileInfo=(f:FileRow)=>({id:f.id,paymentId:f.payment_id,name:f.name,type:f.type,size:f.size,url:'/api/reconciliation/files/'+f.id,createdAt:f.created_at});
-const unpack=(p:PaymentRow)=>({...JSON.parse(p.original) as Original,...JSON.parse(p.annotation) as Annotation,id:p.id,version:p.version,createdAt:p.created_at,updatedAt:p.updated_at,attachments:[] as ReturnType<typeof fileInfo>[]});
+const unpack=(p:PaymentRow)=>{
+ const original=JSON.parse(p.original) as Original,annotation=JSON.parse(p.annotation) as Annotation,accountingEvidence=hasAccountingIdentification(original);
+ return {...original,...annotation,accountingEvidence,accountingIdentified:annotation.status!=='review'&&accountingEvidence,id:p.id,version:p.version,createdAt:p.created_at,updatedAt:p.updated_at,attachments:[] as ReturnType<typeof fileInfo>[]};
+};
 const digest=async(bytes:Uint8Array)=>Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes as BufferSource))).map(n=>n.toString(16).padStart(2,'0')).join('');
 // Stable across object key ordering and file renaming, while retaining every source value.
 const canonical=(value:unknown):string=>Array.isArray(value)?'['+value.map(canonical).join(',')+']':value&&typeof value==='object'?'{'+Object.keys(value).sort().map(key=>JSON.stringify(key)+':'+canonical((value as Record<string,unknown>)[key])).join(',')+'}':JSON.stringify(value);
@@ -86,7 +90,7 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  async function receiptCandidates(criteria:{amount:number|null;date:string|null},autoEligible=false){
   const rows=(await prepared(`SELECT * FROM jac_reconciliation_payments WHERE ${g.sql}`).all<PaymentRow>()).results;
   await authorize();
-  return matchReceiptPayments(rows.map(row=>{const p=unpack(row);return {id:p.id,version:p.version,date:p.date,amount:p.amount,status:p.status,entrepreneur:p.entrepreneur,showId:p.showId};}),criteria,autoEligible);
+  return matchReceiptPayments(rows.map(row=>{const p=unpack(row);return {id:p.id,version:p.version,date:p.date,amount:p.amount,status:p.accountingIdentified?'identified':p.status,entrepreneur:p.entrepreneur,showId:p.showId};}),criteria,autoEligible);
  }
  function showGate(showId:string){return showId?`(EXISTS(SELECT 1 FROM jac_reconciliation_shows WHERE id=?) OR EXISTS(SELECT 1 FROM jac_crm_shows WHERE id=? AND source_state NOT IN ('deleted','deleting')))`:'1';}
  const showArgs=(showId:string)=>showId?[showId,showId]:[];
@@ -152,7 +156,7 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
   const prior=await completed(true);if(prior)return prior;
   if(!(await shows()).some(s=>s.id===plan.showId))fail('Selecciona un show válido.');
   const originals=new Map<string,PaymentRow>();
-  for(const part of plan.parts){const p=await payment(part.paymentId);if(p.version!==part.version||JSON.parse(p.annotation).status==='identified')fail('Un movimiento cambió o ya fue identificado. Actualiza y revisa la selección.',409);originals.set(p.id,p);}
+  for(const part of plan.parts){const p=await payment(part.paymentId);if(p.version!==part.version||JSON.parse(p.annotation).status==='identified'||unpack(p).accountingIdentified)fail('Un movimiento cambió o ya fue identificado. Actualiza y revisa la selección.',409);originals.set(p.id,p);}
   const previousGroups=(await prepared(`SELECT data FROM jac_reconciliation_audit WHERE action='identify-receipt-batch' AND json_extract(data,'$.sourceHash')=? AND ${g.sql}`,[sourceHash]).all<{data:string}>()).results;
   const reusable=new Map<string,FileRow>();
   for(const group of previousGroups){
@@ -219,11 +223,19 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  if(path==='/scan'&&method==='POST'){
   const release=reserveReceiptReader(user.id);
   try{
-   const {bytes,type,hash}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);await authorize();
+   const {bytes,type,hash,form}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES,17*1024*1024);await authorize();
    const duplicate=await prepared(`SELECT * FROM jac_reconciliation_attachments WHERE hash=? AND state='ready' AND ${g.sql}`,[hash]).first<FileRow>();
    await authorize();
    if(duplicate){await payment(duplicate.payment_id);return json({existingPaymentId:duplicate.payment_id,reading:null,matches:[],total:0,autoMatchId:null});}
-   const reading=await readReceipt(bytes,type,authorize,req.signal);await authorize();
+   // The original remains the duplicate/support identity. Only an optional
+   // bounded JPEG copy, with EXIF/orientation applied, is sent to the reader.
+   const preview=form.get('readingImage');let readingBytes=bytes,readingType=type;
+   if(preview!==null){
+    if(type==='application/pdf'||typeof preview==='string'||!preview.size||preview.size>5*1024*1024)fail('La vista orientada debe ser una imagen de hasta 5 MB.');
+    readingBytes=new Uint8Array(await preview.arrayBuffer());readingType='image/jpeg';
+    if(readingBytes[0]!==255||readingBytes[1]!==216||readingBytes[2]!==255)fail('La vista orientada debe ser una imagen JPEG válida.');
+   }
+   const reading=await readReceipt(readingBytes,readingType,authorize,req.signal);await authorize();
    const result=reading.amount!==null||reading.date!==null?await receiptCandidates({amount:reading.amount,date:reading.date},reading.autoEligible):{matches:[],total:0,autoMatchId:null};
    await authorize();return json({reading,...result});
   }finally{release();}

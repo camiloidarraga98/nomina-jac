@@ -11,8 +11,14 @@ export function receiptDate(value:string):string|null {
  else {
   const months=[['ene','enero'],['feb','febrero'],['mar','marzo'],['abr','abril'],['may','mayo'],['jun','junio'],['jul','julio'],['ago','agosto'],['sep','sept','septiembre','setiembre'],['oct','octubre'],['nov','noviembre'],['dic','diciembre']];
   match=v.match(/^(\d{1,2})[\s/-]+([a-z]+)\.?[\s/-]+(\d{4})$/);
-  if(!match)return null;
-  day=Number(match[1]);month=months.findIndex(names=>names.includes(match![2]))+1;year=Number(match[3]);
+  if(match){day=Number(match[1]);month=months.findIndex(names=>names.includes(match![2]))+1;year=Number(match[3]);}
+  else {
+   // Redeban prints the month first (ENE 07 2026). Preserve the printed
+   // digits; this is not the ambiguous US order of an all-numeric date.
+   match=v.match(/^([a-z]+)\.?[\s/-]+(\d{1,2})[\s/-]+(\d{4})$/);
+   if(!match)return null;
+   month=months.findIndex(names=>names.includes(match![1]))+1;day=Number(match[2]);year=Number(match[3]);
+  }
  }
  if(year<2000||year>2100||month<1||month>12||day<1||day>31)return null;
  const iso=`${year}-${String(month).padStart(2,'0')}-${String(day).padStart(2,'0')}`;

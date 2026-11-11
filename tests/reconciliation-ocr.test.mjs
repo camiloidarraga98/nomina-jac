@@ -27,6 +27,20 @@ test('Colombian transaction dates require a complete year and a real calendar da
  assert.equal(m.receiptDate('29/02/2024'),'2024-02-29');
  for(const v of ['29/02/2026','31/04/2026','2026-13-10','10/11/26','hoy','ayer','10/11','10 marciano 2026','10/11/2026 12:00',''])assert.equal(m.receiptDate(v),null,v);
 });
+test('thermal receipt month-first dates retain the printed day and agree with independent day-first readings',async()=>{
+ for(const [i,month] of ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'].entries()){
+  const expected=`2026-${String(i+1).padStart(2,'0')}-07`;
+  for(const text of [`${month} 07 2026`,`${month.toLowerCase()}. 7, 2026`,`7 ${month} 2026`])assert.equal(m.receiptDate(text),expected,text);
+ }
+ for(const text of ['ENE 00 2026','ENE 32 2026','FEB 29 2026','ABR 31 2026','ENE 07 26','ENE 07','JAN 07 2026','ENE 07 2026 16:13:35','ENE 07 2026 / FEB 07 2026'])assert.equal(m.receiptDate(text),null,text);
+ assert.equal(m.receiptDate('02/01/2026'),'2026-01-02');
+ let calls=0;
+ globalThis.fetch=async()=>provider({...raw,dateText:calls++===0?'ENE 07 2026':'07/01/2026'});
+ const result=await m.readReceipt(png,'image/png',authorize);
+ assert.equal(calls,2);assert.equal(result.date,'2026-01-07');assert.equal(result.autoEligible,true);
+ calls=0;globalThis.fetch=async()=>provider({...raw,dateText:calls++===0?'ENE 07 2026':'07/04/2026'});
+ const disagreement=await m.readReceipt(png,'image/png',authorize);assert.equal(disagreement.date,null);assert.equal(disagreement.autoEligible,false);
+});
 test('unclear, incomplete, failed, pending, multiple or foreign payments cannot auto-select a bank movement',()=>{
  const valid=m.normalizeReceiptReading(raw);assert.equal(valid.amount,1250000.5);assert.equal(valid.date,'2026-11-10');assert.equal(valid.autoEligible,true);
  for(const extra of [{document:'multiple_payments'},{document:'other'},{document:'unreadable'},{transactionStatus:'failed'},{transactionStatus:'pending'},{transactionStatus:'unknown'},{currency:'other'},{currency:'unknown'},{legible:false},{amountText:null},{dateText:'hoy'}])assert.equal(m.normalizeReceiptReading({...raw,...extra}).autoEligible,false,JSON.stringify(extra));

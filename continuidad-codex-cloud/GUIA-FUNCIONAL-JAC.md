@@ -1,3 +1,17 @@
+## Lectura automática y abonos ya facturados · 11 noviembre 2026
+
+Antes de leer fecha y valor, JAC endereza automáticamente las imágenes de lado o invertidas. La vista previa muestra la copia orientada y el soporte guardado conserva el archivo original. Esto aplica tanto a un recibo individual como a varios recibos en una foto.
+
+En **Leer comprobante** ya no se elige entre dos pestañas: seleccionar, arrastrar o pegar una imagen inicia el conteo. Un recibo se lee completo; varios pasan a la separación y lectura conjunta. Las coincidencias se buscan solas. Si los cuadros son dudosos, revisarlos y confirmar inicia la lectura. Una coincidencia exacta única se selecciona; si hay varias posibles, elegir la correcta. En una ficha abierta desde el lector, completar show/empresario y **Guardar identificación** adjunta el archivo y deja Identificado en un solo paso. En un grupo se guardan juntos los seleccionados.
+
+Los abonos que contabilidad ya entregó con factura y tercero identificado muestran **Identificado y facturado**, no cuentan como pendientes y aparecen en Listos y en la exportación aunque no se haya adjuntado otro soporte. La referencia de factura no se convierte en un archivo PDF ficticio. Se puede abrir la ficha, elegir **En revisión** y guardar para volver a verificarla; volver a la opción **Identificado y facturado en contabilidad** cierra esa revisión sin inventar una relación con un show. La búsqueda y clasificación no duplican ingresos ni modifican saldos. Ver publicación real en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
+## Recibos con valores cortados y fechas tipo ENE 07 2026 · 11 noviembre 2026
+
+El lector admite la fecha impresa con el mes primero: `ENE 07 2026` corresponde al **7 de enero de 2026**. Sigue exigiendo un año completo y coincidencia entre sus dos lecturas; no toma la fecha del nombre del archivo ni de otro abono.
+
+Al separar una foto organizada en filas/columnas, busca espacios libres entre los recibos y conserva los extremos de la foto para incluir todo el valor. Si la separación no es clara, solicita revisar los cuadros antes de leer/identificar. Se mantienen **Ajustar recorte**, la separación manual, el original exacto adjunto y los movimientos independientes para el mismo show. Recargar la herramienta después de publicarse y volver a seleccionar la foto genera los nuevos recortes; no modifica soportes ni asignaciones ya guardados. Estado de publicación en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
 ## Recibos de un mismo show en una fotografía ·10 noviembre2026
 
 Corrección de cargas grandes: un error413tras terminar el conteo provenía de un límite de1MiB del router de páginas, anterior al lector. La API de Conciliación conserva sus límites propios y permisos. Si falla la separación, **Reintentar separación** utiliza la misma foto y el conteo ya obtenido; no hace reintentos automáticos ni vuelve a guardar pagos. También se puede usar la separación manual. Los originales adjuntos no se comprimen para eludir el límite.

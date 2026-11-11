@@ -231,7 +231,7 @@
       ['ID abono', p => p.id], ['Archivo de origen', p => p.importName], ['Hoja original', p => p.sheet], ['Fila original', p => p.sourceRow],
       ['Fecha consignación', p => p.date], ['Valor COP', p => p.amount], ['Descripción bancaria', p => p.description], ['Referencia bancaria', p => p.reference],
       ['Tercero original', p => p.thirdParty], ['Recibo de caja original', p => p.receipt], ['Factura original', p => p.invoice],
-      ['Estado conciliación', p => statusLabels[p.status] || p.status], ['Listo para contabilidad', p => p.status === 'identified' && p.attachments?.length ? 'Sí' : 'No'],
+      ['Estado conciliación', p => p.accountingIdentified ? 'Identificado y facturado' : statusLabels[p.status] || p.status], ['Listo para contabilidad', p => p.accountingIdentified || (p.status === 'identified' && p.attachments?.length) ? 'Sí' : 'No'],
       ['ID show', p => p.showId], ['Show', p => p.showName || p.show?.name], ['Fecha show', p => p.showDate || p.show?.date], ['Ciudad show', p => p.showCity || p.show?.city],
       ['Empresario', p => p.entrepreneur], ['Titular que consignó', p => p.payer], ['Facturación', p => billingLabels[p.billingStatus] || p.billingStatus],
       ['NIT', p => p.nit], ['Razón social', p => p.businessName], ['Observaciones', p => p.notes],
@@ -293,7 +293,7 @@
         if (onProgress) onProgress({ downloaded, total });
       }
     }
-    const ready = payments.filter(payment => payment.status === 'identified' && payment.attachments?.length).length;
+    const ready = payments.filter(payment => payment.accountingIdentified || (payment.status === 'identified' && payment.attachments?.length)).length;
     const totalAmount = payments.reduce((sum, payment) => sum + Math.round(Number(payment.amount || 0) * 100), 0) / 100;
     zip.file('LEEME.txt', [
       'JAC MUSIC · RELACIÓN DE ABONOS', `Exportado: ${new Date().toISOString()}`,

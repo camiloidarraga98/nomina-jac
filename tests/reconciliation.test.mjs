@@ -73,7 +73,7 @@ async function request(account, path = '/state', { method = 'GET', data, headers
   return apiModule.api[method](req, { params: Promise.resolve({ path: path.split('/').filter(Boolean) }) });
 }
 async function state(account) { const response = await request(account); assert.equal(response.status, 200, await response.clone().text()); return response.json(); }
-const row = (sourceRow = 5, extra = {}) => ({ sheet: 'BANCO FICTICIO', sourceRow, date: '2026-11-10', amount: 1250000.5, description: 'Consignación de prueba', reference: '0000123', thirdParty: 'Tercero de origen', receipt: 'RC-TEST-01', invoice: 'FV-TEST-01', original: { FECHA: '10/11/2026', 'VALOR [D]': 1250000.5, 'TERCERO [H]': 'Tercero de origen', NIT: '001234' }, ...extra });
+const row = (sourceRow = 5, extra = {}) => ({ sheet: 'BANCO FICTICIO', sourceRow, date: '2026-11-10', amount: 1250000.5, description: 'Consignación de prueba', reference: '0000123', thirdParty: 'Tercero de origen', receipt: 'RC-TEST-01', invoice: '', original: { FECHA: '10/11/2026', 'VALOR [D]': 1250000.5, 'TERCERO [H]': 'Tercero de origen', NIT: '001234' }, ...extra });
 function importPayload(rows = [row()]) { return { name: 'fixture-' + (++sequence) + '.xlsx', fileHash: crypto.randomUUID().replaceAll('-', '').repeat(2), rows }; }
 async function seed(account, rows = [row()]) {
   const payload = importPayload(rows), response = await request(account, '/import', { method: 'POST', data: payload });

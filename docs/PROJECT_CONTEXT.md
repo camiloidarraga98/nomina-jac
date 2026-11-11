@@ -1,3 +1,13 @@
+## Entrada única e identificación automática · 11 noviembre 2026
+
+Camilo pidió además orientar las imágenes antes de leer. El conteo se hace sobre una vista con EXIF aplicado; el giro detectado se aplica a la copia de lectura y vista previa, tanto individual como de grupo. En el lector individual se envía `readingImage` JPEG de hasta5MiB además del original; el original sigue siendo la identidad para duplicados y el archivo que se adjunta. Límite multipart17MiB, original10MiB; PDF conserva su ruta sin copia. No alterar el soporte original ni inferir fecha/valor de la orientación.
+
+Camilo amplió la corrección de recortes: una sola entrada detecta uno/varios recibos, lee y busca coincidencias automáticamente; revisión de recortes inciertos antes de seguir. Coincidencia exacta única seleccionada y una sola acción guarda Identificado con show/empresario/soporte. Contabilidad con factura y tercero identificados se clasifica como Identificado y facturado, fuera de pendientes y listo para exportar, sin inventar adjuntos ni modificar saldos. En revisión explícito prevalece. Misma sesión y dominio, revisión `receipt-auto-9`; estado real en [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+
+## Recortes de recibos y fechas térmicas · 11 noviembre 2026
+
+Se corrige el rechazo determinista de fechas españolas con mes primero (`ENE 07 2026`) y se conserva la doble lectura independiente. Para conjuntos en filas/columnas, las coordenadas aproximadas de IA guían la búsqueda local de espacios entre recibos; los recortes llegan a los bordes exteriores de la fotografía para no perder los últimos dígitos. Una separación dudosa exige revisar antes de leer o guardar. El ajuste local de los recortes no agrega llamadas al proveedor ni cambia modelos, secretos, permisos o datos. La entrada única sí usa el conteo/orientación también antes de una lectura individual. Revisión de interfaz `receipt-auto-9`. Detalles y estado real de publicación en [CRM_RECONCILIATION.md](CRM_RECONCILIATION.md).
+
 ## Corrección413 de formularios de conciliación ·10 noviembre2026
 
 Publicado17:34Colombia: fuente `3f8cc02`, Worker `dd7327f6-dd8d-4fd0-b410-864babdafee3`, deployment `233242c3-73bb-4cb8-8e41-6226eece930f`, activo al100%. Código idéntico a la compilación verificada y revisión `receipt-upload-7`;14bindings,2crons y DB/BUCKET conservados.57pruebas de conciliación,65comprobaciones Chromium con Worker completo, regresiones de nómina/autenticación/correo y TypeScript/build correctos. Verificación real por API; cargas y navegador locales con datos sintéticos. No se repitió el despliegue tras el error auxiliar conocido de Wrangler.
