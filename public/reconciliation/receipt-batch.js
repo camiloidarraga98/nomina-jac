@@ -17,6 +17,18 @@
       canvas.width=turn?source.height:source.width;canvas.height=turn?source.width:source.height;
       const c=canvas.getContext('2d');c.fillStyle='#fff';c.fillRect(0,0,canvas.width,canvas.height);c.translate(canvas.width/2,canvas.height/2);c.rotate(rotation*Math.PI/180);c.drawImage(source,-source.width/2,-source.height/2);return canvas;
     }
+    // A/B/C/D are actual rendered alternatives, not a request to reason about
+    // clockwise versus counterclockwise angles. Keep labels outside the photo.
+    static orientationSheet(source){
+      const canvas=document.createElement('canvas'),cell=1000,header=64,pad=24;canvas.width=cell*2;canvas.height=cell*2;
+      const c=canvas.getContext('2d');c.fillStyle='#e8eef3';c.fillRect(0,0,canvas.width,canvas.height);
+      for(const [index,rotation] of [0,90,180,270].entries()){
+        const x=index%2*cell,y=Math.floor(index/2)*cell,turn=rotation===90||rotation===270,w=turn?source.height:source.width,h=turn?source.width:source.height;
+        const scale=Math.min((cell-pad*2)/w,(cell-header-pad*2)/h);
+        c.fillStyle='#fff';c.fillRect(x+4,y+4,cell-8,cell-8);c.fillStyle='#102c40';c.font='bold 48px sans-serif';c.fillText('ABCD'[index],x+pad,y+50);
+        c.save();c.translate(x+cell/2,y+header+(cell-header)/2);c.rotate(rotation*Math.PI/180);c.drawImage(source,-source.width*scale/2,-source.height*scale/2,source.width*scale,source.height*scale);c.restore();
+      }return canvas;
+    }
     /** Locate whitespace between receipts, rather than trust estimated paper edges.
      * The outer image edges are retained: a model cannot truncate the final digits
      * of an amount by proposing a narrow right edge. No image leaves the browser.
@@ -87,12 +99,12 @@
       return this.constructor.partitionRegions(c.getImageData(0,0,canvas.width,canvas.height),this.layout,result.regions);
     }
     constructor(host){
-      this.h=host;this.active=true;this.busy=false;this.parts=[];this.shared={showId:'',entrepreneur:'',name:'',date:'',city:''};this.error='';this.phase='preparing';this.operation=null;this.rotation=0;this.needsReview=false;this.geometryWarnings=[];this.detectionFailed=false;
+      this.h=host;this.active=true;this.busy=false;this.parts=[];this.shared={showId:'',entrepreneur:'',name:'',date:'',city:''};this.error='';this.phase='preparing';this.operation=null;this.rotation=0;this.needsReview=false;this.geometryWarnings=[];this.detectionFailed=false;this.layout=host.layout?{...host.layout}:null;this.orientationVerified=false;this.orientationEditing=false;this.orientationUpdate=0;
       this.click=event=>{const button=event.target.closest('[data-action^="batch-"]');if(button&&!button.disabled)this.action(button.dataset.action,button.dataset.index);};
       this.change=event=>this.input(event.target,event.type);
       document.addEventListener('click',this.click);document.addEventListener('input',this.change);document.addEventListener('change',this.change);
     }
-    dispose(){this.active=false;this.controller?.abort();this.image?.close();if(this.url)URL.revokeObjectURL(this.url);for(const p of this.parts)if(p.url)URL.revokeObjectURL(p.url);this.parts=[];this.source=null;this.preview=null;this.shared={};document.removeEventListener('click',this.click);document.removeEventListener('input',this.change);document.removeEventListener('change',this.change);}
+    dispose(){this.active=false;++this.orientationUpdate;if(this.orientationUrl)URL.revokeObjectURL(this.orientationUrl);this.controller?.abort();this.image?.close();if(this.url)URL.revokeObjectURL(this.url);for(const p of this.parts)if(p.url)URL.revokeObjectURL(p.url);this.parts=[];this.source=null;this.preview=null;this.shared={};document.removeEventListener('click',this.click);document.removeEventListener('input',this.change);document.removeEventListener('change',this.change);}
     setBusy(value){this.busy=value;if(this.active)this.h.busy(value);}
     async start(file){
       this.source=file;this.setBusy(true);this.h.dirty(true);this.render();
@@ -112,12 +124,23 @@
         this.phase='counting';this.render();const form=new FormData();form.set('file',this.preview);
         this.layout=await this.h.api('/api/reconciliation/scan/layout',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
       }
+      if(this.manualRotation!==undefined)this.setOrientation(this.manualRotation);
+      if(!this.orientationVerified){
+        if(this.h.reviewOrientation){this.h.reviewOrientation=false;this.orientationManual=true;await this.beginOrientationReview(this.layout.rotation);return;}
+        this.phase='orienting';this.render();
+        const sheet=await blobFromCanvas(this.constructor.orientationSheet(this.image));if(!this.active)return;
+        if(sheet.size>5*1024*1024)throw Error('La comparación de orientación supera 5 MB. Usa una copia de menor tamaño.');
+        const form=new FormData();form.set('file',new File([sheet],'orientaciones.jpg',{type:'image/jpeg'}));
+        const checked=await this.h.api('/api/reconciliation/scan/orientation',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;
+        if(checked.needsReview||![0,90,180,270].includes(checked.rotation)){await this.beginOrientationReview(this.layout.rotation);return;}
+        this.setOrientation(checked.rotation);this.orientationVerified=true;
+      }
       // One upload entry point. Reuse this count for groups; a single receipt
       // goes to the full-original reader without region requests or cropping.
       if(this.layout.count===1&&this.h.single&&!this.h.forceGroup){
         const readingImage=this.layout.rotation?new File([await blobFromCanvas(this.constructor.rotatedCanvas(this.image,this.layout.rotation))],'comprobante-orientado.jpg',{type:'image/jpeg'}):this.preview;
         if(!this.active)return;if(readingImage.size>5*1024*1024)throw Error('La vista para lectura supera 5 MB. Usa una copia de menor tamaño.');
-        return this.h.single(this.source,false,readingImage);
+        return this.h.single(this.source,false,readingImage,{...this.layout});
       }
       this.rotation=this.layout.rotation;this.phase='detecting';this.render();
       const oriented=this.constructor.rotatedCanvas(this.image,this.rotation),imageBlob=await blobFromCanvas(oriented),grid=await this.coordinateGuide(oriented);if(!this.active)return;
@@ -131,6 +154,22 @@
       for(const [index,viewBounds] of safe.regions.entries()){const bounds=this.constructor.originalBounds(viewBounds,this.rotation),part=this.newPart(index,bounds);this.parts.push(part);await this.crop(part);if(!this.active)return;}
       this.detectionFailed=false;if(!this.parts.length)this.error='No se delimitaron comprobantes automáticamente. Puedes agregar los recortes manualmente.';
       if(this.parts.length&&!this.needsReview)await this.readParts(this.parts);
+    }
+    setOrientation(rotation){
+      if(this.layout){const difference=(rotation-this.layout.rotation+360)%360;if(difference===90||difference===270)[this.layout.rows,this.layout.columns]=[this.layout.columns,this.layout.rows];this.layout.rotation=rotation;}
+      this.rotation=rotation;
+    }
+    async beginOrientationReview(rotation){
+      this.orientationEditing=true;this.orientationDraft=rotation;this.error='';this.setBusy(true);this.render();try{await this.refreshOrientationPreview();}catch(error){if(this.active)this.error=error.message;}finally{if(this.active){this.setBusy(false);this.render();}}
+    }
+    async refreshOrientationPreview(){
+      const update=++this.orientationUpdate,blob=await blobFromCanvas(this.constructor.rotatedCanvas(this.image,this.orientationDraft));
+      if(!this.active||!this.orientationEditing||update!==this.orientationUpdate)return;
+      if(this.orientationUrl)URL.revokeObjectURL(this.orientationUrl);this.orientationUrl=URL.createObjectURL(blob);this.orientationPreviewRotation=this.orientationDraft;this.render();
+    }
+    renderOrientation(){
+      const esc=this.h.esc;
+      this.h.open(`<div class="overlay modal-overlay"><section class="modal receipt-batch" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">Revisar orientación</h2><p>Deja el texto derecho antes de leer la fecha y el valor.</p></div><button class="icon-close" data-action="batch-close" aria-label="Cerrar revisión">×</button></div><div class="modal-body">${!this.orientationVerified&&!this.orientationManual?'<div class="notice warning">No se pudo confirmar la orientación automáticamente. Gira la imagen hasta poder leerla normalmente.</div>':''}${this.error?`<div class="error-banner" role="alert">${esc(this.error)}</div>`:''}<div style="text-align:center">${this.orientationUrl?`<img id="batch-orientation-preview" src="${esc(this.orientationUrl)}" alt="Comprobante para revisar la orientación del texto" style="display:block;max-width:100%;max-height:42vh;width:auto;height:auto;margin:auto">`:'<p role="status">Preparando vista previa…</p>'}</div><div class="batch-tools" style="justify-content:center;margin-top:20px"><button class="btn" data-action="batch-turn-left" ${this.busy?'disabled':''}>↶ Girar izquierda</button><button class="btn" data-action="batch-turn-right" ${this.busy?'disabled':''}>↷ Girar derecha</button></div></div><div class="modal-footer">${this.orientationVerified?'<button class="btn" data-action="batch-orientation-cancel">Volver</button>':''}<button class="btn btn-primary" data-action="batch-orientation-confirm" ${this.busy||!this.orientationUrl||this.orientationPreviewRotation!==this.orientationDraft?'disabled':''}>Así se lee correctamente</button></div></section></div>`);
     }
     newPart(index,bounds){return {index,bounds,amount:'',date:'',matches:[],paymentId:'',version:null,read:false,saved:false,error:'',warnings:[]};}
     async coordinateGuide(source){
@@ -154,16 +193,16 @@
     selected(){return this.parts.filter(p=>!p.saved&&p.paymentId&&p.version);}
     summary(){const selected=this.selected();return `${selected.length} por guardar · ${this.parts.filter(p=>p.saved).length} guardados · ${this.parts.filter(p=>!p.saved&&!p.paymentId).length} sin asignar`;}
     render(){
-      if(!this.active)return;if(this.gridEditing){this.renderGrid();return;}if(this.editing!==undefined){this.renderCrop();return;}
+      if(!this.active)return;if(this.orientationEditing){this.renderOrientation();return;}if(this.gridEditing){this.renderGrid();return;}if(this.editing!==undefined){this.renderCrop();return;}
       const {esc,money,date}=this.h,working=this.busy,locked=working||this.parts.some(p=>p.saved),top=$('.receipt-batch .modal-body')?.scrollTop||0;
       const show=this.h.shows().find(s=>s.id===this.shared.showId);
       this.h.open(`<div class="overlay modal-overlay"><section class="modal receipt-batch" role="dialog" aria-modal="true" aria-labelledby="receipt-title"><div class="modal-header"><div><h2 id="receipt-title">${this.layout?.count>1?'Varios comprobantes de un show':'Analizando comprobantes'}</h2><p>${this.layout?.count>1?'Un movimiento por recibo, con el mismo show y empresario.':'Detectamos cuántos recibos hay y buscamos sus abonos.'}</p></div><button class="icon-close" data-action="batch-close" aria-label="Cerrar grupo" ${this.phase==='saving'?'disabled':''}>×</button></div><div class="modal-body">
         ${this.error?`<div class="error-banner" role="alert">${esc(this.error)}${this.h.single&&!(this.layout?.count>1)?'<p><button class="btn" data-action="batch-manual">Buscar abono manualmente</button></p>':''}${this.detectionFailed&&this.image&&!this.parts.some(p=>p.saved)?`<p><button class="btn" data-action="batch-detect" ${working?'disabled':''}>Reintentar separación</button></p>`:''}</div>`:''}
         ${this.url?`<details class="batch-original" ${this.needsReview?'open':''}><summary>Revisar separación · ${this.parts.length} recortes${this.layout?` · Conteo: ${this.layout.count}`:''}</summary><div class="batch-map" style="--image-ratio:${this.image.width/this.image.height}"><img src="${esc(this.url)}" alt="Foto completa con los límites de cada comprobante">${this.parts.map(p=>`<button class="batch-map-box" data-action="batch-crop" data-index="${p.index}" style="left:${p.bounds.x/10}%;top:${p.bounds.y/10}%;width:${p.bounds.width/10}%;height:${p.bounds.height/10}%" aria-label="Ajustar comprobante ${p.index+1}" ${working||p.saved?'disabled':''}><span>${p.index+1}</span></button>`).join('')}</div></details>`:''}
-        ${['preparing','counting','detecting'].includes(this.phase)?`<div class="loading-state" role="status"><span class="spinner"></span>${this.phase==='preparing'?'Preparando imagen…':this.phase==='counting'?'Contando los recibos y revisando su orientación…':'Delimitando y verificando los recortes completos…'}</div>`:`
+        ${['preparing','counting','orienting','detecting'].includes(this.phase)?`<div class="loading-state" role="status"><span class="spinner"></span>${this.phase==='preparing'?'Preparando imagen…':this.phase==='counting'?'Contando los recibos…':this.phase==='orienting'?'Comprobando la orientación del texto…':'Delimitando y verificando los recortes completos…'}</div>`:`
         ${this.needsReview?`<div class="notice warning" role="alert">${this.geometryWarnings.map(esc).join('<br>')||'Revisa la separación antes de leer. Cada cuadro debe incluir un recibo completo.'}<br><button class="btn" data-action="batch-confirm-crops" ${working||!this.parts.length?'disabled':''}>Ya revisé: un recibo completo por recorte</button></div>`:''}
         <div class="notice">Revisa que haya un recorte por comprobante y que todos estén incluidos. Puedes ajustar, quitar o agregar recortes antes de leerlos.</div>
-        <div class="batch-tools"><button class="btn" data-action="batch-add" ${working||!this.image||this.parts.length>=limit?'disabled':''}>+ Agregar recorte</button><button class="btn" data-action="batch-grid" ${working||!this.image||this.parts.some(p=>p.saved)?'disabled':''}>Separar por filas y columnas</button><button class="btn btn-primary" data-action="batch-read" ${working||this.needsReview||!this.parts.some(p=>!p.saved&&!p.read)?'disabled':''}>${this.parts.length&&this.parts.every(p=>p.read||p.saved)?'Lectura completada':'Leer comprobantes pendientes'}</button>${this.phase==='reading'?'<button class="btn" data-action="batch-stop">Detener lectura</button>':''}</div>
+        <div class="batch-tools"><button class="btn" data-action="batch-orientation" ${working||!this.image||this.parts.some(p=>p.saved)?'disabled':''}>Revisar orientación</button><button class="btn" data-action="batch-add" ${working||!this.image||this.parts.length>=limit?'disabled':''}>+ Agregar recorte</button><button class="btn" data-action="batch-grid" ${working||!this.image||this.parts.some(p=>p.saved)?'disabled':''}>Separar por filas y columnas</button><button class="btn btn-primary" data-action="batch-read" ${working||!this.orientationVerified||this.needsReview||!this.parts.some(p=>!p.saved&&!p.read)?'disabled':''}>${this.parts.length&&this.parts.every(p=>p.read||p.saved)?'Lectura completada':'Leer comprobantes pendientes'}</button>${this.phase==='reading'?'<button class="btn" data-action="batch-stop">Detener lectura</button>':''}</div>
         <section class="batch-shared"><h3>Datos comunes del grupo</h3><div class="form-grid"><div class="form-field full"><label for="batch-show">Show y fecha del show</label><select id="batch-show" data-common="showId" ${locked?'disabled':''}><option value="">Selecciona el show</option>${[...this.h.shows()].sort((a,b)=>b.date.localeCompare(a.date)).map(s=>`<option value="${esc(s.id)}" ${this.shared.showId===s.id?'selected':''}>${esc(date(s.date))} · ${esc(s.name)}</option>`).join('')}<option value="__new" ${this.shared.showId==='__new'?'selected':''}>+ Agregar show histórico</option></select></div><div class="form-field full"><label for="batch-entrepreneur">Empresario</label><input id="batch-entrepreneur" class="input" data-common="entrepreneur" value="${esc(this.shared.entrepreneur)}" maxlength="300" ${locked?'disabled':''}></div>${this.shared.showId==='__new'?`<div class="form-field full"><label for="batch-name">Nombre del show histórico</label><input id="batch-name" class="input" data-common="name" value="${esc(this.shared.name)}" maxlength="200" ${locked?'disabled':''}></div><div class="form-field"><label for="batch-date">Fecha del show</label><input type="date" id="batch-date" data-common="date" value="${esc(this.shared.date)}" ${locked?'disabled':''}></div><div class="form-field"><label for="batch-city">Ciudad</label><input class="input" id="batch-city" data-common="city" value="${esc(this.shared.city)}" maxlength="100" ${locked?'disabled':''}></div>`:''}</div><p class="small-note">${show?`Fecha del show: ${esc(date(show.date))}. `:''}Cada recibo conserva su propia fecha bancaria. Los pagos siguen siendo movimientos separados.</p></section>
         <div class="batch-cards">${this.parts.map(p=>`<article class="batch-card" id="batch-part-${p.index}"><div class="batch-preview">${p.url?`<a href="${esc(p.url)}" target="_blank" rel="noopener"><img src="${esc(p.url)}" alt="Recorte del comprobante ${p.index+1}"></a>`:''}<strong>Comprobante ${p.index+1}</strong><div class="batch-tools"><button class="link-button" data-action="batch-crop" data-index="${p.index}" ${working||p.saved?'disabled':''}>Ajustar recorte</button><button class="link-button" data-action="batch-remove" data-index="${p.index}" ${working||p.saved?'disabled':''}>Quitar</button></div></div><div class="batch-fields">${p.saved?`<div class="notice"><strong>Guardado e identificado</strong>${p.supportUrl?`<p><a href="${esc(p.supportUrl)}" target="_blank" rel="noopener">Consultar soporte PDF</a></p>`:''}</div>`:`
           ${this.readingIndex===p.index?'<div class="loading-state" role="status"><span class="spinner"></span>Leyendo y comprobando este recibo…</div>':''}
@@ -171,7 +210,7 @@
           <div class="form-grid"><div class="form-field"><label for="batch-amount-${p.index}">Valor (COP)</label><input class="input" id="batch-amount-${p.index}" data-part="${p.index}" data-key="amount" inputmode="decimal" value="${esc(p.amount)}" ${working?'disabled':''}></div><div class="form-field"><label for="batch-bank-date-${p.index}">Fecha bancaria</label><input class="input" type="date" id="batch-bank-date-${p.index}" data-part="${p.index}" data-key="date" value="${esc(p.date)}" ${working?'disabled':''}>${p.date?`<small>${esc(date(p.date))}</small>`:''}</div></div>
           <div class="batch-tools"><button class="btn btn-small" data-action="batch-search" data-index="${p.index}" ${working?'disabled':''}>${p.read?'Actualizar coincidencias':'Buscar coincidencias'}</button><button class="link-button" data-action="batch-reread" data-index="${p.index}" ${working||this.needsReview?'disabled':''}>${p.read?'Volver a leer':'Leer este recibo'}</button></div>
           <label for="batch-payment-${p.index}">Movimiento pendiente</label><select id="batch-payment-${p.index}" data-part="${p.index}" data-key="paymentId" ${working?'disabled':''}>${this.options(p)}</select><p class="small-note" id="batch-match-note-${p.index}">${p.paymentId?'Abono seleccionado. Quedará identificado al guardar.':p.matches.length?`${p.matches.length} coincidencias; elige el abono correcto.`:p.read?'No hay coincidencias. Revisa el valor y la fecha.':'Las coincidencias aparecerán al terminar la lectura.'}</p>`}</div></article>`).join('')}</div>`}
-        </div><div class="modal-footer batch-footer"><span id="batch-summary" role="status">${esc(this.phase==='saving'?'Guardando soportes e identificación…':this.summary())}</span><button class="btn btn-primary" data-action="batch-save" id="batch-save" ${working||this.needsReview||!this.selected().length?'disabled':''}>Guardar e identificar seleccionados</button></div></section></div>`);
+        </div><div class="modal-footer batch-footer"><span id="batch-summary" role="status">${esc(this.phase==='saving'?'Guardando soportes e identificación…':this.summary())}</span><button class="btn btn-primary" data-action="batch-save" id="batch-save" ${working||!this.orientationVerified||this.needsReview||!this.selected().length?'disabled':''}>Guardar e identificar seleccionados</button></div></section></div>`);
       const body=$('.receipt-batch .modal-body');if(body)body.scrollTop=top;
     }
     input(el,eventType){
@@ -191,6 +230,20 @@
       if(action==='batch-close'){if(this.phase==='saving')return;if(this.h.isDirty()&&!confirm('Hay comprobantes o cambios sin guardar. ¿Quieres cerrar el grupo?'))return;this.h.close();return;}
       if(action==='batch-stop'){this.stopRequested=true;this.controller?.abort();return;}
       if(this.busy)return;
+      if(action==='batch-turn-left'||action==='batch-turn-right'){
+        if(!this.orientationEditing)return;this.orientationDraft=(this.orientationDraft+(action==='batch-turn-left'?270:90))%360;this.setBusy(true);this.render();try{await this.refreshOrientationPreview();}catch(error){if(this.active)this.error=error.message;}finally{if(this.active){this.setBusy(false);this.render();}}return;
+      }
+      if(action==='batch-orientation-cancel'&&this.orientationVerified){this.orientationEditing=false;++this.orientationUpdate;if(this.orientationUrl)URL.revokeObjectURL(this.orientationUrl);this.orientationUrl=null;this.render();return;}
+      if(action==='batch-orientation'&&this.image&&!this.parts.some(p=>p.saved))return this.beginOrientationReview(this.rotation);
+      if(action==='batch-orientation-confirm'&&this.orientationEditing){
+        if(!this.orientationUrl||this.orientationPreviewRotation!==this.orientationDraft)return;
+        if(this.parts.some(p=>p.read||p.paymentId)&&!confirm('Se volverán a separar y leer los comprobantes. Las selecciones sin guardar se retirarán. ¿Continuar?'))return;
+        this.manualRotation=this.orientationDraft;this.setOrientation(this.manualRotation);this.orientationVerified=true;this.orientationEditing=false;++this.orientationUpdate;
+        if(this.orientationUrl)URL.revokeObjectURL(this.orientationUrl);this.orientationUrl=null;
+        for(const part of this.parts)if(part.url)URL.revokeObjectURL(part.url);this.parts=[];this.operation=null;this.needsReview=false;this.geometryWarnings=[];this.error='';this.setBusy(true);this.render();
+        try{await this.detectRegions();}catch(error){if(this.active){this.error=error.message;this.needsReview=true;this.detectionFailed=true;}}
+        finally{if(this.active){this.phase='review';this.setBusy(false);this.render();}}return;
+      }
       if(action==='batch-manual'&&this.h.single&&!(this.layout?.count>1))return this.h.single(this.source,true);
       if(action==='batch-detect'&&this.image&&!this.parts.some(p=>p.saved)){
         if(this.parts.some(p=>p.read||p.paymentId)&&!confirm('Reintentar retirará las lecturas y selecciones sin guardar si consigue nuevos recortes. ¿Continuar?'))return;
@@ -255,7 +308,7 @@
       if(candidate&&!this.parts.some(other=>other!==p&&other.paymentId===candidate.id)){p.paymentId=candidate.id;p.version=candidate.version;}
     }
     async readParts(parts){
-      if(!parts.length||this.needsReview)return;this.setBusy(true);this.phase='reading';this.stopRequested=false;this.error='';
+      if(!parts.length||this.needsReview||!this.orientationVerified)return;this.setBusy(true);this.phase='reading';this.stopRequested=false;this.error='';
       try{for(const p of parts){
         if(!this.active||this.stopRequested)break;this.readingIndex=p.index;p.error='';p.read=false;p.paymentId='';p.version=null;p.matches=[];p.warnings=[];this.render();this.controller=new AbortController();
         try{
@@ -275,7 +328,7 @@
       finally{if(this.active){this.setBusy(false);this.render();}}
     }
     async save(){
-      const parts=this.selected();if(!parts.length||this.needsReview)return;
+      const parts=this.selected();if(!parts.length||this.needsReview||!this.orientationVerified)return;
       if(!this.shared.showId||!this.shared.entrepreneur.trim()){this.error='Selecciona el show y escribe el empresario para todo el grupo.';this.render();return;}
       if(new Set(parts.map(p=>p.paymentId)).size!==parts.length){this.error='Elige un movimiento diferente para cada recibo.';this.render();return;}
       this.setBusy(true);this.phase='saving';this.error='';this.render();this.controller=new AbortController();

@@ -66,9 +66,17 @@ test('light table and paper edges are not mistaken for payment text in regular r
 });
 test('single-receipt count hands off the original without region requests, and reviewing crops starts pending reads',async()=>{
  const source={name:'synthetic.jpg'},calls=[];
- const b=new Batch({single:file=>calls.push(file)});b.source=source;b.preview={size:100};b.layout={count:1,rows:1,columns:1,rotation:0};
+ const b=new Batch({single:file=>calls.push(file)});b.source=source;b.preview={size:100};b.layout={count:1,rows:1,columns:1,rotation:0};b.orientationVerified=true;
  await b.detectRegions();assert.deepEqual(calls,[source]);
  b.parts=[{index:0,bounds:{x:0,y:0,width:400,height:1000},read:false},{index:1,bounds:{x:600,y:0,width:400,height:1000},read:true}];b.needsReview=true;b.render=()=>{};
  b.readParts=async parts=>{assert.equal(b.needsReview,false);assert.deepEqual(parts.map(p=>p.index),[0]);calls.push('read');};
  await b.action('batch-confirm-crops');assert.deepEqual(calls,[source,'read']);
+});
+
+test('verified orientation replaces an incorrect angle and swaps grid axes only for a quarter turn',async()=>{
+ const b=new Batch({});b.layout={count:8,rows:2,columns:4,rotation:90};
+ b.setOrientation(270);assert.equal(b.rotation,270);assert.equal(b.layout.rows,2);assert.equal(b.layout.columns,4);
+ b.setOrientation(0);assert.equal(b.layout.rows,4);assert.equal(b.layout.columns,2);
+ b.parts=[{paymentId:'synthetic',version:1}];b.setBusy=()=>{throw Error('Must not start reading or saving before orientation review');};
+ await b.readParts(b.parts);await b.save();
 });

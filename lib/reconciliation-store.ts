@@ -6,7 +6,7 @@ import type {CrmGuard} from './crm-access';
 import type {AccessUser} from './payroll-permissions';
 import {payrollHeaders} from './payroll-access';
 import {matchReceiptPayments,receiptLookupSchema} from './reconciliation-receipt';
-import {readReceipt,inspectReceiptLayout,detectReceiptRegions,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
+import {readReceipt,inspectReceiptLayout,inspectReceiptOrientation,detectReceiptRegions,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
 import {receiptBatchPlanSchema,receiptPartPDF,receiptRegionsOverlap,type ReceiptBounds} from './reconciliation-batch';
 import {hasAccountingIdentification} from './reconciliation-status';
 
@@ -115,6 +115,14 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
   const release=reserveReceiptReader(user.id);
   try{const {bytes,type}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);const layout=await inspectReceiptLayout(bytes,type,authorize,req.signal);await authorize();return json(layout);}
   finally{release();}
+ }
+ if(path==='/scan/orientation'&&method==='POST'){
+  const release=reserveReceiptReader(user.id);
+  try{
+   const {bytes,type}=await receiptUpload(req,5*1024*1024,6*1024*1024);
+   if(type!=='image/jpeg')fail('La comparación de orientación debe ser una imagen JPEG.',415);
+   const orientation=await inspectReceiptOrientation(bytes,type,authorize,req.signal);await authorize();return json(orientation);
+  }finally{release();}
  }
  if(path==='/scan/regions'&&method==='POST'){
   const release=reserveReceiptReader(user.id);

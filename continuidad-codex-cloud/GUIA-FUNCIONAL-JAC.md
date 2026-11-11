@@ -1,3 +1,9 @@
+## Corregir una foto que quedó invertida · 11 noviembre 2026
+
+Antes de leer el valor y la fecha, JAC compara cuatro orientaciones visibles y comprueba cuál muestra el texto derecho. Si no logra confirmarlo, muestra **Girar izquierda**, **Girar derecha** y **Así se lee correctamente**. También puedes abrir **Revisar orientación** desde la vista previa o la ficha de un comprobante aún sin guardar.
+
+Al confirmar se vuelve a leer y buscar el abono. Para grupos, cambiar el giro vuelve a separar y leer la foto, por lo que se pide confirmar antes de retirar selecciones pendientes. Los soportes ya guardados y el archivo original se conservan. Publicación pendiente; el resultado de las verificaciones se registra en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
 ## Lectura automática y abonos ya facturados · 11 noviembre 2026
 
 Actualización publicada el 11/11/2026 a las 12:07 Colombia, revisión `receipt-auto-9`. Recarga Conciliación y vuelve a seleccionar o pegar la foto para usar el nuevo flujo. Se conservan los soportes y asignaciones que ya guardaste. Versión activa confirmada por API; orientación, recortes, lectura y guardado comprobados con recibos ficticios.

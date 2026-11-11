@@ -105,7 +105,7 @@
   function closeOverlay(force=false){if(state.busy&&!force)return;if(state.dirty&&!force&&!confirm('Tienes cambios sin guardar. ¿Quieres cerrar sin guardarlos?'))return;discardReceipt();state.selected=null;state.overlay=null;state.dirty=false;$('#overlay-root').innerHTML='';document.body.style.overflow='';}
 
   function discardReceipt(){++clipboardRead;clipboardBusy=false;const scan=receiptScan;receiptScan=null;scan?.controller?.abort();if(scan?.url)URL.revokeObjectURL(scan.url);const batch=receiptBatch;receiptBatch=null;batch?.dispose();}
-  function startReceiptBatch(file,{forceGroup=false}={}){
+  function startReceiptBatch(file,{forceGroup=false,reviewOrientation=false,layout=null,draft=null}={}){
     if(!['image/jpeg','image/png','image/webp'].includes(file.type))return toast('Para varios comprobantes juntos, elige una imagen JPG, PNG o WebP.',true);
     if(file.size>10*1024*1024)return toast('La imagen supera el máximo de 10 MB.',true);
     if(receiptBatch&&state.dirty&&!confirm('Hay comprobantes sin guardar. ¿Quieres sustituir la imagen del grupo?'))return;
@@ -113,7 +113,7 @@
     const batch=new window.JacReceiptBatch({esc,money,date,amount:namount,api,
       open:html=>{if(receiptBatch===batch)openOverlay(html,'receipt');},
       busy:value=>{if(receiptBatch===batch)state.busy=value;},dirty:value=>{if(receiptBatch===batch)state.dirty=value;},isDirty:()=>state.dirty,
-      forceGroup,shows:()=>state.shows,reload:()=>reload(),single:(file,manual=false,readingImage)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,manual,readingImage});},close:()=>{if(receiptBatch===batch){state.busy=false;state.dirty=false;closeOverlay(true);}}
+      forceGroup,reviewOrientation,layout,shows:()=>state.shows,reload:()=>reload(),single:(file,manual=false,readingImage,layout)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,manual,readingImage,layout,draft});},close:()=>{if(receiptBatch===batch){state.busy=false;state.dirty=false;closeOverlay(true);}}
     });receiptBatch=batch;batch.start(file);
   }
   function receiptClipboard(){return `<div class="receipt-clipboard"><button type="button" class="btn" id="receipt-paste-button" data-action="paste-scan" aria-describedby="receipt-paste-hint">Pegar del portapapeles</button><p id="receipt-paste-hint" class="small-note">Copia la imagen del comprobante y pulsa <kbd>⌘ V</kbd> en Mac o <kbd>Ctrl V</kbd> en Windows.</p><p id="receipt-paste-message" class="small-note" role="status"></p><textarea id="receipt-paste-target" class="input" rows="2" hidden aria-label="Pegar imagen del comprobante" placeholder="Pega aquí con ⌘V, Ctrl+V o el menú Pegar" autocomplete="off"></textarea></div>`;}
@@ -142,7 +142,7 @@
   }
   function receiptPreview(scan){
     if(!scan?.url)return '';
-    return scan.file.type==='application/pdf'?`<div class="receipt-pdf"><span aria-hidden="true">▤</span><strong>Comprobante PDF</strong><a class="btn" href="${esc(scan.url)}" target="_blank" rel="noopener">Consultar PDF</a></div>`:`<a href="${esc(scan.url)}" target="_blank" rel="noopener" aria-label="Ver comprobante completo"><img class="receipt-image" src="${esc(scan.url)}" alt="Comprobante seleccionado para lectura"></a>`;
+    return scan.file.type==='application/pdf'?`<div class="receipt-pdf"><span aria-hidden="true">▤</span><strong>Comprobante PDF</strong><a class="btn" href="${esc(scan.url)}" target="_blank" rel="noopener">Consultar PDF</a></div>`:`<a href="${esc(scan.url)}" target="_blank" rel="noopener" aria-label="Ver comprobante completo"><img class="receipt-image" src="${esc(scan.url)}" alt="Comprobante seleccionado para lectura"></a>${!scan.loading&&!scan.attached?'<button type="button" class="link-button" data-action="orient-scan">Revisar orientación</button>':''}`;
   }
   function renderReceipt(){
     const scan=receiptScan,loading=!!scan?.loading;
@@ -164,12 +164,12 @@
     if(!matches.length)return '<div class="notice">No hay abonos con estos datos. Revisa el valor y la fecha, o borra uno de los campos para ampliar la búsqueda.</div>';
     return `<h3 class="receipt-match-title">${scan.result.total} coincidencia${scan.result.total===1?'':'s'} · Elige el abono</h3>${matches.map(p=>`<button class="receipt-match" data-action="select-scan-payment" data-id="${esc(p.id)}"><span><strong>${money(p.amount)}</strong><span>${esc(date(p.date))} · ${p.kind==='exact'?'Coinciden valor y fecha':p.kind==='amount'?'Mismo valor · revisa la fecha':'Misma fecha · revisa el valor'}</span><small>${esc(state.shows.find(s=>s.id===p.showId)?.name||'Sin show asignado')} · ${esc(p.entrepreneur||'Empresario por identificar')}</small>${p.status==='identified'?'<small>Ya identificado · revisa antes de añadir otro soporte</small>':''}</span><span class="receipt-use">Usar este abono →</span></button>`).join('')}${scan.result.total>matches.length?'<p class="secondary">Se muestran las primeras 100 coincidencias. Añade el valor para acotar la búsqueda.</p>':''}`;
   }
-  async function readReceiptFile(file,{single=false,manual=false,readingImage=null}={}){
+  async function readReceiptFile(file,{single=false,manual=false,readingImage=null,layout=null,draft=null}={}){
     if(!file||state.busy)return;
     if(!['image/jpeg','image/png','image/webp','application/pdf'].includes(file.type)||!file.size||file.size>10*1024*1024)return toast('Usa un JPG, PNG, WebP o PDF de hasta 10 MB.',true);
     if(!single&&file.type!=='application/pdf')return startReceiptBatch(file);
     discardReceipt();
-    const scan=receiptScan={file,url:URL.createObjectURL(readingImage||file),controller:new AbortController(),loading:true,error:'',amount:'',date:'',result:null,matchesCurrent:false,paymentId:null,attached:false,draft:null};
+    const scan=receiptScan={file,url:URL.createObjectURL(readingImage||file),controller:new AbortController(),loading:true,error:'',amount:'',date:'',result:null,matchesCurrent:false,paymentId:null,attached:false,layout,draft};
     state.busy=!manual;scan.loading=!manual;state.dirty=true;renderReceipt();if(manual)return;
     try{
       const body=new FormData();body.append('file',file);if(readingImage)body.append('readingImage',readingImage);
@@ -298,6 +298,12 @@
     else if(action==='choose-scan'){if(!state.busy)$('#scan-file')?.click();}
     else if(action==='paste-scan')pasteReceipt();
     else if(action==='split-scan'&&receiptScan&&!state.busy)startReceiptBatch(receiptScan.file);
+    else if(action==='orient-scan'&&receiptScan&&!state.busy&&!receiptScan.attached){
+      const scan=receiptScan,form=$('#payment-form');
+      const draft=form?{id:state.selected,values:Object.fromEntries(new FormData(form))}:scan.draft;
+      if(draft&&!confirm('Se volverán a leer fecha y valor. Los datos que escribiste se conservarán si se encuentra el mismo abono. ¿Continuar?'))return;
+      state.selected=null;startReceiptBatch(scan.file,{reviewOrientation:true,layout:scan.layout,draft});
+    }
     else if(action==='cancel-scan'){state.busy=false;state.dirty=false;closeOverlay(true);}
     else if(action==='select-scan-payment')selectReceiptPayment(target.dataset.id);
     else if(action==='review-scan'){if(receiptScan&&!state.busy){receiptScan.draft={id:state.selected,values:Object.fromEntries(new FormData($('#payment-form')))};state.selected=null;renderReceipt();}}
