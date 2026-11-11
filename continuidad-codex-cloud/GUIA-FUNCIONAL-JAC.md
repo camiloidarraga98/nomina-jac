@@ -4,7 +4,7 @@ La misma entrada **Leer comprobantes con IA** distingue uno y varios. Si las dos
 
 En una foto con varios recibos, cada ficha muestra una miniatura, su número y un mapa que marca su ubicación. Las vistas por posición o límites dudosos dicen que son aproximadas. **Ampliar y ajustar** permite recorrer la foto y marcar el recibo completo, con su fecha y valor. **Usar este recorte** conserva lo leído, el movimiento elegido, el show y el empresario; **Volver** descarta el ajuste. No vuelve a consultar la IA por modificar una referencia visual. Se guarda el recorte confirmado junto con la foto completa y el original privado; una aproximación sin confirmar no sustituye el soporte completo.
 
-Validado en navegador de escritorio y móvil con datos ficticios. Estado de publicación de `receipt-visual-15` en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md). Esta sección sustituye el comportamiento histórico que repetía la foto sin marcar en todas las fichas y usaba el panel de grupo para un solo recibo.
+Validado en navegador de escritorio y móvil con datos ficticios. Publicado el 11/11/2026 a las 15:03 Colombia, revisión `receipt-visual-15`. Detalle de validación y publicación en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md). Esta sección sustituye el comportamiento histórico que repetía la foto sin marcar en todas las fichas y usaba el panel de grupo para un solo recibo.
 
 ## Aviso de número de recibo repetido · 11 noviembre 2026
 
