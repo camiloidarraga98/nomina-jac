@@ -2,13 +2,13 @@
 
 El sistema comprueba los bordes sobre la imagen completa antes de leer. Si encuentra una separación clara pero el conteo inicial no coincide, muestra los recortes propuestos y permite confirmar el número correcto con un solo botón. Si los bordes no son seguros, conserva la foto completa para ajustar o separar por filas y columnas; no muestra once recortes truncados como si fueran recibos completos. Después de confirmar, lee cada recibo y busca coincidencias automáticamente; el show y empresario siguen siendo comunes al grupo. Los giros sugeridos también requieren confirmación y el archivo original se conserva.
 
-Verificado con diez recibos ficticios en navegador y móvil, incluidos sus soportes privados. Publicación pendiente; consultar [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+Verificado con diez recibos ficticios en navegador y móvil, incluidos sus soportes privados. Publicado el 11/11/2026 a las 13:00 Colombia, revisión `receipt-separation-12`; consultar [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
 
 ## La imagen original se conserva · 11 noviembre 2026
 
 JAC conserva la orientación de la imagen que subes. Si el lector propone girarla, muestra primero el original: **Mantener original y leer** continúa sin girarlo. **Ver giro sugerido** sólo muestra una propuesta; **Así se lee correctamente** confirma el cambio antes de leer. Si confirma que no hace falta girar, la lectura y búsqueda continúan automáticamente. Puedes usar también Girar izquierda/derecha.
 
-Esta regla evita que una sugerencia equivocada cambie una foto que ya se lee bien. Se conserva el archivo original y lo ya guardado. Publicación pendiente; consultar [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+Esta regla evita que una sugerencia equivocada cambie una foto que ya se lee bien. Se conserva el archivo original y lo ya guardado. Incluido en la misma publicación `receipt-separation-12`; consultar [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
 
 ## Corregir una foto que quedó invertida · 11 noviembre 2026
 
