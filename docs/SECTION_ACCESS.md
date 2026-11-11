@@ -1,5 +1,10 @@
 # Accesos por sección y subida de administradores
 
+## Administración de Paula · 11 noviembre 2026
+
+Paula: el 11/11/2026 a las 15:49 Colombia, por petición expresa de Camilo («Deja a Paula cómo administradora»), se concedió el rol estándar `administrator` a la cuenta existente `paula` / `contabilidad@jacmusic.co`. Activa, `owner=0`, restricciones históricas desactivadas y permisos completos; contraseña conservada. Cambio condicionado a versión3, verificado en versión4; sus sesiones e invitaciones anteriores quedaron invalidadas y retiradas como en el flujo de Gestión. Debe iniciar sesión de nuevo. No cambia el propietario ni otras cuentas. La asignación se realizó mediante D1 de la cuenta Cloudflare autorizada y se comprobó el estado final; no fue una modificación de prueba. Consultar siempre el estado vivo antes de futuros cambios.
+
+
 16 de octubre de 2026. Continuidad del mismo Site y proyectos nativos.
 
 ## Uso
