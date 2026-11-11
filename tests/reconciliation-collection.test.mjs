@@ -29,6 +29,11 @@ test('conflicting crop edges discard only the reference crop, conflicting dates 
  calls=0;globalThis.fetch=async()=>provider([item(0,{bounds:++calls===1?null:{x:999,y:0,width:500,height:1000}})]);
  const other=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(other.receipts[0].bounds,null);assert.equal(other.receipts[0].reading.autoEligible,true);
 });
+test('one confirmed receipt has no crop; uncertain multi-receipt bounds remain only visual suggestions',async()=>{
+ globalThis.fetch=async()=>provider([item(0)]);const single=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(single.complete,true);assert.equal(single.receipts[0].bounds,null);assert.equal(single.receipts[0].suggestedBounds,null);assert.equal(single.receipts[0].reading.autoEligible,true);
+ let calls=0;globalThis.fetch=async()=>provider([item(0,++calls===2?{bounds:{x:450,y:0,width:150,height:400}}:{}),item(1)]);
+ const group=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(group.receipts[0].bounds,null);assert.deepEqual(group.receipts[0].suggestedBounds,item(0).bounds);assert.equal(group.receipts[0].reading.amount,1250000.25);assert.equal(group.receipts[0].reading.autoEligible,true);
+});
 test('different counts remain reviewable but cannot automatically identify; revocation prevents the second reading',async()=>{
  let calls=0;globalThis.fetch=async()=>provider(++calls===1?ten():[...ten(),item(10)]);
  const r=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(r.receipts.length,10);assert.equal(r.complete,false);assert(r.warnings.length);assert(r.receipts.every(p=>!p.reading.autoEligible));
@@ -54,6 +59,33 @@ test('signed evidence binds the receipt identities, optional bounds, original, p
 });
 
 const upload=()=>{const form=new FormData();form.set('file',new File([receiptJPEG],'synthetic-original.jpg',{type:'image/jpeg'}));form.set('preview',new File([receiptJPEG],'synthetic-preview.jpg',{type:'image/jpeg'}));return form;};
+test('user-confirmed crops preserve signed identities, persist in private PDFs and reject invalid or repeated regions',async()=>{
+ const f=await reconciliationFixture({readReceipt:async()=>provider([item(0,{reference:null,bounds:null}),item(1,{reference:null,bounds:null}),item(2,{reference:null,bounds:null})])});
+ try{
+  await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(4)});const read=await(await f.request('/api/reconciliation/scan/collection',{method:'POST',data:upload()})).json();
+  const bounds={x:0,y:0,width:300,height:1000},part=index=>({index,paymentId:read.receipts[index].autoMatchId,version:1,manualBounds:bounds});
+  const send=async(parts,operationId=crypto.randomUUID())=>{const form=upload();form.set('plan',JSON.stringify({mode:'collection',evidence:read.evidence,operationId,showId:'fixture-show',entrepreneur:'Empresario ficticio',parts}));return f.request('/api/reconciliation/batch',{method:'POST',data:form});};
+  assert.equal((await send([{...part(0),manualBounds:{x:950,y:0,width:100,height:300}}])).status,400);
+  assert.equal((await send([part(0),part(1)])).status,400);assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
+  const operationId=crypto.randomUUID();let response=await send([part(0)],operationId);assert.equal(response.status,200,await response.clone().text());const saved=await response.json();response=await send([part(0)],operationId);assert.equal((await response.json()).alreadySaved,true);
+  assert.equal((await send([part(1)])).status,409,'Another signed identity cannot reuse a previously saved manual crop');
+  response=await send([{...part(1),manualBounds:{x:350,y:0,width:300,height:1000}}]);assert.equal(response.status,200,await response.clone().text());
+  const audits=(await f.db.prepare("SELECT data FROM jac_reconciliation_audit WHERE action='identify-receipt-batch'").all()).results.map(r=>JSON.parse(r.data));assert.equal(audits.length,2);assert(audits.every(a=>a.parts[0].manualCrop));assert.equal(audits[0].parts[0].readingHash,audits[1].parts[0].readingHash,'Manual borders do not change the original signed reading identity');
+  const bytes=Buffer.from(await(await f.request(saved.files[0].url)).arrayBuffer()),pdf=await PDFDocument.load(bytes);assert.equal(pdf.getPageCount(),2);
+  const contents=pdf.getPages()[0].node.lookup(PDFName.of('Contents'),PDFArray);const pageCommands=Array.from({length:contents.size()},(_,i)=>Buffer.from(decodePDFRawStream(contents.lookup(i,PDFRawStream)).decode()).toString()).join('\n');
+  assert(pageCommands.includes(Buffer.from('Recorte delimitado por el usuario.').toString('hex').toUpperCase()));
+  const third=await f.db.prepare("SELECT id FROM jac_reconciliation_payments WHERE json_extract(annotation,'$.status')<>'identified' LIMIT 1").first();assert.equal((await send([{...part(0),paymentId:third.id,manualBounds:{x:700,y:0,width:300,height:1000}}])).status,409,'Moving a crop cannot reassign its signed receipt to another payment');
+  for(const table of ['jac_crm_payments','payroll_periods'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+table).first()).n,0);
+ }finally{await f.close();}
+});
+test('concurrent saves of overlapping manual crops identify at most one existing movement',async()=>{
+ const f=await reconciliationFixture({readReceipt:async()=>provider([item(0),item(1)])});
+ try{
+  await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(2)});const read=await(await f.request('/api/reconciliation/scan/collection',{method:'POST',data:upload()})).json();
+  const send=async(index)=>{const form=upload();form.set('plan',JSON.stringify({mode:'collection',evidence:read.evidence,operationId:crypto.randomUUID(),showId:'fixture-show',entrepreneur:'Empresario ficticio',parts:[{index,paymentId:read.receipts[index].autoMatchId,version:1,manualBounds:{x:600,y:500,width:300,height:490}}]}));return f.request('/api/reconciliation/batch',{method:'POST',data:form});};
+  const result=await Promise.all([send(0),send(1)]);assert.deepEqual(result.map(r=>r.status).sort(),[200,409]);assert.equal((await f.db.prepare("SELECT count(*) n FROM jac_reconciliation_attachments WHERE state='ready'").first()).n,1);assert.equal((await f.db.prepare("SELECT count(*) n FROM jac_reconciliation_attachments WHERE state='uploading'").first()).n,0);
+ }finally{await f.close();}
+});
 test('private API returns candidates despite repeated references and supports reviewed partial saves without duplicate assignments',async()=>{
  const f=await reconciliationFixture({readReceipt:async()=>{const receipts=ten();receipts[1].reference=receipts[0].reference;return provider(receipts);}});
  try{

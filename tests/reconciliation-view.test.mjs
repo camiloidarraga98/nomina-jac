@@ -53,7 +53,7 @@ test('administrador activo recibe solo shell genérico privado con scripts local
   assert.equal(response.headers.get('Cache-Control'),'private, no-store, max-age=0');
   assert.equal(response.headers.get('X-Frame-Options'),'SAMEORIGIN');
   assert.match(response.headers.get('Content-Security-Policy'),/frame-ancestors 'self'/);
-  assert.match(body,/src="\/reconciliation\/app\.js\?v=receipt-reference-14"/);
+  assert.match(body,/src="\/reconciliation\/app\.js\?v=receipt-visual-15"/);
   assert.doesNotMatch(body,/JAC_INITIAL_IMPORT|indexedDB|offline\.js|https:\/\//);
 });
 

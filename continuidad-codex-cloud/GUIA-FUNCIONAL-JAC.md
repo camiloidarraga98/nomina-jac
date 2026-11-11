@@ -1,3 +1,11 @@
+## Vista individual y referencias de cada recibo · 11 noviembre 2026
+
+La misma entrada **Leer comprobantes con IA** distingue uno y varios. Si las dos lecturas confirman un único comprobante, abre la ficha de pago original con la foto completa: show, empresario, quién consignó, facturación, NIT y observaciones. Busca automáticamente por fecha y valor; una coincidencia exacta abre el detalle y un empate permite elegir. **Guardar identificación** adjunta el original y deja el abono identificado en ese paso. No recorta ni gira la imagen automáticamente. Si ya estaba adjunta, abre su abono sin subirla de nuevo.
+
+En una foto con varios recibos, cada ficha muestra una miniatura, su número y un mapa que marca su ubicación. Las vistas por posición o límites dudosos dicen que son aproximadas. **Ampliar y ajustar** permite recorrer la foto y marcar el recibo completo, con su fecha y valor. **Usar este recorte** conserva lo leído, el movimiento elegido, el show y el empresario; **Volver** descarta el ajuste. No vuelve a consultar la IA por modificar una referencia visual. Se guarda el recorte confirmado junto con la foto completa y el original privado; una aproximación sin confirmar no sustituye el soporte completo.
+
+Validado en navegador de escritorio y móvil con datos ficticios. Estado de publicación de `receipt-visual-15` en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md). Esta sección sustituye el comportamiento histórico que repetía la foto sin marcar en todas las fichas y usaba el panel de grupo para un solo recibo.
+
 ## Aviso de número de recibo repetido · 11 noviembre 2026
 
 Un número repetido por la IA no demuestra que haya pagos duplicados. La herramienta conserva las fichas y las coincidencias encontradas. Sólo las fichas con referencia dudosa muestran un aviso y piden elegir el abono; las demás continúan seleccionadas. Después se usa **Guardar e identificar seleccionados**, sin volver a subir todos los comprobantes ni perder el grupo. Se mantienen los soportes privados y la protección contra asignar un mismo recibo a varios movimientos.

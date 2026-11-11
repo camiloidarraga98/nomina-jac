@@ -36,7 +36,7 @@ export type ReceiptBatchPlan=z.infer<typeof receiptBatchPlanSchema>;
 
 /** A derived support includes its individual region, the complete image and the
  * exact original file as a PDF attachment. Never mutate the original receipt. */
-export async function receiptPartPDF(source:Uint8Array,sourceType:string,sourceName:string,preview:Uint8Array,index:number,bounds:ReceiptBounds|null,receipt?:{reference:string|null;row:number;column:number;amount:number|null;date:string|null}){
+export async function receiptPartPDF(source:Uint8Array,sourceType:string,sourceName:string,preview:Uint8Array,index:number,bounds:ReceiptBounds|null,receipt?:{reference:string|null;row:number;column:number;amount:number|null;date:string|null;manualCrop?:boolean}){
  const pdf=await PDFDocument.create(),fixed=new Date('2000-01-01T00:00:00Z');
  pdf.setCreationDate(fixed);pdf.setModificationDate(fixed);pdf.setProducer('JAC Music');pdf.setCreator('JAC Music');
  pdf.setTitle(`Comprobante individual ${index+1}`);
@@ -60,7 +60,7 @@ export async function receiptPartPDF(source:Uint8Array,sourceType:string,sourceN
  page.pushOperators(pushGraphicsState(),rectangle(x,y,dw,dh),clip(),endPath());
  page.drawImage(image,{x:x-image.width*scale*bounds.x/1000,y:y+dh-image.height*scale*(1-bounds.y/1000),width:image.width*scale,height:image.height*scale});
  page.pushOperators(popGraphicsState());
- page.drawText(hasCrop?'Recorte de referencia. Imagen completa en la pagina siguiente.':'Imagen conjunta conservada. Recibo indicado por su referencia y posicion.',{x:36,y:45,font,size:9,color:ink});
+ page.drawText(receipt?.manualCrop?'Recorte delimitado por el usuario. Imagen completa en la pagina siguiente.':hasCrop?'Recorte de referencia. Imagen completa en la pagina siguiente.':'Imagen conjunta conservada. Recibo indicado por su referencia y posicion.',{x:36,y:45,font,size:9,color:ink});
  const full=pdf.addPage([612,792]),fit=Math.min(540/image.width,660/image.height);
  full.drawImage(mark,{x:36,y:744,width:105,height:105*mark.height/mark.width});
  full.drawText('IMAGEN COMPLETA',{x:165,y:750,font:bold,size:12,color:ink});

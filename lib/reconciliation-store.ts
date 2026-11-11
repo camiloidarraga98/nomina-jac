@@ -24,8 +24,9 @@ type PaymentRow={id:string;import_id:string;original:string;annotation:string;ve
 type ImportRow={id:string;name:string;hash:string;manifest_hash:string;count:number;completed:number;created_at:string};
 type FileRow={id:string;payment_id:string;object_key:string;hash:string;name:string;type:string;size:number;state:string;created_at:string};
 type Show={id:string;name:string;date:string;city:string;entrepreneur:string;source:'crm'|'reconciliation';existing?:boolean};
-type ReceiptIdentity={bounds:ReceiptBounds|null;receiptKey?:string;reference?:string|null;readingHash?:string};
+type ReceiptIdentity={bounds:ReceiptBounds|null;receiptKey?:string;reference?:string|null;readingHash?:string;manualCrop?:boolean};
 function sameReceipt(a:ReceiptIdentity,b:ReceiptIdentity){
+ if((a.manualCrop||b.manualCrop)&&a.bounds&&b.bounds&&receiptRegionsOverlap(a.bounds,b.bounds))return true;
  if(a.receiptKey||b.receiptKey)return !a.receiptKey||!b.receiptKey||a.receiptKey===b.receiptKey||((!a.reference||!b.reference)&&(!a.readingHash||a.readingHash!==b.readingHash));
  return !!a.bounds&&!!b.bounds&&receiptRegionsOverlap(a.bounds,b.bounds);
 }
@@ -124,7 +125,7 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
    if(type==='application/pdf'||!previewFile||typeof previewFile==='string'||!previewFile.size||previewFile.size>5*1024*1024)fail('Usa una imagen y su vista de lectura de hasta 5 MB.');
    const preview=new Uint8Array(await previewFile.arrayBuffer());if(preview[0]!==255||preview[1]!==216||preview[2]!==255)fail('La vista de lectura no es JPEG.');
    const duplicate=await prepared(`SELECT payment_id FROM jac_reconciliation_attachments WHERE hash=? AND state='ready' AND ${g.sql}`,[hash]).first<{payment_id:string}>();await authorize();
-   if(duplicate)fail('Esta imagen ya está guardada como soporte. Consulta su abono antes de repetirla.',409);
+   if(duplicate){await payment(duplicate.payment_id);return json({existingPaymentId:duplicate.payment_id,reading:null,matches:[],total:0,autoMatchId:null});}
    const result=await readReceiptCollection(preview,'image/jpeg',authorize,req.signal),receipts=[];
    for(const r of result.receipts){const matches=r.reading.amount!==null||r.reading.date!==null?await receiptCandidates({amount:r.reading.amount,date:r.reading.date},r.reading.autoEligible):{matches:[],total:0,autoMatchId:null};receipts.push({...r,...matches});}
    const evidence=signCollection({actor:user.id,sourceHash:hash,previewHash:await digest(preview),receipts:result.receipts.map(r=>({index:r.index,row:r.row,column:r.column,reference:r.reference,amount:r.reading.amount,date:r.reading.date,bounds:r.bounds,key:r.reference?'reference:'+r.reference:'position:'+r.row+':'+r.column}))});
@@ -163,11 +164,12 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
   let input:unknown;try{input=JSON.parse(rawPlan);}catch{fail('La selección de comprobantes no es válida.');}
   const preview=new Uint8Array(await previewFile.arrayBuffer());
   if(preview.length<3||preview[0]!==0xff||preview[1]!==0xd8||preview[2]!==0xff)fail('La vista de los comprobantes debe ser una imagen JPEG válida.');
-  let plan:{operationId:string;showId:string;entrepreneur:string;parts:({paymentId:string;version:number;index:number;receipt?:CollectionEvidence}&ReceiptIdentity)[]};
+  let plan:{operationId:string;showId:string;entrepreneur:string;parts:({paymentId:string;version:number;index:number;receipt?:CollectionEvidence&{manualCrop?:boolean}}&ReceiptIdentity)[]};
   if((input as {mode?:unknown})?.mode==='collection'){
    const parsed=collectionPlanSchema.safeParse(input);if(!parsed.success)fail('Revisa la selección de los comprobantes.');
    const records=verifyCollection(parsed.data.evidence,user.id,sourceHash,await digest(preview)),readingHash=await digest(new TextEncoder().encode(canonical(records)));
-   plan={...parsed.data,parts:parsed.data.parts.map(p=>{const r=records.find(r=>r.index===p.index);if(!r)fail('El comprobante no pertenece a esta lectura.');return {...p,bounds:r.bounds,receiptKey:r.key,reference:r.reference,readingHash,receipt:r};})};
+   plan={...parsed.data,parts:parsed.data.parts.map(p=>{const r=records.find(r=>r.index===p.index);if(!r)fail('El comprobante no pertenece a esta lectura.');const manual=p.manualBounds?{manualCrop:true}:{};return {...p,bounds:p.manualBounds||r.bounds,receiptKey:r.key,reference:r.reference,readingHash,...manual,receipt:{...r,...manual}};})};
+   if(plan.parts.some((p,i)=>plan.parts.slice(i+1).some(q=>(p.manualCrop||q.manualCrop)&&p.bounds&&q.bounds&&receiptRegionsOverlap(p.bounds,q.bounds))))fail('Hay recortes que representan el mismo recibo. Ajusta sus límites antes de guardar.');
   }else{
    const parsed=receiptBatchPlanSchema.safeParse(input);if(!parsed.success)fail(parsed.error.issues[0]?.message||'Revisa la selección.');plan=parsed.data;
   }
@@ -229,8 +231,8 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
    const selectedJSON=JSON.stringify(plan.parts),filesJSON=JSON.stringify(staged.map(p=>({id:p.id,paymentId:p.paymentId,state:p.fresh?'uploading':'ready'})));
    const old=(key:string)=>`json_extract(previous.value,'$.bounds.${key}')`,next=(key:string)=>`json_extract(selected.value,'$.bounds.${key}')`;
    const overlapSQL=`MAX(0,MIN(${old('x')}+${old('width')},${next('x')}+${next('width')})-MAX(${old('x')},${next('x')}))*MAX(0,MIN(${old('y')}+${old('height')},${next('y')}+${next('height')})-MAX(${old('y')},${next('y')}))>.8*MIN(${old('width')}*${old('height')},${next('width')}*${next('height')})`;
-   const collisionSQL=`CASE WHEN json_extract(previous.value,'$.receiptKey') IS NOT NULL OR json_extract(selected.value,'$.receiptKey') IS NOT NULL THEN json_extract(previous.value,'$.receiptKey') IS NULL OR json_extract(selected.value,'$.receiptKey') IS NULL OR json_extract(previous.value,'$.receiptKey')=json_extract(selected.value,'$.receiptKey') OR ((json_extract(previous.value,'$.reference') IS NULL OR json_extract(selected.value,'$.reference') IS NULL) AND (json_extract(previous.value,'$.readingHash') IS NULL OR json_extract(selected.value,'$.readingHash') IS NULL OR json_extract(previous.value,'$.readingHash')<>json_extract(selected.value,'$.readingHash'))) ELSE ${overlapSQL} END`;
-   const data=JSON.stringify({payloadHash,showId:plan.showId,entrepreneur:plan.entrepreneur,sourceHash,parts:staged.map(p=>{const r=plan.parts.find(part=>part.paymentId===p.paymentId)!;return {paymentId:p.paymentId,fileId:p.id,bounds:r.bounds,...(r.receiptKey?{receiptKey:r.receiptKey,reference:r.reference,readingHash:r.readingHash}:{})};})});
+   const collisionSQL=`CASE WHEN (json_extract(previous.value,'$.manualCrop')=1 OR json_extract(selected.value,'$.manualCrop')=1) AND (${overlapSQL}) THEN 1 WHEN json_extract(previous.value,'$.receiptKey') IS NOT NULL OR json_extract(selected.value,'$.receiptKey') IS NOT NULL THEN json_extract(previous.value,'$.receiptKey') IS NULL OR json_extract(selected.value,'$.receiptKey') IS NULL OR json_extract(previous.value,'$.receiptKey')=json_extract(selected.value,'$.receiptKey') OR ((json_extract(previous.value,'$.reference') IS NULL OR json_extract(selected.value,'$.reference') IS NULL) AND (json_extract(previous.value,'$.readingHash') IS NULL OR json_extract(selected.value,'$.readingHash') IS NULL OR json_extract(previous.value,'$.readingHash')<>json_extract(selected.value,'$.readingHash'))) ELSE ${overlapSQL} END`;
+   const data=JSON.stringify({payloadHash,showId:plan.showId,entrepreneur:plan.entrepreneur,sourceHash,parts:staged.map(p=>{const r=plan.parts.find(part=>part.paymentId===p.paymentId)!;return {paymentId:p.paymentId,fileId:p.id,bounds:r.bounds,...(r.receiptKey?{receiptKey:r.receiptKey,reference:r.reference,readingHash:r.readingHash}:{}),...(r.manualCrop?{manualCrop:true}:{})};})});
    // The first statement is a transaction gate. Nothing becomes visible unless every
    // selected record, support, show and session still passes; D1 batch is atomic.
    const gate=`EXISTS(SELECT 1 FROM jac_reconciliation_audit WHERE id=? AND action='identify-receipt-batch' AND data=?)`;
