@@ -36,7 +36,7 @@ export type ReceiptBatchPlan=z.infer<typeof receiptBatchPlanSchema>;
 
 /** A derived support includes its individual region, the complete image and the
  * exact original file as a PDF attachment. Never mutate the original receipt. */
-export async function receiptPartPDF(source:Uint8Array,sourceType:string,sourceName:string,preview:Uint8Array,index:number,bounds:ReceiptBounds){
+export async function receiptPartPDF(source:Uint8Array,sourceType:string,sourceName:string,preview:Uint8Array,index:number,bounds:ReceiptBounds|null,receipt?:{reference:string|null;row:number;column:number;amount:number|null;date:string|null}){
  const pdf=await PDFDocument.create(),fixed=new Date('2000-01-01T00:00:00Z');
  pdf.setCreationDate(fixed);pdf.setModificationDate(fixed);pdf.setProducer('JAC Music');pdf.setCreator('JAC Music');
  pdf.setTitle(`Comprobante individual ${index+1}`);
@@ -50,12 +50,17 @@ export async function receiptPartPDF(source:Uint8Array,sourceType:string,sourceN
  page.drawImage(mark,{x:36,y:744,width:105,height:105*mark.height/mark.width});
  page.drawText(`Comprobante ${index+1} de imagen conjunta`,{x:36,y:725,font,size:12,color:ink});
  page.drawLine({start:{x:36,y:710},end:{x:576,y:710},thickness:2,color:blue});
- const w=image.width*bounds.width/1000,h=image.height*bounds.height/1000,scale=Math.min(540/w,620/h),dw=w*scale,dh=h*scale;
- const x=36+(540-dw)/2,y=76+(620-dh)/2;
+ if(receipt){
+  page.drawText(`Fila ${receipt.row} - Posicion ${receipt.column} | Ref. ${receipt.reference||'Sin indicar'}`,{x:36,y:693,font,size:9,color:ink});
+  page.drawText(`Lectura del original: ${receipt.date||'Fecha por revisar'} | COP ${receipt.amount===null?'Valor por revisar':new Intl.NumberFormat('es-CO',{maximumFractionDigits:2}).format(receipt.amount)}`,{x:36,y:678,font,size:9,color:ink});
+ }
+ const hasCrop=!!bounds;bounds=bounds||{x:0,y:0,width:1000,height:1000};
+ const available=receipt?580:620,w=image.width*bounds.width/1000,h=image.height*bounds.height/1000,scale=Math.min(540/w,available/h),dw=w*scale,dh=h*scale;
+ const x=36+(540-dw)/2,y=76+(available-dh)/2;
  page.pushOperators(pushGraphicsState(),rectangle(x,y,dw,dh),clip(),endPath());
  page.drawImage(image,{x:x-image.width*scale*bounds.x/1000,y:y+dh-image.height*scale*(1-bounds.y/1000),width:image.width*scale,height:image.height*scale});
  page.pushOperators(popGraphicsState());
- page.drawText('Recorte para revisión. Imagen completa en la página siguiente.',{x:36,y:45,font,size:9,color:ink});
+ page.drawText(hasCrop?'Recorte de referencia. Imagen completa en la pagina siguiente.':'Imagen conjunta conservada. Recibo indicado por su referencia y posicion.',{x:36,y:45,font,size:9,color:ink});
  const full=pdf.addPage([612,792]),fit=Math.min(540/image.width,660/image.height);
  full.drawImage(mark,{x:36,y:744,width:105,height:105*mark.height/mark.width});
  full.drawText('IMAGEN COMPLETA',{x:165,y:750,font:bold,size:12,color:ink});

@@ -367,7 +367,7 @@
           if(!this.shared.name.trim()||!this.shared.date)throw Error('Escribe el nombre y la fecha del show histórico.');
           const show=await this.h.api('/api/reconciliation/shows',{method:'POST',body:JSON.stringify({name:this.shared.name,date:this.shared.date,city:this.shared.city,entrepreneur:this.shared.entrepreneur})});if(!this.active)return;this.shared.showId=show.id;await this.h.reload();if(!this.active)return;
         }
-        const selection={showId:this.shared.showId,entrepreneur:this.shared.entrepreneur.trim(),parts:parts.map(p=>({paymentId:p.paymentId,version:p.version,index:p.index,bounds:p.bounds}))},signature=JSON.stringify(selection);
+        const selection={showId:this.shared.showId,entrepreneur:this.shared.entrepreneur.trim(),...(this.collectionMode?{mode:'collection',evidence:this.evidence}:{}),parts:parts.map(p=>({paymentId:p.paymentId,version:p.version,index:p.index,...(this.collectionMode?{}:{bounds:p.bounds})}))},signature=JSON.stringify(selection);
         if(this.operation?.signature!==signature)this.operation={id:crypto.randomUUID(),signature};
         const form=new FormData();form.set('file',this.source);form.set('preview',this.preview);form.set('plan',JSON.stringify({...selection,operationId:this.operation.id}));
         const result=await this.h.api('/api/reconciliation/batch',{method:'POST',body:form,signal:this.controller.signal});if(!this.active)return;

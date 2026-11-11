@@ -17,21 +17,21 @@ await writeFile(entry,compiled.outputFiles[0].contents);
 const {worker}=await import(pathToFileURL(entry));
 await rm(folder,{recursive:true});
 
-test('la entrega estática permite solamente los siete assets genéricos de conciliación',async()=>{
+test('la entrega estática permite solamente los ocho assets genéricos de conciliación',async()=>{
   const calls=[];
   const env={JAC_READY:'1',ASSETS:{fetch:async request=>{calls.push(new URL(request.url).pathname);return new Response(request.method==='HEAD'?null:'generic-asset');}}};
-  const paths=['/reconciliation/receipt-segmentation.js','/reconciliation/receipt-batch.js','/reconciliation/app.js','/reconciliation/files.js','/reconciliation/style.css','/reconciliation/jszip.min.js','/reconciliation/JSZip-LICENSE.md'];
+  const paths=['/reconciliation/receipt-collection.js','/reconciliation/receipt-segmentation.js','/reconciliation/receipt-batch.js','/reconciliation/app.js','/reconciliation/files.js','/reconciliation/style.css','/reconciliation/jszip.min.js','/reconciliation/JSZip-LICENSE.md'];
   for(const path of paths)for(const method of ['GET','HEAD']){
     const response=await worker.fetch(new Request('https://fixture.example.invalid'+path,{method}),env,{});
     assert.equal(await response.text(),method==='HEAD'?'':'generic-asset');
   }
-  assert.equal(calls.length,14);
+  assert.equal(calls.length,16);
   for(const path of ['/crm/reconciliation','/api/reconciliation/state','/api/reconciliation/files/fixture','/reconciliation/seed.json','/reconciliation/index.html']){
     const response=await worker.fetch(new Request('https://fixture.example.invalid'+path),env,{});
     assert.equal(await response.text(),'protected-router');
   }
   const post=await worker.fetch(new Request('https://fixture.example.invalid/reconciliation/app.js',{method:'POST'}),env,{});
-  assert.equal(await post.text(),'protected-router');assert.equal(calls.length,14);
+  assert.equal(await post.text(),'protected-router');assert.equal(calls.length,16);
 });
 
 test('el entorno sin activar tampoco sirve la conciliación',async()=>{

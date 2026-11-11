@@ -42,7 +42,7 @@
     const read = ++stateRead;
     let timeout;
     try {
-      if(!window.FileTools || !window.JSZip || !window.JacReceiptBatch)throw new Error('No se cargaron todos los componentes de la herramienta. Vuelve a abrir la versión corregida.');
+      if(!window.FileTools || !window.JSZip || !window.JacReceiptBatch || !window.JacReceiptCollection)throw new Error('No se cargaron todos los componentes de la herramienta. Vuelve a abrir la versión corregida.');
       const data=await Promise.race([
         api('/api/reconciliation/state'),
         new Promise((_,reject)=>{timeout=setTimeout(()=>reject(new Error('La carga está tardando demasiado. Vuelve a intentar; tus datos guardados se conservan.')),20000);})
@@ -110,7 +110,8 @@
     if(file.size>10*1024*1024)return toast('La imagen supera el máximo de 10 MB.',true);
     if(receiptBatch&&state.dirty&&!confirm('Hay comprobantes sin guardar. ¿Quieres sustituir la imagen del grupo?'))return;
     discardReceipt();
-    const batch=new window.JacReceiptBatch({esc,money,date,amount:namount,api,
+    const Reader=reviewOrientation?window.JacReceiptBatch:window.JacReceiptCollection;
+    const batch=new Reader({esc,money,date,amount:namount,api,
       open:html=>{if(receiptBatch===batch)openOverlay(html,'receipt');},
       busy:value=>{if(receiptBatch===batch)state.busy=value;},dirty:value=>{if(receiptBatch===batch)state.dirty=value;},isDirty:()=>state.dirty,
       forceGroup,reviewOrientation,layout,shows:()=>state.shows,reload:()=>reload(),single:(file,manual=false,readingImage,layout)=>{if(receiptBatch!==batch)return;state.busy=false;return readReceiptFile(file,{single:true,manual,readingImage,layout,draft});},close:()=>{if(receiptBatch===batch){state.busy=false;state.dirty=false;closeOverlay(true);}}

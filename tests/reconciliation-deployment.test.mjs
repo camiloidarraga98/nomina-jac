@@ -45,3 +45,23 @@ test('built Worker accepts large receipt forms through the private API while ret
   await f.db.prepare('UPDATE payroll_users SET version=version+1 WHERE id=?').bind(f.owner).run();response=await f.request('/api/reconciliation/scan/layout',{method:'POST',data:formFor(image)});assert.equal(response.status,401);assert.equal(f.outgoing(),3);
  }finally{await f.close();}
 });
+
+test('built Worker reads a full-size photo collection and uses signed evidence for optional reference crops',async()=>{
+ const original=largeJPEG(2200*1024),preview=largeJPEG(1200*1024);
+ const f=await reconciliationFixture({workerBundle:process.env.JAC_TEST_WORKER_BUNDLE||'dist/server/index.js',readReceipt:async request=>{
+  const body=await request.json();assert.equal(body.text.format.name,'jac_receipt_collection');assert.equal(body.store,false);assert.equal(body.model,'gpt-4.1-2025-04-14');
+  assert.equal(body.input[0].content[1].image_url,'data:image/jpeg;base64,'+Buffer.from(preview).toString('base64'));
+  return Response.json({status:'completed',output:[{type:'message',content:[{type:'output_text',text:JSON.stringify({complete:true,moreReceipts:false,receipts:[{row:1,column:1,reference:'FICTICIO-001',amountText:'1.250.000,25',dateText:'01/11/2026',currency:'COP',transactionStatus:'completed',legible:true,bounds:null}]})}]}]});
+ }});
+ const upload=()=>{const form=formFor(original);form.set('preview',new File([preview],'full-preview.jpg',{type:'image/jpeg'}));return form;};
+ try{
+  assert.equal((await f.request('/api/reconciliation/scan/collection',{method:'POST',data:upload(),authenticated:false})).status,401);assert.equal(f.outgoing(),0);
+  assert.equal((await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(1)})).status,200);
+  let response=await f.request('/api/reconciliation/scan/collection',{method:'POST',data:upload()});assert.equal(response.status,200,await response.clone().text());
+  const result=await response.json(),receipt=result.receipts[0];assert.equal(f.outgoing(),2);assert(receipt.autoMatchId);assert.equal(receipt.bounds,null);
+  const batch=upload();batch.set('plan',JSON.stringify({mode:'collection',evidence:result.evidence,operationId:crypto.randomUUID(),showId:'fixture-show',entrepreneur:'Empresario ficticio',parts:[{index:0,paymentId:receipt.autoMatchId,version:1}]}));
+  response=await f.request('/api/reconciliation/batch',{method:'POST',data:batch});assert.equal(response.status,200,await response.clone().text());const saved=await response.json();assert.equal(saved.saved,1);
+  response=await f.request(saved.files[0].url);assert.equal(response.status,200);assert.equal((await PDFDocument.load(await response.arrayBuffer())).getPageCount(),2);
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_crm_payments').first()).n,0);
+ }finally{await f.close();}
+});

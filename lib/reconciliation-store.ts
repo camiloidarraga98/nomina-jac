@@ -9,6 +9,7 @@ import {matchReceiptPayments,receiptLookupSchema} from './reconciliation-receipt
 import {readReceipt,inspectReceiptLayout,inspectReceiptOrientation,detectReceiptRegions,reserveReceiptReader,RECEIPT_OCR_MAX_BYTES} from './reconciliation-ocr';
 import {receiptBatchPlanSchema,receiptPartPDF,receiptRegionsOverlap,type ReceiptBounds} from './reconciliation-batch';
 import {hasAccountingIdentification} from './reconciliation-status';
+import {readReceiptCollection,signCollection,verifyCollection,collectionPlanSchema,type CollectionEvidence} from './reconciliation-collection';
 
 const stamp=()=>new Date().toISOString();
 const id=()=>crypto.randomUUID();
@@ -23,6 +24,11 @@ type PaymentRow={id:string;import_id:string;original:string;annotation:string;ve
 type ImportRow={id:string;name:string;hash:string;manifest_hash:string;count:number;completed:number;created_at:string};
 type FileRow={id:string;payment_id:string;object_key:string;hash:string;name:string;type:string;size:number;state:string;created_at:string};
 type Show={id:string;name:string;date:string;city:string;entrepreneur:string;source:'crm'|'reconciliation';existing?:boolean};
+type ReceiptIdentity={bounds:ReceiptBounds|null;receiptKey?:string;reference?:string|null;readingHash?:string};
+function sameReceipt(a:ReceiptIdentity,b:ReceiptIdentity){
+ if(a.receiptKey||b.receiptKey)return !a.receiptKey||!b.receiptKey||a.receiptKey===b.receiptKey||((!a.reference||!b.reference)&&(!a.readingHash||a.readingHash!==b.readingHash));
+ return !!a.bounds&&!!b.bounds&&receiptRegionsOverlap(a.bounds,b.bounds);
+}
 const fileInfo=(f:FileRow)=>({id:f.id,paymentId:f.payment_id,name:f.name,type:f.type,size:f.size,url:'/api/reconciliation/files/'+f.id,createdAt:f.created_at});
 const unpack=(p:PaymentRow)=>{
  const original=JSON.parse(p.original) as Original,annotation=JSON.parse(p.annotation) as Annotation,accountingEvidence=hasAccountingIdentification(original);
@@ -111,6 +117,20 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
  }
  await authorize();
  const path=new URL(req.url).pathname.slice('/api/reconciliation'.length),method=req.method;
+ if(path==='/scan/collection'&&method==='POST'){
+  const release=reserveReceiptReader(user.id);
+  try{
+   const {form,bytes,type,hash}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES,17*1024*1024),previewFile=form.get('preview');
+   if(type==='application/pdf'||!previewFile||typeof previewFile==='string'||!previewFile.size||previewFile.size>5*1024*1024)fail('Usa una imagen y su vista de lectura de hasta 5 MB.');
+   const preview=new Uint8Array(await previewFile.arrayBuffer());if(preview[0]!==255||preview[1]!==216||preview[2]!==255)fail('La vista de lectura no es JPEG.');
+   const duplicate=await prepared(`SELECT payment_id FROM jac_reconciliation_attachments WHERE hash=? AND state='ready' AND ${g.sql}`,[hash]).first<{payment_id:string}>();await authorize();
+   if(duplicate)fail('Esta imagen ya está guardada como soporte. Consulta su abono antes de repetirla.',409);
+   const result=await readReceiptCollection(preview,'image/jpeg',authorize,req.signal),receipts=[];
+   for(const r of result.receipts){const matches=r.reading.amount!==null||r.reading.date!==null?await receiptCandidates({amount:r.reading.amount,date:r.reading.date},r.reading.autoEligible):{matches:[],total:0,autoMatchId:null};receipts.push({...r,...matches});}
+   const evidence=signCollection({actor:user.id,sourceHash:hash,previewHash:await digest(preview),receipts:result.receipts.map(r=>({index:r.index,row:r.row,column:r.column,reference:r.reference,amount:r.reading.amount,date:r.reading.date,bounds:r.bounds,key:r.reference?'reference:'+r.reference:'position:'+r.row+':'+r.column}))});
+   await authorize();void bytes;return json({...result,receipts,evidence});
+  }finally{release();}
+ }
  if(path==='/scan/layout'&&method==='POST'){
   const release=reserveReceiptReader(user.id);
   try{const {bytes,type}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES);const layout=await inspectReceiptLayout(bytes,type,authorize,req.signal);await authorize();const quarter=layout.rotation===90||layout.rotation===270;return json({...layout,rotation:0,rows:quarter?layout.columns:layout.rows,columns:quarter?layout.rows:layout.columns});}
@@ -139,11 +159,18 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
   const {form,upload,bytes,type,hash:sourceHash}=await receiptUpload(req,RECEIPT_OCR_MAX_BYTES,17*1024*1024);
   if(type==='application/pdf')fail('Para separar comprobantes usa una imagen.',415);
   const rawPlan=form.get('plan'),previewFile=form.get('preview');
-  if(typeof rawPlan!=='string'||rawPlan.length>30000||!previewFile||typeof previewFile==='string'||previewFile.size>5*1024*1024)fail('Revisa los comprobantes y su selección.');
+  if(typeof rawPlan!=='string'||rawPlan.length>40000||!previewFile||typeof previewFile==='string'||previewFile.size>5*1024*1024)fail('Revisa los comprobantes y su selección.');
   let input:unknown;try{input=JSON.parse(rawPlan);}catch{fail('La selección de comprobantes no es válida.');}
-  const parsed=receiptBatchPlanSchema.safeParse(input);if(!parsed.success)fail(parsed.error.issues[0]?.message||'Revisa la selección.');
-  const plan=parsed.data,preview=new Uint8Array(await previewFile.arrayBuffer());
+  const preview=new Uint8Array(await previewFile.arrayBuffer());
   if(preview.length<3||preview[0]!==0xff||preview[1]!==0xd8||preview[2]!==0xff)fail('La vista de los comprobantes debe ser una imagen JPEG válida.');
+  let plan:{operationId:string;showId:string;entrepreneur:string;parts:({paymentId:string;version:number;index:number;receipt?:CollectionEvidence}&ReceiptIdentity)[]};
+  if((input as {mode?:unknown})?.mode==='collection'){
+   const parsed=collectionPlanSchema.safeParse(input);if(!parsed.success)fail('Revisa la selección de los comprobantes.');
+   const records=verifyCollection(parsed.data.evidence,user.id,sourceHash,await digest(preview)),readingHash=await digest(new TextEncoder().encode(canonical(records)));
+   plan={...parsed.data,parts:parsed.data.parts.map(p=>{const r=records.find(r=>r.index===p.index);if(!r)fail('El comprobante no pertenece a esta lectura.');return {...p,bounds:r.bounds,receiptKey:r.key,reference:r.reference,readingHash,receipt:r};})};
+  }else{
+   const parsed=receiptBatchPlanSchema.safeParse(input);if(!parsed.success)fail(parsed.error.issues[0]?.message||'Revisa la selección.');plan=parsed.data;
+  }
   const payloadHash=await digest(new TextEncoder().encode(canonical({sourceHash,previewHash:await digest(preview),showId:plan.showId,entrepreneur:plan.entrepreneur,parts:plan.parts})));
   const operation=async()=>{
    const row=await prepared(`SELECT data FROM jac_reconciliation_audit WHERE id=? AND action='identify-receipt-batch' AND ${g.sql}`,[plan.operationId]).first<{data:string}>();
@@ -168,9 +195,9 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
   const previousGroups=(await prepared(`SELECT data FROM jac_reconciliation_audit WHERE action='identify-receipt-batch' AND json_extract(data,'$.sourceHash')=? AND ${g.sql}`,[sourceHash]).all<{data:string}>()).results;
   const reusable=new Map<string,FileRow>();
   for(const group of previousGroups){
-   const previous=JSON.parse(group.data) as {parts:{paymentId:string;fileId:string;bounds:ReceiptBounds}[]};
+   const previous=JSON.parse(group.data) as {parts:({paymentId:string;fileId:string}&ReceiptIdentity)[]};
    for(const old of previous.parts){
-    const overlapping=plan.parts.filter(part=>old.bounds&&receiptRegionsOverlap(part.bounds,old.bounds));if(!overlapping.length)continue;
+    const overlapping=plan.parts.filter(part=>sameReceipt(part,old));if(!overlapping.length)continue;
     const file=await prepared(`SELECT * FROM jac_reconciliation_attachments WHERE id=? AND payment_id=? AND state='ready' AND ${g.sql}`,[old.fileId,old.paymentId]).first<FileRow>();await authorize();if(!file)continue;
     for(const part of overlapping){if(part.paymentId!==old.paymentId)fail('Ese comprobante de la imagen ya se guardó en otro abono. Revisa su relación antes de repetirlo.',409);reusable.set(part.paymentId,file);}
    }
@@ -189,7 +216,7 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
    for(const part of plan.parts){
     await authorize();
     const reuse=reusable.get(part.paymentId);if(reuse){staged.push({id:reuse.id,paymentId:part.paymentId,key:reuse.object_key,fresh:false,name:reuse.name,hash:reuse.hash});continue;}
-    const support=await receiptPartPDF(bytes,type,sourceName,preview,part.index,part.bounds),hash=await digest(support);
+    const support=await receiptPartPDF(bytes,type,sourceName,preview,part.index,part.bounds,part.receipt),hash=await digest(support);
     if(support.length>20*1024*1024)fail('El soporte individual es demasiado grande. Usa una imagen más pequeña.',413);
     const duplicate=await prepared(`SELECT * FROM jac_reconciliation_attachments WHERE hash=? AND state='ready' AND ${g.sql}`,[hash]).first<FileRow>();await authorize();
     if(duplicate){if(duplicate.payment_id!==part.paymentId)fail('Uno de los comprobantes ya está asignado a otro abono.',409);staged.push({id:duplicate.id,paymentId:part.paymentId,key:duplicate.object_key,fresh:false,name:duplicate.name,hash});continue;}
@@ -202,14 +229,15 @@ export async function reconciliationRequest(req:Request,user:AccessUser,g:CrmGua
    const selectedJSON=JSON.stringify(plan.parts),filesJSON=JSON.stringify(staged.map(p=>({id:p.id,paymentId:p.paymentId,state:p.fresh?'uploading':'ready'})));
    const old=(key:string)=>`json_extract(previous.value,'$.bounds.${key}')`,next=(key:string)=>`json_extract(selected.value,'$.bounds.${key}')`;
    const overlapSQL=`MAX(0,MIN(${old('x')}+${old('width')},${next('x')}+${next('width')})-MAX(${old('x')},${next('x')}))*MAX(0,MIN(${old('y')}+${old('height')},${next('y')}+${next('height')})-MAX(${old('y')},${next('y')}))>.8*MIN(${old('width')}*${old('height')},${next('width')}*${next('height')})`;
-   const data=JSON.stringify({payloadHash,showId:plan.showId,entrepreneur:plan.entrepreneur,sourceHash,parts:staged.map(p=>({paymentId:p.paymentId,fileId:p.id,bounds:plan.parts.find(part=>part.paymentId===p.paymentId)!.bounds}))});
+   const collisionSQL=`CASE WHEN json_extract(previous.value,'$.receiptKey') IS NOT NULL OR json_extract(selected.value,'$.receiptKey') IS NOT NULL THEN json_extract(previous.value,'$.receiptKey') IS NULL OR json_extract(selected.value,'$.receiptKey') IS NULL OR json_extract(previous.value,'$.receiptKey')=json_extract(selected.value,'$.receiptKey') OR ((json_extract(previous.value,'$.reference') IS NULL OR json_extract(selected.value,'$.reference') IS NULL) AND (json_extract(previous.value,'$.readingHash') IS NULL OR json_extract(selected.value,'$.readingHash') IS NULL OR json_extract(previous.value,'$.readingHash')<>json_extract(selected.value,'$.readingHash'))) ELSE ${overlapSQL} END`;
+   const data=JSON.stringify({payloadHash,showId:plan.showId,entrepreneur:plan.entrepreneur,sourceHash,parts:staged.map(p=>{const r=plan.parts.find(part=>part.paymentId===p.paymentId)!;return {paymentId:p.paymentId,fileId:p.id,bounds:r.bounds,...(r.receiptKey?{receiptKey:r.receiptKey,reference:r.reference,readingHash:r.readingHash}:{})};})});
    // The first statement is a transaction gate. Nothing becomes visible unless every
    // selected record, support, show and session still passes; D1 batch is atomic.
    const gate=`EXISTS(SELECT 1 FROM jac_reconciliation_audit WHERE id=? AND action='identify-receipt-batch' AND data=?)`;
    const statements=[prepared(`INSERT OR IGNORE INTO jac_reconciliation_audit (id,payment_id,actor_id,action,data,created_at) SELECT ?,'',?,'identify-receipt-batch',?,? WHERE
     (SELECT COUNT(*) FROM json_each(?) selected JOIN jac_reconciliation_payments p ON p.id=json_extract(selected.value,'$.paymentId') AND p.version=json_extract(selected.value,'$.version') WHERE json_extract(p.annotation,'$.status')<>'identified')=?
     AND (SELECT COUNT(*) FROM json_each(?) selected JOIN jac_reconciliation_attachments f ON f.id=json_extract(selected.value,'$.id') AND f.payment_id=json_extract(selected.value,'$.paymentId') AND f.state=json_extract(selected.value,'$.state'))=?
-    AND NOT EXISTS(SELECT 1 FROM jac_reconciliation_audit prior,json_each(prior.data,'$.parts') previous,json_each(?) selected JOIN jac_reconciliation_attachments f ON f.id=json_extract(previous.value,'$.fileId') AND f.state='ready' WHERE prior.action='identify-receipt-batch' AND json_extract(prior.data,'$.sourceHash')=? AND json_extract(previous.value,'$.paymentId')<>json_extract(selected.value,'$.paymentId') AND ${overlapSQL})
+    AND NOT EXISTS(SELECT 1 FROM jac_reconciliation_audit prior,json_each(prior.data,'$.parts') previous,json_each(?) selected JOIN jac_reconciliation_attachments f ON f.id=json_extract(previous.value,'$.fileId') AND f.state='ready' WHERE prior.action='identify-receipt-batch' AND json_extract(prior.data,'$.sourceHash')=? AND json_extract(previous.value,'$.paymentId')<>json_extract(selected.value,'$.paymentId') AND (${collisionSQL}))
     AND ${showGate(plan.showId)} AND ${g.sql}`,[plan.operationId,user.id,data,stamp(),selectedJSON,plan.parts.length,filesJSON,staged.length,selectedJSON,sourceHash,...showArgs(plan.showId)])];
    for(const part of staged.filter(p=>p.fresh))statements.push(prepared(`UPDATE jac_reconciliation_attachments SET state='ready' WHERE id=? AND state='uploading' AND ${gate} AND ${g.sql}`,[part.id,plan.operationId,data]),audit(part.paymentId,'attach',{id:part.id,name:part.name,hash:part.hash,operationId:plan.operationId},true));
    for(const part of plan.parts){

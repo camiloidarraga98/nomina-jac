@@ -98,11 +98,11 @@ async function providerFailure(response:Response){
  return new CrmFailure(`${message} [OCR_${reason} · HTTP ${status}]`,status===429?429:502);
 }
 
-async function requestReceiptJSON(key:string,content:unknown,abort:AbortSignal,format:{instructions:string;prompt:string;name:string;schema:unknown;maxTokens?:number}):Promise<unknown>{
+export async function requestReceiptJSON(key:string,content:unknown,abort:AbortSignal,format:{instructions:string;prompt:string;name:string;schema:unknown;maxTokens?:number;model?:string}):Promise<unknown>{
  let response:Response;
  try{
   response=await fetch(endpoint,{method:'POST',redirect:'manual',signal:abort,headers:{Authorization:'Bearer '+key,'Content-Type':'application/json'},body:JSON.stringify({
-   model:RECEIPT_OCR_MODEL,store:false,instructions:format.instructions,temperature:0,max_output_tokens:format.maxTokens||1200,
+   model:format.model||RECEIPT_OCR_MODEL,store:false,instructions:format.instructions,temperature:0,max_output_tokens:format.maxTokens||1200,
    input:[{role:'user',content:[{type:'input_text',text:format.prompt},...(Array.isArray(content)?content:[content])]}],
    text:{format:{type:'json_schema',name:format.name,strict:true,schema:format.schema}},
   })});

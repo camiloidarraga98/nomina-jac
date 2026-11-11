@@ -1,3 +1,11 @@
+## Leer uno o varios comprobantes con IA · 11 noviembre 2026
+
+Al subir, pegar o arrastrar una imagen, la API lee todos sus comprobantes desde la foto completa y propone las referencias recortadas. La búsqueda de abonos comienza automáticamente. Una coincidencia exacta única queda seleccionada; si hay varias, se elige la correcta. Se completa una sola vez el show y el empresario y se pulsa **Guardar e identificar seleccionados**; cada recibo queda relacionado a un movimiento diferente. También se puede guardar por partes y continuar con los restantes.
+
+Si un recorte no se puede confirmar, se muestra la foto completa y se conservan los datos que sí se pudieron leer. **Ver original** está siempre disponible. El soporte individual incluye la referencia, la foto completa y el archivo original. No se giran las fotos automáticamente y no se duplican ingresos. **Volver a analizar la imagen** sustituye las lecturas sin guardar tras confirmación; no se vuelve a llamar a la IA automáticamente por un error.
+
+Esta pantalla sustituye el flujo que exigía separar y confirmar recortes antes de leer las imágenes. Los PDF conservan su lector anterior. Ver detalles y estado de publicación en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
 ## Revisar la separación de comprobantes · 11 noviembre 2026
 
 El sistema comprueba los bordes sobre la imagen completa antes de leer. Si encuentra una separación clara pero el conteo inicial no coincide, muestra los recortes propuestos y permite confirmar el número correcto con un solo botón. Si los bordes no son seguros, conserva la foto completa para ajustar o separar por filas y columnas; no muestra once recortes truncados como si fueran recibos completos. Después de confirmar, lee cada recibo y busca coincidencias automáticamente; el show y empresario siguen siendo comunes al grupo. Los giros sugeridos también requieren confirmación y el archivo original se conserva.
