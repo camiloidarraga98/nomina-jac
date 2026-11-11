@@ -1,3 +1,9 @@
+## Aviso de número de recibo repetido · 11 noviembre 2026
+
+Un número repetido por la IA no demuestra que haya pagos duplicados. La herramienta conserva las fichas y las coincidencias encontradas. Sólo las fichas con referencia dudosa muestran un aviso y piden elegir el abono; las demás continúan seleccionadas. Después se usa **Guardar e identificar seleccionados**, sin volver a subir todos los comprobantes ni perder el grupo. Se mantienen los soportes privados y la protección contra asignar un mismo recibo a varios movimientos.
+
+Ver el estado de publicación y comprobaciones de `receipt-reference-14` en [CRM_RECONCILIATION.md](../docs/CRM_RECONCILIATION.md).
+
 ## Leer uno o varios comprobantes con IA · 11 noviembre 2026
 
 Al subir, pegar o arrastrar una imagen, la API lee todos sus comprobantes desde la foto completa y propone las referencias recortadas. La búsqueda de abonos comienza automáticamente. Una coincidencia exacta única queda seleccionada; si hay varias, se elige la correcta. Se completa una sola vez el show y el empresario y se pulsa **Guardar e identificar seleccionados**; cada recibo queda relacionado a un movimiento diferente. También se puede guardar por partes y continuar con los restantes.

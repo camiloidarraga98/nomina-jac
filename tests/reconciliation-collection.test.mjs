@@ -29,11 +29,23 @@ test('conflicting crop edges discard only the reference crop, conflicting dates 
  calls=0;globalThis.fetch=async()=>provider([item(0,{bounds:++calls===1?null:{x:999,y:0,width:500,height:1000}})]);
  const other=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(other.receipts[0].bounds,null);assert.equal(other.receipts[0].reading.autoEligible,true);
 });
-test('different counts or physical identities remain reviewable but cannot automatically identify; repeated references are rejected',async()=>{
+test('different counts remain reviewable but cannot automatically identify; revocation prevents the second reading',async()=>{
  let calls=0;globalThis.fetch=async()=>provider(++calls===1?ten():[...ten(),item(10)]);
  const r=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(r.receipts.length,10);assert.equal(r.complete,false);assert(r.warnings.length);assert(r.receipts.every(p=>!p.reading.autoEligible));
- globalThis.fetch=async()=>provider([item(0),item(1,{reference:'REC-0'})]);await assert.rejects(m.readReceiptCollection(receiptJPEG,'image/jpeg',auth),e=>e.status===422);
  let a=0;calls=0;globalThis.fetch=async()=>{calls++;return provider(ten());};await assert.rejects(m.readReceiptCollection(receiptJPEG,'image/jpeg',async()=>{if(++a===2)throw Error('revoked');}),/revoked/);assert.equal(calls,1);
+});
+test('repeated references in either independent reading preserve all ten receipts and limit review to the affected cards',async()=>{
+ for(const duplicateIn of ['first','second','both']){
+  let calls=0;globalThis.fetch=async()=>{calls++;const receipts=ten();if(duplicateIn==='both'||duplicateIn===(calls===1?'first':'second'))receipts[1].reference=receipts[0].reference;return provider(calls===2?receipts.reverse():receipts);};
+  const r=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(calls,2);assert.equal(r.receipts.length,10);assert.equal(r.complete,true);assert(r.warnings.length);
+  r.receipts.forEach((p,i)=>{assert.equal(p.reading.amount,1250000.25+i);assert.equal(p.reading.date,'2026-11-'+String(i+1).padStart(2,'0'));assert.equal(p.referenceNeedsReview,i<2);assert.equal(p.reading.autoEligible,i>=2);assert.equal(p.reference,i<2?null:'REC-'+i);if(i<2)assert(p.reading.warnings.some(w=>w.includes('Esto no confirma pagos duplicados')));});
+ }
+});
+test('positional fallback never steals an independently confirmed reference or accepts conflicting date and amount',async()=>{
+ let calls=0;globalThis.fetch=async()=>{const receipts=[item(0,{reference:'REPEATED'}),item(1,{reference:'REPEATED'}),item(2)];if(++calls===2){receipts[0].column=3;receipts[2].column=1;}return provider(receipts);};
+ const r=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(r.receipts[2].reading.amount,1250002.25);assert.equal(r.receipts[2].reference,'REC-2');assert.equal(r.receipts[0].reading.amount,null);assert.equal(r.complete,false);assert(r.receipts.every(p=>!p.reading.autoEligible));
+ calls=0;globalThis.fetch=async()=>provider([item(0,{reference:'REPEATED'}),item(1,{reference:'REPEATED',...(++calls===2?{amountText:'9.000.000',dateText:'07/04/2026'}:{})})]);
+ const conflicting=await m.readReceiptCollection(receiptJPEG,'image/jpeg',auth);assert.equal(conflicting.receipts.length,2);assert.equal(conflicting.receipts[0].reading.amount,1250000.25);assert.equal(conflicting.receipts[1].reading.amount,null);assert.equal(conflicting.receipts[1].reading.date,null);assert(conflicting.receipts.every(p=>!p.reading.autoEligible));
 });
 test('signed evidence binds the receipt identities, optional bounds, original, preview and actor without granting access',()=>{
  const data={actor:'fixture-owner',sourceHash:'a'.repeat(64),previewHash:'b'.repeat(64),receipts:[{index:0,row:1,column:1,reference:'REC-0',amount:1250000.25,date:'2026-11-01',bounds:null,key:'reference:REC-0'}]};
@@ -42,6 +54,22 @@ test('signed evidence binds the receipt identities, optional bounds, original, p
 });
 
 const upload=()=>{const form=new FormData();form.set('file',new File([receiptJPEG],'synthetic-original.jpg',{type:'image/jpeg'}));form.set('preview',new File([receiptJPEG],'synthetic-preview.jpg',{type:'image/jpeg'}));return form;};
+test('private API returns candidates despite repeated references and supports reviewed partial saves without duplicate assignments',async()=>{
+ const f=await reconciliationFixture({readReceipt:async()=>{const receipts=ten();receipts[1].reference=receipts[0].reference;return provider(receipts);}});
+ try{
+  await f.request('/api/reconciliation/import',{method:'POST',data:syntheticImport(11)});
+  const originals=(await f.db.prepare('SELECT id,original FROM jac_reconciliation_payments ORDER BY id').all()).results;
+  let response=await f.request('/api/reconciliation/scan/collection',{method:'POST',data:upload()});assert.equal(response.status,200,await response.clone().text());const read=await response.json();assert.equal(read.receipts.length,10);assert.equal(f.outgoing(),2);
+  read.receipts.forEach((r,i)=>{assert.equal(r.autoMatchId===null,i<2);assert(r.matches.some(c=>c.kind==='exact'));assert.equal(r.reading.amount,1250000.25+i);});
+  assert.equal((await f.db.prepare('SELECT count(*) n FROM jac_reconciliation_attachments').first()).n,0);
+  const save=async(parts)=>{const form=upload();form.set('plan',JSON.stringify({mode:'collection',evidence:read.evidence,operationId:crypto.randomUUID(),showId:'fixture-show',entrepreneur:'Empresario ficticio',parts}));return f.request('/api/reconciliation/batch',{method:'POST',data:form});};
+  const selected=read.receipts.map(r=>({index:r.index,paymentId:r.matches.find(c=>c.kind==='exact').id,version:1}));
+  for(const parts of [selected.slice(2),selected.slice(0,2)]){response=await save(parts);assert.equal(response.status,200,await response.clone().text());}
+  const third=await f.db.prepare("SELECT id FROM jac_reconciliation_payments WHERE json_extract(annotation,'$.status')<>'identified'").first();assert.equal((await save([{...selected[0],paymentId:third.id}])).status,409);
+  assert.equal((await f.db.prepare("SELECT count(*) n FROM jac_reconciliation_attachments WHERE state='ready'").first()).n,10);
+  assert.deepEqual((await f.db.prepare('SELECT id,original FROM jac_reconciliation_payments ORDER BY id').all()).results,originals);for(const table of ['jac_crm_payments','payroll_periods'])assert.equal((await f.db.prepare('SELECT count(*) n FROM '+table).first()).n,0);
+ }finally{await f.close();}
+});
 test('a signed reading without printed references can be saved in parts without reassigning an already saved receipt',async()=>{
  const f=await reconciliationFixture({readReceipt:async()=>provider([item(0,{reference:null,bounds:null}),item(1,{reference:null,bounds:null})])});
  try{
