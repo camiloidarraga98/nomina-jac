@@ -210,6 +210,7 @@ struct MacCRMHomeView: View {
                         hero
                         HStack(spacing:6) {
                             sectionButton("Shows", symbol:"music.mic", value:"shows")
+                            sectionButton("Preparación", symbol:"checklist", value:"preparation")
                             sectionButton("Semana", symbol:"calendar", value:"weekly")
                             sectionButton("Empresarios", symbol:"person.2", value:"contacts")
                             sectionButton("Contratos", symbol:"doc.text", value:"contracts")
@@ -219,6 +220,7 @@ struct MacCRMHomeView: View {
                         if let error { HStack { InlineError(message: error); Spacer(); Button("Reintentar") { Task { await load() } } } }
                     }.padding(.horizontal,24).padding(.top,22).padding(.bottom,14)
                     if section == "shows" { shows }
+                    else if section == "preparation" { PreparationView(weekly:true) }
                     else if section == "contracts" {CRMContractsHome()}
                     else { List { if section == "weekly" { CRMWeeklyView() } else { CRMContactsView() } }.jacSurface() }
                 }.background(JACTheme.canvas).navigationTitle("CRM")

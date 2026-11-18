@@ -74,7 +74,8 @@ struct CRMHomeView:View {
     }
     private var legacyContent:some View {
         Group {
-            if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractsHome() } }
+            if section == "preparation" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);PreparationView(weekly:true) } }
+            else if section == "contracts" { VStack(spacing:0) { sectionPicker.padding(.horizontal).padding(.vertical,10);CRMContractsHome() } }
             else { List {
                 if let error { InlineError(message:error) }
                 Section {
@@ -105,7 +106,8 @@ struct CRMHomeView:View {
     private var phoneContent:some View {
         VStack(spacing:0) {
             phoneSections.padding(.horizontal,20).padding(.bottom,12)
-            if section == "contracts" { CRMContractsHome() }
+            if section == "preparation" { PreparationView(weekly:true) }
+            else if section == "contracts" { CRMContractsHome() }
             else if section == "shows" {
                 HStack(spacing: 0) {
                     phoneShows.frame(maxWidth: layout.isWide ? max(290, layout.contentWidth * 0.43) : .infinity)
@@ -131,6 +133,7 @@ struct CRMHomeView:View {
         ScrollView(.horizontal,showsIndicators:false) {
         HStack(spacing:24) {
             phoneSection("Shows",value:"shows")
+            phoneSection("Preparación",value:"preparation")
             phoneSection("Empresarios",value:"contacts")
             Menu {
                 Button("Resumen semanal") { section="weekly" }
@@ -262,7 +265,7 @@ struct CRMHomeView:View {
         }.presentationDetents([.medium,.large])
     }
     #endif
-    private var sectionPicker:some View {Picker("Sección",selection:$section) {Text("Shows").tag("shows");Text("Semana").tag("weekly");Text("Empresarios").tag("contacts");Text("Contratos").tag("contracts")}.pickerStyle(.segmented).accessibilityIdentifier("crm.sections")}
+    private var sectionPicker:some View {Picker("Sección",selection:$section) {Text("Shows").tag("shows");Text("Preparación").tag("preparation");Text("Semana").tag("weekly");Text("Empresarios").tag("contacts");Text("Contratos").tag("contracts")}.pickerStyle(.segmented).accessibilityIdentifier("crm.sections")}
     private var quickPayment:some View {
         Button { editor=CRMEditorRequest(kind:.payment,record:.null,feed:feed) } label: { Label("Registrar abono",systemImage:"plus.circle").frame(maxWidth:.infinity) }
             .buttonStyle(JACPrimaryButtonStyle()).disabled(busy || store.isOffline || feed.isNull).accessibilityIdentifier("crm.quickPayment")

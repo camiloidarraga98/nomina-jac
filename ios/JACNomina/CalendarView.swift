@@ -66,6 +66,18 @@ struct CalendarView: View {
     }
     private var agendaPage: some View {
         AgendaPage(compact: compactPhone) {
+            NavigationLink {
+                PreparationView(weekly:false).navigationTitle("Agenda").jacInlineTitle()
+            } label: {
+                HStack {
+                    Label("Mis pendientes",systemImage:"checklist")
+                        .font(.subheadline.weight(.semibold)).foregroundStyle(JACTheme.ink)
+                    Spacer()
+                    Image(systemName:"chevron.right").font(.caption).foregroundStyle(JACTheme.action)
+                }.padding(14).frame(minHeight:44)
+                    .background(JACTheme.card,in:RoundedRectangle(cornerRadius:14))
+                    .overlay(RoundedRectangle(cornerRadius:14).strokeBorder(JACTheme.border,lineWidth:1).allowsHitTesting(false))
+            }.buttonStyle(.plain).accessibilityIdentifier("agenda.preparation")
             statusSections
             if let visible, visible.connection.connected, visible.connection.selected != nil {
                 connectedAgenda(visible, byDay: eventsByDay)

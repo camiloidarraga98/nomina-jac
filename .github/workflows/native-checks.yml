@@ -6,6 +6,7 @@ on:
     branches:
       - main
       - codex/conexiones-activas
+      - codex/preparacion-semanal
     paths:
       - ios/**
       - macos/**
@@ -163,7 +164,7 @@ jobs:
         run: |
           set -euo pipefail
           build_action=test
-          if [ "$GITHUB_REF_NAME" = "codex/conexiones-activas" ]; then
+          if [[ "$GITHUB_REF_NAME" == "codex/conexiones-activas" || "$GITHUB_REF_NAME" == "codex/preparacion-semanal" ]]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testFolderShareClientCreatesListsAndRevokesWithTheSameRequestIdentity
               -only-testing:JACNominaTests/PayrollClientTests/testPhotographerRoleDoesNotInheritPayrollOrGeneralAccess

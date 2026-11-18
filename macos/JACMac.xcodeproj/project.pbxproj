@@ -43,6 +43,17 @@
 			<key>sourceTree</key>
 			<string>&lt;group&gt;</string>
 		</dict>
+		<key>7D4D08565AF3457DB7DEC924</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXFileReference</string>
+			<key>path</key>
+			<string>../ios/JACNomina/PreparationView.swift</string>
+			<key>lastKnownFileType</key>
+			<string>sourcecode.swift</string>
+			<key>sourceTree</key>
+			<string>&lt;group&gt;</string>
+		</dict>
 		<key>1002BD0D5689C8ECAD7BB40D</key>
 		<dict>
 			<key>isa</key>
@@ -396,6 +407,13 @@
 			<key>fileRef</key>
 			<string>924964FBD032C7650F1A288C</string>
 		</dict>
+		<key>50CC37D6B0264EF39376965B</key>
+		<dict>
+			<key>isa</key>
+			<string>PBXBuildFile</string>
+			<key>fileRef</key>
+			<string>7D4D08565AF3457DB7DEC924</string>
+		</dict>
 		<key>D4D0099233A969FB7B34930B</key>
 		<dict>
 			<key>isa</key>
@@ -597,6 +615,7 @@
 				<string>77AAA7699BD3E325C1B690CF</string>
 				<string>3112E154D5BF96C72B150E8A</string>
 				<string>D4D0099233A969FB7B34930B</string>
+				<string>50CC37D6B0264EF39376965B</string>
 				<string>C61ED44E5FC4C5FF83743B9D</string>
 				<string>79A4B92FB7DD2C08BBA9C21E</string>
 				<string>174AD6E1DB405F1629410F48</string>
@@ -1374,6 +1393,7 @@
 				<string>BEBD527D0A5A06CDCFF19B76</string>
 				<string>924964FBD032C7650F1A288C</string>
 				<string>1002BD0D5689C8ECAD7BB40D</string>
+				<string>7D4D08565AF3457DB7DEC924</string>
 				<string>12E05E4F9F3ABF587B5F47AD</string>
 				<string>B8A75EEF7BC854581AE2143D</string>
 				<string>FAA90F93277D587FCB28B08D</string>

@@ -1080,6 +1080,23 @@ final class PayrollClient: ObservableObject {
         let(data,_)=try await request(path:"api/crm",query:query.map{URLQueryItem(name:$0.key,value:$0.value)},forceNetwork:forceNetwork)
         return try decoder.decode(JSONValue.self,from:data)
     }
+    func preparation(weekly: Bool, day: String) async throws -> PreparationFeed {
+        let query = [URLQueryItem(name:"scope",value:weekly ? "weekly":"personal"), URLQueryItem(name:"day",value:day)]
+        let (data, _) = try await request(path:"api/preparation",query:query,forceNetwork:true)
+        return try decoder.decode(PreparationFeed.self,from:data)
+    }
+    func preparationFolders(search: String) async throws -> [PreparationFolder] {
+        struct Result: Decodable { let folders: [PreparationFolder] }
+        let (data, _) = try await request(path:"api/preparation",query:[URLQueryItem(name:"folders",value:search)],forceNetwork:true)
+        return try decoder.decode(Result.self,from:data).folders
+    }
+    func updatePreparation(_ task: PreparationTask, fields: [String: JSONValue]) async throws {
+        var body = fields
+        body["showId"] = .string(task.showId)
+        body["kind"] = .string(task.kind.rawValue)
+        body["version"] = .number(Double(task.version))
+        _ = try await request(path:"api/preparation",body:.object(body),forceNetwork:true)
+    }
     func crmCommand(_ action:String,record:JSONValue? = nil,month:String? = nil) async throws -> JSONValue {
         guard ["updateShow","createShow","addPayment","voidPayment","savePlan","linkPayroll","saveContact","addContactFiles","prepareDeleteShow","deleteShow","syncCalendar","syncSheets"].contains(action) else{throw APIError.invalid("Operación del CRM no disponible en este formulario.")}
         var command:JSONValue = .object(["action":.string(action)]);if let record{command["record"]=record};if let month{command["month"] = .string(month)}

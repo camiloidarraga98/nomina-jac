@@ -21,6 +21,11 @@ struct AccountView: View {
                 Section("Tu cuenta") {
                     LabeledContent("Usuario", value: user.username)
                     LabeledContent("Correo", value: user.email).textSelection(.enabled)
+                    if !user.hasSection(.calendar), user.canReadMedia {
+                        NavigationLink {
+                            PreparationView(weekly:false).navigationTitle("Mi cuenta").jacInlineTitle()
+                        } label: { Label("Mis pendientes",systemImage:"checklist") }
+                    }
                     if !store.isAgendaOnly { NavigationLink { ChangePasswordView() } label:{ Label("Cambiar contraseña",systemImage:"key") }.disabled(store.isOffline).accessibilityLabel("Cambiar contraseña") }
                 }
                 Section("Secciones de tu cuenta") { ForEach(JACSection.allCases.filter { user.hasSection($0) && $0 != .mediaUpload && $0 != .musicUpload },id:\.self) { Text($0.title) } }
