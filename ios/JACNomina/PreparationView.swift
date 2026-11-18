@@ -338,7 +338,7 @@ struct PreparationView: View {
                 Task { _ = await save(task,fields:["action":.string("complete"),"done":.bool(task.status != .done)]) }
             }.buttonStyle(.borderedProminent).tint(JACTheme.primary).controlSize(.large)
         }
-        if task.kind != .photos, let path=task.href, path.hasPrefix("/crm?"),
+        if task.kind != .photos, let path=task.href, path.hasPrefix("/crm?") || path.hasPrefix("/crm/reconciliation?"),
            let url=URL(string:path,relativeTo:store.client.baseURL)?.absoluteURL {
             Link(destination:url) { Label(task.kind == .contract ? "Abrir contratos" : "Abrir en Conciliación",systemImage:"arrow.up.right") }
                 .buttonStyle(.bordered).tint(JACTheme.action).controlSize(.large)
