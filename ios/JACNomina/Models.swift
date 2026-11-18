@@ -14,6 +14,7 @@ struct PayrollUser: Codable, Equatable {
     var itinerariesOnly: Bool? = nil
     var mediaOnly: Bool? = nil
     var sections: [String]? = nil
+    var canViewPresence: Bool? = nil
 
     func hasSection(_ section: JACSection) -> Bool {
         if isOwner && mediaOnly != true && itinerariesOnly != true { return true }
@@ -35,6 +36,14 @@ struct PayrollUser: Codable, Equatable {
     var firstDestination: String { hasSection(.payroll) ? "payroll" : hasSection(.calendar) ? "agenda" : hasSection(.itineraries) || hasSection(.boarding) ? "itineraries" : hasSection(.alerts) ? "alerts" : canReadMedia ? "media" : canReadMusic ? "music" : "management" }
     var initialMobileDestination: String { hasSection(.calendar) ? "agenda" : firstDestination }
     func can(_ permission: String) -> Bool { hasSection(.payroll) && (isOwner || permissions.contains(permission)) }
+}
+
+struct ActiveConnection: Decodable, Identifiable {
+    let id: Int
+    let name: String
+    let platform: String
+    let section: String
+    let connectedAt: String
 }
 
 struct PayrollOverview: Codable {

@@ -159,6 +159,7 @@ private struct MacWorkspace:View {
                 }
             }
         }.safeAreaInset(edge:.bottom,spacing:0){MusicMiniPlayer(player:store.music)}
+            .modifier(JACPresenceReporter(user: overview.user, route: selected.rawValue))
             .sheet(item:$store.incomingAudio){incoming in MusicImportView(incoming:incoming,initialSection:.warmup).environmentObject(store)}
             .onOpenURL{url in store.receiveAudio(url)}
             .modifier(MediaNotificationPresenter(opened: { section = .media }))

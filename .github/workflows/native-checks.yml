@@ -5,6 +5,7 @@ on:
   push:
     branches:
       - main
+      - codex/conexiones-activas
     paths:
       - ios/**
       - macos/**
@@ -162,7 +163,13 @@ jobs:
         run: |
           set -euo pipefail
           build_action=test
-          if [ "$JAC_PRELIQUIDATION" = true ]; then
+          if [ "$GITHUB_REF_NAME" = "codex/conexiones-activas" ]; then
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testFolderShareClientCreatesListsAndRevokesWithTheSameRequestIdentity
+              -only-testing:JACNominaTests/PayrollClientTests/testPhotographerRoleDoesNotInheritPayrollOrGeneralAccess
+              -only-testing:JACNominaTests/PayrollClientTests/testAutomaticSessionRefreshCannotReinstallWorkspaceAfterManualLogout
+            )
+          elif [ "$JAC_PRELIQUIDATION" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testPreliquidationUsesSavedRevisionFreshGETAndOnlyGeneralDocuments
               -only-testing:JACNominaTests/PayrollClientTests/testPermissionDenialPreservesSessionAndDoesNotWriteDocument

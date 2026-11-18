@@ -12,6 +12,11 @@ struct UsersView: View {
     var body: some View {
         List {
             if store.hasOperationStatus { OperationStatusSection() }
+            if store.overview?.user.canViewPresence == true {
+                Section {
+                    NavigationLink { ActiveConnectionsView() } label: { Label("Conexiones activas", systemImage: "dot.radiowaves.left.and.right") }
+                }
+            }
             if let notice { Section { Text(notice).foregroundStyle(.green) } }
             if let invitation {
                 Section("Enlace de activación") {
@@ -60,6 +65,114 @@ struct UsersView: View {
                   ActivationInput.token(url.absoluteString, baseURL: store.client.baseURL) != nil else { throw APIError.message("El enlace recibido no es válido.") }
             invitation = url; notice = response.notice
         } catch { store.report(error) }
+    }
+}
+
+private struct ActiveConnectionsView: View {
+    @EnvironmentObject private var store: PayrollStore
+    @Environment(\.scenePhase) private var phase
+    @State private var connections: [ActiveConnection]?
+    @State private var error: String?
+    @State private var loading = false
+
+    private var canRead: Bool {
+        phase == .active && !store.isOffline && store.overview?.user.canViewPresence == true
+    }
+
+    var body: some View {
+        List {
+            Section {
+                if !canRead { Text("Conéctate para ver las conexiones activas.").foregroundStyle(.secondary) }
+                else if let error { InlineError(message: error) }
+                else if let connections {
+                    if connections.isEmpty { Text("Las conexiones aparecerán aquí cuando alguien abra JAC.").foregroundStyle(.secondary) }
+                    ForEach(connections) { connection in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Text(connection.name).font(.headline)
+                            Text("\(connection.platform) · \(connection.section)")
+                            Text("Desde \(PayrollFormat.timestamp(connection.connectedAt))").font(.footnote).foregroundStyle(.secondary)
+                        }.padding(.vertical, 3)
+                    }
+                } else { ProgressView("Consultando conexiones…") }
+            } footer: { Text("Pestañas y apps de JAC en primer plano. Horas de Colombia.") }
+        }.jacSurface().navigationTitle("Conexiones activas").jacInlineTitle().privacySensitive()
+            .refreshable { await load() }
+            .task(id: canRead) {
+                if !canRead { connections = nil; error = nil; return }
+                while !Task.isCancelled {
+                    await load()
+                    do { try await Task.sleep(for: .seconds(10)) } catch { return }
+                }
+            }
+    }
+
+    private func load() async {
+        guard canRead, !loading else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            let current = try await store.client.activeConnections()
+            guard !Task.isCancelled, canRead else { return }
+            connections = current
+            error = nil
+        } catch {
+            guard !Task.isCancelled, canRead else { return }
+            connections = nil
+            self.error = error.localizedDescription
+        }
+    }
+}
+
+/// Report the visible section of an authenticated workspace, independently of its refresh and offline cache.
+struct JACPresenceReporter: ViewModifier {
+    let user: PayrollUser
+    let route: String
+    @EnvironmentObject private var store: PayrollStore
+    @Environment(\.scenePhase) private var phase
+    @State private var clientId = UUID()
+    @State private var sequence = 0
+    @State private var reported = false
+
+    private struct Target: Equatable {
+        let userId: String
+        let section: String?
+    }
+
+    private var section: String {
+        switch route {
+        case "payroll": "quincena"
+        case "agenda": "agenda"
+        case "itineraries": user.hasSection(.itineraries) ? "itinerarios" : "pases"
+        case "boarding": "pases"
+        case "alerts": "alertas"
+        case "media": "fotografia"
+        case "music": "musica"
+        case "crm": "crm"
+        case "account": "cuenta"
+        default: "gestion"
+        }
+    }
+
+    func body(content: Content) -> some View {
+        let target = Target(userId: user.id, section: phase == .active && !store.isOffline ? section : nil)
+        content.task(id: target) {
+            guard !Task.isCancelled, store.client.baseURL.host?.hasSuffix(".invalid") != true else { return }
+            guard target.section != nil else {
+                if reported { reported = false; await send(target) }
+                return
+            }
+            reported = true
+            while !Task.isCancelled {
+                await send(target)
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+            }
+        }
+    }
+
+    private func send(_ target: Target) async {
+        guard store.overview?.user.id == target.userId else { return }
+        sequence += 1
+        try? await store.client.reportPresence(userId: target.userId, clientId: clientId, section: target.section, sequence: sequence)
     }
 }
 struct UserEditorView: View {

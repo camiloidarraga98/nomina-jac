@@ -51,6 +51,7 @@ struct MediaFolderShareSheet: View {
     @State private var attempt: (id: String, days: Int)?
     @State private var busy = false
     @State private var error: String?
+    @State private var linkToRevoke: MediaSharedLink?
     @State private var stamp: String?
     @State private var operation: Task<Void, Never>?
     var body: some View {
@@ -71,14 +72,26 @@ struct MediaFolderShareSheet: View {
                             if let url = link.absoluteURL(origin: client.baseURL) {
                                 ShareLink(item: url) { Label("Compartir enlace", systemImage: "square.and.arrow.up") }
                                     .accessibilityIdentifier("media.share.link." + link.id)
+                                Link("Abrir enlace", destination: url)
                             }
-                            Button("Revocar enlace", role: .destructive) { run { try await revoke(link) } }
+                            Button("Revocar enlace", role: .destructive) { linkToRevoke = link }
                                 .disabled(busy).accessibilityIdentifier("media.share.revoke." + link.id)
                         }
                     }
                 }
             }.navigationTitle("Compartir carpeta").jacInlineTitle()
                 .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Listo") { dismiss() } } }
+        }
+        .confirmationDialog("¿Revocar este enlace?", isPresented: Binding(
+            get: { linkToRevoke != nil },
+            set: { if !$0 { linkToRevoke = nil } }
+        ), titleVisibility: .visible) {
+            if let link = linkToRevoke {
+                Button("Revocar enlace", role: .destructive) { linkToRevoke = nil; run { try await revoke(link) } }
+            }
+            Button("Cancelar", role: .cancel) { linkToRevoke = nil }
+        } message: {
+            Text("Las personas que lo recibieron perderán el acceso por ese enlace.")
         }
         .task { stamp = try? client.mediaAccessStamp(); run { try await refresh() } }
         .onChange(of: try? client.mediaAccessStamp()) { _, value in if value != stamp { links = []; operation?.cancel(); dismiss() } }
@@ -101,8 +114,13 @@ struct MediaFolderShareSheet: View {
         try validate()
         if attempt == nil { attempt = (UUID().uuidString.lowercased(), days) }
         guard let attempt else { return }
-        let link = try await client.createMediaFolderShare(folder.id, id: attempt.id, days: attempt.days)
-        try validate(); links.removeAll { $0.id == link.id }; links.insert(link, at: 0); self.attempt = nil
+        do {
+            let link = try await client.createMediaFolderShare(folder.id, id: attempt.id, days: attempt.days)
+            try validate(); links.removeAll { $0.id == link.id }; links.insert(link, at: 0); self.attempt = nil
+        } catch APIError.conflict(let message) {
+            try validate(); self.attempt = nil
+            throw APIError.conflict(message)
+        }
     }
     private func revoke(_ link: MediaSharedLink) async throws {
         try validate(); try await client.revokeMediaFolderShare(folder.id, id: link.id); try validate(); links.removeAll { $0.id == link.id }

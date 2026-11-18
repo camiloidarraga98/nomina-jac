@@ -169,6 +169,7 @@ struct PayrollHomeView: View {
             phoneTabs.safeAreaInset(edge: .bottom, spacing: 0) { MusicMiniPlayer(player: store.music) }
             #endif
         }.tint(JACTheme.action)
+            .modifier(JACPresenceReporter(user: user, route: selected))
             .sheet(item: $store.incomingAudio) { incoming in MusicImportView(incoming: incoming, initialSection: .warmup).environmentObject(store) }
             .task(id: store.isAgendaOnly) { if !store.isAgendaOnly && user.canReceiveNotifications { await push.bind(store.client) } }
             .onChange(of: scenePhase) { _, value in if value == .active && !store.isAgendaOnly && user.canReceiveNotifications { Task { await push.bind(store.client) } } }

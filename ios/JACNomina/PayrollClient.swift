@@ -604,7 +604,7 @@ final class PayrollClient: ObservableObject {
         catch {
             guard sentToken == (try checkedToken()), generation == cacheGeneration else { throw CancellationError() }
             if path.hasPrefix("api/crm") || path == "api/mobile/contracts",body == nil,crmReadGeneration != crmGeneration {throw CancellationError()}
-            if AgendaOfflineCache.isUnavailable(error), !mediaThumbnailRead, !mediaPreviewRead {
+            if AgendaOfflineCache.isUnavailable(error), !mediaThumbnailRead, !mediaPreviewRead, path != "api/presence" {
                 usingOfflineCopy = true
                 if let saved, let response = saved.response, !forceNetwork { return (try authorizedNoticeData(saved.data,path:path), response) }
             }
@@ -1176,6 +1176,20 @@ final class PayrollClient: ObservableObject {
     func users() async throws -> UserDirectory {
         let (data, _) = try await request(path: "api/users")
         return try decoder.decode(UserDirectory.self, from: data)
+    }
+    func reportPresence(userId: String, clientId: UUID, section: String?, sequence: Int) async throws {
+        _ = try await request(path: "api/presence", body: .object([
+            "userId": .string(userId),
+            "clientId": .string(clientId.uuidString.lowercased()),
+            "section": section.map(JSONValue.string) ?? .null,
+            "sequence": .number(Double(sequence))
+        ]))
+    }
+    func activeConnections() async throws -> [ActiveConnection] {
+        struct Roster: Decodable { let connections: [ActiveConnection] }
+        guard permissionUser?.canViewPresence == true, !usingOfflineCopy else { throw APIError.forbidden("Conéctate con la cuenta de Camilo para consultar las conexiones.") }
+        let (data, _) = try await request(path: "api/presence", forceNetwork: true)
+        return try decoder.decode(Roster.self, from: data).connections
     }
     func updateUser(_ user: ManagedUser) async throws -> OperationNotice {
         let record = try JSONDecoder().decode(JSONValue.self, from: JSONEncoder().encode(user))
