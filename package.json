@@ -9,6 +9,7 @@
     "install:ci": "npm ci --no-audit --no-fund",
     "dev": "WRANGLER_LOG_PATH=.wrangler/wrangler.log vite",
     "build": "JAC_HOSTING=cloudflare vinext build",
+    "asistencia": "npm run build && node scripts/attendance-pilot.mjs",
     "build:cloudflare": "JAC_HOSTING=cloudflare vinext build",
     "dev:cloudflare": "JAC_HOSTING=cloudflare vite",
     "deploy:cloudflare": "wrangler deploy --config dist/server/wrangler.json --keep-vars",

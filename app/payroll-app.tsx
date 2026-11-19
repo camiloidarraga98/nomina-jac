@@ -3,7 +3,7 @@ import {clearMediaOffline} from '@/public/jac-media-offline.js';
 import {useState,useEffect,useId,useMemo,lazy,Suspense,type ReactNode,type MouseEvent} from 'react';
 import {Camera,BriefcaseBusiness,Bell,CalendarDays,Users,SlidersHorizontal,FolderClosed,Plus,Music2,LogOut,Download,Check,LockKeyhole,Pencil,Trash2,Truck,Clock,Search,FileText,Wallet,RefreshCw,Printer,Mail} from 'lucide-react';
 import Image from 'next/image';
-import {needsPayrollData,canViewSection,defaultSection,payrollRoute,payrollHref,type PayrollRoute} from '@/lib/payroll-navigation';
+import {attendanceHref,needsPayrollData,canViewSection,defaultSection,payrollRoute,payrollHref,type PayrollRoute} from '@/lib/payroll-navigation';
 const UsersPanel=lazy(()=>import('./users-panel'));
 import AuthForm from './auth-form';
 import {can,hasSection,type AccessUser} from '@/lib/payroll-permissions';
@@ -91,6 +91,10 @@ export default function PayrollApp({initial,user,isOwner,access,agendaCache=null
   if(id&&/^[a-f0-9-]{36}$/.test(id)){navigate(allowed('itinerarios')?'itinerarios':'alertas','shows',periodId,true,'jac-notice='+encodeURIComponent(id));setNoticeId(id);}
   if(calendar){navigate('agenda','shows',periodId,true);if(calendar==='connected')setNotice('Google Calendar conectado. Elige el calendario de Jhon Alex.');else setError(calendarOAuthMessage(params.get('reason')));}
   if(mail){navigate('correos','shows',periodId,true);if(mail==='connected')setNotice('Gmail conectado. Los desprendibles pendientes del cierre se enviarán automáticamente; consulta su estado en Correos.');else setError('No se pudo autorizar Gmail. Vuelve a conectar y elige jacmusicestudios@gmail.com.');}
+ },[]);
+ useEffect(()=>{
+  const changed=(event:StorageEvent)=>{if(event.key==='jac.attendance.session-change')location.replace(attendanceHref);};
+  window.addEventListener('storage',changed);return ()=>window.removeEventListener('storage',changed);
  },[]);
  const title=view==='musica'?'Música':view==='musica'?'Música':view==='fotografia'?'Fotografía':view==='crm'?'CRM · Shows y abonos':view==='gastos'?'Gastos de viaje':view==='notificaciones'?'Notificaciones':view==='conexiones'?'Servicios conectados':view==='configuracion'?'Configuración general':view==='itinerarios'?'Itinerarios':view==='alertas'?'Alertas':view==='agenda'?'Agenda de Jhon Alex':view==='usuarios'?'Usuarios y permisos':view==='cuenta'?'Mi cuenta':view==='personal'?'El equipo JAC':view==='reglas'?'Conceptos y reglas':view==='archivo'?'Quincenas cerradas':view==='correos'?'Envío de desprendibles':hasPeriod?periodLabel(p):'Quincenas';
  const routePeople=routePayees(periodEmployees,p.excludedEmployees);

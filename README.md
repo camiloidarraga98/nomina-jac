@@ -17,6 +17,8 @@ Las pruebas usan bases en memoria y correo simulado. Para vista local usa `npm r
 
 ## Funciones
 
+La cuenta de prueba `admin` abre Asistencia en la web y en el esquema **JAC Asistencia** del proyecto de iPhone y iPad. [Guía del piloto](docs/ATTENDANCE_PILOT.md)
+
 La app nativa de iPhone está en [`ios/`](ios/README.md), con proyecto SwiftUI/Xcode, acceso a las mismas cuentas y funciones de quincenas, pagos, personal, edición, cierres, archivo, usuarios, correo y documentos/impresión. Puede instalarse de forma privada en los tres iPhones registrados de Camilo sin publicarla en App Store. La guía detalla el alcance de esta entrega y la firma desde su Mac.
 
 Personal, tarifas y conceptos editables; shows y ajustes de honorarios; kilometraje compartido y adicional; novedades y siete categorías de horas. Cierres con instantáneas, correcciones con historial y permiso delegable. Eliminación completa de quincenas por el propietario.

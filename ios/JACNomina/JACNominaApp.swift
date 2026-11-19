@@ -65,7 +65,12 @@ struct JACNominaApp: App {
             ZStack {
                 Group {
                     if Self.isUnitTestHost { Color(uiColor: .systemBackground) }
+                    else if Self.attendanceNeedsServer {
+                        ContentUnavailableView("Asistencia de prueba", systemImage: "network.slash",
+                            description: Text("Selecciona un simulador en Xcode o configura JAC_ATTENDANCE_ORIGIN con la dirección HTTPS privada del piloto para este dispositivo."))
+                    }
                     else if store.restoring { ProgressView("Conectando…") }
+                    else if let kiosk = store.attendanceKiosk { AttendanceView(account: kiosk.id).id(kiosk.id) }
                     else if let overview = store.overview { PayrollHomeView(overview: overview, agendaOnly: store.isAgendaOnly) }
                     else if store.hasSavedSession { OfflineStartView() }
                     else { LoginView() }
@@ -78,7 +83,7 @@ struct JACNominaApp: App {
                 }
             }
             .background(WindowPrivacyShield())
-            .modifier(JACWidgetLifecycle(store: store, enabled: Self.widgetIntegrationEnabled))
+            .modifier(JACWidgetLifecycle(store: store, enabled: Self.widgetIntegrationEnabled && store.attendanceKiosk == nil))
             #if DEBUG
             .overlay(alignment: .bottomTrailing) {
                 if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance") {
@@ -90,16 +95,19 @@ struct JACNominaApp: App {
             }
             #endif
             .onOpenURL { url in
+                guard store.allowsExternalDestination else { return }
                 if url.isFileURL { store.receiveAudio(url); return }
                 if JACWidgetNavigation.shared.receive(url) { return }
                 if let share = MediaIncomingShare.parse(url) { incomingShare = share }
             }
             .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                guard store.allowsExternalDestination else { return }
                 if let url = activity.webpageURL, let share = MediaIncomingShare.parse(url) { incomingShare = share }
             }
+            .onChange(of: store.attendanceKiosk?.id) { _, kiosk in if kiosk != nil { incomingShare = nil } }
             .sheet(item: $incomingShare) { share in MediaSharedFolderBrowser(share: share).id(share.id) }
             .task {
-                guard !Self.isUnitTestHost else { return }
+                guard !Self.isUnitTestHost, !Self.attendanceNeedsServer else { return }
                 await store.restore()
                 await store.resumeMediaUploads()
                 store.prefetchMediaRoot()
@@ -133,7 +141,8 @@ struct JACNominaApp: App {
     }
     private static var widgetIntegrationEnabled: Bool {
         #if DEBUG
-        return !Self.isUnitTestHost && !ProcessInfo.processInfo.arguments.contains("--uitest-payroll")
+        let arguments = ProcessInfo.processInfo.arguments
+        return !Self.isUnitTestHost && !arguments.contains("--uitest-payroll") && !arguments.contains("--attendance-local") && Self.attendanceOrigin == nil
         #else
         return true
         #endif
@@ -145,9 +154,33 @@ struct JACNominaApp: App {
         return false
         #endif
     }
+    #if DEBUG
+    private static var attendanceOrigin: URL? {
+        guard let raw = ProcessInfo.processInfo.environment["JAC_ATTENDANCE_ORIGIN"],
+              let url = URL(string: raw), url.scheme == "https", let host = url.host,
+              host.hasSuffix(".local") || host.hasSuffix(".test"),
+              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil, url.path.isEmpty else { return nil }
+        return url
+    }
+    #endif
+
+    private static var attendanceNeedsServer: Bool {
+        #if DEBUG && !targetEnvironment(simulator)
+        return ProcessInfo.processInfo.arguments.contains("--attendance-local") && attendanceOrigin == nil
+        #else
+        return false
+        #endif
+    }
+
     private static func makeStore() -> PayrollStore {
         #if DEBUG
         let arguments = ProcessInfo.processInfo.arguments
+        if let url = attendanceOrigin { return PayrollStore(client: PayrollClient(baseURL: url)) }
+        #if targetEnvironment(simulator)
+        if arguments.contains("--attendance-local") { return PayrollStore(client: PayrollClient(baseURL: URL(string: "http://localhost:8789")!)) }
+        #else
+        if attendanceNeedsServer { return PayrollStore(client: PayrollClient(baseURL: URL(string: "https://asistencia.invalid")!)) }
+        #endif
         if arguments.contains("--uitest-payroll") { return PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"), offline: arguments.contains("--uitest-offline"), slowAgenda: arguments.contains("--uitest-slow-agenda"), persistentAgenda: arguments.contains("--uitest-agenda-cache"), resetAgenda: arguments.contains("--uitest-reset-agenda"))) }
         #endif
         return PayrollStore()

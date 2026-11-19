@@ -1,3 +1,4 @@
+export const attendanceHref='/asistencia/';
 import {hasSection,type AccessUser} from './payroll-permissions';
 // Navigation only: these paths never execute payroll commands.
 export const sectionPaths:Record<string,string>={musica:'/musica',fotografia:'/fotografia',crm:'/crm',gastos:'/gastos-de-viaje',configuracion:'/configuracion',notificaciones:'/configuracion/notificaciones',conexiones:'/configuracion/conexiones',quincena:'/',agenda:'/agenda',itinerarios:'/itinerarios',alertas:'/alertas',personal:'/personal',reglas:'/conceptos',archivo:'/archivo',correos:'/correos',cuenta:'/mi-cuenta',usuarios:'/usuarios'};

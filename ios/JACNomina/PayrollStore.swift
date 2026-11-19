@@ -3,6 +3,18 @@ import Combine
 
 @MainActor
 final class PayrollStore: ObservableObject {
+    #if os(iOS)
+    @Published private(set) var attendanceKiosk: AttendanceIdentity?
+    var allowsExternalDestination: Bool {
+        do { guard attendanceKiosk == nil else { return false }; return try client.savedAttendanceKiosk() == nil }
+        catch { return false }
+    }
+    private func restoreAttendanceKiosk() throws -> Bool {
+        attendanceKiosk = try client.savedAttendanceKiosk()
+        if attendanceKiosk != nil { forgetAgenda(); overview = nil; workspace = nil; pending = nil; notice = nil; return true }
+        return false
+    }
+    #endif
     @Published private(set) var overview: PayrollOverview?
     @Published private(set) var workspace: PayrollWorkspace?
     @Published private(set) var restoring = true
@@ -36,12 +48,23 @@ final class PayrollStore: ObservableObject {
         hasSavedSession = (try? client.hasSession()) == true
         checkingConnection = hasSavedSession
         if hasSavedSession { restoring = false }
-        if let cached = client.cachedWorkspace() {
+        #if os(iOS)
+        // Choose the authenticated kiosk before restoring any workspace or agenda cache.
+        let allowWorkspaceCaches: Bool
+        do { attendanceKiosk = try client.savedAttendanceKiosk(); allowWorkspaceCaches = attendanceKiosk == nil }
+        catch { allowWorkspaceCaches = false }
+        #else
+        let allowWorkspaceCaches = true
+        #endif
+        if allowWorkspaceCaches, let cached = client.cachedWorkspace() {
             workspace = cached; overview = cached.overview
             client.beginOfflineRestore(); restoring = false
         }
         client.onSessionInvalidated = { [weak self] in
             guard let self else { return }
+            #if os(iOS)
+            self.attendanceKiosk = nil
+            #endif
             JACNotifications.shared.stop()
             self.musicPlayer?.stop()
             self.incomingAudio?.files.forEach { $0.remove() }; self.incomingAudio = nil
@@ -55,7 +78,7 @@ final class PayrollStore: ObservableObject {
         // every intermediate cache write and synchronization status update.
         clientChanges = Publishers.CombineLatest3(client.$cacheRevision.removeDuplicates(), client.$syncingOffline.removeDuplicates(), client.$offlineSyncMessage.removeDuplicates())
             .dropFirst().receive(on: RunLoop.main).sink { [weak self] _ in self?.objectWillChange.send() }
-        if let record = client.cachedAgenda(), overview == nil || overview?.user.id == record.user.id {
+        if allowWorkspaceCaches, let record = client.cachedAgenda(), overview == nil || overview?.user.id == record.user.id {
             savedAgenda = record; savedAgendaScope = (try? client.agendaScope())?.id
             // Older installations may have only the calendar cache. Keep that
             // fallback while the new complete copy downloads for the first time.
@@ -144,6 +167,9 @@ final class PayrollStore: ObservableObject {
         do {
             if try client.hasSession() {
                 hasSavedSession = true
+                #if os(iOS)
+                if try restoreAttendanceKiosk() { return }
+                #endif
                 if overview == nil, let cached = client.cachedWorkspace() {
                     client.beginOfflineRestore()
                     workspace = cached; overview = cached.overview
@@ -161,7 +187,11 @@ final class PayrollStore: ObservableObject {
         }
         busy = true; error = nil
         defer { busy = false }
-        do { try await client.login(username: username, password: password, keepSignedIn: keepSignedIn); hasSavedSession = true; try await refresh() }
+        do { try await client.login(username: username, password: password, keepSignedIn: keepSignedIn); hasSavedSession = true
+            #if os(iOS)
+            if try restoreAttendanceKiosk() { return }
+            #endif
+            try await refresh() }
         catch { report(error) }
     }
     func refreshAutomatically() async throws {
@@ -172,6 +202,9 @@ final class PayrollStore: ObservableObject {
         try await task.value
     }
     func refresh() async throws {
+        #if os(iOS)
+        if attendanceKiosk != nil { return }
+        #endif
         guard pending == nil else { throw APIError.message("Conserva o descarta tus cambios pendientes antes de actualizar.") }
         let sessionScope = try client.offlineScope()?.id
         do {
@@ -199,7 +232,7 @@ final class PayrollStore: ObservableObject {
     }
     func resumeMediaUploads() async {
         #if os(iOS)
-        guard !Self.isUnitTestHost else { return }
+        guard attendanceKiosk == nil, !Self.isUnitTestHost else { return }
         let uploads = MediaUploadQueue.shared
         uploads.bind(client)
         if let user = overview?.user, !user.canUploadMedia { uploads.revoke(); return }
@@ -250,6 +283,9 @@ final class PayrollStore: ObservableObject {
         defer { busy = false }
         do { try await client.logout() }
         catch { report(error) }
+        #if os(iOS)
+        attendanceKiosk = nil
+        #endif
         overview = nil
         workspace = nil; pending = nil; notice = nil; hasSavedSession = false
     }

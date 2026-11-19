@@ -1,5 +1,6 @@
 import {runMaintenance} from '../lib/maintenance';
 import {handleBirthdayApi,processBirthdayJobs} from '../lib/fans-birthday';
+import {attendanceBoundary} from '../lib/attendance-http';
 import application from './index';
 
 type DeploymentEnv=Parameters<typeof application.fetch>[1]&{JAC_HOSTING?:string;JAC_READY?:string};
@@ -28,6 +29,7 @@ export default {
     // or expose the CRM. Readiness is a runtime secret set after migration QA;
     // it is deliberately absent from the build configuration and GitHub.
     if(env.JAC_READY!=='1')return new Response('JAC está preparando este entorno. El sitio habitual sigue disponible.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','Retry-After':'3600','X-Robots-Tag':'noindex, nofollow'}});
+    const attendance=await attendanceBoundary(request,env);if(attendance)return attendance;
     // Public fan experience has its own anonymous cookie, bot checks and bounded
     // queue. It never enters the administrative application's authentication.
     if(url.pathname==='/api/fans/cumpleanos')return handleBirthdayApi(request);

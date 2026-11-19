@@ -3,9 +3,14 @@ import {database} from '@/db/raw';
 import {hashPassword,verifyPassword,tokenHash,randomToken,SESSION_SECONDS} from './payroll-auth-crypto';
 import {permissionKeys,defaultPermissionKeys,sectionKeys,type AccessUser,type Permission,type SectionKey} from './payroll-permissions';
 export const OWNER_EMAIL='camilo@mac2you.co';
-export type UserRow={id:string;username:string;email:string;name:string;password_hash:string;owner:number;active:number;itineraries_only?:number;media_only?:number;section_access?:string|null;permissions:string;version:number;created_at:string;updated_at:string};
+export type UserRow={id:string;username:string;email:string;name:string;password_hash:string;owner:number;active:number;itineraries_only?:number;media_only?:number;attendance_role?:"kiosk"|"operator"|null;section_access?:string|null;permissions:string;version:number;created_at:string;updated_at:string};
+export function attendancePilotEnabled(){return (env as typeof env & {JAC_ATTENDANCE_PILOT?:string}).JAC_ATTENDANCE_PILOT==='isolated-local';}
+export function attendancePilotOrigin(url:URL){return attendancePilotEnabled()&&/^(localhost|127\.0\.0\.1|\[::1\]|[\w.-]+\.(test|invalid|local))$/.test(url.hostname);}
+export function attendanceIdentity(row:UserRow){
+ return attendancePilotEnabled() && row.username==='admin' && row.attendance_role==='kiosk' && row.owner===0 ? {id:row.id,role:row.attendance_role,name:row.name} : null;
+}
 export function authKey(){if(!env.PAYROLL_AUTH_KEY)throw new Error('El acceso propio todavía no está preparado.');return env.PAYROLL_AUTH_KEY;}
-export async function ownAuthReady(){return !!await database().prepare('SELECT id FROM payroll_users WHERE owner=1 LIMIT 1').first();}
+export async function ownAuthReady(){return !!await database().prepare(attendancePilotEnabled()?'SELECT id FROM payroll_users WHERE owner=1 OR attendance_role IS NOT NULL LIMIT 1':'SELECT id FROM payroll_users WHERE owner=1 LIMIT 1').first();}
 // Stored separately from ordinary permissions; old clients preserve the role
 // when administrator is omitted. The founder's protected owner row is unchanged.
 export const ADMINISTRATOR_ROLE='administrator';
@@ -24,19 +29,21 @@ async function sessionAccount(token:string){
  if(!/^[A-Za-z0-9_-]{43}$/.test(token))return null;
  return database().prepare('SELECT u.*,s.persistent AS session_persistent FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version WHERE s.id=? AND (s.persistent=1 OR s.expires_at>?) AND u.active=1 AND u.password_hash<>?').bind(tokenHash(token),new Date().toISOString(),'').first<UserRow&{session_persistent:number}>();
 }
-export async function authenticatedSession(token:string){const row=await sessionAccount(token);return row?accessUser(row):null;}
+export async function authenticatedSession(token:string){const row=await sessionAccount(token);return row&&!row.attendance_role?accessUser(row):null;}
+export async function attendanceSession(token:string){const row=await sessionAccount(token);return row?{kiosk:attendanceIdentity(row),restricted:!!row.attendance_role}:null;}
 export async function sessionIsPersistent(token:string){return (await sessionAccount(token))?.session_persistent===1;}
 export async function makeSession(userId:string,persistent=false){
  const token=randomToken(),db=database(),now=new Date().toISOString();
+ const pilotFilter=attendancePilotEnabled() ? " AND (attendance_role IS NULL OR (attendance_role='kiosk' AND username COLLATE BINARY='admin' AND owner=0))" : '';
  const result=await db.batch([
   db.prepare('DELETE FROM payroll_sessions WHERE persistent=0 AND expires_at<=?').bind(now),
-  db.prepare('INSERT INTO payroll_sessions (id,user_id,user_version,expires_at,persistent) SELECT ?,id,version,?,? FROM payroll_users WHERE id=? AND active=1 AND password_hash<>?').bind(tokenHash(token),persistent?'':new Date(Date.now()+SESSION_SECONDS*1000).toISOString(),Number(persistent),userId,'')
+  db.prepare('INSERT INTO payroll_sessions (id,user_id,user_version,expires_at,persistent) SELECT ?,id,version,?,? FROM payroll_users WHERE id=? AND active=1 AND password_hash<>?'+pilotFilter).bind(tokenHash(token),persistent?'':new Date(Date.now()+SESSION_SECONDS*1000).toISOString(),Number(persistent),userId,'')
  ]);
  if(result[1].meta.changes!==1)throw new Error('No se pudo iniciar sesión.');return token;
 }
 export async function revokeSession(token:string,deviceId?:unknown){if(token){if(typeof deviceId==='string'&&/^[a-f0-9-]{36}$/.test(deviceId))await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND session_id=?').bind(deviceId,tokenHash(token)).run();await database().prepare('DELETE FROM payroll_sessions WHERE id=?').bind(tokenHash(token)).run();}}
 export async function rateLimit(req:Request,account:string){const now=Date.now(),slot=Math.floor(now/900000),expires=new Date((slot+2)*900000).toISOString();const ip=req.headers.get('cf-connecting-ip')||'unknown';const keys=[['ip:'+ip,30],['account:'+account,10]] as const;const statements=keys.map(([key])=>database().prepare('INSERT INTO payroll_login_limits (id,count,expires_at) VALUES (?,1,?) ON CONFLICT(id) DO UPDATE SET count=count+1 RETURNING count').bind(tokenHash(key+':'+slot),expires));const rows=await database().batch([...statements,database().prepare('DELETE FROM payroll_login_limits WHERE expires_at<=?').bind(new Date(now).toISOString())]);if(keys.some(([,limit],i)=>Number((rows[i].results[0] as {count:number}|undefined)?.count)>limit))throw new Error('RATE_LIMIT');}
-export async function passwordLogin(username:string,password:string){const row=await database().prepare('SELECT * FROM payroll_users WHERE username=? OR email=? LIMIT 1').bind(username,username).first<UserRow>();const key=authKey();const dummy='scrypt-v1:AAAAAAAAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';const valid=verifyPassword(password,row?.password_hash||dummy,key);return row?.active&&row.password_hash&&valid?row:null;}
+export async function passwordLogin(username:string,password:string){const row=await database().prepare('SELECT * FROM payroll_users WHERE username=? OR email=? LIMIT 1').bind(username,username).first<UserRow>();const key=authKey();const dummy='scrypt-v1:AAAAAAAAAAAAAAAAAAAAAA:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';const valid=verifyPassword(password,row?.password_hash||dummy,key);return row?.active&&row.password_hash&&valid&&(!row.attendance_role||attendancePilotEnabled())?row:null;}
 export async function bootstrapOwner(username:string,password:string){const db=database(),now=new Date().toISOString(),id=crypto.randomUUID(),hash=hashPassword(password,authKey());const result=await db.batch([
  db.prepare('INSERT INTO payroll_users (id,username,email,name,password_hash,owner,active,permissions,created_at,updated_at) SELECT ?,?,?,?, ?,1,1,?,?,? WHERE NOT EXISTS (SELECT 1 FROM payroll_users WHERE owner=1)').bind(id,username,OWNER_EMAIL,'Camilo Idarraga',hash,JSON.stringify(permissionKeys),now,now),
  ...[{username:'luisa',email:'info@jacmusic.co',name:'Luisa'},{username:'paula',email:'contabilidad@jacmusic.co',name:'Paula'}].map(u=>db.prepare('INSERT OR IGNORE INTO payroll_users (id,username,email,name,permissions,created_at,updated_at) SELECT ?,?,?,?,?,?,? WHERE EXISTS (SELECT 1 FROM payroll_users WHERE id=? AND owner=1)').bind(crypto.randomUUID(),u.username===username?u.username+'-jac':u.username,u.email,u.name,JSON.stringify(defaultPermissionKeys),now,now,id))]);if(result[0].meta.changes!==1)throw new Error('El administrador ya fue activado. Inicia sesión con tu contraseña.');return id;}

@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover"><title>Asistencia · JAC Music</title><link rel="stylesheet" href="./style.css"></head>
+<body><header><div class="brand"><span class="monogram">JAC</span><span class="divider"></span>Asistencia</div><nav><button id="operator" hidden>Gestión supervisada</button><button id="lock" hidden>Volver al kiosco</button><button id="logout" hidden>Salir</button></nav></header>
+<main><div class="section-title"><div><p class="eyebrow">JAC MUSIC · PILOTO</p><h1 id="title">Registro de asistencia</h1></div><span id="connection" class="status" role="status">Conectando…</span></div>
+<p id="message" role="status" aria-live="polite"></p>
+<section id="kiosk" hidden><div class="columns"><form id="punchForm" class="card">
+<fieldset><legend>Movimiento</legend><div class="choices"><label><input type="radio" name="movement" value="entry" required checked> Entrada</label><label><input type="radio" name="movement" value="exit"> Salida</label></div></fieldset>
+<label>Empleado de prueba<select id="employee" required><option value="">Selecciona un empleado</option></select></label>
+<label>Método<select id="method"><option value="supervised">Solicitar supervisión presencial</option><option disabled>Comprobación facial 1:1 · pendiente de licencia</option><option value="simulation">Simulación sintética</option><option value="simulation_failed">Simular un fallo</option></select></label>
+<p class="muted" id="methodInfo">El operador revisará la marcación antes de aprobarla.</p>
+<button class="primary" id="punch">Confirmar marcación</button></form>
+<aside class="card"><h2>En este dispositivo</h2><ul id="recent" class="items"></ul><button id="sync" class="subtle">Sincronizar ahora</button></aside></div></section>
+<form id="unlock" class="card narrow" hidden><h2>Gestión supervisada</h2><label>Clave de supervisión<input name="password" type="password" autocomplete="off" required maxlength="512"></label><div class="actions"><button class="primary">Entrar a gestión</button><button type="button" id="cancel">Volver</button></div></form>
+<section id="management" hidden><div class="tabs" aria-label="Gestión"><button id="showPunches" aria-pressed="true">Marcaciones</button><button id="showPeople" aria-pressed="false">Empleados de prueba</button></div>
+<div id="managePunches" class="card"><h2>Revisión de marcaciones</h2><div id="punchList"></div></div>
+<div id="managePeople" class="columns" hidden><section class="card"><h2>Empleados de prueba</h2><ul id="peopleList" class="items"></ul></section><section class="card"><h2>Agregar empleados</h2><form id="personForm"><label>Identificador interno<input name="code" required maxlength="32" pattern="[a-zA-Z0-9_-]{1,32}"></label><label>Nombre de prueba<input name="name" required maxlength="80"></label><button class="primary">Crear empleado</button></form><hr><form id="batchForm"><label>Cantidad de empleados ficticios<input name="count" type="number" min="1" max="30" value="3" required></label><button>Generar lote</button></form></section></div></section>
+</main><script defer src="./storage.js"></script><script defer src="./biometrics.js"></script><script defer src="./app.js"></script></body></html>

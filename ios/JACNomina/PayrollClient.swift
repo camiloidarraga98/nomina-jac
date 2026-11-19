@@ -282,11 +282,16 @@ final class PayrollClient: ObservableObject {
     var accessUser: PayrollUser? { permissionUser }
     private let automaticOfflineSync: Bool
     let agendaCache: AgendaOfflineCache
-    private var cookieName: String { "__Host-jac_session" }
+    private var cookieName: String { baseURL.scheme == "http" ? "jac_session" : "__Host-jac_session" }
     private var origin: String { baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
 
     init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil, offlineCache: OfflineResponseCache? = nil, mediaOffline: MediaOfflineCache? = nil, automaticallyDownloadOffline: Bool? = nil, mediaUploadTransport: MediaUploadTransporting? = nil) {
-        precondition(baseURL.scheme == "https" && baseURL.host != nil && baseURL.path.isEmpty && baseURL.user == nil && baseURL.query == nil)
+        #if DEBUG && targetEnvironment(simulator)
+        let isPilotLoopback = baseURL.scheme == "http" && baseURL.host == "localhost" && baseURL.port == 8789
+        #else
+        let isPilotLoopback = false
+        #endif
+        precondition((isPilotLoopback || baseURL.scheme == "https") && baseURL.host != nil && baseURL.path.isEmpty && baseURL.user == nil && baseURL.query == nil)
         self.baseURL = baseURL
         self.vault = vault ?? KeychainSessionStore(account: baseURL.host!)
         self.mediaUploadTransport = mediaUploadTransport
@@ -414,6 +419,9 @@ final class PayrollClient: ObservableObject {
         if sequence == agendaWriteSequence { rememberedAgenda = (scope.id, generation, record) }
     }
     func clearSession() throws {
+        #if os(iOS)
+        if attendanceTestHost, let scope = try offlineScope() { try KeychainSessionStore(account: "attendance-scope-" + scope.id).clear() }
+        #endif
         invalidateWidgetSnapshot()
         #if os(iOS)
         MediaGridThumbnailLoader.shared.clear()
@@ -906,9 +914,51 @@ final class PayrollClient: ObservableObject {
     }
 
     func login(username: String, password: String, keepSignedIn: Bool = false) async throws {
-        _ = try await request(path: "api/auth", body: .object(["action": .string("login"), "username": .string(username.trimmingCharacters(in: .whitespacesAndNewlines)), "password": .string(password), "keepSignedIn": .bool(keepSignedIn)]))
+        let (loginData, _) = try await request(path: "api/auth", body: .object(["action": .string("login"), "username": .string(username.trimmingCharacters(in: .whitespacesAndNewlines)), "password": .string(password), "keepSignedIn": .bool(keepSignedIn)]))
+        #if os(iOS)
+        struct LoginReply: Decodable { let attendance: AttendanceIdentity? }
+        let profile = try JSONDecoder().decode(LoginReply.self, from: loginData).attendance
+        if attendanceTestHost, let scope = try offlineScope() {
+            let marker = KeychainSessionStore(account: "attendance-scope-" + scope.id)
+            if let profile, profile.role == "kiosk" { try marker.save(profile.id) }
+            else { try marker.clear() }
+        }
+        #endif
         guard try hasSession() else { throw APIError.message("No se pudo guardar la sesión. Intenta de nuevo.") }
     }
+    #if os(iOS)
+    private var attendanceTestHost: Bool {
+        guard let host = baseURL.host else { return false }
+        return host == "localhost" || host == "127.0.0.1" || [".local",".test",".invalid"].contains(where: { host.hasSuffix($0) })
+    }
+    func savedAttendanceKiosk() throws -> AttendanceIdentity? {
+        guard attendanceTestHost else { return nil }
+        guard let scope = try offlineScope(), let id = try KeychainSessionStore(account: "attendance-scope-" + scope.id).load(),
+              UUID(uuidString: id) != nil else { return nil }
+        return AttendanceIdentity(id: id, role: "kiosk", name: "Kiosco")
+    }
+    func attendanceRequest(command: String, data: Data?, ticket: String?) async throws -> (Data, Int) {
+        let commands = ["session","unlock","lock","management","people","retire","punch","review","enrollment-access","status"]
+        guard commands.contains(command), (command == "session") == (data == nil),
+              (data?.count ?? 0) <= 16384, let token = try checkedToken() else { throw APIError.unauthorized }
+        var call = URLRequest(url: resourceURL(path: "api/attendance/" + command, query: []))
+        call.httpShouldHandleCookies = false
+        call.cachePolicy = .reloadIgnoringLocalCacheData
+        call.httpMethod = data == nil ? "GET" : "POST"
+        call.setValue(cookieName + "=" + token, forHTTPHeaderField: "Cookie")
+        call.setValue(origin, forHTTPHeaderField: "Origin")
+        call.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        if let ticket, !ticket.isEmpty { call.setValue(ticket, forHTTPHeaderField: "X-Attendance-Operator") }
+        call.httpBody = data
+        let (bytes, response) = try await session.data(for: call)
+        guard let http = response as? HTTPURLResponse, http.url == call.url, token == (try checkedToken()) else { throw CancellationError() }
+        if http.statusCode == 401 || (command == "session" && http.statusCode == 403) {
+            try clearSession()
+            throw APIError.unauthorized
+        }
+        return (bytes, http.statusCode)
+    }
+    #endif
     func overview() async throws -> PayrollOverview {
         let (data, _) = try await request(path: "api/mobile/payroll")
         return try decoder.decode(PayrollOverview.self, from: data)
