@@ -54,7 +54,7 @@ struct MediaFileRemoved: LocalizedError {
     var errorDescription: String? { "Esta foto o video ya no está disponible. Actualiza la carpeta." }
 }
 
-private final class NoRedirects: NSObject, URLSessionTaskDelegate {
+final class NoRedirects: NSObject, URLSessionTaskDelegate {
     func urlSession(_ session: URLSession, task: URLSessionTask, willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest, completionHandler: @escaping (URLRequest?) -> Void) {
         // Never forward payroll credentials to a redirect destination.
         completionHandler(nil)
@@ -478,6 +478,7 @@ final class PayrollClient: ObservableObject {
     private func allowsResource(_ path: String, query: [URLQueryItem], body: JSONValue? = nil) -> Bool { Self.allowsResource(permissionUser, path: path, query: query, body: body) }
     nonisolated private static func allowsResource(_ permissionUser: PayrollUser?, path: String, query: [URLQueryItem], body: JSONValue? = nil) -> Bool {
         guard let user=permissionUser else {return true}
+        if path == "api/team-attendance/admin" {return user.isOwner && user.hasSection(.crm)}
         if path == "api/mobile/payroll" {return query.contains{$0.name == "workspace"} || user.hasSection(.payroll)}
         if path.hasPrefix("api/payroll/") || path == "api/mobile/gmail" {return user.hasSection(.payroll)}
         if path.hasPrefix("api/calendar") {return user.hasSection(.calendar)}
@@ -574,7 +575,7 @@ final class PayrollClient: ObservableObject {
         return ["api/mobile/payroll", "api/notices", "api/notices/pdf", "api/notices/file", "api/payroll/export", "api/payroll/email", "api/users", "api/expenses", "api/expenses/file", "api/crm", "api/crm/file", "api/mobile/contracts", "api/media"].contains(path)
     }
 
-    private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false, progress:(@MainActor (Int64,Int64)->Void)? = nil, maximumBytes:Int = 0) async throws -> (Data, HTTPURLResponse) {
+    private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false, enrollmentCredential: String? = nil, progress:(@MainActor (Int64,Int64)->Void)? = nil, maximumBytes:Int = 0) async throws -> (Data, HTTPURLResponse) {
         if isAttendancePilot && !(path == "api/auth" && ["login", "logout"].contains(body?["action"].text ?? "")) {
             throw APIError.forbidden("Esta cuenta solo tiene acceso a Asistencia.")
         }
@@ -624,9 +625,15 @@ final class PayrollClient: ObservableObject {
         if let token = sentToken, !(isAttendancePilot && body?["action"].text == "login") {
             guard token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { try clearSession(); throw APIError.unauthorized }
             if nativeBearer {
-                guard path == "api/mobile/contracts" else {throw APIError.invalid("Ruta móvil no disponible.")}
+                guard ["api/mobile/contracts","api/team-attendance/admin"].contains(path) else {throw APIError.invalid("Ruta móvil no disponible.")}
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             } else { request.setValue("\(cookieName)=\(token)", forHTTPHeaderField: "Cookie") }
+        }
+        if let enrollmentCredential {
+            guard nativeBearer, path == "api/team-attendance/admin", body?["action"].text == "enroll" else {
+                throw APIError.invalid("Solicitud de inscripción no válida.")
+            }
+            request.setValue(enrollmentCredential, forHTTPHeaderField: "X-JAC-Kiosk-Token")
         }
         if let body {
             request.httpMethod = "POST"
@@ -2194,3 +2201,14 @@ struct MediaPlaybackPending: LocalizedError {
     let message: String
     var errorDescription: String? { message }
 }
+
+#if os(iOS)
+extension PayrollClient {
+    func sharedAttendanceAdmin(_ body: [String: Any]? = nil, filters: [String: String] = [:], enrollmentCredential: String? = nil) async throws -> Data {
+        guard !isAttendancePilot, try hasSession() else { throw APIError.unauthorized }
+        let payload: JSONValue? = try body.map { try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: $0)) }
+        let query = filters.filter { ["employee","day","cursor","record"].contains($0.key) && !$0.value.isEmpty }.map { URLQueryItem(name:$0.key, value:$0.value) }
+        return try await request(path:"api/team-attendance/admin", query:query, body:payload, forceNetwork:true, nativeBearer:true, enrollmentCredential:enrollmentCredential).0
+    }
+}
+#endif

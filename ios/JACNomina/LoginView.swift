@@ -2,6 +2,9 @@ import SwiftUI
 
 struct LoginView: View {
     @EnvironmentObject private var store: PayrollStore
+    #if os(iOS)
+    @State private var hasTeamKiosk = false
+    #endif
     @State private var username = ""
     @State private var password = ""
     @State private var keepSignedIn = false
@@ -85,7 +88,19 @@ struct LoginView: View {
                         #endif
                     }.padding(22).background(JACTheme.card,in:RoundedRectangle(cornerRadius:24))
                     if !kioskLogin && !store.client.isAttendancePilot {
+                        #if os(iOS)
+                        if hasTeamKiosk {
+                            NavigationLink {
+                                TeamAttendanceView(administrator:nil).navigationTitle("Kiosco de asistencia").jacInlineTitle()
+                            } label: {
+                                Label("Marcar asistencia",systemImage:"person.crop.square").frame(maxWidth:.infinity)
+                            }.buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("attendance.openKiosk")
+                        }
+                        #endif
                         NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() }
+                            #if os(iOS)
+                            .onAppear { hasTeamKiosk=TeamAttendanceDevice.shared.isPaired }
+                            #endif
                             .disabled(busy)
                             .font(.subheadline.weight(.medium)).frame(maxWidth:.infinity).padding(.vertical,4)
                         Text("Usa la misma cuenta que en la web. Acceso exclusivo del equipo autorizado.").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity).multilineTextAlignment(.center)

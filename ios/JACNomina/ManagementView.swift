@@ -71,6 +71,15 @@ struct ManagementView: View {
                     if !administration.isEmpty {
                         Text("Administración").font(.system(.headline,design:.rounded))
                         cards(administration)
+                        #if os(iOS)
+                        if user.isOwner && user.hasSection(.crm) {
+                            NavigationLink {
+                                TeamAttendanceView(administrator:user.id).privacySensitive().navigationTitle("Asistencia").jacInlineTitle()
+                            } label: {
+                                JACAccessCard(title:"Asistencia",subtitle:"Personal, entradas y salidas",symbol:"person.badge.clock",tone:.teal)
+                            }.buttonStyle(.plain).accessibilityIdentifier("management.attendance")
+                        }
+                        #endif
                     }
                     if !preferences.isEmpty {Text("Preferencias y acceso").font(.system(.headline,design:.rounded))
                     VStack(spacing:0) {

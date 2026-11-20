@@ -1,4 +1,18 @@
-# Asistencia de JAC · piloto local
+# Asistencia de JAC
+
+## Historial compartido
+
+En la web abre **Configuración general → Asistencia**. En JACNomina abre **Gestión → Asistencia** con tu cuenta administradora habitual. Ambos consultan la misma base D1. El historial compartido empieza con las nuevas marcaciones. Las marcaciones anteriores del piloto siguen en su dispositivo.
+
+1. En **Personal** crea una ficha por persona con código interno y nombre.
+2. En cada iPad físico inicia sesión como administrador. En **Kioscos** nombra y habilita el dispositivo. En **Personal** confirma la identidad y el consentimiento del participante antes de pulsar **Inscribir rostro** junto a la ficha correcta. Repite la inscripción en el segundo iPad. Los identificadores de ficha e inscripción se comparten. La referencia facial cifrada permanece en el iPad y caduca a los 30 días.
+3. Cierra la sesión administradora y toca **Marcar asistencia**. La persona elige **Entrada** o **Salida** y pulsa **Escanear**. La cámara solicita un giro de cabeza y compara la muestra contra los perfiles inscritos activos. **Verificar con mi código de empleado** permite comprobar además que la coincidencia corresponde a la ficha declarada. La comparación dudosa, múltiple o con otro perfil bloquea la marcación. Un administrador puede comprobar una inscripción con **Verificar perfil**.
+4. **Marcación recibida** indica que el servidor confirmó el registro. Con una lista sincronizada durante las últimas 12 horas, el iPad puede marcar sin red. Guarda una copia cifrada temporal y reintenta mientras el kiosco está abierto. Un UUID identifica cada operación, incluso después de reiniciar. Un registro revocado o en conflicto requiere intervención.
+5. **Marcaciones** muestra la hora del movimiento en Colombia, la hora de recepción y el dispositivo o el supervisor. Filtra por persona y por fecha para consultar el historial. Para una excepción el administrador verifica la identidad en persona y registra el motivo. El panel se actualiza periódicamente. En **Revisar** puedes corregir la hora o el movimiento con motivo y consultar el original y sus revisiones. Retirar el rostro o desactivar una persona invalida sus inscripciones en ambos iPads. Las marcaciones existentes siguen en el historial.
+
+El servidor acepta marcaciones automáticas únicamente de un kiosco habilitado y con una inscripción vigente para esa misma persona y dispositivo. La app firma la marcación con una clave propia de esa inscripción. El servidor verifica la firma y recibe los datos de asistencia. Las fotos, el video y los descriptores faciales permanecen en el iPad. La comparación visual y el giro son controles básicos, con posibles errores y riesgo de engaño. Antes del uso con personal real se requiere una prueba física con consentimiento y la revisión de privacidad aplicable. La supervisión presencial queda disponible como alternativa. La asistencia no produce cambios en nómina.
+
+## Piloto local de desarrollo
 
 La cuenta de prueba `admin` abre el kiosco integrado en **JACNomina**. Tiene acceso al registro de asistencia. Las operaciones de gestión requieren además una clave de operador. Los empleados y las marcaciones del piloto son ficticios.
 
@@ -59,7 +73,7 @@ La hora indicada por el dispositivo y la hora de recepción del servidor se guar
 
 1. En un iPad físico, abre **Gestión supervisada → Empleados de prueba**. Junto a la ficha del voluntario, toca **Registrar rostro**. Con su consentimiento, pulsa **Autorizar y abrir cámara**. Mira de frente, gira un poco la cabeza y vuelve al centro. La app usa la cámara frontal al iniciar esa acción.
 2. En el kiosco, selecciona **Entrada** o **Salida** y el empleado. Si su referencia está disponible, el método **Comparar mi rostro** queda seleccionado. Toca **Confirmar marcación** y sigue las indicaciones de la cámara.
-3. Un parecido suficiente deja la marcación con **Coincidencia visual**. Una comparación dudosa la guarda como **Pendiente de revisión humana**. También puedes elegir **Solicitar supervisión presencial**. Si cancelas o no se consigue capturar una muestra, puedes reintentar sin crear otra marcación.
+3. Un parecido suficiente deja la marcación con **Coincidencia visual**. Una comparación dudosa muestra un aviso y bloquea la marcación facial. También puedes elegir **Solicitar supervisión presencial**. Si cancelas o no se consigue capturar una muestra, puedes reintentar sin crear otra marcación.
 4. **Borrar referencia facial** permite retirar el consentimiento en Gestión. Retirar al empleado también borra su referencia. Cada uno de los dos iPads conserva un historial independiente y requiere su propio registro del rostro.
 
 La cámara solicita una sola cara y obtiene dos vistas frontales separadas por un giro. Vision localiza los ojos para alinear las vistas. JAC compara proporciones de los rasgos, textura y distribución de luz del interior de la cara únicamente con la referencia del empleado seleccionado. El giro es una comprobación básica. Una fotografía o un video pueden engañar al sistema. Luz, postura y cambios de apariencia también pueden afectar el resultado. La semejanza y la aprobación presencial quedan diferenciadas en el historial. El piloto carece de efectos sobre nómina.

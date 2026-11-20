@@ -282,6 +282,7 @@ final class DeviceAttendancePilot {
                 if let previous = try existingFacePunch(body, in: initial) { return try encoded(previous) }
             }
             let person = initial.people[try personIndex(body, initial)]
+            if enroll && person.face != nil {throw Problem(409, "Retira primero la referencia anterior de esta ficha.")}
             guard enroll || person.face != nil else { throw Problem(409, "Este empleado aún no tiene referencia en este dispositivo.") }
             let sample = try await capture(person.name)
             guard try authorized(token) else { throw Problem(401, "La sesión cambió durante la captura.") }
@@ -291,7 +292,14 @@ final class DeviceAttendancePilot {
             let binding = Data(person.id.utf8)
             let result: Row
             if enroll {
-                let box = try AES.GCM.seal(JSONEncoder().encode(sample), using: keyForFace(create: true), authenticating: binding)
+                let key = try keyForFace(create: true)
+                for other in ledger.people where other.active && other.id != person.id {
+                    guard let face = other.face else { continue }
+                    let opened = try AES.GCM.open(AES.GCM.SealedBox(combined:face.sealed),using:key,authenticating:Data(other.id.utf8))
+                    let reference = try JSONDecoder().decode(AttendanceFaceSignature.self,from:opened)
+                    if reference.resembles(sample) {throw Problem(409, "Perfil incorrecto. El rostro ya está asociado a otra ficha.")}
+                }
+                let box = try AES.GCM.seal(JSONEncoder().encode(sample), using: key, authenticating: binding)
                 guard let bytes = box.combined else { throw invalid }
                 ledger.people[i].face = FaceReference(sealed: bytes, expires: Date().addingTimeInterval(30 * 86400))
                 ledger.people[i].revision += 1
@@ -304,7 +312,8 @@ final class DeviceAttendancePilot {
                     let data = try AES.GCM.open(AES.GCM.SealedBox(combined: face.sealed), using: keyForFace(create: false), authenticating: binding)
                     reference = try JSONDecoder().decode(AttendanceFaceSignature.self, from: data)
                 } catch { throw Problem(409, "No se pudo abrir la referencia. Puedes volver a registrarla o elegir supervisión.") }
-                result = try record(body, method: reference.resembles(sample) ? "visual_match" : "visual_review", in: &ledger)
+                guard reference.resembles(sample) else { throw Problem(409, "Perfil incorrecto o lectura inconclusa. No se registró la marcación.") }
+                result = try record(body, method: "visual_match", in: &ledger)
             }
             try saveLedger(ledger)
             return try encoded(result)

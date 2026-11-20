@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>Asistencia · JAC</title>
+    <link rel="stylesheet" href="team.css" />
+    <script defer src="team.js"></script>
+  </head>
+  <body>
+    <main id="admin" hidden>
+      <header class="admin-head">
+        <div class="brand">
+          <b>JAC<span>›</span></b> Asistencia
+        </div>
+        <a id="settings" href="/configuracion">Configuración general</a>
+      </header>
+      <div class="content">
+        <h1>Asistencia del equipo</h1>
+        <nav aria-label="Asistencia">
+          <button data-tab="history" aria-pressed="true">Marcaciones</button
+          ><button data-tab="people">Personal</button><button data-tab="devices">Kioscos</button>
+        </nav>
+        <p id="notice" role="status"></p>
+        <section id="history">
+          <div class="tools">
+            <label>Empleado<select id="filter"></select></label
+            ><label>Fecha en Colombia<input type="date" id="day" /></label
+            ><button id="refresh">Actualizar</button>
+          </div>
+          <div class="scroll">
+            <table>
+              <thead>
+                <tr>
+                  <th>Empleado</th>
+                  <th>Movimiento</th>
+                  <th>Fecha y hora</th>
+                  <th>Origen</th>
+                </tr>
+              </thead>
+              <tbody id="rows"></tbody>
+            </table>
+          </div>
+          <p id="empty"></p>
+          <button hidden id="more">Ver anteriores</button>
+          <details>
+            <summary>Registrar con supervisión presencial</summary>
+            <form id="manual">
+              <label>Empleado<select name="employee" required></select></label
+              ><label
+                >Movimiento<select name="movement">
+                  <option value="entry">Entrada</option>
+                  <option value="exit">Salida</option>
+                </select></label
+              ><label>Motivo<input name="reason" required minlength="3" maxlength="240" /></label
+              ><button class="primary">Confirmar marcación presencial</button>
+            </form>
+          </details>
+        </section>
+        <section id="people" hidden>
+          <form id="add">
+            <label>Código interno<input name="code" required maxlength="32" /></label
+            ><label>Nombre del empleado<input name="name" required maxlength="80" /></label
+            ><button class="primary">Agregar empleado</button>
+          </form>
+          <div id="peopleList"></div>
+        </section>
+        <section id="devices" hidden>
+          <form id="pair" hidden>
+            <label
+              >Nombre de este kiosco<input
+                name="name"
+                placeholder="iPad de recepción"
+                required
+                maxlength="80" /></label
+            ><button class="primary">Habilitar este dispositivo</button>
+          </form>
+          <p>
+            Habilita cada iPad desde Gestión en JACNomina. El kiosco queda disponible en la pantalla de inicio
+            de sesión.
+          </p>
+          <div id="deviceList"></div>
+        </section>
+      </div>
+    </main>
+    <main id="kiosk" hidden>
+      <div class="terminal">
+        <header class="hero">
+          <div class="top">
+            <div class="brand">
+              <b>JAC<span>›</span></b> Asistencia
+            </div>
+            <span id="connection">Conectando…</span>
+          </div>
+          <div class="clock"><strong id="clock"></strong> <small id="period"></small></div>
+          <div id="date"></div>
+        </header>
+        <div class="body">
+          <section id="home">
+            <h1>Marca tu asistencia</h1>
+            <p>Elige tu movimiento y escanea tu rostro.</p>
+            <div class="choices">
+              <button data-move="entry" aria-pressed="true"><span aria-hidden="true">↪</span> Entrada</button
+              ><button data-move="exit" aria-pressed="false">
+                <span aria-hidden="true">↗</span> Salida
+              </button>
+            </div>
+            <div class="lens" aria-hidden="true">
+              <svg
+                viewBox="0 0 64 64"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2.4"
+                stroke-linecap="round"
+              >
+                <path
+                  d="M6 20v-8a6 6 0 0 1 6-6h8m24 0h8a6 6 0 0 1 6 6v8m0 24v8a6 6 0 0 1-6 6h-8m-24 0h-8a6 6 0 0 1-6-6v-8M22 25v4m20-4v4m-10-2v9l-3 1m-6 6q9 7 18 0"
+                />
+              </svg>
+            </div>
+            <button class="primary scan" id="scan">Escanear para marcar entrada</button>
+            <details class="claim" id="claim">
+              <summary>Verificar con mi código de empleado</summary>
+              <label
+                >Código de mi ficha
+                <input
+                  id="claimCode"
+                  maxlength="32"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  placeholder="Código interno"
+              /></label>
+            </details>
+          </section>
+          <section id="outcome" hidden aria-live="polite">
+            <div class="mark" aria-hidden="true">◎</div>
+            <h2 id="outTitle"></h2>
+            <strong id="outName"></strong>
+            <p id="outDetail"></p>
+            <button id="back">Volver al inicio</button>
+          </section>
+        </div>
+        <footer><span id="device">Kiosco JAC</span><button id="help">Pedir supervisión</button></footer>
+        <p id="delivery" role="status"></p>
+      </div>
+    </main>
+    <dialog id="review">
+      <h2>Revisar marcación</h2>
+      <p id="original"></p>
+      <ul id="revisions"></ul>
+      <form id="reviewForm">
+        <label
+          >Movimiento<select name="movement">
+            <option value="entry">Entrada</option>
+            <option value="exit">Salida</option>
+          </select></label
+        ><label>Fecha y hora en Colombia<input type="datetime-local" step="1" name="date" required /></label
+        ><label>Motivo de la revisión<input name="reason" minlength="3" maxlength="240" required /></label>
+        <div class="choices">
+          <button type="button" id="closeReview">Volver</button
+          ><button class="primary">Guardar revisión</button>
+        </div>
+      </form>
+    </dialog>
+    <dialog id="confirmation">
+      <form method="dialog">
+        <h2 id="question"></h2>
+        <p id="explain"></p>
+        <div class="choices">
+          <button value="cancel">Cancelar</button><button value="yes" class="primary">Confirmar</button>
+        </div>
+      </form>
+    </dialog>
+  </body>
+</html>

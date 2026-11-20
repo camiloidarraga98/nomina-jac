@@ -1,8 +1,8 @@
-#if os(iOS) && DEBUG
+#if os(iOS)
 import Foundation
 import Vision
 import CoreVideo
-#if targetEnvironment(simulator)
+#if DEBUG && targetEnvironment(simulator)
 import ImageIO
 
 /// Only bundled illustrations can enter the Xcode rehearsal. The kiosk chooses a sample, never a verdict.
@@ -135,19 +135,35 @@ struct AttendanceFaceSignature: Codable, Sendable {
         texture = bins.map { sqrt($0 / area) }
     }
 
-    func resembles(_ other: Self) -> Bool {
+    private func scores(_ other: Self) -> (tone: Float, texture: Float)? {
         guard texture.count == 16 * 59, other.texture.count == texture.count,
-              !tones.isEmpty, other.tones.count == tones.count else { return false }
+              !tones.isEmpty, other.tones.count == tones.count else { return nil }
         if let a = proportions, let b = other.proportions {
-            guard a.count == 5, b.count == 5 else { return false }
-            // Distances are expressed in eye spacings, independently of the camera distance.
+            guard a.count == 5, b.count == 5 else { return nil }
             let drift = zip(a, b).map { abs($0.0 - $0.1) }
-            guard drift.allSatisfy({ $0 < 0.20 }), drift.reduce(0, +) < 0.48 else { return false }
-        } else if proportions != nil || other.proportions != nil { return false }
-        let toneCorrelation = zip(tones, other.tones).reduce(Float(0)) { $0 + $1.0 * $1.1 }
-        let textureOverlap = zip(texture, other.texture).reduce(Float(0)) { $0 + $1.0 * $1.1 }
-        // Conservative pilot cutoffs on aligned inner-face images. They are not calibrated accuracy rates.
-        return toneCorrelation >= 0.88 && textureOverlap >= 0.84
+            guard drift.allSatisfy({ $0 < 0.20 }), drift.reduce(0, +) < 0.48 else { return nil }
+        } else if proportions != nil || other.proportions != nil { return nil }
+        let tone = zip(tones, other.tones).reduce(Float(0)) { $0 + $1.0 * $1.1 }
+        let overlap = zip(texture, other.texture).reduce(Float(0)) { $0 + $1.0 * $1.1 }
+        guard tone.isFinite, overlap.isFinite else { return nil }
+        return (tone, overlap)
+    }
+
+    func resembles(_ other: Self) -> Bool {
+        guard let score = scores(other) else { return false }
+        return score.tone >= 0.88 && score.texture >= 0.84
+    }
+
+    /// For an open set, both the absolute similarity and separation from other references matter.
+    func identified(in references: [String: Self]) -> String? {
+        let ranked = references.compactMap { item -> (id: String, rank: Float, eligible: Bool)? in
+            guard let score = scores(item.value) else { return nil }
+            return (item.key, 0.65 * score.tone + 0.35 * score.texture,
+                    score.tone >= 0.92 && score.texture >= 0.87)
+        }.sorted { $0.rank > $1.rank }
+        guard let best = ranked.first, best.eligible else { return nil }
+        if ranked.count > 1, best.rank - ranked[1].rank < 0.045 { return nil }
+        return best.id
     }
 }
 #endif

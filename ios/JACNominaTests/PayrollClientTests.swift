@@ -3189,6 +3189,10 @@ final class PayrollClientTests: XCTestCase {
         let other = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels(variant: 1)))
         XCTAssertTrue(reference.resembles(brighter))
         XCTAssertFalse(reference.resembles(other))
+        XCTAssertEqual(brighter.identified(in:["primera":reference,"otra":other]), "primera")
+        XCTAssertNil(brighter.identified(in:["primera":reference,"duplicada":reference]))
+        XCTAssertNil(brighter.identified(in:["otra":other]))
+        XCTAssertNil(brighter.identified(in:[:]))
         XCTAssertNil(AttendanceFaceSignature(alignedPixels: Array(repeating: 128, count: side * side)))
         var turn = AttendanceFaceTurn()
         XCTAssertNil(turn.observe(yaw: 0, at: 10) { reference })
@@ -3240,9 +3244,8 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertEqual(retried["stored_at"] as? String, match["stored_at"] as? String)
         punch["id"] = UUID().uuidString
         punch["movement"] = "exit"
-        let doubtful = try await camera("face-punch", punch, nil, 200) { _ in other }
-        XCTAssertEqual(doubtful["state"] as? String, "pending")
-        XCTAssertEqual(doubtful["method"] as? String, "visual_review")
+        let doubtful = try await camera("face-punch", punch, nil, 409) { _ in other }
+        XCTAssertTrue((doubtful["error"] as? String)?.contains("Perfil incorrecto") == true)
         person["revision"] = 2
         _ = try await request("face-remove", person, nil, 403)
         punch["id"] = UUID().uuidString

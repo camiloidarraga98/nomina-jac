@@ -19,7 +19,10 @@
     generation = 0;
   const labelMove = value => value === 'entry' ? 'Entrada' : 'Salida';
   const deviceOnly = () => identity?.mode === 'device';
-  const connectedLabel = () => deviceOnly() ? 'Prueba en este dispositivo' : 'Conectado';
+  const connectedLabel = () => {
+    document.getElementById('sharedHistoryHint').hidden = !deviceOnly();
+    return deviceOnly() ? 'Prueba en este dispositivo' : 'Conectado';
+  };
   const savedTime = row => deviceOnly() ? row.stored_at : row.received_at;
   const demoOutcomes = {simulation: 'Coincidencia de prueba', simulation_failed: 'Rostros de prueba distintos'};
   const localDate = value => new Date(value).toLocaleString('es-CO', {

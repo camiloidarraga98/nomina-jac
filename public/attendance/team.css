@@ -1,0 +1,409 @@
+:root {
+  font:
+    16px/1.45 -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    sans-serif;
+  color: #17374b;
+  background: #eff4f7;
+  --line: #cfdee5;
+  --sub: #456277;
+  --blue: #006a9e;
+  --pale: #e7f3f8;
+}
+* {
+  box-sizing: border-box;
+}
+[hidden] {
+  display: none !important;
+}
+body {
+  margin: 0;
+}
+h1,
+h2,
+p {
+  margin: 0;
+}
+h1,
+h2 {
+  font-weight: 620;
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+h1 {
+  font-size: clamp(26px, 4vw, 36px);
+}
+h2 {
+  font-size: 25px;
+}
+p {
+  color: var(--sub);
+}
+button,
+input,
+select {
+  font: inherit;
+}
+button,
+select,
+input {
+  min-height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 0.55rem 0.85rem;
+  background: white;
+  color: inherit;
+}
+button {
+  cursor: pointer;
+  font-weight: 550;
+}
+button:disabled {
+  opacity: 0.55;
+  cursor: wait;
+}
+button:focus-visible,
+a:focus-visible,
+input:focus-visible,
+select:focus-visible,
+summary:focus-visible {
+  outline: 3px solid #038cb9;
+  outline-offset: 2px;
+}
+button.primary {
+  background: var(--blue);
+  color: white;
+  border-color: var(--blue);
+}
+a {
+  color: var(--blue);
+}
+.admin-head,
+.top,
+.brand,
+footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.admin-head,
+.hero {
+  color: white;
+  background: #0b3246;
+}
+.brand {
+  justify-content: flex-start;
+}
+.brand b {
+  font-size: 24px;
+  letter-spacing: -1.5px;
+  padding-right: 12px;
+  border-right: 1px solid #648190;
+}
+.brand span {
+  color: #60cff1;
+}
+.admin-head {
+  padding: 12px max(18px, calc((100% - 1020px) / 2));
+}
+.admin-head a {
+  color: #e2f4fb;
+}
+.content {
+  max-width: 1060px;
+  padding: 28px 20px;
+  margin: auto;
+}
+.content nav,
+.tools,
+.content form,
+.choices,
+.item,
+.item-actions {
+  display: flex;
+  gap: 10px;
+  align-items: end;
+  flex-wrap: wrap;
+}
+.content nav {
+  margin: 20px 0 10px;
+  border-bottom: 1px solid var(--line);
+  padding-bottom: 8px;
+}
+.content nav button {
+  background: transparent;
+  border: 0;
+}
+.content nav button[aria-pressed='true'],
+.choices button[aria-pressed='true'] {
+  background: var(--pale);
+  color: var(--blue);
+  box-shadow: inset 0 0 0 1.5px var(--blue);
+}
+.content section {
+  background: #fff;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px;
+}
+.content label {
+  display: grid;
+  gap: 4px;
+  font-size: 0.88rem;
+  color: var(--sub);
+}
+#notice:not(:empty) {
+  margin: 12px 0;
+}
+.scroll {
+  overflow: auto;
+}
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 18px 0;
+}
+th,
+td {
+  padding: 11px 8px;
+  text-align: left;
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+}
+th {
+  font-size: 0.82rem;
+  color: var(--sub);
+}
+td small,
+.item small {
+  display: block;
+  color: var(--sub);
+}
+details {
+  margin-top: 20px;
+}
+summary {
+  cursor: pointer;
+  color: var(--blue);
+  min-height: 44px;
+}
+.item {
+  justify-content: space-between;
+  align-items: center;
+  padding: 15px 0;
+  border-bottom: 1px solid var(--line);
+}
+.item-actions {
+  align-items: center;
+  gap: 6px;
+}
+.item-actions button {
+  font-size: 0.84rem;
+}
+.tools + .scroll {
+  min-height: 80px;
+}
+dialog {
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  max-width: min(92vw, 480px);
+  color: inherit;
+  padding: 24px;
+}
+dialog p {
+  margin: 14px 0;
+}
+dialog::backdrop {
+  background: #10293985;
+}
+#kiosk {
+  min-height: 100dvh;
+  padding: clamp(12px, 4vh, 48px) 14px;
+  display: grid;
+  place-items: center;
+}
+.terminal {
+  width: min(100%, 560px);
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: #fcfcfa;
+  box-shadow: 0 12px 36px #133d4c12;
+  overflow: hidden;
+}
+.hero {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  padding: 24px 30px;
+  background: linear-gradient(116deg, #0b283b, #103c53);
+}
+.hero:after {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  right: -90px;
+  bottom: -130px;
+  width: 270px;
+  height: 245px;
+  border: 1px solid #5c99ac55;
+  border-radius: 48%;
+  box-shadow:
+    0 0 0 22px #5c99ac10,
+    0 0 0 46px #5c99ac12,
+    0 0 0 70px #5c99ac0f;
+  transform: rotate(-25deg);
+}
+#connection {
+  font-size: 0.82rem;
+  color: #dfedf1;
+}
+#connection:before {
+  content: '';
+  display: inline-block;
+  width: 8px;
+  height: 8px;
+  background: #e9bf79;
+  border-radius: 50%;
+  margin-right: 6px;
+}
+#connection.online:before {
+  background: #86e2bb;
+}
+.clock {
+  margin: 18px 0 2px;
+  line-height: 1;
+}
+.clock strong {
+  font-size: clamp(48px, 9vw, 68px);
+  font-weight: 530;
+  letter-spacing: -3px;
+  font-variant-numeric: tabular-nums;
+}
+.clock small,
+#date {
+  color: #cce1e9;
+}
+.body {
+  padding: 26px 30px;
+}
+.body h1 {
+  font-size: clamp(25px, 4vw, 32px);
+}
+.body p {
+  margin-top: 7px;
+}
+.choices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  margin: 18px 0 8px;
+}
+.choices button {
+  min-height: 50px;
+}
+.lens {
+  display: grid;
+  place-items: center;
+  min-height: 128px;
+  background: radial-gradient(ellipse at center, var(--pale), transparent 65%);
+  color: var(--blue);
+}
+.lens svg {
+  width: 62px;
+}
+.scan {
+  width: 100%;
+  min-height: 53px;
+}
+footer {
+  padding: 10px 28px;
+  border-top: 1px solid var(--line);
+  color: var(--sub);
+  font-size: 0.9rem;
+}
+#help,
+#back {
+  border: 0;
+  background: transparent;
+  color: var(--blue);
+}
+#delivery:not(:empty) {
+  padding: 0 28px 12px;
+  font-size: 0.82rem;
+}
+#outcome {
+  text-align: center;
+  min-height: 285px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 8px;
+}
+.mark {
+  color: var(--blue);
+  font-size: 40px;
+}
+#outName {
+  font-size: 20px;
+}
+@media (max-width: 520px) {
+  .content {
+    padding: 18px 10px;
+  }
+  .content section {
+    padding: 12px;
+  }
+  th,
+  td {
+    font-size: 0.84rem;
+    padding: 8px 5px;
+  }
+  .body,
+  .hero {
+    padding: 21px;
+  }
+  .admin-head {
+    font-size: 0.88rem;
+  }
+  .item {
+    align-items: flex-start;
+  }
+  #kiosk {
+    padding: 8px;
+  }
+}
+
+.claim {
+  margin: 6px 0 -8px;
+  color: var(--sub);
+  font-size: 0.85rem;
+}
+.claim summary {
+  display: list-item;
+  min-height: 36px;
+  padding: 8px 0;
+}
+.claim label {
+  display: grid;
+  gap: 4px;
+  padding-bottom: 10px;
+}
+
+#review label {
+  display: grid;
+  gap: 4px;
+  margin: 10px 0;
+}
+#review ul {
+  padding-left: 18px;
+}
+td .review-link {
+  display: block;
+  min-height: 32px;
+  border: 0;
+  color: var(--blue);
+  background: transparent;
+  padding: 4px 0;
+  font-size: 0.86rem;
+}
