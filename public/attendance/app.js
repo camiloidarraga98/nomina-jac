@@ -200,7 +200,7 @@
     else $('methodInfo').textContent = 'El operador revisará la marcación antes de aprobarla.';
   }
   $('employee').onchange = () => { if (deviceOnly()) updateFaceMethod(true); };
-  async function useCamera(command, payload, operator = false) {
+  async function captureWithCamera(command, payload, operator = false) {
     if (cameraBusy) throw Error('Ya hay una captura en curso.');
     cameraBusy = true;
     try { return await api(command, payload, operator); }
@@ -353,7 +353,7 @@
       if (deviceOnly() && $('method').value === 'face') {
         const request = {account: identity.id, id: crypto.randomUUID(), employee, revision: person.revision, device, movement, device_time: new Date().toISOString()};
         let receipt;
-        try { receipt = await useCamera('face-punch', request); }
+        try { receipt = await captureWithCamera('face-punch', request); }
         catch (error) {
           // A native commit can finish just before WebKit loses its reply.
           if (sameAccount()) receipt = (await api('device-recent', {})).records.find(p => p.id === request.id);
@@ -462,20 +462,31 @@
       if (!p.active || !deviceOnly()) li.append(el('small', p.active ? enrolled ? 'Muestra sintética local · caduca en 24 h' : 'Sin muestra sintética' : 'Inactivo'));
       if (p.active) {
         const actions = el('div', '', 'actions');
-        if (deviceOnly() && (identity.faceCamera || enrolled)) actions.append(button(enrolled ? 'Borrar referencia facial' : 'Registrar rostro', async () => {
+        if (deviceOnly() && (identity.faceCamera || enrolled)) {
           const body = {employee: p.id, revision: p.revision};
-          if (enrolled) {
-            if (!confirm('¿Borrar la referencia facial de ' + p.name + ' de este dispositivo?')) return;
-            await api('face-remove', body, true);
-          } else {
-            if (!confirm('¿La persona que participa como ' + p.name + ' autoriza guardar su referencia facial en este dispositivo durante 30 días? Puede borrarse en Gestión. La supervisión presencial sigue disponible.')) return;
-            await useCamera('face-enroll', {...body, consent: true}, true);
-          }
-          if (ticket !== activeTicket) return;
-          await loadManagement();
-          await refresh();
-          say(enrolled ? 'Referencia facial borrada.' : 'Rostro registrado en este dispositivo.');
-        }));
+          const updateFace = async () => {
+            if (activeTicket !== ticket) return;
+            if (enrolled) await api('face-remove', body, true);
+            else await captureWithCamera('face-enroll', {...body, consent: true}, true);
+            if (activeTicket !== ticket) return;
+            await loadManagement();
+            await refresh();
+            say(enrolled ? 'Referencia facial borrada.' : 'Rostro registrado en este dispositivo.');
+          };
+          actions.append(button(enrolled ? 'Borrar referencia facial' : 'Registrar rostro', async () => {
+            if (enrolled) {
+              if (confirm('¿Borrar la referencia facial de ' + p.name + ' de este dispositivo?')) await updateFace();
+            } else if (!li.querySelector('.face-consent')) {
+              const consent = el('div', '', 'face-consent');
+              const start = button('Autorizar y abrir cámara', updateFace);
+              const buttons = el('div', '', 'actions');
+              buttons.append(start, button('Cancelar', () => consent.remove()));
+              consent.append(el('p', p.name + ', ¿autorizas guardar una referencia de tu rostro en este dispositivo durante 30 días para esta prueba? Puedes borrarla en Gestión o elegir supervisión presencial.'), buttons);
+              li.append(consent);
+              start.focus();
+            }
+          }));
+        }
         if (!deviceOnly()) actions.append(button(enrolled ? 'Borrar muestra' : 'Enrolar muestra sintética', async () => {
           await api('enrollment-access', {
             employee: p.id,

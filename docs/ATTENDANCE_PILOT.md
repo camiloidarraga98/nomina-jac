@@ -48,7 +48,7 @@ La hora indicada por el dispositivo y la hora de recepción del servidor se guar
 
 ## Comparación facial en el piloto del iPad
 
-1. En un iPad físico, abre **Gestión supervisada → Empleados de prueba**. Junto a la ficha del voluntario, toca **Registrar rostro** con su consentimiento. Mira de frente, gira un poco la cabeza y vuelve al centro. La app usa la cámara frontal al iniciar esa acción.
+1. En un iPad físico, abre **Gestión supervisada → Empleados de prueba**. Junto a la ficha del voluntario, toca **Registrar rostro**. Con su consentimiento, pulsa **Autorizar y abrir cámara**. Mira de frente, gira un poco la cabeza y vuelve al centro. La app usa la cámara frontal al iniciar esa acción.
 2. En el kiosco, selecciona **Entrada** o **Salida** y el empleado. Si su referencia está disponible, el método **Comparar mi rostro** queda seleccionado. Toca **Confirmar marcación** y sigue las indicaciones de la cámara.
 3. Un parecido suficiente deja la marcación con **Coincidencia visual**. Una comparación dudosa la guarda como **Pendiente de revisión humana**. También puedes elegir **Solicitar supervisión presencial**. Si cancelas o no se consigue capturar una muestra, puedes reintentar sin crear otra marcación.
 4. **Borrar referencia facial** permite retirar el consentimiento en Gestión. Retirar al empleado también borra su referencia. Cada uno de los dos iPads conserva un historial independiente y requiere su propio registro del rostro.

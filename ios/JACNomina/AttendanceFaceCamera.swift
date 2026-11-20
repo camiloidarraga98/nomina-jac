@@ -164,8 +164,8 @@ final class AttendanceFaceCamera: UIViewController {
     static func collect(for name: String, from presenter: UIViewController, stillAllowed: () -> Bool) async throws -> AttendanceFaceSignature {
         guard let camera = frontCamera else { throw APIError.message("Para comparar un rostro, usa un dispositivo con cámara frontal. Puedes elegir supervisión.") }
         guard await AVCaptureDevice.requestAccess(for: .video) else { throw APIError.message("Para usar la comparación habilita Cámara en Ajustes de JAC. También puedes elegir supervisión.") }
-        guard stillAllowed(), presenter.viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive,
-              presenter.presentedViewController == nil else { throw APIError.message("Vuelve al kiosco e intenta de nuevo.") }
+        guard stillAllowed(), let scene = presenter.viewIfLoaded?.window?.windowScene,
+              [.foregroundActive, .foregroundInactive].contains(scene.activationState), presenter.presentedViewController == nil else { throw APIError.message("Vuelve al kiosco e intenta de nuevo.") }
         return try await withCheckedThrowingContinuation { continuation in
             let screen = AttendanceFaceCamera()
             screen.modalPresentationStyle = .overFullScreen
