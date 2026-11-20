@@ -108,16 +108,31 @@ private final class AttendanceFaceStream: NSObject, AVCaptureVideoDataOutputSamp
         lastInstruction = message
         DispatchQueue.main.async { self.instruction(message) }
     }
+    private func headTurn(of face: VNFaceObservation) -> Double? {
+        let measured = face.yaw?.doubleValue
+        if let measured, abs(measured) >= 0.15 { return measured }
+        // Some Vision revisions give a frontal bin or nil on modest turns. The nose moves
+        // sideways relative to the midpoint of the eyes as the participant turns.
+        func centerX(_ region: VNFaceLandmarkRegion2D?) -> Double? {
+            guard let region, region.pointCount > 0 else { return nil }
+            return region.normalizedPoints.reduce(0) { $0 + Double($1.x) } / Double(region.pointCount)
+        }
+        guard let marks = face.landmarks, let left = centerX(marks.leftEye), let right = centerX(marks.rightEye),
+              let nose = centerX(marks.nose), abs(right - left) > 0.1 else { return measured }
+        let offset = atan(2 * (nose - (left + right) / 2) / abs(right - left))
+        return measured == nil || abs(offset) > 0.28 ? offset : measured
+    }
+
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let now = ProcessInfo.processInfo.systemUptime
         guard !finished, now - lastFrame > 0.12, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
         if now - lastFrame > 1.2 { turn = AttendanceFaceTurn() }
         lastFrame = now
         let request = VNDetectFaceLandmarksRequest()
-        do { try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up).perform([request]) }
+        do { try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:]).perform([request]) }
         catch { turn = AttendanceFaceTurn(); guide("Busca buena luz y mira a la cámara."); return }
         let faces = request.results ?? []
-        guard faces.count == 1, let face = faces.first, face.boundingBox.width >= 0.18, let yaw = face.yaw?.doubleValue else {
+        guard faces.count == 1, let face = faces.first, face.boundingBox.width >= 0.18, let yaw = headTurn(of: face) else {
             turn = AttendanceFaceTurn()
             guide(faces.count > 1 ? "Debe aparecer una sola persona." : "Acércate y mira de frente con buena luz.")
             return

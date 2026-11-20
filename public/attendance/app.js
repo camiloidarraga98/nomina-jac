@@ -190,9 +190,10 @@
     const person = roster.find(p => p.id === $('employee').value);
     const available = identity.faceCamera && person?.hasFace;
     const choice = $('method').querySelector('option[value="face"]');
+    const wasAvailable = !choice.disabled;
     choice.disabled = !available;
     if (!available) $('method').value = 'supervised';
-    else if (selectedEmployeeChanged) $('method').value = 'face';
+    else if (selectedEmployeeChanged || !wasAvailable) $('method').value = 'face';
     if (!identity.faceCamera) $('methodInfo').textContent = 'La comparación necesita la cámara frontal de un iPhone o iPad físico. Aquí puedes usar supervisión.';
     else if (person && !person.hasFace) $('methodInfo').textContent = 'Este empleado aún no tiene rostro registrado en este dispositivo. Puedes marcar con supervisión.';
     else if ($('method').value === 'face') $('methodInfo').textContent = 'La cámara comparará tu rostro con tu referencia en este dispositivo.';

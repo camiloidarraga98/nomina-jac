@@ -3161,15 +3161,32 @@ final class PayrollClientTests: XCTestCase {
 
     #if os(iOS) && DEBUG
     @MainActor func testLocalVisualAttendanceUsesOnlyTheSelectedReference() async throws {
-        // Synthetic aligned intensity fields exercise the matcher without capturing a person.
+        // Analytic fixtures with aligned eyes, a nose and a mouth. No photographs or identities.
         let side = AttendanceFaceSignature.side
-        let pixels: [Float] = (0..<(side * side)).map { i in
-            let x = Float(i % side), y = Float(i / side)
-            return 120 + 38 * sin(x / 6) + 34 * cos((x + y) / 9)
+        func pixels(variant: Double, light: Double = 0) -> [Float] {
+            (0..<(side * side)).map { i in
+                let x = Double(i % side), y = Double(i / side)
+                func spot(_ cx: Double, _ cy: Double, _ w: Double, _ h: Double) -> Double {
+                    let dx = (x - cx) / w, dy = (y - cy) / h
+                    return exp(-0.5 * (dx * dx + dy * dy))
+                }
+                var v = 145 + light + 51 * spot(32, 32, 16, 23)
+                for eye in [19.0, 45.0] {
+                    v -= 56 * spot(eye, 23, 4 + variant * 1.3, 2)
+                    v -= 34 * spot(eye, 19 - variant, 5.4, 1.2)
+                    v += 25 * spot(eye + 1, 26, 6, 2.4)
+                }
+                v += 25 * spot(32, 30, 2.3 + 2 * variant, 5)
+                for sign in [-1.0, 1.0] {
+                    v -= 30 * spot(32 + sign * (3 + 2 * variant), 36 + variant * 3, 1.8, 1.6)
+                }
+                v -= 66 * spot(32, 44 + variant * 5, 6 + variant * 3, 1.7 + variant * 0.7)
+                return Float(v)
+            }
         }
-        let reference = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels))
-        let brighter = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels.map { $0 + 18 }))
-        let other = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels.map { 240 - $0 }))
+        let reference = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels(variant: 0)))
+        let brighter = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels(variant: 0, light: 18)))
+        let other = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels(variant: 1)))
         XCTAssertTrue(reference.resembles(brighter))
         XCTAssertFalse(reference.resembles(other))
         XCTAssertNil(AttendanceFaceSignature(alignedPixels: Array(repeating: 128, count: side * side)))
@@ -3208,6 +3225,11 @@ final class PayrollClientTests: XCTestCase {
         _ = try await camera("face-enroll", person, ticket, 400, noCapture)
         person["consent"] = true
         _ = try await camera("face-enroll", person, ticket, 200) { _ in reference }
+        let roster = try await request("management", [:], ticket)
+        let people = try XCTUnwrap(roster["people"] as? [[String: Any]])
+        let displayed = try XCTUnwrap(people.first(where: { $0["id"] as? String == employee }))
+        XCTAssertEqual(displayed["hasFace"] as? Bool, true)
+        XCTAssertNil(displayed["face"])
         let device = UUID().uuidString
         var punch: [String: Any] = ["id":UUID().uuidString, "account":DeviceAttendancePilot.account, "employee":employee,
                                     "revision":2, "device":device, "device_time":"2026-11-20T12:00:00.000Z", "movement":"entry", "method":"visual_match"]

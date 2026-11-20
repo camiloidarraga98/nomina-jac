@@ -1,4 +1,4 @@
-/* Local provider boundary. This pilot accepts synthetic markers only. No camera or image inputs. */
+/* The web and private-server simulation uses synthetic markers. Camera capture belongs to the native device pilot. */
 window.AttendanceBiometrics = Object.freeze({
   realAvailable: false,
   async enroll(store, employee) {

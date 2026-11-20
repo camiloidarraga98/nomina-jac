@@ -7,6 +7,7 @@ import CoreVideo
 struct AttendanceFaceSignature: Codable, Sendable {
     let texture: [Float]
     let tones: [Float]
+    private var proportions: [Float]?
     static let side = 64
     // Uniform local binary patterns. Non-uniform patterns share the last bin.
     private static let patternBins: [Int] = {
@@ -24,8 +25,9 @@ struct AttendanceFaceSignature: Codable, Sendable {
               left.pointCount > 0, right.pointCount > 0,
               CVPixelBufferGetPixelFormatType(buffer) == kCVPixelFormatType_32BGRA else { return nil }
         let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        let imageSize = CGSize(width: width, height: height)
         func eye(_ region: VNFaceLandmarkRegion2D) -> CGPoint {
-            let points = region.pointsInImage(imageSize: CGSize(width: width, height: height))
+            let points = region.pointsInImage(imageSize: imageSize)
             let x = points.reduce(0) { $0 + $1.x } / CGFloat(points.count)
             let y = points.reduce(0) { $0 + $1.y } / CGFloat(points.count)
             return CGPoint(x: x, y: CGFloat(height) - y)
@@ -53,7 +55,24 @@ struct AttendanceFaceSignature: Codable, Sendable {
                 pixels[y * side + x] = Float((1 - fy) * top + fy * bottom)
             }
         }
-        return Self(alignedPixels: pixels)
+        guard var result = Self(alignedPixels: pixels), let nose = marks.nose, let mouth = marks.outerLips,
+              let jaw = marks.faceContour else { return nil }
+        let squareSpan = dx * dx + dy * dy
+        func dimensions(_ region: VNFaceLandmarkRegion2D) -> (width: Float, depth: Float)? {
+            guard region.pointCount >= 2 else { return nil }
+            var minX = CGFloat.infinity, maxX = -CGFloat.infinity, sumY: CGFloat = 0
+            for point in region.pointsInImage(imageSize: imageSize) {
+                let x = point.x - eyes[0].x, y = CGFloat(height) - point.y - eyes[0].y
+                let along = (x * dx + y * dy) / squareSpan
+                minX = min(minX, along)
+                maxX = max(maxX, along)
+                sumY += (-x * dy + y * dx) / squareSpan
+            }
+            return (Float(maxX - minX), Float(sumY / CGFloat(region.pointCount)))
+        }
+        guard let n = dimensions(nose), let m = dimensions(mouth), let j = dimensions(jaw) else { return nil }
+        result.proportions = [n.width, n.depth, m.width, m.depth, j.width]
+        return result
     }
 
     init?(alignedPixels pixels: [Float]) {
@@ -92,6 +111,12 @@ struct AttendanceFaceSignature: Codable, Sendable {
     func resembles(_ other: Self) -> Bool {
         guard texture.count == 16 * 59, other.texture.count == texture.count,
               !tones.isEmpty, other.tones.count == tones.count else { return false }
+        if let a = proportions, let b = other.proportions {
+            guard a.count == 5, b.count == 5 else { return false }
+            // Distances are expressed in eye spacings, independently of the camera distance.
+            let drift = zip(a, b).map { abs($0.0 - $0.1) }
+            guard drift.allSatisfy({ $0 < 0.20 }), drift.reduce(0, +) < 0.48 else { return false }
+        } else if proportions != nil || other.proportions != nil { return false }
         let toneCorrelation = zip(tones, other.tones).reduce(Float(0)) { $0 + $1.0 * $1.1 }
         let textureOverlap = zip(texture, other.texture).reduce(Float(0)) { $0 + $1.0 * $1.1 }
         // Conservative pilot cutoffs on aligned inner-face images. They are not calibrated accuracy rates.
