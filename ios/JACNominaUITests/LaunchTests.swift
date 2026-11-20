@@ -768,8 +768,10 @@ final class LaunchTests: XCTestCase {
         supervisor.tap()
         supervisor.typeText("gestion-demo")
         view.buttons["Entrar a gestión"].tap()
-        XCTAssertTrue(view.buttons["Empleados de prueba"].waitForExistence(timeout: 10))
-        view.buttons["Empleados de prueba"].tap()
+        XCTAssertTrue(view.staticTexts["Gestión de asistencia"].waitForExistence(timeout: 10))
+        let peopleTab = view.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Empleados de prueba")).firstMatch
+        XCTAssertTrue(peopleTab.waitForExistence(timeout: 5))
+        peopleTab.tap()
         XCTAssertTrue(view.buttons["Crear empleado"].waitForExistence(timeout: 5))
         view.buttons["Salir"].tap()
         XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout: 10))
