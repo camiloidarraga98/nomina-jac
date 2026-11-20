@@ -45,6 +45,7 @@ async function api(payload, params = {}) {
   const result = await response.json();
   if (!response.ok) {
     if ([401, 403].includes(response.status)) {
+      if ($('photoDialog').open) $('photoDialog').close();
       for (const key of ['rows', 'peopleList', 'deviceList', 'filter', 'revisions', 'original'])
         $(key).replaceChildren();
       $('manual').elements.employee.replaceChildren();
@@ -119,7 +120,7 @@ function drawRoster(feed) {
                 'Inscribir a ' + p.name,
                 'Comprueba presencialmente que esta persona corresponde a la ficha ' +
                   p.code +
-                  ' y que acepta el registro facial en este iPad.'
+                  ' y que acepta la verificación facial y la foto que se guarda con cada marcación.'
               ))
             )
               return;
@@ -201,6 +202,11 @@ async function load(older = false) {
     source.append(el('small', r.deviceName ? 'Comparación en el kiosco' : r.supervisor + ' · ' + r.reason));
     const review = button(r.revision ? 'Ver revisión' : 'Revisar', () => openReview(r));
     review.className = 'review-link';
+    if (r.hasPhoto) {
+      const photo = button('Ver foto', () => openPhoto(r));
+      photo.className = 'review-link';
+      source.append(photo);
+    }
     source.append(review);
     if (Math.abs(new Date(r.originalTime) - new Date(r.receivedAt)) > 300000)
       date.append(el('small', 'Hora de recepción distinta'));
@@ -213,6 +219,34 @@ async function load(older = false) {
   $('empty').textContent = $('rows').childElementCount ? '' : 'No hay marcaciones para esta consulta.';
 }
 let selectedRecord, reviewDraft;
+let photoRequest = 0, photoURL;
+function clearPhoto() {
+  ++photoRequest;
+  $('punchPhoto').hidden = true;
+  $('punchPhoto').removeAttribute('src');
+  if (photoURL) URL.revokeObjectURL(photoURL);
+  photoURL = null;
+  $('photoRecord').textContent = '';
+  $('photoStatus').textContent = '';
+}
+async function openPhoto(record) {
+  clearPhoto();
+  const request = photoRequest, dialog = $('photoDialog');
+  $('photoRecord').textContent = [record.employeeName, record.originalMovement === 'entry' ? 'Entrada' : 'Salida', when(record.originalTime)].join(' · ');
+  $('photoStatus').textContent = 'Cargando foto…';
+  dialog.showModal();
+  try {
+    const result = await api(null, { photo: record.id });
+    if (request !== photoRequest || !dialog.open || document.hidden) return;
+    const bytes = Uint8Array.from(atob(result.jpeg), (c) => c.charCodeAt(0));
+    photoURL = URL.createObjectURL(new Blob([bytes], { type: 'image/jpeg' }));
+    $('punchPhoto').src = photoURL;
+    $('punchPhoto').hidden = false;
+    $('photoStatus').textContent = '';
+  } catch (e) {
+    if (request === photoRequest && dialog.open) $('photoStatus').textContent = message(e);
+  }
+}
 async function openReview(record) {
   const audit = await api(null, { record: record.id });
   selectedRecord = record;
@@ -266,6 +300,10 @@ function formHandler(form, action) {
 }
 function startAdmin() {
   $('admin').hidden = false;
+  $('photoDialog').addEventListener('close', clearPhoto);
+  const dismissPhoto = () => { if ($('photoDialog').open) $('photoDialog').close(); };
+  window.addEventListener('pagehide', dismissPhoto);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) dismissPhoto(); });
   $('settings').hidden = !!bridge;
   for (const b of document.querySelectorAll('[data-tab]'))
     b.onclick = () => {
@@ -359,6 +397,7 @@ let move = 'entry',
   resetTimer,
   statusBusy = false;
 const term = () => (move === 'entry' ? 'entrada' : 'salida');
+const scanInstruction = $('scanHelp').textContent;
 function outcome(title, detail, person = '') {
   clearTimeout(resetTimer);
   $('home').hidden = true;
@@ -410,7 +449,7 @@ async function kioskStatus() {
       $('delivery').textContent = '';
       return;
     }
-    $('scanHelp').textContent = 'Elige tu movimiento y escanea tu rostro.';
+    $('scanHelp').textContent = scanInstruction;
     $('connection').textContent = s.online ? 'En línea' : 'Sin conexión';
     $('connection').className = s.online ? 'online' : '';
     $('device').textContent = s.name;
@@ -433,6 +472,7 @@ function startKiosk() {
   setInterval(kioskStatus, 15000);
   for (const b of document.querySelectorAll('[data-move]'))
     b.onclick = () => {
+      if (scanning) return;
       move = b.dataset.move;
       for (const other of document.querySelectorAll('[data-move]'))
         other.setAttribute('aria-pressed', b === other);
@@ -457,7 +497,7 @@ function startKiosk() {
           ' · ' +
           when(result.occurredAt) +
           (result.received ? '' : ' · El iPad volverá a intentar el envío.'),
-        result.name
+        result.greeting
       );
     } catch (e) {
       const detail = message(e);

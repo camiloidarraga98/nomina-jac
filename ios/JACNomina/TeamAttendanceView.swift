@@ -1,6 +1,7 @@
 #if os(iOS)
 import SwiftUI
 import WebKit
+import AVFoundation
 
 struct TeamAttendanceView: UIViewRepresentable {
     @EnvironmentObject private var store: PayrollStore
@@ -20,6 +21,7 @@ struct TeamAttendanceView: UIViewRepresentable {
     func updateUIView(_ web:WKWebView,context:Context) {}
     static func dismantleUIView(_ web:WKWebView,coordinator:Coordinator) {
         coordinator.active=false
+        coordinator.speaker.stopSpeaking(at: .immediate)
         var presenter=web.window?.rootViewController
         while let next=presenter?.presentedViewController {presenter=next}
         (presenter as? AttendanceFaceCamera)?.cancelCapture()
@@ -30,6 +32,7 @@ struct TeamAttendanceView: UIViewRepresentable {
         let store:PayrollStore
         let accounts:JACAccountSessions
         let administrator:String?
+        let speaker = AVSpeechSynthesizer()
         var active=true
         static var file:URL? {Bundle.main.url(forResource:"team",withExtension:"html",subdirectory:"attendance")}
         init(store:PayrollStore,accounts:JACAccountSessions,administrator:String?) {
@@ -73,7 +76,17 @@ struct TeamAttendanceView: UIViewRepresentable {
                         while let next=presenter.presentedViewController {presenter=next}
                         let employee=body["employee"] as? String, movement=body["movement"] as? String
                         guard action=="mark" ? (employee==nil && ["entry","exit"].contains(movement ?? "")) : (movement==nil && UUID(uuidString:employee ?? "") != nil) else {throw APIError.invalid("Solicitud no válida.")}
-                        result=try await device.capture(employee:employee,claimedCode:action=="mark" ? body["code"] as? String : nil,movement:movement,enroll:action=="enroll",client:store.client,presenter:presenter,allowed:{self.allowed && web.window != nil})
+                        var capture = try await device.capture(employee:employee,claimedCode:action=="mark" ? body["code"] as? String : nil,movement:movement,enroll:action=="enroll",client:store.client,presenter:presenter,allowed:{self.allowed && web.window != nil})
+                        if action == "mark", let movement, let name = capture["name"] as? String, self.allowed, web.window != nil {
+                            let greeting = movement == "entry" ? "Bienvenido, \(name). Te deseamos un feliz día." : "\(name), ten un buen descanso."
+                            capture["greeting"] = greeting
+                            if !UIAccessibility.isVoiceOverRunning {
+                                let phrase = AVSpeechUtterance(string: greeting)
+                                phrase.voice = AVSpeechSynthesisVoice(language: "es-CO") ?? AVSpeechSynthesisVoice(language: "es-ES")
+                                speaker.speak(phrase)
+                            }
+                        }
+                        result = capture
                     default:throw APIError.forbidden("Esta acción requiere otra autorización.")
                     }
                     guard self.allowed else {throw APIError.unauthorized}

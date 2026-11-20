@@ -26,6 +26,10 @@ final class TeamAttendanceDevice {
     }
     private struct Punch: Codable {
         let id, employee, movement, occurredAt, enrollment, signature: String
+        var photo: Data?
+    }
+    private struct LastPunch: Codable {
+        let employee, movement, occurredAt: String
     }
     private struct Local: Codable {
         var roster: [Person] = []
@@ -33,7 +37,7 @@ final class TeamAttendanceDevice {
         var references: [String: Reference] = [:]
         var pending: [Punch] = []
         var blocked: [String] = []
-        var lastPunch: Punch?
+        var lastPunch: LastPunch?
     }
     private struct RemoteError: LocalizedError {
         let status: Int, message: String
@@ -48,6 +52,9 @@ final class TeamAttendanceDevice {
         session = URLSession(configuration: config, delegate: NoRedirects(), delegateQueue: nil)
     }
     private static func uuid() -> String { UUID().uuidString.lowercased() }
+    private static func photoHash(_ data: Data) -> String {
+        SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
+    }
     private func device() throws -> Device? {
         guard let value = try credentials.load() else { return nil }
         return try JSONDecoder().decode(Device.self, from: Data(value.utf8))
@@ -109,7 +116,9 @@ final class TeamAttendanceDevice {
         r.setValue(d.id,forHTTPHeaderField:"X-JAC-Device")
         if let punch {
             r.httpMethod="POST";r.setValue("application/json",forHTTPHeaderField:"Content-Type")
-            r.httpBody=try JSONEncoder().encode(punch)
+            let encoder = JSONEncoder()
+            encoder.outputFormatting = [.withoutEscapingSlashes]
+            r.httpBody = try encoder.encode(punch)
         }
         let (data,response)=try await session.data(for:r)
         guard let http=response as? HTTPURLResponse else {throw URLError(.badServerResponse)}
@@ -162,10 +171,14 @@ final class TeamAttendanceDevice {
                 let data=try await request(d,punch:punch)
                 let receipt=try JSONSerialization.jsonObject(with:data) as? [String:String]
                 guard receipt?["id"]==punch.id, receipt?["receivedAt"] != nil else {throw URLError(.cannotParseResponse)}
+                if let photo = punch.photo, receipt?["photoHash"] != Self.photoHash(photo) { throw URLError(.cannotParseResponse) }
                 var state=try ledger(d);state.pending.removeAll{$0.id==punch.id};try save(state,d)
                 nextAttempt = .distantPast;retryDelay=2
             } catch let e as RemoteError where [400,409].contains(e.status) {
-                var state=try ledger(d);if !state.blocked.contains(punch.id) {state.blocked.append(punch.id)};try save(state,d)
+                var state=try ledger(d)
+                if !state.blocked.contains(punch.id) { state.blocked.append(punch.id) }
+                if let i = state.pending.firstIndex(where: { $0.id == punch.id }) { state.pending[i].photo = nil }
+                try save(state,d)
             } catch {
                 nextAttempt=Date().addingTimeInterval(retryDelay);retryDelay=min(120,retryDelay*2)
                 if let e=error as? RemoteError, e.status==403 {throw e};return
@@ -206,7 +219,9 @@ final class TeamAttendanceDevice {
         if !enroll && candidates.isEmpty {throw APIError.message("Inscribe primero los rostros en este kiosco desde tu cuenta administradora.")}
         try Task.checkCancellation()
         guard allowed() else {throw APIError.unauthorized}
-        let sample=try await AttendanceFaceCamera.collect(for:expected?.name ?? "Registro de asistencia",from:presenter,stillAllowed:allowed)
+        let reading = try await AttendanceFaceCamera.collect(for: expected?.name ?? "Registro de asistencia", from: presenter,
+                                                             includePhoto: movement != nil, stillAllowed: allowed)
+        let sample = reading.signature
         guard allowed() else {throw APIError.unauthorized}
         _ = try await refresh(d,allowCached:movement != nil)
         guard allowed() else {throw APIError.unauthorized}
@@ -243,11 +258,14 @@ final class TeamAttendanceDevice {
            abs(now.timeIntervalSince(time))<60 {throw APIError.message("Ya se tomó esta marcación hace menos de un minuto. Consulta su estado antes de repetirla.")}
         guard let ref=state.references[who], ref.id==enrollment else {throw APIError.message("La inscripción cambió. Intenta de nuevo.")}
         let id=Self.uuid(), occurred=format.string(from:now).replacingOccurrences(of:"Z",with:".000Z")
-        let signed=["jac-attendance-v1",d.id,who,enrollment,id,movement,occurred].joined(separator:"\n")
+        guard let photo = reading.photo else { throw APIError.message("Vuelve a escanear para guardar la foto de la marcación.") }
+        let signed=["jac-attendance-v2",d.id,who,enrollment,id,movement,occurred,Self.photoHash(photo)].joined(separator:"\n")
         let privateKey=try P256.Signing.PrivateKey(rawRepresentation:ref.signingKey)
         let signature=try privateKey.signature(for:Data(signed.utf8)).rawRepresentation.base64EncodedString()
-        let punch=Punch(id:id,employee:who,movement:movement,occurredAt:occurred,enrollment:enrollment,signature:signature)
-        state.pending.append(punch);state.lastPunch=punch;try save(state,d)
+        let punch=Punch(id:id,employee:who,movement:movement,occurredAt:occurred,enrollment:enrollment,signature:signature,photo:photo)
+        state.pending.append(punch)
+        state.lastPunch=LastPunch(employee:who,movement:movement,occurredAt:occurred)
+        try save(state,d)
         if online {try await sync(d)}
         let finished=try ledger(d)
         if finished.blocked.contains(punch.id) {throw APIError.message("El servidor bloqueó la marcación. Pide revisión al administrador.")}

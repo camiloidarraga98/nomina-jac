@@ -1,34 +1,55 @@
 #if os(iOS)
 import AVFoundation
 import UIKit
+import CoreImage
+import ImageIO
+import UniformTypeIdentifiers
 import Vision
 
-/// The turn between two frontal readings is a basic cooperation check, not certified liveness.
-struct AttendanceFaceTurn {
-    enum Step { case front, turn, back }
-    private(set) var step = Step.front
-    private var first: AttendanceFaceSignature?
-    private var started: TimeInterval = 0
+/// Three compatible frontal readings protect against a single blurry frame or a change of subject.
+struct AttendanceFrontalCapture {
+    private var samples: [AttendanceFaceSignature] = []
+    private var lastSample: TimeInterval?
+    var isReading: Bool { !samples.isEmpty }
 
-    mutating func observe(yaw: Double, at time: TimeInterval, signature: () -> AttendanceFaceSignature?) -> AttendanceFaceSignature? {
-        if step != .front && time - started > 9 { self = Self() }
-        switch step {
-        case .front:
-            if abs(yaw) < 0.15, let sample = signature() {
-                first = sample
-                started = time
-                step = .turn
-            }
-        case .turn:
-            if abs(yaw) > 0.24 && time - started >= 0.25 { step = .back }
-        case .back:
-            if abs(yaw) < 0.15, let sample = signature() {
-                let consistent = first?.resembles(sample) == true
-                self = Self()
-                return consistent ? sample : nil
-            }
+    mutating func observe(yaw: Double?, at time: TimeInterval, signature: () -> AttendanceFaceSignature?) -> AttendanceFaceSignature? {
+        if let lastSample {
+            if time - lastSample > 1 { self = Self() }
+            else if time - lastSample < 0.18 { return nil }
         }
-        return nil
+        guard yaw.map({ abs($0) <= 0.35 }) ?? true, let sample = signature() else {
+            self = Self()
+            return nil
+        }
+        if let first = samples.first, !first.resembles(sample) { samples.removeAll() }
+        samples.append(sample)
+        lastSample = time
+        guard samples.count == 3 else { return nil }
+        let result = AttendanceFaceSignature.mean(of: samples)
+        self = Self()
+        return result
+    }
+}
+
+struct AttendanceFaceReading {
+    let signature: AttendanceFaceSignature
+    let photo: Data?
+
+    static func portrait(bounds: CGRect, image: CIImage, context: CIContext) -> Data? {
+        let box = VNImageRectForNormalizedRect(bounds, Int(image.extent.width), Int(image.extent.height))
+        let crop = box.insetBy(dx: -box.width * 0.12, dy: -box.height * 0.15).integral.intersection(image.extent)
+        guard !crop.isEmpty else { return nil }
+        let scale = min(1, 360 / max(crop.width, crop.height))
+        let cut = image.cropped(to: crop)
+            .transformed(by: CGAffineTransform(translationX: -crop.minX, y: -crop.minY))
+            .transformed(by: CGAffineTransform(scaleX: scale, y: scale))
+        let size = CGRect(x: 0, y: 0, width: floor(crop.width * scale), height: floor(crop.height * scale))
+        guard let pixels = context.createCGImage(cut, from: size) else { return nil }
+        let bytes = NSMutableData()
+        guard let writer = CGImageDestinationCreateWithData(bytes as CFMutableData, UTType.jpeg.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(writer, pixels, [kCGImageDestinationLossyCompressionQuality: 0.72] as CFDictionary)
+        guard CGImageDestinationFinalize(writer), bytes.length <= 96 * 1024 else { return nil }
+        return bytes as Data
     }
 }
 
@@ -37,14 +58,17 @@ private final class AttendanceFaceStream: NSObject, AVCaptureVideoDataOutputSamp
     private let queue = DispatchQueue(label: "co.jacmusic.asistencia.camara")
     private let output = AVCaptureVideoDataOutput()
     private var orientation = AVCaptureVideoOrientation.portrait
-    private var turn = AttendanceFaceTurn()
+    private var frontal = AttendanceFrontalCapture()
+    private let photoContext = CIContext(options: [.cacheIntermediates: false])
+    private let includePhoto: Bool
     private var finished = false
     private var lastFrame: TimeInterval = 0
     private var lastInstruction = ""
-    let event: (Result<AttendanceFaceSignature, Error>) -> Void
+    let event: (Result<AttendanceFaceReading, Error>) -> Void
     let instruction: (String) -> Void
 
-    init(event: @escaping (Result<AttendanceFaceSignature, Error>) -> Void, instruction: @escaping (String) -> Void) {
+    init(includePhoto: Bool, event: @escaping (Result<AttendanceFaceReading, Error>) -> Void, instruction: @escaping (String) -> Void) {
+        self.includePhoto = includePhoto
         self.event = event
         self.instruction = instruction
     }
@@ -78,7 +102,7 @@ private final class AttendanceFaceStream: NSObject, AVCaptureVideoDataOutputSamp
         queue.async { [self] in
             guard value != orientation else { return }
             orientation = value
-            turn = AttendanceFaceTurn()
+            frontal = AttendanceFrontalCapture()
             orientOutput()
         }
     }
@@ -98,7 +122,7 @@ private final class AttendanceFaceStream: NSObject, AVCaptureVideoDataOutputSamp
             if session.isRunning { session.stopRunning() }
         }
     }
-    private func end(_ result: Result<AttendanceFaceSignature, Error>) {
+    private func end(_ result: Result<AttendanceFaceReading, Error>) {
         guard !finished else { return }
         finished = true
         DispatchQueue.main.async { self.event(result) }
@@ -108,54 +132,39 @@ private final class AttendanceFaceStream: NSObject, AVCaptureVideoDataOutputSamp
         lastInstruction = message
         DispatchQueue.main.async { self.instruction(message) }
     }
-    private func headTurn(of face: VNFaceObservation) -> Double? {
-        let measured = face.yaw?.doubleValue
-        if let measured, abs(measured) >= 0.15 { return measured }
-        // Some Vision revisions give a frontal bin or nil on modest turns. The nose moves
-        // sideways relative to the midpoint of the eyes as the participant turns.
-        func centerX(_ region: VNFaceLandmarkRegion2D?) -> Double? {
-            guard let region, region.pointCount > 0 else { return nil }
-            return region.normalizedPoints.reduce(0) { $0 + Double($1.x) } / Double(region.pointCount)
-        }
-        guard let marks = face.landmarks, let left = centerX(marks.leftEye), let right = centerX(marks.rightEye),
-              let nose = centerX(marks.nose), abs(right - left) > 0.1 else { return measured }
-        let offset = atan(2 * (nose - (left + right) / 2) / abs(right - left))
-        return measured == nil || abs(offset) > 0.28 ? offset : measured
-    }
 
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let now = ProcessInfo.processInfo.systemUptime
         guard !finished, now - lastFrame > 0.12, let buffer = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
-        if now - lastFrame > 1.2 { turn = AttendanceFaceTurn() }
+        if now - lastFrame > 1.2 { frontal = AttendanceFrontalCapture() }
         lastFrame = now
         let request = VNDetectFaceLandmarksRequest()
         do { try VNImageRequestHandler(cvPixelBuffer: buffer, orientation: .up, options: [:]).perform([request]) }
-        catch { turn = AttendanceFaceTurn(); guide("Busca buena luz y mira a la cámara."); return }
+        catch { frontal = AttendanceFrontalCapture(); guide("Busca buena luz y mira a la cámara."); return }
         let faces = request.results ?? []
-        guard faces.count == 1, let face = faces.first, face.boundingBox.width >= 0.18, let yaw = headTurn(of: face) else {
-            turn = AttendanceFaceTurn()
+        guard faces.count == 1, let face = faces.first, face.boundingBox.width >= 0.16 else {
+            frontal = AttendanceFrontalCapture()
             guide(faces.count > 1 ? "Debe aparecer una sola persona." : "Acércate y mira de frente con buena luz.")
             return
         }
-        if let signature = turn.observe(yaw: yaw, at: now, signature: { AttendanceFaceSignature.capture(face, in: buffer) }) {
-            end(.success(signature))
+        if let signature = frontal.observe(yaw: face.yaw?.doubleValue, at: now, signature: { AttendanceFaceSignature.capture(face, in: buffer) }) {
+            let photo = includePhoto ? AttendanceFaceReading.portrait(bounds: face.boundingBox, image: CIImage(cvPixelBuffer: buffer), context: photoContext) : nil
+            if includePhoto && photo == nil { guide("Mira a la cámara un instante más para tomar la foto."); return }
+            end(.success(AttendanceFaceReading(signature: signature, photo: photo)))
             return
         }
-        switch turn.step {
-        case .front: guide("Mira de frente con buena luz.")
-        case .turn: guide("Gira un poco la cabeza hacia un lado.")
-        case .back: guide("Vuelve a mirar de frente.")
-        }
+        guide(frontal.isReading ? "Quédate así un instante." : "Mira a la cámara con buena luz.")
     }
 }
 
 @MainActor
 final class AttendanceFaceCamera: UIViewController {
-    private var completion: ((Result<AttendanceFaceSignature, Error>) -> Void)?
+    private var completion: ((Result<AttendanceFaceReading, Error>) -> Void)?
     private var timeout: Timer?
     private let hint = UILabel()
     private let titleLabel = UILabel()
-    private lazy var stream = AttendanceFaceStream(event: { [weak self] result in self?.finish(result) },
+    private var includePhoto = false
+    private lazy var stream = AttendanceFaceStream(includePhoto: includePhoto, event: { [weak self] result in self?.finish(result) },
                                                   instruction: { [weak self] text in
         self?.hint.text = text
         // The preview connection can appear after the first layout on a landscape iPad.
@@ -169,13 +178,14 @@ final class AttendanceFaceCamera: UIViewController {
         return AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .video, position: .front).devices.first
     }
 
-    static func collect(for name: String, from presenter: UIViewController, stillAllowed: () -> Bool) async throws -> AttendanceFaceSignature {
+    static func collect(for name: String, from presenter: UIViewController, includePhoto: Bool = false, stillAllowed: () -> Bool) async throws -> AttendanceFaceReading {
         guard let camera = frontCamera else { throw APIError.message("Para comparar un rostro, usa un dispositivo con cámara frontal. Puedes elegir supervisión.") }
         guard await AVCaptureDevice.requestAccess(for: .video) else { throw APIError.message("Para usar la comparación habilita Cámara en Ajustes de JAC. También puedes elegir supervisión.") }
         guard stillAllowed(), let scene = presenter.viewIfLoaded?.window?.windowScene,
               [.foregroundActive, .foregroundInactive].contains(scene.activationState), presenter.presentedViewController == nil else { throw APIError.message("Vuelve al kiosco e intenta de nuevo.") }
         return try await withCheckedThrowingContinuation { continuation in
             let screen = AttendanceFaceCamera()
+            screen.includePhoto = includePhoto
             screen.modalPresentationStyle = .overFullScreen
             screen.titleLabel.text = name
             screen.completion = { continuation.resume(with: $0) }
@@ -212,7 +222,7 @@ final class AttendanceFaceCamera: UIViewController {
             label.adjustsFontForContentSizeCategory = true
             panel.addArrangedSubview(label)
         }
-        hint.text = "Mira de frente."
+        hint.text = includePhoto ? "Mira de frente. Se guardará una foto con tu marcación." : "Mira de frente."
         let cancel = UIButton(type: .system)
         cancel.setTitle("Cancelar", for: .normal)
         cancel.tintColor = .white
@@ -239,7 +249,7 @@ final class AttendanceFaceCamera: UIViewController {
         super.viewDidDisappear(animated)
         if completion != nil { cancelCapture() }
     }
-    private func finish(_ result: Result<AttendanceFaceSignature, Error>) {
+    private func finish(_ result: Result<AttendanceFaceReading, Error>) {
         guard let callback = completion else { return }
         completion = nil
         timeout?.invalidate()

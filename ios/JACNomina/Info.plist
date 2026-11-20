@@ -3,7 +3,7 @@
 <plist version="1.0"><dict>
 <!-- Cifrado exento provisto por iOS (CryptoKit/Security). Revisar si cambian el cifrado o las dependencias. -->
 <key>ITSAppUsesNonExemptEncryption</key><false/>
-<key>NSCameraUsageDescription</key><string>JAC usa la cámara para fotografiar comprobantes de viaje o comparar tu rostro en este dispositivo al registrar asistencia.</string>
+<key>NSCameraUsageDescription</key><string>JAC usa la cámara para fotografiar comprobantes de viaje y verificar tu rostro al marcar asistencia. La marcación guarda una foto para los administradores de JAC.</string>
 <key>NSLocalNetworkUsageDescription</key><string>Conectar el kiosco de Asistencia con su servidor de pruebas en la red privada de JAC.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSExceptionDomains</key><dict>
 <key>localhost</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>

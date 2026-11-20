@@ -346,6 +346,16 @@ footer {
 }
 #outName {
   font-size: 20px;
+  overflow-wrap: anywhere;
+}
+#punchPhoto {
+  max-width: 100%;
+  max-height: 55vh;
+  margin: 0 auto 1rem;
+  border-radius: 10px;
+}
+#punchPhoto:not([hidden]) {
+  display: block;
 }
 @media (max-width: 520px) {
   .content {

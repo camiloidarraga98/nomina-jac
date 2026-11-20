@@ -135,6 +135,29 @@ struct AttendanceFaceSignature: Codable, Sendable {
         texture = bins.map { sqrt($0 / area) }
     }
 
+    private init(texture: [Float], tones: [Float], proportions: [Float]?) {
+        self.texture = texture
+        self.tones = tones
+        self.proportions = proportions
+    }
+
+    static func mean(of samples: [Self]) -> Self? {
+        guard let first = samples.first, samples.allSatisfy({ first.scores($0) != nil }) else { return nil }
+        func normalizedSum(_ values: [[Float]]) -> [Float] {
+            var sum = Array(repeating: Float.zero, count: values[0].count)
+            for vector in values {
+                for i in sum.indices { sum[i] += vector[i] }
+            }
+            let norm = sqrt(sum.reduce(0) { $0 + $1 * $1 })
+            return norm > 0 ? sum.map { $0 / norm } : []
+        }
+        let shapes = samples.compactMap(\.proportions)
+        let shape = first.proportions?.indices.map { index in
+            shapes.reduce(Float.zero) { $0 + $1[index] } / Float(shapes.count)
+        }
+        return Self(texture: normalizedSum(samples.map(\.texture)), tones: normalizedSum(samples.map(\.tones)), proportions: shape)
+    }
+
     private func scores(_ other: Self) -> (tone: Float, texture: Float)? {
         guard texture.count == 16 * 59, other.texture.count == texture.count,
               !tones.isEmpty, other.tones.count == tones.count else { return nil }
@@ -158,8 +181,8 @@ struct AttendanceFaceSignature: Codable, Sendable {
     func identified(in references: [String: Self]) -> String? {
         let ranked = references.compactMap { item -> (id: String, rank: Float, eligible: Bool)? in
             guard let score = scores(item.value) else { return nil }
-            return (item.key, 0.65 * score.tone + 0.35 * score.texture,
-                    score.tone >= 0.92 && score.texture >= 0.87)
+            let rank = 0.65 * score.tone + 0.35 * score.texture
+            return (item.key, rank, score.tone >= 0.88 && score.texture >= 0.84 && rank >= 0.88)
         }.sorted { $0.rank > $1.rank }
         guard let best = ranked.first, best.eligible else { return nil }
         if ranked.count > 1, best.rank - ranked[1].rank < 0.045 { return nil }

@@ -819,7 +819,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(title.waitForExistence(timeout: 15))
         XCTAssertTrue(view.staticTexts["Por habilitar"].waitForExistence(timeout: 8))
         XCTAssertFalse(view.buttons["Escanear para marcar entrada"].isEnabled)
-        view.buttons["Salida"].tap()
+        view.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Salida")).firstMatch.tap()
         XCTAssertTrue(view.buttons["Escanear para marcar salida"].exists)
         XCTAssertFalse(view.buttons["Personal"].exists)
         XCTAssertFalse(view.buttons["Gestión supervisada"].exists)

@@ -1,0 +1,1 @@
+ALTER TABLE `jac_attendance_records` ADD `photo_jpeg` blob;

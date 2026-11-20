@@ -111,7 +111,7 @@ struct AttendanceView: UIViewRepresentable {
                             capturing = true
                             defer { capturing = false }
                             (response, status) = try await store.client.attendanceFaceRequest(command: command, data: data, ticket: ticket) { name in
-                                try await AttendanceFaceCamera.collect(for: name, from: presenter, stillAllowed: { self.allowed && message.webView?.window != nil })
+                                try await AttendanceFaceCamera.collect(for: name, from: presenter, stillAllowed: { self.allowed && message.webView?.window != nil }).signature
                             }
                         } else {
                             (response, status) = try await store.client.attendanceRequest(command: command, data: data, ticket: ticket)

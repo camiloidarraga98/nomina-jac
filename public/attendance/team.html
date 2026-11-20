@@ -99,7 +99,7 @@
         <div class="body">
           <section id="home">
             <h1>Marca tu asistencia</h1>
-            <p id="scanHelp">Elige tu movimiento y escanea tu rostro.</p>
+            <p id="scanHelp">Mira de frente. Al marcar se guardará una foto de tu rostro para el administrador.</p>
             <div class="choices">
               <button data-move="entry" aria-pressed="true">
                 <svg
@@ -188,6 +188,13 @@
         <p id="delivery" role="status"></p>
       </div>
     </main>
+    <dialog id="photoDialog" aria-labelledby="photoTitle">
+      <h2 id="photoTitle">Foto de la marcación</h2>
+      <p id="photoRecord"></p>
+      <p id="photoStatus" role="status"></p>
+      <img id="punchPhoto" alt="Rostro capturado al marcar asistencia" hidden />
+      <form method="dialog"><button>Cerrar</button></form>
+    </dialog>
     <dialog id="review">
       <h2>Revisar marcación</h2>
       <p id="original"></p>

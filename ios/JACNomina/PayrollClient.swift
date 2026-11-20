@@ -2207,7 +2207,7 @@ extension PayrollClient {
     func sharedAttendanceAdmin(_ body: [String: Any]? = nil, filters: [String: String] = [:], enrollmentCredential: String? = nil) async throws -> Data {
         guard !isAttendancePilot, try hasSession() else { throw APIError.unauthorized }
         let payload: JSONValue? = try body.map { try JSONDecoder().decode(JSONValue.self, from: JSONSerialization.data(withJSONObject: $0)) }
-        let query = filters.filter { ["employee","day","cursor","record"].contains($0.key) && !$0.value.isEmpty }.map { URLQueryItem(name:$0.key, value:$0.value) }
+        let query = filters.filter { ["employee","day","cursor","record","photo"].contains($0.key) && !$0.value.isEmpty }.map { URLQueryItem(name:$0.key, value:$0.value) }
         return try await request(path:"api/team-attendance/admin", query:query, body:payload, forceNetwork:true, nativeBearer:true, enrollmentCredential:enrollmentCredential).0
     }
 }

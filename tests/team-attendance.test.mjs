@@ -68,13 +68,14 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
     );
     const sign = async (input) => {
       const value = [
-        'jac-attendance-v1',
+        input.photo ? 'jac-attendance-v2' : 'jac-attendance-v1',
         id,
         input.employee,
         input.enrollment,
         input.id,
         input.movement,
-        new Date(input.occurredAt).toISOString()
+        new Date(input.occurredAt).toISOString(),
+        ...(input.photo ? [hash(Buffer.from(input.photo, 'base64'))] : [])
       ].join('\n');
       const signature = await crypto.subtle.sign(
         { name: 'ECDSA', hash: 'SHA-256' },
@@ -101,16 +102,34 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
   assert.equal((await device(next.headers, input)).status, 409);
   assert.equal((await device(first.headers, { ...input, employee: randomUUID() })).status, 409);
   assert.equal((await device(first.headers, { ...input, face: 'reject' })).status, 400);
+  // A generated 8 × 8 gray square, without personal data.
+  const photo = '/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAAIAAgBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AP//Z';
   const out = await next.sign({
     ...input,
     id: randomUUID(),
     enrollment: next.enrollment,
     movement: 'exit',
+    photo,
     occurredAt: '2026-11-20T22:00:00Z'
   });
   const [a, b] = await Promise.all([device(first.headers, input), device(next.headers, out)]);
   assert.equal(a.status, 200);
   assert.equal(b.status, 200);
+  const receipt = await b.json();
+  assert.equal(receipt.photoHash, hash(Buffer.from(photo, 'base64')));
+  assert.deepEqual(await (await device(next.headers, out)).json(), receipt);
+  const altered = Buffer.concat([Buffer.from([255,216,255,254,0,3,65]), Buffer.from(photo, 'base64').subarray(2)]).toString('base64');
+  assert.equal((await device(next.headers, {...out, photo:altered})).status,409);
+  assert.equal((await device(next.headers, await next.sign({...out, photo:altered}))).status,409);
+  assert.equal((await device(next.headers, await next.sign({...out, photo:undefined}))).status,409);
+  assert.equal((await device(next.headers, {...out, photo:'bm90LWEtanBlZw=='})).status,400);
+  const photoPath = '/api/team-attendance/admin?photo=' + out.id;
+  const portrait = await call(photoPath, other);
+  assert.equal((await portrait.json()).jpeg, photo);
+  assert.match(portrait.headers.get('cache-control'), /no-store/);
+  for (const headers of [{}, next.headers]) assert.equal((await call(photoPath, headers)).status, 401);
+  assert.equal((await call(photoPath, { Authorization: 'Bearer ' + staff })).status, 403);
+  assert.equal((await call('/api/team-attendance/admin?photo=' + input.id, auth)).status, 404);
   assert.deepEqual(await a.json(), await (await device(first.headers, input)).json());
   assert.equal((await device(first.headers, { ...input, movement: 'exit' })).status, 409);
   const manual = {
@@ -130,6 +149,9 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
   assert.equal(feed.records[0].id, out.id);
   assert.equal(feed.records[1].possibleDuplicate, 1);
   assert.ok(feed.records[1].supervisor);
+  assert.equal(feed.records.find(r => r.id === out.id).hasPhoto, 1);
+  assert.equal(feed.records.find(r => r.id === input.id).hasPhoto, 0);
+  assert.equal(JSON.stringify(feed).includes(photo), false);
   const review = {
     action: 'review',
     id: randomUUID(),

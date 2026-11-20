@@ -3160,6 +3160,29 @@ final class PayrollClientTests: XCTestCase {
     }
 
     #if os(iOS) && DEBUG
+    @MainActor func testAttendancePortraitIsCroppedFromTheObservedFaceRegion() throws {
+        let context = CIContext()
+        let frame = CGRect(x: 0, y: 0, width: 512, height: 512)
+        let blue = CIImage(color: CIColor(red: 0, green: 0, blue: 1)).cropped(to: frame)
+        let red = CIImage(color: CIColor(red: 1, green: 0, blue: 0)).cropped(to: CGRect(x: 0, y: 0, width: 256, height: 512))
+        let bytes = try XCTUnwrap(AttendanceFaceReading.portrait(bounds: CGRect(x: 0.14, y: 0.2, width: 0.25, height: 0.5),
+                                                                 image: red.composited(over: blue), context: context))
+        XCTAssertLessThanOrEqual(bytes.count, 96 * 1024)
+        let source = try XCTUnwrap(CGImageSourceCreateWithData(bytes as CFData, nil))
+        let crop = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertLessThan(crop.width, 200)
+        XCTAssertGreaterThan(crop.height, crop.width)
+        XCTAssertLessThanOrEqual(crop.height, 360)
+        let center = CGRect(x: CGFloat(crop.width / 2), y: CGFloat(crop.height / 2), width: 1, height: 1)
+        var pixel = [UInt8](repeating: 0, count: 4)
+        pixel.withUnsafeMutableBytes { buffer in
+            context.render(CIImage(cgImage: crop), toBitmap: buffer.baseAddress!, rowBytes: 4,
+                           bounds: center, format: .RGBA8, colorSpace: CGColorSpaceCreateDeviceRGB())
+        }
+        XCTAssertGreaterThan(pixel[0], 220)
+        XCTAssertLessThan(pixel[2], 35)
+    }
+
     @MainActor func testLocalVisualAttendanceUsesOnlyTheSelectedReference() async throws {
         // Analytic fixtures with aligned eyes, a nose and a mouth. No photographs or identities.
         let side = AttendanceFaceSignature.side
@@ -3194,14 +3217,21 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNil(brighter.identified(in:["otra":other]))
         XCTAssertNil(brighter.identified(in:[:]))
         XCTAssertNil(AttendanceFaceSignature(alignedPixels: Array(repeating: 128, count: side * side)))
-        var turn = AttendanceFaceTurn()
-        XCTAssertNil(turn.observe(yaw: 0, at: 10) { reference })
-        XCTAssertNil(turn.observe(yaw: 0, at: 10.5) { reference })
-        XCTAssertNil(turn.observe(yaw: -0.4, at: 11) { nil })
-        XCTAssertNil(turn.observe(yaw: 0, at: 11.5) { other })
-        XCTAssertNil(turn.observe(yaw: 0, at: 12) { reference })
-        XCTAssertNil(turn.observe(yaw: 0.4, at: 12.5) { nil })
-        XCTAssertNotNil(turn.observe(yaw: 0, at: 13) { brighter })
+        let sideLight = pixels(variant: 0).enumerated().map { $0.element + Float($0.offset % side - 32) * 0.5 }
+        let shaded = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: sideLight))
+        XCTAssertEqual(shaded.identified(in:["primera":reference,"otra":other]), "primera")
+        XCTAssertNil(shaded.identified(in:["otra":other]))
+        var frontal = AttendanceFrontalCapture()
+        XCTAssertNil(frontal.observe(yaw: 0.1, at: 10) { shaded })
+        XCTAssertNil(frontal.observe(yaw: nil, at: 10.25) { shaded })
+        let still = try XCTUnwrap(frontal.observe(yaw: 0, at: 10.5) { shaded })
+        XCTAssertEqual(still.identified(in:["primera":reference,"otra":other]), "primera")
+        XCTAssertNil(frontal.observe(yaw: 0, at: 11) { reference })
+        XCTAssertNil(frontal.observe(yaw: 0, at: 11.25) { other })
+        XCTAssertNil(frontal.observe(yaw: 0, at: 11.5) { reference })
+        XCTAssertNil(frontal.observe(yaw: 0, at: 13) { brighter })
+        XCTAssertNil(frontal.observe(yaw: 0.6, at: 13.25) { brighter })
+        XCTAssertFalse(frontal.isReading)
 
         let vault = MemorySession()
         let client = PayrollClient(baseURL: DeviceAttendancePilot.origin, vault: vault, isAttendancePilot: true)

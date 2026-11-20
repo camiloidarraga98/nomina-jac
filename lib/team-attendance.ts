@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { Buffer } from 'node:buffer';
+import { createHash } from 'node:crypto';
 import { sessionToken, tokenHash } from './payroll-auth-crypto';
 import { sectionSql } from './payroll-permissions';
 
@@ -17,6 +19,7 @@ const moment = z
   .datetime({ offset: true })
   .transform((v) => new Date(v).toISOString());
 const movement = z.enum(['entry', 'exit']);
+const maxPhotoBytes = 96 * 1024;
 const devicePunch = z
   .object({
     id: uuid,
@@ -24,6 +27,7 @@ const devicePunch = z
     enrollment: uuid,
     movement,
     occurredAt: moment,
+    photo: z.string().min(8).max(4 * Math.ceil(maxPhotoBytes / 3)).optional(),
     signature: z.string().regex(/^[A-Za-z0-9+/]{86}==$/)
   })
   .strict();
@@ -79,12 +83,12 @@ const conflict = () => error('El registro cambió o ya existe. Actualiza los dat
 type Env = { DB: D1Database; ASSETS: Fetcher };
 type Row = Record<string, string | number | null>;
 
-async function bodyOf(request: Request) {
+async function bodyOf(request: Request, maxBytes = 4096) {
   if (request.headers.get('content-type')?.split(';')[0].trim() !== 'application/json')
     throw new Error('body');
   const reader = request.body?.getReader();
   if (!reader) throw new Error('body');
-  const bytes = new Uint8Array(4096);
+  const bytes = new Uint8Array(maxBytes);
   let count = 0;
   for (;;) {
     const part = await reader.read();
@@ -101,11 +105,19 @@ async function bodyOf(request: Request) {
 
 const effectiveTime = 'COALESCE(v.occurred_at,r.occurred_at)';
 const history = `SELECT r.id,r.employee,p.name AS employeeName,p.code,COALESCE(v.movement,r.movement) AS movement,${effectiveTime} AS occurredAt, r.movement AS originalMovement, r.occurred_at AS originalTime, COALESCE(v.revision,0) AS revision,
- r.received_at AS receivedAt,d.name AS deviceName,u.name AS supervisor,r.reason,r.possible_duplicate AS possibleDuplicate
+ r.received_at AS receivedAt,d.name AS deviceName,u.name AS supervisor,r.reason,r.possible_duplicate AS possibleDuplicate,r.photo_jpeg IS NOT NULL AS hasPhoto
  FROM jac_attendance_records r JOIN jac_attendance_people p ON p.id=r.employee
  LEFT JOIN jac_attendance_devices d ON d.id=r.device LEFT JOIN payroll_users u ON u.id=r.supervisor
  LEFT JOIN jac_attendance_reviews v ON v.record=r.id AND v.revision=(SELECT max(revision) FROM jac_attendance_reviews WHERE record=r.id)`;
 async function adminFeed(db: D1Database, hash: string, params: URLSearchParams) {
+  if (params.has('photo')) {
+    const record = uuid.safeParse(params.get('photo'));
+    if (!record.success) return error('Registro no válido.', 400);
+    const row = await db.prepare('SELECT photo_jpeg AS jpeg FROM jac_attendance_records WHERE id=? AND photo_jpeg IS NOT NULL AND EXISTS(' + adminQuery + ')')
+      .bind(record.data, hash).first<{ jpeg: number[] | ArrayBuffer }>();
+    if (!row) return error('Esta marcación no tiene foto disponible.', 404);
+    return json({ jpeg: Buffer.from(new Uint8Array(row.jpeg)).toString('base64') });
+  }
   const audit = params.get('record');
   if (audit) {
     if (!uuid.safeParse(audit).success) return error('Registro no válido.', 400);
@@ -348,6 +360,22 @@ function enrollmentKey(encoded: string) {
     'verify'
   ]);
 }
+// The native camera produces a cropped JPEG with a longest side of at most 360 px.
+function checkedPortrait(encoded: string): Buffer | null {
+  const bytes = Buffer.from(encoded, 'base64');
+  if (bytes.length < 12 || bytes.length > maxPhotoBytes || bytes.toString('base64') !== encoded ||
+      bytes.readUInt16BE(0) !== 0xffd8 || bytes.readUInt16BE(bytes.length - 2) !== 0xffd9) return null;
+  for (let i = 2; i + 9 < bytes.length && bytes[i] === 0xff;) {
+    const marker = bytes[i + 1], length = bytes.readUInt16BE(i + 2);
+    if (length < 2 || i + 2 + length > bytes.length || marker === 0xda) return null;
+    if ([0xc0, 0xc1, 0xc2].includes(marker)) {
+      const height = bytes.readUInt16BE(i + 5), width = bytes.readUInt16BE(i + 7);
+      return length >= 8 && height > 0 && width > 0 && Math.max(height, width) <= 512 ? bytes : null;
+    }
+    i += 2 + length;
+  }
+  return null;
+}
 async function kiosk(request: Request, db: D1Database) {
   const device = request.headers.get('x-jac-device') || '',
     authorization = request.headers.get('authorization') || '';
@@ -372,7 +400,10 @@ async function kiosk(request: Request, db: D1Database) {
       .all();
     return json({ people: people.results });
   }
-  const input = devicePunch.parse(await bodyOf(request));
+  const input = devicePunch.parse(await bodyOf(request, 4 * Math.ceil(maxPhotoBytes / 3) + 4096));
+  const photo = input.photo ? checkedPortrait(input.photo) : null;
+  if (input.photo && !photo) return error('La foto de la marcación no es un JPEG válido.', 400);
+  const photoHash = photo ? createHash('sha256').update(photo).digest('hex') : null;
   const ref = await db
     .prepare(
       'SELECT public_key FROM jac_attendance_enrollments WHERE id=? AND device=? AND employee=? AND EXISTS(' +
@@ -383,13 +414,14 @@ async function kiosk(request: Request, db: D1Database) {
     .first<{ public_key: string }>();
   if (!ref) return conflict();
   const signed = [
-    'jac-attendance-v1',
+    photo ? 'jac-attendance-v2' : 'jac-attendance-v1',
     device,
     input.employee,
     input.enrollment,
     input.id,
     input.movement,
-    input.occurredAt
+    input.occurredAt,
+    ...(photoHash ? [photoHash] : [])
   ].join('\n');
   const verified = await crypto.subtle.verify(
     { name: 'ECDSA', hash: 'SHA-256' },
@@ -399,11 +431,12 @@ async function kiosk(request: Request, db: D1Database) {
   );
   if (!verified) return conflict();
   const now = new Date().toISOString();
+  const jpeg = photo ? Uint8Array.from(photo).buffer : null;
   const [, receipt] = await db.batch<Row>([
     db
       .prepare(
-        `INSERT INTO jac_attendance_records(id,employee,movement,occurred_at,received_at,device,enrollment,possible_duplicate)
-      SELECT ?,e.employee,?,?,?,e.device,e.id,${duplicate} FROM jac_attendance_enrollments e
+        `INSERT INTO jac_attendance_records(id,employee,movement,occurred_at,received_at,device,enrollment,photo_jpeg,possible_duplicate)
+      SELECT ?,e.employee,?,?,?,e.device,e.id,?,${duplicate} FROM jac_attendance_enrollments e
       JOIN jac_attendance_people p ON e.employee=p.id AND e.revision=p.face_revision AND p.active=1
       WHERE e.employee=? AND e.id=? AND e.device=? AND julianday(e.created_at,'+30 days')>julianday('now') AND EXISTS(${deviceQuery}) ON CONFLICT(id) DO NOTHING`
       )
@@ -412,6 +445,7 @@ async function kiosk(request: Request, db: D1Database) {
         input.movement,
         input.occurredAt,
         now,
+        jpeg,
         input.employee,
         input.movement,
         input.occurredAt,
@@ -422,13 +456,13 @@ async function kiosk(request: Request, db: D1Database) {
       ),
     db
       .prepare(
-        'SELECT id,received_at AS receivedAt FROM jac_attendance_records WHERE id=? AND employee=? AND movement=? AND occurred_at=? AND device=? AND enrollment=? AND EXISTS(' +
+        'SELECT id,received_at AS receivedAt FROM jac_attendance_records WHERE id=? AND employee=? AND movement=? AND occurred_at=? AND device=? AND enrollment=? AND photo_jpeg IS ? AND EXISTS(' +
           deviceQuery +
           ')'
       )
-      .bind(input.id, input.employee, input.movement, input.occurredAt, device, input.enrollment, ...keys)
+      .bind(input.id, input.employee, input.movement, input.occurredAt, device, input.enrollment, jpeg, ...keys)
   ]);
-  return receipt.results[0] ? json(receipt.results[0]) : conflict();
+  return receipt.results[0] ? json({ ...receipt.results[0], ...(photoHash ? { photoHash } : {}) }) : conflict();
 }
 
 export async function teamAttendance(request: Request, env: Env): Promise<Response | null> {
@@ -477,7 +511,7 @@ export async function teamAttendance(request: Request, env: Env): Promise<Respon
       for (const [key, value] of Object.entries(privateHeaders)) headers.set(key, value);
       headers.set(
         'Content-Security-Policy',
-        "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
+        "default-src 'none'; style-src 'self'; script-src 'self'; connect-src 'self'; img-src blob:; base-uri 'none'; frame-ancestors 'none'; form-action 'none'"
       );
       return new Response(asset.body, { status: asset.status, headers });
     }

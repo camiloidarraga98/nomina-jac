@@ -281,6 +281,20 @@
       "when": 1794332783240,
       "tag": "0039_crm_reconciliation",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1795210742936,
+      "tag": "0043_team_attendance",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "6",
+      "when": 1795211054577,
+      "tag": "0044_attendance_photo",
+      "breakpoints": true
     }
   ]
 }
