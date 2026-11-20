@@ -3,6 +3,56 @@ import SwiftUI
 import WebKit
 import AVFoundation
 
+/// Only used for a weak or ambiguous scan. The photo stays in native memory while the employee answers.
+@MainActor private final class AttendanceIdentityPrompt: NSObject {
+    private var answer: CheckedContinuation<AttendanceIdentityAnswer?, Never>?
+    private weak var alert: UIAlertController?
+
+    func ask(_ question: AttendanceIdentityQuestion, from presenter: UIViewController) async -> AttendanceIdentityAnswer? {
+        guard answer == nil, presenter.presentedViewController == nil,
+              presenter.viewIfLoaded?.window?.windowScene?.activationState == .foregroundActive else { return nil }
+        return await withCheckedContinuation { continuation in
+            answer = continuation
+            let alert = UIAlertController(title: nil, message: nil, preferredStyle: .alert)
+            self.alert = alert
+            switch question {
+            case let .name(name):
+                alert.title = "¿Eres " + name + "?"
+                alert.message = "Confirma tu nombre para guardar la marcación."
+                alert.addAction(UIAlertAction(title: "Sí, soy yo", style: .default) { [weak self] _ in self?.finish(.confirmed) })
+            case .employeeCode:
+                alert.title = "Confirma tu código de empleado"
+                alert.message = "Hay dos o más rostros parecidos. Ya tomamos la foto."
+                alert.addTextField { field in
+                    field.placeholder = "Código de empleado"
+                    field.autocorrectionType = .no
+                    field.isSecureTextEntry = true
+                }
+                alert.addAction(UIAlertAction(title: "Confirmar", style: .default) { [weak self, weak alert] _ in
+                    self?.finish(.code(alert?.textFields?.first?.text ?? ""))
+                })
+            }
+            alert.addAction(UIAlertAction(title: "Cancelar", style: .cancel) { [weak self] _ in self?.finish(nil) })
+            NotificationCenter.default.addObserver(self, selector: #selector(cancel),
+                name: UIApplication.willResignActiveNotification, object: nil)
+            presenter.present(alert, animated: true)
+        }
+    }
+
+    private func finish(_ value: AttendanceIdentityAnswer?) {
+        NotificationCenter.default.removeObserver(self, name: UIApplication.willResignActiveNotification, object: nil)
+        let continuation = answer
+        answer = nil
+        alert = nil
+        continuation?.resume(returning: value)
+    }
+
+    @objc func cancel() {
+        alert?.dismiss(animated: false)
+        finish(nil)
+    }
+}
+
 struct TeamAttendanceView: UIViewRepresentable {
     @EnvironmentObject private var store: PayrollStore
     @EnvironmentObject private var accounts: JACAccountSessions
@@ -22,6 +72,7 @@ struct TeamAttendanceView: UIViewRepresentable {
     static func dismantleUIView(_ web:WKWebView,coordinator:Coordinator) {
         coordinator.active=false
         coordinator.speaker.stopSpeaking(at: .immediate)
+        coordinator.cancelIdentityPrompt()
         var presenter=web.window?.rootViewController
         while let next=presenter?.presentedViewController {presenter=next}
         (presenter as? AttendanceFaceCamera)?.cancelCapture()
@@ -33,7 +84,9 @@ struct TeamAttendanceView: UIViewRepresentable {
         let accounts:JACAccountSessions
         let administrator:String?
         let speaker = AVSpeechSynthesizer()
+        private let identityPrompt = AttendanceIdentityPrompt()
         var active=true
+        func cancelIdentityPrompt() { identityPrompt.cancel() }
         static var file:URL? {Bundle.main.url(forResource:"team",withExtension:"html",subdirectory:"attendance")}
         init(store:PayrollStore,accounts:JACAccountSessions,administrator:String?) {
             self.store=store
@@ -76,7 +129,11 @@ struct TeamAttendanceView: UIViewRepresentable {
                         while let next=presenter.presentedViewController {presenter=next}
                         let employee=body["employee"] as? String, movement=body["movement"] as? String
                         guard action=="mark" ? (employee==nil && ["entry","exit"].contains(movement ?? "")) : (movement==nil && UUID(uuidString:employee ?? "") != nil) else {throw APIError.invalid("Solicitud no válida.")}
-                        var capture = try await device.capture(employee:employee,claimedCode:action=="mark" ? body["code"] as? String : nil,movement:movement,enroll:action=="enroll",client:store.client,presenter:presenter,allowed:{self.allowed && web.window != nil})
+                        var capture = try await device.capture(employee:employee,claimedCode:action=="mark" ? body["code"] as? String : nil,movement:movement,enroll:action=="enroll",client:store.client,presenter:presenter,
+                            ask: { question in
+                                guard self.allowed, web.window != nil else { return nil }
+                                return await self.identityPrompt.ask(question, from: presenter)
+                            }, allowed:{self.allowed && web.window != nil})
                         if action == "mark", let movement, let name = capture["name"] as? String, self.allowed, web.window != nil {
                             let greeting = movement == "entry" ? "Bienvenido, \(name). Te deseamos un feliz día." : "\(name), ten un buen descanso."
                             capture["greeting"] = greeting

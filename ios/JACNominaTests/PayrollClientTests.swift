@@ -3183,6 +3183,45 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertLessThan(pixel[2], 35)
     }
 
+    @MainActor func testSharedAttendanceResolvesWeakAndAmbiguousScansAgainstTheEnrolledRoster() async throws {
+        let ana = TeamAttendanceDevice.Person(id: "a", name: "Ana", code: "AA", revision: 1, enrollment: "ref-a")
+        let luis = TeamAttendanceDevice.Person(id: "b", name: "Luis", code: "BB", revision: 1, enrollment: "ref-b")
+        let sol = TeamAttendanceDevice.Person(id: "c", name: "Sol", code: "CC", revision: 1, enrollment: "ref-c")
+        let roster = [ana, luis, sol]
+        let weak = AttendanceFaceMatch.choose(["a": 0.10])
+        let unclear = AttendanceFaceMatch.choose(["a": 0.80, "b": 0.79, "c": 0.15])
+        XCTAssertEqual(weak, .suggested("a"))
+        XCTAssertEqual(AttendanceFaceMatch.choose(["a": 0.099]), .unknown)
+        XCTAssertEqual(unclear, .needsCode(["a", "b"]))
+        let agreed = try await TeamAttendanceDevice.resolve(weak, in: roster, expected: nil) {
+            XCTAssertEqual($0, .name("Ana"))
+            return .confirmed
+        }
+        XCTAssertEqual(agreed, ana)
+        let byCode = try await TeamAttendanceDevice.resolve(unclear, in: roster, expected: nil) {
+            XCTAssertEqual($0, .employeeCode)
+            return .code(" bb ")
+        }
+        XCTAssertEqual(byCode, luis)
+        let supplied = try await TeamAttendanceDevice.resolve(unclear, in: roster, expected: ana) { _ in
+            XCTFail("An employee who already supplied the matching code should not be asked again")
+            return nil
+        }
+        XCTAssertEqual(supplied, ana)
+        let direct = try await TeamAttendanceDevice.resolve(.automatic("c"), in: roster, expected: nil) { _ in
+            XCTFail("Clear scans mark automatically")
+            return nil
+        }
+        XCTAssertEqual(direct, sol)
+        for (match, claimed, answer) in [(weak, nil as TeamAttendanceDevice.Person?, nil as AttendanceIdentityAnswer?),
+                                        (unclear, nil, .code("CC")), (.automatic("b"), ana, nil), (.unknown, ana, nil)] {
+            do {
+                _ = try await TeamAttendanceDevice.resolve(match, in: roster, expected: claimed) { _ in answer }
+                XCTFail("A cancellation, different face or unrelated code cannot create attendance")
+            } catch { XCTAssertFalse(error.localizedDescription.isEmpty) }
+        }
+    }
+
     @MainActor func testLocalVisualAttendanceUsesOnlyTheSelectedReference() async throws {
         // Analytic fixtures with aligned eyes, a nose and a mouth. No photographs or identities.
         let side = AttendanceFaceSignature.side
@@ -3212,25 +3251,44 @@ final class PayrollClientTests: XCTestCase {
         let other = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels(variant: 1)))
         XCTAssertTrue(reference.resembles(brighter))
         XCTAssertFalse(reference.resembles(other))
-        XCTAssertEqual(brighter.identified(in:["primera":reference,"otra":other]), "primera")
-        XCTAssertNil(brighter.identified(in:["primera":reference,"duplicada":reference]))
-        XCTAssertNil(brighter.identified(in:["otra":other]))
-        XCTAssertNil(brighter.identified(in:[:]))
+        let both = ["primera": reference, "otra": other]
+        XCTAssertEqual(brighter.match(in: both), .automatic("primera"))
+        XCTAssertEqual(brighter.match(in: ["primera": reference, "duplicada": reference]), .needsCode(["duplicada", "primera"]))
+        XCTAssertNil(brighter.match(in: ["otra": other]).automaticID)
+        XCTAssertEqual(brighter.match(in: [:]), .unknown)
         XCTAssertNil(AttendanceFaceSignature(alignedPixels: Array(repeating: 128, count: side * side)))
         let sideLight = pixels(variant: 0).enumerated().map { $0.element + Float($0.offset % side - 32) * 0.5 }
         let shaded = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: sideLight))
-        XCTAssertEqual(shaded.identified(in:["primera":reference,"otra":other]), "primera")
-        XCTAssertNil(shaded.identified(in:["otra":other]))
+        XCTAssertEqual(shaded.match(in: both), .automatic("primera"))
+        XCTAssertNil(shaded.match(in: ["otra": other]).automaticID)
+        let cornerLight = pixels(variant: 0).enumerated().map { i, value in
+            value * 0.65 + 1.45 * Float(i % side - 32) + 0.7 * Float(i / side - 32)
+        }
+        let everyday = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: cornerLight))
+        let existing = try JSONDecoder().decode(AttendanceFaceSignature.self, from: JSONEncoder().encode(reference))
+        XCTAssertFalse(existing.resembles(everyday), "The previous appearance thresholds rejected this registration under side lighting")
+        XCTAssertEqual(everyday.match(in: ["primera": existing, "otra": other]), .automatic("primera"))
+        var registered = try XCTUnwrap(JSONSerialization.jsonObject(with: JSONEncoder().encode(existing)) as? [String: Any])
+        registered["proportions"] = [0.4, 0.45, 0.57, 0.8, 1.7]
+        let withLandmarks = try JSONDecoder().decode(AttendanceFaceSignature.self, from: JSONSerialization.data(withJSONObject: registered))
+        XCTAssertEqual(everyday.match(in: ["primera": withLandmarks, "otra": other]), .automatic("primera"))
         var frontal = AttendanceFrontalCapture()
         XCTAssertNil(frontal.observe(yaw: 0.1, at: 10) { shaded })
         XCTAssertNil(frontal.observe(yaw: nil, at: 10.25) { shaded })
         let still = try XCTUnwrap(frontal.observe(yaw: 0, at: 10.5) { shaded })
-        XCTAssertEqual(still.identified(in:["primera":reference,"otra":other]), "primera")
+        XCTAssertEqual(still.match(in: both), .automatic("primera"))
         XCTAssertNil(frontal.observe(yaw: 0, at: 11) { reference })
         XCTAssertNil(frontal.observe(yaw: 0, at: 11.25) { other })
         XCTAssertNil(frontal.observe(yaw: 0, at: 11.5) { reference })
         XCTAssertNil(frontal.observe(yaw: 0, at: 13) { brighter })
         XCTAssertNil(frontal.observe(yaw: 0.6, at: 13.25) { brighter })
+        XCTAssertFalse(frontal.isReading)
+        let similar = ["primera": existing, "duplicada": existing]
+        for frame in 0..<5 {
+            XCTAssertNil(frontal.observe(yaw: 0, at: 20 + 0.25 * Double(frame), comparing: similar) { everyday })
+        }
+        let secondLook = try XCTUnwrap(frontal.observe(yaw: 0.1, at: 21.25, comparing: similar) { everyday })
+        XCTAssertEqual(secondLook.match(in: similar), .needsCode(["duplicada", "primera"]))
         XCTAssertFalse(frontal.isReading)
 
         let vault = MemorySession()

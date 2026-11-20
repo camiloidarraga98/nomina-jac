@@ -3,6 +3,9 @@ import CryptoKit
 import Foundation
 import UIKit
 
+enum AttendanceIdentityQuestion: Equatable { case name(String), employeeCode }
+enum AttendanceIdentityAnswer { case confirmed, code(String) }
+
 @MainActor
 final class TeamAttendanceDevice {
     static let shared = TeamAttendanceDevice()
@@ -15,7 +18,7 @@ final class TeamAttendanceDevice {
     private var cameraInUse = false
 
     private struct Device: Codable { let id, secret: String; var name: String; var paired: Bool }
-    private struct Person: Codable, Equatable { let id, name: String; let code: String?; let revision: Int; let enrollment: String? }
+    struct Person: Codable, Equatable { let id, name: String; let code: String?; let revision: Int; let enrollment: String? }
     private struct Roster: Decodable { let people: [Person] }
     private struct Reference: Codable {
         let id, employee, device: String
@@ -200,7 +203,35 @@ final class TeamAttendanceDevice {
         let state=try ledger(d)
         return ["paired":true,"name":d.name,"online":online,"pending":state.pending.count,"warning":state.blocked.isEmpty ? "" : "Hay marcaciones en conflicto en este kiosco. Pide supervisión antes de repetirlas."]
     }
+    static func resolve(_ match: AttendanceFaceMatch, in people: [Person], expected: Person?,
+                        ask: (AttendanceIdentityQuestion) async -> AttendanceIdentityAnswer?) async throws -> Person {
+        let wrong = APIError.message("Perfil incorrecto. El rostro y el perfil indicado no coinciden.")
+        if let expected, match != .unknown {
+            guard match.includes(expected.id) else { throw wrong }
+            return expected
+        }
+        let cancelled = APIError.message("Marcación cancelada.")
+        switch match {
+        case let .automatic(id), let .suggested(id):
+            guard let person = people.first(where: { $0.id == id }) else { throw wrong }
+            if case .suggested = match {
+                guard case .confirmed? = await ask(.name(person.name)) else { throw cancelled }
+            }
+            return person
+        case .needsCode:
+            guard case let .code(input)? = await ask(.employeeCode) else { throw cancelled }
+            let code = input.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !code.isEmpty,
+                  let person = people.first(where: { $0.code?.caseInsensitiveCompare(code) == .orderedSame }),
+                  match.includes(person.id) else { throw wrong }
+            return person
+        case .unknown:
+            throw APIError.message("No se parece a un rostro inscrito en este iPad. Mira de frente con buena luz y vuelve a marcar.")
+        }
+    }
+
     func capture(employee:String?, claimedCode:String?, movement:String?, enroll:Bool, client:PayrollClient, presenter:UIViewController,
+                 ask: (AttendanceIdentityQuestion) async -> AttendanceIdentityAnswer?,
                  allowed:() -> Bool) async throws -> [String:Any] {
         guard !cameraInUse else {throw APIError.message("Ya hay una lectura en curso.")}
         cameraInUse=true;defer {cameraInUse=false}
@@ -217,11 +248,19 @@ final class TeamAttendanceDevice {
         if enroll, expected?.enrollment != nil {throw APIError.message("Este perfil ya tiene una inscripción. Retírala explícitamente antes de reemplazarla.")}
         let candidates=references(state)
         if !enroll && candidates.isEmpty {throw APIError.message("Inscribe primero los rostros en este kiosco desde tu cuenta administradora.")}
+        if !enroll, let expected, candidates[expected.id] == nil {
+            throw APIError.message("Este empleado necesita una inscripción de rostro vigente en este iPad.")
+        }
         try Task.checkCancellation()
         guard allowed() else {throw APIError.unauthorized}
         let reading = try await AttendanceFaceCamera.collect(for: expected?.name ?? "Registro de asistencia", from: presenter,
-                                                             includePhoto: movement != nil, stillAllowed: allowed)
+                                                             includePhoto: movement != nil, references: enroll ? nil : candidates, stillAllowed: allowed)
         let sample = reading.signature
+        guard allowed() else {throw APIError.unauthorized}
+        let match = enroll ? AttendanceFaceMatch.unknown : sample.match(in: candidates)
+        let scanned: Person?
+        if enroll { scanned = nil }
+        else { scanned = try await Self.resolve(match, in: state.roster, expected: expected, ask: ask) }
         guard allowed() else {throw APIError.unauthorized}
         _ = try await refresh(d,allowCached:movement != nil)
         guard allowed() else {throw APIError.unauthorized}
@@ -246,11 +285,14 @@ final class TeamAttendanceDevice {
             _ = try await refresh(d,allowCached:false)
             return ["ok":true]
         }
-        guard let who=sample.identified(in:known), let person=state.roster.first(where:{$0.id==who}), let enrollment=person.enrollment else {
-            if expected != nil {throw APIError.message("No se pudo confirmar el rostro de este perfil. Reintenta o pide supervisión. No se registró una marcación.")}
-            throw APIError.message("No se obtuvo una coincidencia única. Reintenta o pide supervisión. No se registró una marcación.")
+        // A revocation, new competing enrollment or change of employee while the camera/prompt was open
+        // must never attach this photo or sign a punch for a different registration.
+        guard let scanned, let person=state.roster.first(where: { $0.id == scanned.id }),
+              let enrollment=person.enrollment, enrollment == scanned.enrollment, person.revision == scanned.revision,
+              person.code == scanned.code, person.name == scanned.name, sample.match(in: known) == match else {
+            throw APIError.message("La inscripción cambió durante el escaneo. Vuelve a marcar.")
         }
-        if let expected, expected.id != who {throw APIError.message("Perfil incorrecto. El rostro no corresponde al empleado seleccionado. No se registró una marcación.")}
+        let who = person.id
         guard let movement else {return ["message":"El rostro coincide con la ficha de "+person.name+"."]}
         guard ["entry","exit"].contains(movement), employee==nil else {throw APIError.message("Movimiento no válido.")}
         let now=Date(), format=ISO8601DateFormatter()

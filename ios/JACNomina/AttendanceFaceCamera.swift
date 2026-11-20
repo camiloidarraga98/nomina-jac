@@ -10,22 +10,29 @@ import Vision
 struct AttendanceFrontalCapture {
     private var samples: [AttendanceFaceSignature] = []
     private var lastSample: TimeInterval?
-    var isReading: Bool { !samples.isEmpty }
+    private var takingSecondReading = false
+    var isReading: Bool { !samples.isEmpty || takingSecondReading }
 
-    mutating func observe(yaw: Double?, at time: TimeInterval, signature: () -> AttendanceFaceSignature?) -> AttendanceFaceSignature? {
+    mutating func observe(yaw: Double?, at time: TimeInterval, comparing references: [String: AttendanceFaceSignature]? = nil,
+                          signature: () -> AttendanceFaceSignature?) -> AttendanceFaceSignature? {
         if let lastSample {
             if time - lastSample > 1 { self = Self() }
             else if time - lastSample < 0.18 { return nil }
         }
-        guard yaw.map({ abs($0) <= 0.35 }) ?? true, let sample = signature() else {
+        guard yaw.map({ abs($0) <= 0.45 }) ?? true, let sample = signature() else {
             self = Self()
             return nil
         }
-        if let first = samples.first, !first.resembles(sample) { samples.removeAll() }
+        if let first = samples.first, !first.continuesReading(sample) { self = Self() }
         samples.append(sample)
         lastSample = time
         guard samples.count == 3 else { return nil }
         let result = AttendanceFaceSignature.mean(of: samples)
+        if let result, let references, !takingSecondReading, result.match(in: references).automaticID == nil {
+            takingSecondReading = true
+            samples.removeAll(keepingCapacity: true)
+            return nil
+        }
         self = Self()
         return result
     }
@@ -61,14 +68,16 @@ private final class AttendanceFaceStream: NSObject, AVCaptureVideoDataOutputSamp
     private var frontal = AttendanceFrontalCapture()
     private let photoContext = CIContext(options: [.cacheIntermediates: false])
     private let includePhoto: Bool
+    private let references: [String: AttendanceFaceSignature]?
     private var finished = false
     private var lastFrame: TimeInterval = 0
     private var lastInstruction = ""
     let event: (Result<AttendanceFaceReading, Error>) -> Void
     let instruction: (String) -> Void
 
-    init(includePhoto: Bool, event: @escaping (Result<AttendanceFaceReading, Error>) -> Void, instruction: @escaping (String) -> Void) {
+    init(includePhoto: Bool, references: [String: AttendanceFaceSignature]?, event: @escaping (Result<AttendanceFaceReading, Error>) -> Void, instruction: @escaping (String) -> Void) {
         self.includePhoto = includePhoto
+        self.references = references
         self.event = event
         self.instruction = instruction
     }
@@ -147,7 +156,8 @@ private final class AttendanceFaceStream: NSObject, AVCaptureVideoDataOutputSamp
             guide(faces.count > 1 ? "Debe aparecer una sola persona." : "Acércate y mira de frente con buena luz.")
             return
         }
-        if let signature = frontal.observe(yaw: face.yaw?.doubleValue, at: now, signature: { AttendanceFaceSignature.capture(face, in: buffer) }) {
+        if let signature = frontal.observe(yaw: face.yaw?.doubleValue, at: now, comparing: references,
+                                          signature: { AttendanceFaceSignature.capture(face, in: buffer) }) {
             let photo = includePhoto ? AttendanceFaceReading.portrait(bounds: face.boundingBox, image: CIImage(cvPixelBuffer: buffer), context: photoContext) : nil
             if includePhoto && photo == nil { guide("Mira a la cámara un instante más para tomar la foto."); return }
             end(.success(AttendanceFaceReading(signature: signature, photo: photo)))
@@ -164,7 +174,8 @@ final class AttendanceFaceCamera: UIViewController {
     private let hint = UILabel()
     private let titleLabel = UILabel()
     private var includePhoto = false
-    private lazy var stream = AttendanceFaceStream(includePhoto: includePhoto, event: { [weak self] result in self?.finish(result) },
+    private var references: [String: AttendanceFaceSignature]?
+    private lazy var stream = AttendanceFaceStream(includePhoto: includePhoto, references: references, event: { [weak self] result in self?.finish(result) },
                                                   instruction: { [weak self] text in
         self?.hint.text = text
         // The preview connection can appear after the first layout on a landscape iPad.
@@ -178,7 +189,8 @@ final class AttendanceFaceCamera: UIViewController {
         return AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .video, position: .front).devices.first
     }
 
-    static func collect(for name: String, from presenter: UIViewController, includePhoto: Bool = false, stillAllowed: () -> Bool) async throws -> AttendanceFaceReading {
+    static func collect(for name: String, from presenter: UIViewController, includePhoto: Bool = false,
+                        references: [String: AttendanceFaceSignature]? = nil, stillAllowed: () -> Bool) async throws -> AttendanceFaceReading {
         guard let camera = frontCamera else { throw APIError.message("Para comparar un rostro, usa un dispositivo con cámara frontal. Puedes elegir supervisión.") }
         guard await AVCaptureDevice.requestAccess(for: .video) else { throw APIError.message("Para usar la comparación habilita Cámara en Ajustes de JAC. También puedes elegir supervisión.") }
         guard stillAllowed(), let scene = presenter.viewIfLoaded?.window?.windowScene,
@@ -186,6 +198,7 @@ final class AttendanceFaceCamera: UIViewController {
         return try await withCheckedThrowingContinuation { continuation in
             let screen = AttendanceFaceCamera()
             screen.includePhoto = includePhoto
+            screen.references = references
             screen.modalPresentationStyle = .overFullScreen
             screen.titleLabel.text = name
             screen.completion = { continuation.resume(with: $0) }
