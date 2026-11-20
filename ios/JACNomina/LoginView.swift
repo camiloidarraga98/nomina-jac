@@ -3,18 +3,21 @@ import SwiftUI
 struct LoginView: View {
     @EnvironmentObject private var store: PayrollStore
     #if os(iOS)
+    @EnvironmentObject private var accounts: JACAccountSessions
     @State private var hasTeamKiosk = false
+    private var kioskLogin: Bool { JACAccountSessions.isKioskLogin(username) }
+    #else
+    private var kioskLogin: Bool { false }
     #endif
     @State private var username = ""
     @State private var password = ""
     @State private var keepSignedIn = false
     #if os(iOS) && DEBUG
-    @EnvironmentObject private var accounts: JACAccountSessions
     @State private var privateAddress = JACAccountSessions.lastAddress
-    private var kioskLogin: Bool { JACAccountSessions.isKioskLogin(username) }
+    private var pilotLogin: Bool { JACAccountSessions.isPilotLogin(username) }
     private var pilotProgress: String? { accounts.pilotProgress }
     #else
-    private var kioskLogin: Bool { false }
+    private var pilotLogin: Bool { false }
     private var pilotProgress: String? { nil }
     #endif
     @FocusState private var focus: Field?
@@ -54,7 +57,7 @@ struct LoginView: View {
                         Text("Si la activas, permanecerás conectado en este \(JACDevice.name) hasta que cierres sesión.").font(.caption).foregroundStyle(.secondary)
                         if let error = store.error { InlineError(message: error) }
                         #if os(iOS) && DEBUG
-                        if kioskLogin && JACAccountSessions.needsAddressField {
+                        if pilotLogin && JACAccountSessions.needsAddressField {
                             VStack(alignment: .leading, spacing: 7) {
                                 Text("Servidor privado de Asistencia").font(.caption.weight(.semibold))
                                 TextField("https://asistencia.local", text: $privateAddress)
@@ -75,7 +78,7 @@ struct LoginView: View {
                                 HStack {
                                     Spacer()
                                     if store.busy { ProgressView().tint(.white) }
-                                    Text("Iniciar sesión")
+                                    Text(kioskLogin ? "Entrar al kiosco de asistencia" : "Iniciar sesión")
                                     Image(systemName: "arrow.right"); Spacer()
                                 }
                             }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy).accessibilityIdentifier("login.submit")
@@ -87,14 +90,17 @@ struct LoginView: View {
                         }
                         #endif
                     }.padding(22).background(JACTheme.card,in:RoundedRectangle(cornerRadius:24))
-                    if !kioskLogin && !store.client.isAttendancePilot {
+                    if !kioskLogin && !pilotLogin && !store.client.isAttendancePilot {
                         #if os(iOS)
                         if hasTeamKiosk {
-                            NavigationLink {
-                                TeamAttendanceView(administrator:nil).navigationTitle("Kiosco de asistencia").jacInlineTitle()
+                            Button {
+                                username = "admin"
+                                password = ""
+                                store.error = nil
+                                focus = .password
                             } label: {
                                 Label("Marcar asistencia",systemImage:"person.crop.square").frame(maxWidth:.infinity)
-                            }.buttonStyle(JACPrimaryButtonStyle()).accessibilityIdentifier("attendance.openKiosk")
+                            }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy).accessibilityIdentifier("attendance.openKiosk")
                         }
                         #endif
                         NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() }
@@ -114,9 +120,16 @@ struct LoginView: View {
     private func signIn() {
         guard !busy else { return }
         focus = nil
+        #if os(iOS)
+        if kioskLogin {
+            accounts.signInTeamKiosk(password: password, keepSignedIn: keepSignedIn)
+            password = ""
+            return
+        }
+        #endif
         Task {
             #if os(iOS) && DEBUG
-            if kioskLogin {
+            if pilotLogin {
                 await accounts.signInPilot(password: password, keepSignedIn: keepSignedIn, address: privateAddress) { password = "" }
                 return
             }

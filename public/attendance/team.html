@@ -8,6 +8,7 @@
     <script defer src="team.js"></script>
   </head>
   <body>
+    <p id="accessError" role="alert" hidden></p>
     <main id="admin" hidden>
       <header class="admin-head">
         <div class="brand">
@@ -98,7 +99,7 @@
         <div class="body">
           <section id="home">
             <h1>Marca tu asistencia</h1>
-            <p>Elige tu movimiento y escanea tu rostro.</p>
+            <p id="scanHelp">Elige tu movimiento y escanea tu rostro.</p>
             <div class="choices">
               <button data-move="entry" aria-pressed="true">
                 <svg
@@ -145,7 +146,7 @@
                 />
               </svg>
             </div>
-            <button class="primary scan" id="scan">
+            <button class="primary scan" id="scan" disabled>
               <svg
                 class="action-icon"
                 aria-hidden="true"

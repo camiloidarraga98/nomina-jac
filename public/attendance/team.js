@@ -355,6 +355,7 @@ function startAdmin() {
 }
 let move = 'entry',
   scanning = false,
+  canMark = false,
   resetTimer,
   statusBusy = false;
 const term = () => (move === 'entry' ? 'entrada' : 'salida');
@@ -400,15 +401,27 @@ async function kioskStatus() {
   statusBusy = true;
   try {
     const s = await native('status');
+    canMark = s.paired === true;
+    if (!canMark) {
+      $('connection').textContent = 'Por habilitar';
+      $('connection').className = '';
+      $('scanHelp').textContent =
+        'Para habilitar este dispositivo, toca Salir y entra con tu cuenta administradora a Gestión → Asistencia → Kioscos.';
+      $('delivery').textContent = '';
+      return;
+    }
+    $('scanHelp').textContent = 'Elige tu movimiento y escanea tu rostro.';
     $('connection').textContent = s.online ? 'En línea' : 'Sin conexión';
     $('connection').className = s.online ? 'online' : '';
     $('device').textContent = s.name;
     $('delivery').textContent = s.warning || (s.pending ? s.pending + ' por enviar al servidor' : '');
   } catch (e) {
+    canMark = false;
     $('connection').textContent = 'Kiosco no disponible';
     $('connection').className = '';
     $('delivery').textContent = message(e);
   } finally {
+    $('scan').disabled = !canMark || scanning;
     statusBusy = false;
   }
 }
@@ -426,7 +439,7 @@ function startKiosk() {
       $('scanLabel').textContent = 'Escanear para marcar ' + term();
     };
   $('scan').onclick = async () => {
-    if (scanning) return;
+    if (scanning || !canMark) return;
     scanning = true;
     $('scan').disabled = true;
     try {
@@ -451,7 +464,7 @@ function startKiosk() {
       outcome(detail.includes('Perfil incorrecto') ? 'Perfil incorrecto' : 'Marcación sin confirmar', detail);
     } finally {
       scanning = false;
-      $('scan').disabled = false;
+      $('scan').disabled = !canMark;
       kioskStatus();
     }
   };
@@ -470,9 +483,12 @@ function startKiosk() {
   });
 }
 (async () => {
-  if (bridge && (await native('mode')) === 'kiosk') startKiosk();
-  else startAdmin();
+  if (!bridge) return startAdmin();
+  const mode = await native('mode');
+  if (mode === 'kiosk') return startKiosk();
+  if (mode === 'admin') return startAdmin();
+  throw Error('Vuelve a iniciar sesión en Asistencia.');
 })().catch((e) => {
-  $('admin').hidden = false;
-  $('notice').textContent = message(e);
+  $('accessError').textContent = message(e);
+  $('accessError').hidden = false;
 });

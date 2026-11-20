@@ -1,12 +1,18 @@
 # Asistencia de JAC
 
+## Entrar al kiosco de JACNomina
+
+En iPhone y iPad, escribe `admin` en **Usuario o correo** y `admin` en **Contraseña**. Se abre **Marca tu asistencia**. Esta cuenta permite elegir entrada o salida y escanear el rostro. **Mantener la sesión iniciada** vuelve a abrir el kiosco al reiniciar la app. **Salir** devuelve al inicio de sesión.
+
+En un dispositivo nuevo puedes ver la pantalla con el indicador **Por habilitar**. Para activar las marcaciones, entra con tu cuenta administradora habitual a **Gestión → Asistencia → Kioscos** y pulsa **Habilitar este dispositivo**. En **Personal**, inscribe a los empleados con la cámara del iPad. La gestión del personal y el historial compartido requieren tu cuenta personal.
+
 ## Historial compartido
 
 En la web abre **Configuración general → Asistencia**. En JACNomina abre **Gestión → Asistencia** con tu cuenta administradora habitual. Ambos consultan la misma base D1. El historial compartido empieza con las nuevas marcaciones. Las marcaciones anteriores del piloto siguen en su dispositivo.
 
 1. En **Personal** crea una ficha por persona con código interno y nombre.
 2. En cada iPad físico inicia sesión como administrador. En **Kioscos** nombra y habilita el dispositivo. En **Personal** confirma la identidad y el consentimiento del participante antes de pulsar **Inscribir rostro** junto a la ficha correcta. Repite la inscripción en el segundo iPad. Los identificadores de ficha e inscripción se comparten. La referencia facial cifrada permanece en el iPad y caduca a los 30 días.
-3. Cierra la sesión administradora y toca **Marcar asistencia**. La persona elige **Entrada** o **Salida** y pulsa **Escanear**. La cámara solicita un giro de cabeza y compara la muestra contra los perfiles inscritos activos. **Verificar con mi código de empleado** permite comprobar además que la coincidencia corresponde a la ficha declarada. La comparación dudosa, múltiple o con otro perfil bloquea la marcación. Un administrador puede comprobar una inscripción con **Verificar perfil**.
+3. Cierra la sesión administradora, toca **Marcar asistencia** y escribe la contraseña del kiosco. La persona elige **Entrada** o **Salida** y pulsa **Escanear**. La cámara solicita un giro de cabeza y compara la muestra contra los perfiles inscritos activos. **Verificar con mi código de empleado** permite comprobar además que la coincidencia corresponde a la ficha declarada. La comparación dudosa, múltiple o con otro perfil bloquea la marcación. Un administrador puede comprobar una inscripción con **Verificar perfil**.
 4. **Marcación recibida** indica que el servidor confirmó el registro. Con una lista sincronizada durante las últimas 12 horas, el iPad puede marcar sin red. Guarda una copia cifrada temporal y reintenta mientras el kiosco está abierto. Un UUID identifica cada operación, incluso después de reiniciar. Un registro revocado o en conflicto requiere intervención.
 5. **Marcaciones** muestra la hora del movimiento en Colombia, la hora de recepción y el dispositivo o el supervisor. Filtra por persona y por fecha para consultar el historial. Para una excepción el administrador verifica la identidad en persona y registra el motivo. El panel se actualiza periódicamente. En **Revisar** puedes corregir la hora o el movimiento con motivo y consultar el original y sus revisiones. Retirar el rostro o desactivar una persona invalida sus inscripciones en ambos iPads. Las marcaciones existentes siguen en el historial.
 
@@ -14,12 +20,12 @@ El servidor acepta marcaciones automáticas únicamente de un kiosco habilitado 
 
 ## Piloto local de desarrollo
 
-La cuenta de prueba `admin` abre el kiosco integrado en **JACNomina**. Tiene acceso al registro de asistencia. Las operaciones de gestión requieren además una clave de operador. Los empleados y las marcaciones del piloto son ficticios.
+La cuenta de desarrollo `admin@attendance.invalid` abre el piloto local en la compilación Debug de **JACNomina**. Tiene acceso al registro de asistencia. Las operaciones de gestión requieren además una clave de operador. Los empleados y las marcaciones del piloto son ficticios.
 
 ## Probar en iPad o iPhone desde Xcode
 
 1. Actualiza `main`, abre `ios/JACNomina.xcodeproj`, selecciona **JACNomina** y el iPad o iPhone de prueba. Pulsa **Run**.
-2. Ingresa con usuario `admin` y contraseña `admin`. El indicador **Prueba en este dispositivo** identifica el piloto integrado. Encontrarás dos empleados ficticios para probar **Entrada** y **Salida** de inmediato.
+2. Ingresa con usuario `admin@attendance.invalid` y contraseña `admin`. El indicador **Prueba en este dispositivo** identifica el piloto integrado. Encontrarás dos empleados ficticios para probar **Entrada** y **Salida** de inmediato.
 3. En **Gestión supervisada** escribe `admin`. La autorización de operador dura cinco minutos. En **Empleados de prueba** puedes crear fichas. En **Marcaciones** puedes revisar y corregir un registro con motivo e historial.
 
 El primer arranque y el registro funcionan directamente en la app de desarrollo, incluso en modo avión. El iPad conserva las marcaciones en un archivo protegido y excluido de las copias de seguridad. Cerrar sesión bloquea la gestión y conserva el historial para el siguiente acceso autorizado en ese dispositivo. Cada dispositivo de prueba tiene su propio historial. Una marcación manual queda pendiente de revisión. En un dispositivo con cámara frontal también se puede elegir la comparación visual descrita más abajo. La cuenta y la clave de demostración están limitadas a la compilación de desarrollo y a sus datos de prueba.
@@ -28,7 +34,7 @@ Al actualizar desde el piloto que dependía del Mac puede volver a aparecer el f
 
 ## Ensayar la comparación en el simulador de Xcode
 
-1. En **JACNomina**, entra al kiosco como `admin` con contraseña `admin`. Abre **Gestión supervisada** con `admin` y toca **Empleados de prueba**.
+1. En **JACNomina**, entra al piloto como `admin@attendance.invalid` con contraseña `admin`. Abre **Gestión supervisada** con `admin` y toca **Empleados de prueba**.
 2. En una ficha toca **Registrar rostro de prueba** y escoge **Rostro A** como referencia. Pulsa **Volver al kiosco**. Quedará seleccionado ese empleado.
 3. Elige **Entrada**, **Rostro A** y **Confirmar marcación**. Verás **Coincidencia de prueba**. Para probar el otro resultado, elige **Salida**, vuelve a seleccionar al mismo empleado y confirma con **Rostro B**. Verás **Rostros de prueba distintos**.
 4. Ambas marcaciones aparecen pendientes en **Gestión supervisada → Marcaciones**. Para hacer una marcación manual, elige **Solicitar supervisión presencial** en el selector de método.
@@ -50,7 +56,7 @@ npm run asistencia
 5. En Gestión abre **Marcaciones → Supervisar** y registra el motivo de tu confirmación presencial. Para una corrección indica el movimiento, la hora y el motivo. El original y cada revisión están en **Original e historial**. Corregir reabre la supervisión.
 6. Para probar el modo offline, abre el kiosco una vez con conexión y empleados cargados. Desconecta la red de la pestaña, registra una salida y vuelve a abrir la misma dirección en ese perfil. Al recuperar la conexión, el mismo UUID se entrega al servidor. **Sincronizar ahora** permite adelantar el intento.
 
-El servidor escucha en el loopback del Mac u ordenador de prueba. Usa Miniflare, D1 efímera y sesiones propias del motor JAC con su hash scrypt. La contraseña débil pertenece únicamente al kiosco ficticio. El inicio comprueba los dos nombres antes de insertar las cuentas. Detener el servidor descarta su base y volver a iniciarlo crea identidades nuevas. Para probar el reinicio de la aplicación, deja el servidor encendido y cierra el navegador o la app. La migración aditiva del piloto vive en `db/attendance-pilot/001.sql` y la aplica solo este ejecutor.
+El servidor escucha en el loopback del Mac u ordenador de prueba. Usa Miniflare, D1 efímera y sesiones propias del motor JAC con su hash scrypt. Este servidor de pruebas mantiene su propia cuenta ficticia. El inicio comprueba los dos nombres antes de insertar las cuentas. Detener el servidor descarta su base y volver a iniciarlo crea identidades nuevas. Para probar el reinicio de la aplicación, deja el servidor encendido y cierra el navegador o la app. La migración aditiva del piloto vive en `db/attendance-pilot/001.sql` y la aplica solo este ejecutor.
 
 ## Probar la sincronización en una compilación de desarrollo
 

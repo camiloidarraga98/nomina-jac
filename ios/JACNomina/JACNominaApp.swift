@@ -82,6 +82,19 @@ private struct JACPhoneSession: View {
         ZStack {
             Group {
                 if JACAccountSessions.isUnitTestHost { Color(uiColor: .systemBackground) }
+                else if accounts.teamKioskOpen {
+                    NavigationStack {
+                        TeamAttendanceView(administrator: nil)
+                            .navigationTitle("Kiosco de asistencia")
+                            .navigationBarTitleDisplayMode(.inline)
+                            .toolbar {
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    Button("Salir", action: accounts.closeTeamKiosk)
+                                        .accessibilityIdentifier("attendance.exitKiosk")
+                                }
+                            }
+                    }
+                }
                 else if store.restoring { ProgressView("Conectando…") }
                 else if let kiosk = store.attendanceKiosk { AttendanceView(account: kiosk.id).id(kiosk.id) }
                 else if let overview = store.overview { PayrollHomeView(overview: overview, agendaOnly: store.isAgendaOnly) }
@@ -108,26 +121,31 @@ private struct JACPhoneSession: View {
         }
         #endif
         .onOpenURL { url in
-            guard store.allowsExternalDestination else { return }
+            guard !accounts.teamKioskOpen, store.allowsExternalDestination else { return }
             if url.isFileURL { store.receiveAudio(url); return }
             if JACWidgetNavigation.shared.receive(url) { return }
             if let share = MediaIncomingShare.parse(url) { incomingShare = share }
         }
         .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-            guard store.allowsExternalDestination else { return }
+            guard !accounts.teamKioskOpen, store.allowsExternalDestination else { return }
             if let url = activity.webpageURL, let share = MediaIncomingShare.parse(url) { incomingShare = share }
         }
         .onChange(of: store.attendanceKiosk?.id) { _, kiosk in
             if kiosk != nil { incomingShare = nil }
             else { accounts.didLeaveKiosk(store) }
         }
+        .onChange(of: accounts.teamKioskOpen) { _, open in
+            if open { incomingShare = nil }
+        }
         .sheet(item: $incomingShare) { share in MediaSharedFolderBrowser(share: share).id(share.id) }
         .task {
             guard !JACAccountSessions.isUnitTestHost else { return }
             await store.restore()
             if store.client.isAttendancePilot { accounts.didLeaveKiosk(store); return }
-            await store.resumeMediaUploads()
-            store.prefetchMediaRoot()
+            if !accounts.teamKioskOpen {
+                await store.resumeMediaUploads()
+                store.prefetchMediaRoot()
+            }
             while !Task.isCancelled {
                 do { try await Task.sleep(for: .seconds(30)) } catch { return }
                 // Read the current scene state; a long-lived task must not
@@ -136,7 +154,7 @@ private struct JACPhoneSession: View {
             }
         }
         .onChange(of: scenePhase) { _, value in
-            guard value == .active, !JACAccountSessions.isUnitTestHost else { return }
+            guard value == .active, !accounts.teamKioskOpen, !JACAccountSessions.isUnitTestHost else { return }
             if store.client.isAttendancePilot {
                 if store.attendanceKiosk == nil { Task { await store.restore(); accounts.didLeaveKiosk(store) } }
                 return
@@ -162,6 +180,8 @@ private struct JACPhoneSession: View {
 @MainActor
 final class JACAccountSessions: ObservableObject {
     @Published private(set) var store: PayrollStore
+    @Published private(set) var teamKioskOpen = false
+    private static let rememberTeamKiosk = "jac.attendance.rememberTeamKiosk"
     #if DEBUG
     @Published private(set) var pilotProgress: String?
     private var preparation: Task<Void, Error>?
@@ -177,7 +197,7 @@ final class JACAccountSessions: ObservableObject {
         #endif
     }
     var widgetClient: PayrollClient? {
-        guard !store.client.isAttendancePilot, !Self.isUnitTestHost,
+        guard !teamKioskOpen, !store.client.isAttendancePilot, !Self.isUnitTestHost,
               !ProcessInfo.processInfo.arguments.contains("--uitest-payroll") else { return nil }
         return store.client
     }
@@ -189,30 +209,73 @@ final class JACAccountSessions: ObservableObject {
             store = PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"), offline: arguments.contains("--uitest-offline"), slowAgenda: arguments.contains("--uitest-slow-agenda"), persistentAgenda: arguments.contains("--uitest-agenda-cache"), resetAgenda: arguments.contains("--uitest-reset-agenda")))
             return
         }
-        // A previous pilot session must return to the kiosk or its login, even when
-        // the selected pilot has changed. Never reuse another origin's credentials.
-        let hadPilot = UserDefaults.standard.string(forKey: Self.activeKey) != nil
-        if !Self.isUnitTestHost, let origin = Self.pilotOrigin(address: Self.lastAddress), let host = origin.host,
-           hadPilot || (try? KeychainSessionStore(account: host).load()) != nil {
-            let client = PayrollClient(baseURL: origin, isAttendancePilot: true)
-            if hadPilot || (try? client.savedAttendanceKiosk()) != nil {
-                UserDefaults.standard.set(origin.absoluteString, forKey: Self.activeKey)
-                store = PayrollStore(client: client)
+        if !Self.isUnitTestHost, let origin = Self.pilotOrigin(address: Self.lastAddress) {
+            let defaults = UserDefaults.standard
+            if defaults.string(forKey: Self.activeKey) == origin.absoluteString {
+                store = PayrollStore(client: PayrollClient(baseURL: origin, isAttendancePilot: true))
                 return
+            }
+            // In older builds "admin" selected the local pilot. End that login on
+            // upgrade, preserving its ledger and requiring a fresh choice of account.
+            if defaults.string(forKey: Self.legacyPilotKey) != nil || defaults.string(forKey: Self.activeKey) != nil {
+                let client = PayrollClient(baseURL: origin, isAttendancePilot: true)
+                do {
+                    try client.clearSession()
+                    try Self.clearPilotSelection()
+                } catch {
+                    let previous = PayrollStore(client: client)
+                    previous.report(error)
+                    store = previous
+                    return
+                }
             }
         }
         #endif
-        store = PayrollStore()
+        let regular = PayrollStore()
+        store = regular
+        teamKioskOpen = UserDefaults.standard.bool(forKey: Self.rememberTeamKiosk)
+            && (try? regular.client.hasSession()) == false
+    }
+
+    static func isKioskLogin(_ input: String) -> Bool {
+        input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "admin"
+    }
+
+    func signInTeamKiosk(password: String, keepSignedIn: Bool) {
+        guard !store.busy, !store.hasSavedSession, store.overview == nil, !store.client.isAttendancePilot,
+              store.client.baseURL == PayrollClient.productionURL else { return }
+        do {
+            guard try !store.client.hasSession() else { throw APIError.message("Cierra la sesión actual para abrir el kiosco.") }
+            guard password == "admin" else { throw APIError.invalid("Usuario o contraseña incorrectos.") }
+            // This opens the terminal. The server authenticates marks with the
+            // paired device and the enrollment, independently of this shared login.
+            store.error = nil
+            UserDefaults.standard.set(keepSignedIn, forKey: Self.rememberTeamKiosk)
+            teamKioskOpen = true
+        } catch { store.report(error) }
+    }
+
+    func closeTeamKiosk() {
+        UserDefaults.standard.removeObject(forKey: Self.rememberTeamKiosk)
+        teamKioskOpen = false
     }
 
     #if DEBUG
-    private static let activeKey = "jac.attendance.activeOrigin"
+    private static let activeKey = "jac.attendance.explicitPilotOrigin"
+    private static let legacyPilotKey = "jac.attendance.activeOrigin"
     private static let addressKey = "jac.attendance.privateOrigin"
     static var lastAddress: String { UserDefaults.standard.string(forKey: addressKey) ?? "" }
 
-    static func isKioskLogin(_ input: String) -> Bool {
-        let name = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        return name == "admin" || name == "admin@attendance.invalid"
+    static func isPilotLogin(_ input: String) -> Bool {
+        input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == "admin@attendance.invalid"
+    }
+
+    private static func clearPilotSelection() throws {
+        // Older builds could leave a second account signed in on the same device.
+        let regularVault = KeychainSessionStore(account: PayrollClient.productionURL.host!)
+        if try regularVault.load() != nil { try regularVault.clear() }
+        UserDefaults.standard.removeObject(forKey: activeKey)
+        UserDefaults.standard.removeObject(forKey: legacyPilotKey)
     }
     static var needsAddressField: Bool {
         pilotOrigin(address: "") == nil
@@ -276,11 +339,7 @@ final class JACAccountSessions: ObservableObject {
         guard store === previous, previous.client.isAttendancePilot, previous.attendanceKiosk == nil,
               (try? previous.client.hasSession()) == false else { return }
         do {
-            // Older builds could leave a second account signed in on the same device.
-            // A kiosk logout must lead to a fresh login, even on those installations.
-            let regularVault = KeychainSessionStore(account: PayrollClient.productionURL.host!)
-            if try regularVault.load() != nil { try regularVault.clear() }
-            UserDefaults.standard.removeObject(forKey: Self.activeKey)
+            try Self.clearPilotSelection()
             let regular = PayrollStore()
             regular.error = previous.error
             store = regular

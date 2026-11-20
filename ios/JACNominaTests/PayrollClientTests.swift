@@ -3388,9 +3388,12 @@ final class PayrollClientTests: XCTestCase {
 
     @MainActor func testOnlyTheKioskAccountAndAPrivateOriginCanSelectAttendance() {
         XCTAssertTrue(JACAccountSessions.isKioskLogin(" Admin "))
-        XCTAssertTrue(JACAccountSessions.isKioskLogin("admin@attendance.invalid"))
+        XCTAssertFalse(JACAccountSessions.isPilotLogin(" Admin "))
+        XCTAssertTrue(JACAccountSessions.isPilotLogin("admin@attendance.invalid"))
+        XCTAssertFalse(JACAccountSessions.isKioskLogin("admin@attendance.invalid"))
         for name in ["camilo", "administrador", "admin@empresa.test", "operador"] {
             XCTAssertFalse(JACAccountSessions.isKioskLogin(name))
+            XCTAssertFalse(JACAccountSessions.isPilotLogin(name))
         }
         XCTAssertEqual(JACAccountSessions.privateOrigin("https://ASISTENCIA.local:8789/")?.absoluteString, "https://asistencia.local:8789")
         for url in ["http://asistencia.local", "https://jhonalexcastano.com", "https://asistencia.test.example.com", "https://u@jac.test", "https://jac.test/sesion", "https://jac.test?clave=x"] {

@@ -181,10 +181,11 @@ final class TeamAttendanceDevice {
         return ["paired":true,"enrolled":Array(references(try ledger(d)).keys)]
     }
     func status() async throws -> [String:Any] {
-        let d=try paired(), online=try await refresh(d,allowCached:true)
+        guard let d = try device(), d.paired else { return ["paired":false] }
+        let online = try await refresh(d,allowCached:true)
         if online {try await sync(d)}
         let state=try ledger(d)
-        return ["name":d.name,"online":online,"pending":state.pending.count,"warning":state.blocked.isEmpty ? "" : "Hay marcaciones en conflicto en este kiosco. Pide supervisión antes de repetirlas."]
+        return ["paired":true,"name":d.name,"online":online,"pending":state.pending.count,"warning":state.blocked.isEmpty ? "" : "Hay marcaciones en conflicto en este kiosco. Pide supervisión antes de repetirlas."]
     }
     func capture(employee:String?, claimedCode:String?, movement:String?, enroll:Bool, client:PayrollClient, presenter:UIViewController,
                  allowed:() -> Bool) async throws -> [String:Any] {

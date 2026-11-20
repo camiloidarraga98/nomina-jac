@@ -166,7 +166,7 @@ jobs:
           set -euo pipefail
           build_action=test
           if [ "$JAC_ATTENDANCE" = true ]; then
-            # Exercise the packaged pilot on a fresh iPad with no attendance service.
+            # Exercise both kiosk logins on a fresh iPad without real employee records.
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorCancelsPreparationBeforeSendingCredentials
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorShowsHowToRecoverFromAStoppedOrFailedPilot
@@ -175,7 +175,9 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testLocalVisualAttendanceUsesOnlyTheSelectedReference
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorComparesBundledPortraitsAndKeepsBothResultsPending
               -only-testing:JACNominaTests/PayrollClientTests/testDeviceAttendanceLedgerAndOperator
+              -only-testing:JACNominaTests/PayrollClientTests/testOnlyTheKioskAccountAndAPrivateOriginCanSelectAttendance
               -only-testing:JACNominaUITests/LaunchTests/testLocalAttendanceKioskLoginAndRestart
+              -only-testing:JACNominaUITests/LaunchTests/testSharedAttendanceLoginOpensOnlyTheApprovedKiosk
             )
           elif [ "$JAC_PRELIQUIDATION" = true ]; then
             checks=(
@@ -724,6 +726,7 @@ jobs:
             "$build_action" 2>&1 | tee native-ci/iphone-tests.log
           if [ "$JAC_ATTENDANCE" = true ]; then
             grep -Eq 'testLocalAttendanceKioskLoginAndRestart.* passed' native-ci/iphone-tests.log
+            grep -Eq 'testSharedAttendanceLoginOpensOnlyTheApprovedKiosk.* passed' native-ci/iphone-tests.log
           fi
       - name: Verify the affected iPad flow using the compiled app
         if: ${{ !cancelled() && (inputs.scope == 'media-light' || inputs.scope == 'photo-notices' || inputs.scope == 'photo-notices-ipad' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-photo-notices]') || contains(github.event.head_commit.message, '[photo-notices-ipad-only]')))) }}

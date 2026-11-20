@@ -751,7 +751,7 @@ final class LaunchTests: XCTestCase {
         if !view.buttons["Gestión supervisada"].exists {
             let user = app.textFields["login.username"]
             XCTAssertTrue(user.waitForExistence(timeout: 10))
-            user.tap(); user.typeText("admin")
+            user.tap(); user.typeText("admin@attendance.invalid")
             let password = app.secureTextFields["login.password"]
             password.tap(); password.typeText("admin")
             app.buttons["login.submit"].tap()
@@ -793,6 +793,48 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout: 10))
         XCTAssertFalse(view.buttons["Confirmar marcación"].exists)
         XCTAssertTrue(app.buttons["login.submit"].exists)
+    }
+
+    @MainActor func testSharedAttendanceLoginOpensOnlyTheApprovedKiosk() {
+        let app = XCUIApplication()
+        app.launch()
+        let user = app.textFields["login.username"]
+        XCTAssertTrue(user.waitForExistence(timeout: 12))
+        user.tap()
+        user.typeText("admin")
+        let password = app.secureTextFields["login.password"]
+        password.tap()
+        password.typeText("incorrecta")
+        let submit = app.buttons["login.submit"]
+        submit.tap()
+        XCTAssertTrue(app.staticTexts["Usuario o contraseña incorrectos."].waitForExistence(timeout: 5))
+        let remember = app.switches["login.keepSignedIn"]
+        remember.coordinate(withNormalizedOffset: CGVector(dx: 0.9, dy: 0.5)).tap()
+        password.tap()
+        password.typeText("admin")
+        submit.tap()
+
+        let view = app.webViews.firstMatch
+        let title = view.staticTexts["Marca tu asistencia"]
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        XCTAssertTrue(view.staticTexts["Por habilitar"].waitForExistence(timeout: 8))
+        XCTAssertFalse(view.buttons["Escanear para marcar entrada"].isEnabled)
+        view.buttons["Salida"].tap()
+        XCTAssertTrue(view.buttons["Escanear para marcar salida"].exists)
+        XCTAssertFalse(view.buttons["Personal"].exists)
+        XCTAssertFalse(view.buttons["Gestión supervisada"].exists)
+        XCTAssertFalse(app.buttons["phone.menu"].exists)
+        attachScreen(app, name: "kiosco-compartido-cuenta-admin")
+
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(title.waitForExistence(timeout: 15))
+        app.buttons["attendance.exitKiosk"].tap()
+        XCTAssertTrue(user.waitForExistence(timeout: 10))
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(user.waitForExistence(timeout: 10))
+        XCTAssertFalse(title.exists)
     }
 
     @MainActor func testLoginIsVisibleAndUsableAfterLaunchAndResume() {

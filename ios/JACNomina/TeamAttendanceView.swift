@@ -4,9 +4,10 @@ import WebKit
 
 struct TeamAttendanceView: UIViewRepresentable {
     @EnvironmentObject private var store: PayrollStore
-    /// nil is the restricted, signed-out device. The admin interface is tied to one JAC user.
+    @EnvironmentObject private var accounts: JACAccountSessions
+    /// The terminal has no payroll session. Management is tied to a particular JAC user.
     let administrator: String?
-    func makeCoordinator() -> Coordinator { Coordinator(store:store, administrator:administrator) }
+    func makeCoordinator() -> Coordinator { Coordinator(store:store, accounts:accounts, administrator:administrator) }
     func makeUIView(context:Context) -> WKWebView {
         let config=WKWebViewConfiguration()
         config.websiteDataStore = .nonPersistent()
@@ -27,17 +28,22 @@ struct TeamAttendanceView: UIViewRepresentable {
 
     @MainActor final class Coordinator:NSObject,WKNavigationDelegate,WKScriptMessageHandlerWithReply {
         let store:PayrollStore
+        let accounts:JACAccountSessions
         let administrator:String?
         var active=true
         static var file:URL? {Bundle.main.url(forResource:"team",withExtension:"html",subdirectory:"attendance")}
-        init(store:PayrollStore,administrator:String?) {self.store=store;self.administrator=administrator}
+        init(store:PayrollStore,accounts:JACAccountSessions,administrator:String?) {
+            self.store=store
+            self.accounts=accounts
+            self.administrator=administrator
+        }
         private var allowed:Bool {
-            guard active,!store.client.isAttendancePilot,store.client.baseURL==PayrollClient.productionURL else {return false}
+            guard active,accounts.store === store,!store.client.isAttendancePilot,store.client.baseURL==PayrollClient.productionURL else {return false}
             if let administrator {
-                guard let user=store.overview?.user, user.id==administrator,user.isOwner,user.hasSection(.crm) else {return false}
+                guard !accounts.teamKioskOpen,let user=store.overview?.user, user.id==administrator,user.isOwner,user.hasSection(.crm) else {return false}
                 return (try? store.client.hasSession()) == true
             }
-            return (try? store.client.hasSession()) == false && TeamAttendanceDevice.shared.isPaired
+            return accounts.teamKioskOpen && (try? store.client.hasSession()) == false
         }
         func webView(_ webView:WKWebView,decidePolicyFor action:WKNavigationAction,decisionHandler:@escaping(WKNavigationActionPolicy)->Void) {
             decisionHandler(Self.file != nil && action.request.url?.standardizedFileURL==Self.file?.standardizedFileURL ? .allow:.cancel)
