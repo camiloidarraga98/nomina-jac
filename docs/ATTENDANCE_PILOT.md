@@ -1,27 +1,27 @@
 # Asistencia de JAC · piloto local
 
-La cuenta de prueba `admin` entra por el acceso habitual de JAC y abre directamente Asistencia. Solo su sesión de kiosco puede abrir la pantalla, registrar entradas y salidas, solicitar la comprobación facial de prueba o acceder a la gestión. El servidor comprueba la cuenta y su rol también en peticiones directas. Para gestionar empleados, enrolar una muestra o aprobar una marcación se necesita además la credencial de supervisión dentro de esa sesión. Cada empleado de la prueba tiene una ficha ficticia con nombre y código propios.
+La cuenta de prueba `admin` abre el kiosco integrado en **JACNomina**. Tiene acceso al registro de asistencia. Las operaciones de gestión requieren además una clave de operador. Los empleados y las marcaciones del piloto son ficticios.
 
-## Abrir el piloto desde Xcode
+## Probar en iPad o iPhone desde Xcode
 
-Después de actualizar `main`, abre `ios/JACNomina.xcodeproj` y pulsa **Run** con **JACNomina** y el simulador de iPhone o iPad. El formulario habitual abre el kiosco con la cuenta de prueba `admin`. Las demás cuentas siguen su recorrido de JAC. Al salir del kiosco vuelve el mismo formulario. Si la versión anterior había dejado dos sesiones guardadas en el dispositivo, el siguiente usuario debe identificarse de nuevo.
+1. Actualiza `main`, abre `ios/JACNomina.xcodeproj`, selecciona **JACNomina** y el iPad o iPhone de prueba. Pulsa **Run**.
+2. Ingresa con usuario `admin` y contraseña `admin`. El indicador **Prueba en este dispositivo** identifica el piloto integrado. Encontrarás dos empleados ficticios para probar **Entrada** y **Salida** de inmediato.
+3. En **Gestión supervisada** escribe `gestion-demo`. La autorización de operador dura cinco minutos. En **Empleados de prueba** puedes crear fichas. En **Marcaciones** puedes revisar y corregir un registro con motivo e historial.
 
-En el simulador, Xcode inicia el servidor en segundo plano en el Mac. Ingresa con usuario `admin` y contraseña temporal `admin`. La pantalla indica si está instalando las herramientas, compilando el piloto, preparando las cuentas o validando el usuario. **Cancelar espera** permite volver al formulario durante la preparación. Si el Mac no responde, puedes abrir `scripts/asistencia-mac.command` en Finder y reintentar desde el mismo formulario.
+El primer arranque y el registro funcionan directamente en la app de desarrollo, incluso en modo avión. El iPad conserva las marcaciones en un archivo protegido y excluido de las copias de seguridad. Cerrar sesión bloquea la gestión y conserva el historial para el siguiente acceso autorizado en ese dispositivo. Cada dispositivo de prueba tiene su propio historial. La comprobación presencial se registra como pendiente hasta la revisión del operador. La prueba local utiliza supervisión manual. La cuenta y la clave de demostración están limitadas a la compilación de desarrollo y a sus datos de prueba.
 
-La primera vez, conecta el Mac a internet y pulsa **Run**. Xcode reutiliza Node 24 o posterior con npm si ya están disponibles. Si hacen falta, descarga Node 24 LTS de nodejs.org para Apple Silicon o Intel, verifica la suma SHA-256 publicada y guarda las herramientas dentro del proyecto. Las siguientes aperturas reutilizan esa copia. Si la red del Mac impide la descarga automática, puedes instalar el paquete oficial de macOS, que incluye npm, y volver a pulsar **Run**. [Descargas de Node.js](https://nodejs.org/en/download)
+Al actualizar desde el piloto que dependía del Mac puede volver a aparecer el formulario de acceso. El nuevo historial empieza con las fichas de demostración. Los registros del servidor anterior pertenecen a aquel ensayo.
 
-El simulador prepara el servicio de autenticación y Asistencia. Si abres la página en un navegador, el iniciador carga entonces el formulario web habitual de JAC. En un arranque desde Xcode, el detalle de instalación y compilación queda en `work/local/asistencia/servidor.log` y la clave de supervisión en el archivo privado `work/local/asistencia/supervision.txt`. Para terminar el ensayo y descartar su base efímera, ejecuta `bash scripts/asistencia-mac.command --stop` desde la carpeta del proyecto.
+## Probar la web con el servidor de desarrollo
 
-## Probar la web
-
-Si abriste el piloto desde Xcode, la web utiliza ese mismo servidor. También puedes iniciarlo desde la raíz del repositorio con Node 24 y las dependencias de JAC instaladas.
+La web conserva el piloto que permite ensayar el intercambio con un servidor, la sincronización entre clientes y los marcadores sintéticos. Para usarlo, abre `scripts/asistencia-mac.command` en el Mac o ejecuta este comando desde la raíz del repositorio con Node 24 y las dependencias de JAC instaladas.
 
 ```sh
 npm run asistencia
 ```
 
 1. Abre `http://127.0.0.1:8789/acceso`. Ingresa como `admin` con la contraseña temporal `admin`.
-2. Pulsa **Gestión supervisada** dentro del kiosco. Si abriste el piloto desde Xcode, usa la clave de `work/local/asistencia/supervision.txt`. Si ejecutaste `npm run asistencia`, usa la que muestra Terminal. Esta credencial autoriza la gestión durante cinco minutos y únicamente dentro de la sesión actual de `admin`.
+2. Pulsa **Gestión supervisada** dentro del kiosco. Si abriste el script del Mac, usa la clave de `work/local/asistencia/supervision.txt`. Si ejecutaste `npm run asistencia`, usa la que muestra Terminal. Esta credencial autoriza la gestión durante cinco minutos y únicamente dentro de la sesión actual de `admin`.
 3. En **Empleados de prueba** crea una ficha o genera un lote. **Enrolar muestra sintética** guarda un marcador de demostración en este dispositivo. **Borrar muestra** lo retira. Al retirar un empleado, Gestión elimina la ficha sin historial o la desactiva y conserva sus marcaciones.
 4. Pulsa **Volver al kiosco**. Elige Entrada o Salida, selecciona al empleado, elige el método y confirma. El kiosco muestra cuándo la marcación está guardada localmente y cuándo el servidor confirma su recepción.
 5. En Gestión abre **Marcaciones → Supervisar** y registra el motivo de tu confirmación presencial. Para una corrección indica el movimiento, la hora y el motivo. El original y cada revisión están en **Original e historial**. Corregir reabre la supervisión.
@@ -29,11 +29,9 @@ npm run asistencia
 
 El servidor escucha en el loopback del Mac u ordenador de prueba. Usa Miniflare, D1 efímera y sesiones propias del motor JAC con su hash scrypt. La contraseña débil pertenece únicamente al kiosco ficticio. El inicio comprueba los dos nombres antes de insertar las cuentas. Detener el servidor descarta su base y volver a iniciarlo crea identidades nuevas. Para probar el reinicio de la aplicación, deja el servidor encendido y cierra el navegador o la app. La migración aditiva del piloto vive en `db/attendance-pilot/001.sql` y la aplica solo este ejecutor.
 
-## iPhone y iPad físicos
+## Probar la sincronización en una compilación de desarrollo
 
-En la compilación de desarrollo, abre **JACNomina** en el dispositivo e ingresa `admin`. En **Servidor privado de Asistencia**, escribe la dirección HTTPS de tu servidor de pruebas accesible desde ese iPhone o iPad. Debe terminar en `.local` o `.test` y usar un certificado de confianza. El dispositivo recuerda la dirección tras el primer acceso correcto. La app también admite una dirección preconfigurada mediante `JAC_ATTENDANCE_ORIGIN`. La distribución de producción utiliza la autenticación habitual de JAC.
-
-El servidor automático del simulador escucha en el loopback del Mac. Para probar el recorrido automatizado con ese servidor activo, habilita `JAC_TEST_ATTENDANCE=1` para el proceso de pruebas y ejecuta `LaunchTests/testLocalAttendanceKioskLoginAndRestart` con el esquema JACNomina. La verificación física requiere Xcode, firma de desarrollo e instalación en el dispositivo.
+Para conectar un dispositivo físico al piloto privado, configura `JAC_ATTENDANCE_ORIGIN` en el esquema con una dirección HTTPS que termine en `.local` o `.test` y use un certificado de confianza. En el simulador también se admite explícitamente `http://localhost:8789`. En ese modo rigen las cuentas, la clave de supervisión y los registros del servidor privado. Al quitar la variable del esquema, **Run** vuelve a la prueba del dispositivo. La distribución de producción utiliza la autenticación habitual de JAC.
 
 ## Qué se conserva
 
@@ -41,8 +39,8 @@ El servidor automático del simulador escucha en el loopback del Mac. Para proba
 | --- | --- | --- |
 | Interfaz y cola | Tras la primera carga, el Service Worker conserva la interfaz pública. IndexedDB guarda por cuenta el padrón y los envíos con cifrado AES-GCM. | WebKit muestra los recursos incluidos en el mismo target universal. La cola usa escrituras atómicas, protección completa de archivos y exclusión de copias de seguridad. |
 | Identidad del kiosco | Cookie de sesión HttpOnly y una credencial acotada que permite abrir la copia cifrada de esa cuenta hasta el vencimiento o cierre de la sesión. La salida invalida el acceso a esa partición. | La sesión reside en Llavero. Un marcador asociado a esa sesión selecciona el kiosco antes de leer cachés de nómina o Agenda. |
-| Gestión y supervisión | Requieren conexión y reautenticación de un operador. | Mismas API y autorización desde la aplicación. La credencial JAC permanece en el cliente nativo. |
-| Enrolamiento de prueba | Marcador sintético local, sin cámara. Expira a las 24 horas. | Mismo simulador. El archivo de la muestra queda protegido en el dispositivo. |
+| Gestión y supervisión | Requieren conexión y reautenticación de un operador. | En la prueba local, la app comprueba la autorización de operador en el dispositivo. El modo de sincronización usa las API del servidor privado. |
+| Enrolamiento de prueba | Marcador sintético local, sin cámara. Expira a las 24 horas. | En la prueba local se utiliza supervisión presencial. En el modo de servidor privado se pueden probar marcadores sintéticos protegidos en el dispositivo. |
 
 Al abrir el kiosco o consultar una muestra se retiran los marcadores caducados. El operador también puede borrarlos en el momento. Al terminar el ensayo se pueden retirar los datos del sitio en el perfil de navegador de pruebas o eliminar la instalación de prueba del dispositivo. Conserva las marcaciones pendientes hasta comprobar su recepción.
 
@@ -66,4 +64,4 @@ npm run build
 node --test tests/attendance-launcher.test.mjs tests/attendance-pilot.test.mjs tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
 ```
 
-Con Playwright y Chromium disponibles en el equipo, `node scripts/attendance-browser.mjs` comprueba el acceso desde el formulario de JAC, kiosco, gestión, creación y retiro de empleados, enrolamiento sintético, aprobación, cierre de sesión, recarga sin red, respuesta perdida y reintento con el mismo UUID. Acepta `JAC_PLAYWRIGHT_MODULE` y `CHROMIUM_PATH` para usar herramientas ya instaladas. Las capturas se guardan en `.sites-runtime/asistencia` o en la carpeta indicada mediante `JAC_ATTENDANCE_CAPTURES`. La compilación del binario Apple y los ensayos en hardware quedan pendientes en este entorno Linux.
+Con Playwright y Chromium disponibles en el equipo, `node scripts/attendance-browser.mjs` comprueba el acceso desde el formulario de JAC, kiosco, gestión, creación y retiro de empleados, enrolamiento sintético, aprobación, cierre de sesión, recarga sin red, respuesta perdida y reintento con el mismo UUID. Acepta `JAC_PLAYWRIGHT_MODULE` y `CHROMIUM_PATH` para usar herramientas ya instaladas. Las capturas se guardan en `.sites-runtime/asistencia` o en la carpeta indicada mediante `JAC_ATTENDANCE_CAPTURES`. El flujo de GitHub Actions para Asistencia compila JACNomina y prueba el acceso al kiosco y a Gestión en un simulador de iPad sin iniciar el servicio del Mac. La instalación física requiere la firma de desarrollo del equipo.

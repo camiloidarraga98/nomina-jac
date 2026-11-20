@@ -314,7 +314,7 @@ test('iOS target embeds the shared offline resources and selects kiosk before an
   assert(!schemes.some(name => /asistencia/i.test(name)));
   const scheme = await readFile(folder + '/JACNomina.xcscheme', 'utf8');
   assert.match(scheme, /BlueprintName="JACNomina"/);
-  assert.match(scheme, /iphonesimulator.*?asistencia-mac\.command/);
+  assert(!scheme.includes('asistencia-mac.command'));
   assert(!scheme.includes('--attendance-local'));
   assert.match(bridge, /return store.attendanceKiosk\?\.id == account/);
 });

@@ -37,18 +37,6 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Prepare the same project-local Node and npm that a fresh Mac needs
-        if: env.JAC_ATTENDANCE == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          bin=$(bash scripts/asistencia-mac.command --prepare-runtime)
-          "$bin/node" --version
-          PATH="$bin:$PATH" "$bin/npm" --version
-          echo "$bin" >> "$GITHUB_PATH"
-      - name: Install the simulator worker dependencies
-        if: env.JAC_ATTENDANCE == 'true'
-        run: npm ci --no-audit --no-fund --prefer-offline
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
@@ -178,15 +166,13 @@ jobs:
           set -euo pipefail
           build_action=test
           if [ "$JAC_ATTENDANCE" = true ]; then
-            # xcodebuild test uses TestAction rather than the simulator Run pre-action.
-            bash scripts/asistencia-mac.command --xcode
-            trap 'if [ "$?" -ne 0 ]; then tail -n 40 work/local/asistencia/servidor.log; fi; bash scripts/asistencia-mac.command --stop' EXIT
-            export TEST_RUNNER_JAC_TEST_ATTENDANCE=1
+            # Exercise the packaged pilot on a fresh iPad with no attendance service.
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorCancelsPreparationBeforeSendingCredentials
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorShowsHowToRecoverFromAStoppedOrFailedPilot
               -only-testing:JACNominaTests/PayrollClientTests/testAttendanceWaitsForReadyAndRestoresOnlyTheAuthenticatedKiosk
               -only-testing:JACNominaTests/PayrollClientTests/testAttendanceRejectsAnUnmarkedServerAndANormalPayrollLogin
+              -only-testing:JACNominaTests/PayrollClientTests/testDeviceAttendanceLedgerAndOperator
               -only-testing:JACNominaUITests/LaunchTests/testLocalAttendanceKioskLoginAndRestart
             )
           elif [ "$JAC_PRELIQUIDATION" = true ]; then

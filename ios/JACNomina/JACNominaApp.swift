@@ -189,12 +189,13 @@ final class JACAccountSessions: ObservableObject {
             store = PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"), offline: arguments.contains("--uitest-offline"), slowAgenda: arguments.contains("--uitest-slow-agenda"), persistentAgenda: arguments.contains("--uitest-agenda-cache"), resetAgenda: arguments.contains("--uitest-reset-agenda")))
             return
         }
-        // Also recognize sessions created with the previous version of the pilot.
-        let remembered = Self.activeOrigin
-        if !Self.isUnitTestHost, let origin = remembered ?? Self.pilotOrigin(address: Self.lastAddress), let host = origin.host,
-           remembered != nil || (try? KeychainSessionStore(account: host).load()) != nil {
+        // A previous pilot session must return to the kiosk or its login, even when
+        // the selected pilot has changed. Never reuse another origin's credentials.
+        let hadPilot = UserDefaults.standard.string(forKey: Self.activeKey) != nil
+        if !Self.isUnitTestHost, let origin = Self.pilotOrigin(address: Self.lastAddress), let host = origin.host,
+           hadPilot || (try? KeychainSessionStore(account: host).load()) != nil {
             let client = PayrollClient(baseURL: origin, isAttendancePilot: true)
-            if remembered != nil || (try? client.savedAttendanceKiosk()) != nil {
+            if hadPilot || (try? client.savedAttendanceKiosk()) != nil {
                 UserDefaults.standard.set(origin.absoluteString, forKey: Self.activeKey)
                 store = PayrollStore(client: client)
                 return
@@ -208,27 +209,13 @@ final class JACAccountSessions: ObservableObject {
     private static let activeKey = "jac.attendance.activeOrigin"
     private static let addressKey = "jac.attendance.privateOrigin"
     static var lastAddress: String { UserDefaults.standard.string(forKey: addressKey) ?? "" }
-    private static var activeOrigin: URL? {
-        guard let saved = UserDefaults.standard.string(forKey: activeKey) else { return nil }
-        #if targetEnvironment(simulator)
-        if saved == "http://localhost:8789" { return URL(string: saved) }
-        #endif
-        return privateOrigin(saved)
-    }
 
     static func isKioskLogin(_ input: String) -> Bool {
         let name = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         return name == "admin" || name == "admin@attendance.invalid"
     }
     static var needsAddressField: Bool {
-        if let configured = ProcessInfo.processInfo.environment["JAC_ATTENDANCE_ORIGIN"] {
-            return privateOrigin(configured) == nil
-        }
-        #if targetEnvironment(simulator)
-        return false
-        #else
-        return true
-        #endif
+        pilotOrigin(address: "") == nil
     }
     static func privateOrigin(_ input: String) -> URL? {
         let raw = input.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -242,13 +229,12 @@ final class JACAccountSessions: ObservableObject {
     }
     private static func pilotOrigin(address: String) -> URL? {
         if let configured = ProcessInfo.processInfo.environment["JAC_ATTENDANCE_ORIGIN"] {
+            #if targetEnvironment(simulator)
+            if configured == "http://localhost:8789" { return URL(string: configured) }
+            #endif
             return privateOrigin(configured) ?? privateOrigin(address)
         }
-        #if targetEnvironment(simulator)
-        return URL(string: "http://localhost:8789")
-        #else
-        return privateOrigin(address)
-        #endif
+        return DeviceAttendancePilot.origin
     }
 
     func signInPilot(password: String, keepSignedIn: Bool, address: String, sendingPassword: () -> Void) async {
@@ -267,7 +253,7 @@ final class JACAccountSessions: ObservableObject {
             }
         }
         preparation = probe
-        pilotProgress = "Buscando el servidor de Asistencia…"
+        pilotProgress = client.isDeviceAttendancePilot ? "Abriendo Asistencia en este dispositivo…" : "Buscando el servidor de Asistencia…"
         defer { preparation = nil; pilotProgress = nil }
         do {
             try await probe.value
@@ -277,7 +263,7 @@ final class JACAccountSessions: ObservableObject {
             sendingPassword()
             try await client.login(username: "admin", password: password, keepSignedIn: keepSignedIn)
             guard store === login, !login.hasSavedSession else { try client.clearSession(); return }
-            if origin.scheme == "https" { UserDefaults.standard.set(origin.absoluteString, forKey: Self.addressKey) }
+            if !client.isDeviceAttendancePilot && origin.scheme == "https" { UserDefaults.standard.set(origin.absoluteString, forKey: Self.addressKey) }
             UserDefaults.standard.set(origin.absoluteString, forKey: Self.activeKey)
             store = PayrollStore(client: client)
         } catch is CancellationError { return }

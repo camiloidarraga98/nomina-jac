@@ -237,6 +237,9 @@ final class PayrollClient: ObservableObject {
     let baseURL: URL
     private let transportURL: URL
     let isAttendancePilot: Bool
+    #if os(iOS) && DEBUG
+    var isDeviceAttendancePilot: Bool { isAttendancePilot && baseURL == DeviceAttendancePilot.origin }
+    #endif
     private let vault: SessionStoring
     private let session: URLSession
     private let mediaSession: URLSession
@@ -575,6 +578,22 @@ final class PayrollClient: ObservableObject {
         if isAttendancePilot && !(path == "api/auth" && ["login", "logout"].contains(body?["action"].text ?? "")) {
             throw APIError.forbidden("Esta cuenta solo tiene acceso a Asistencia.")
         }
+        #if os(iOS) && DEBUG
+        if isDeviceAttendancePilot {
+            let demo = DeviceAttendancePilot.shared
+            let response = HTTPURLResponse(url: baseURL.appendingPathComponent(path), statusCode: 200, httpVersion: nil, headerFields: nil)!
+            if body?["action"].text == "logout" {
+                if let token = try checkedToken() { try demo.logout(token) }
+                return (Data("{}".utf8), response)
+            }
+            let token = try demo.login(username: body?["username"].text ?? "", password: body?["password"].text ?? "",
+                                       persistent: body?["keepSignedIn"].flag == true)
+            do { try vault.save(token) }
+            catch { try demo.logout(token); throw error }
+            let identity = AttendanceIdentity(id: DeviceAttendancePilot.account, role: "kiosk", name: "Kiosco de prueba")
+            return (try JSONEncoder().encode(["attendance":identity]), response)
+        }
+        #endif
         let mediaThumbnailRead = path == "api/media/file" && query.contains { $0.name == "thumbnail" && $0.value == "1" }
         let mediaPreviewRead = path == "api/media/file" && query.contains { $0.name == "preview" && $0.value == "1" }
         guard allowsResource(path,query:query,body:body) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
@@ -954,6 +973,9 @@ final class PayrollClient: ObservableObject {
 
     func attendanceServerReady(onPreparation: (String) -> Void = { _ in }) async throws -> Bool {
         guard isAttendancePilot else { throw APIError.invalid("Elige el servidor privado de Asistencia para esta prueba.") }
+        #if os(iOS) && DEBUG
+        if isDeviceAttendancePilot { return true }
+        #endif
         var probe = URLRequest(url: transportURL.appendingPathComponent("_jac/attendance-ready"),
                                cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 3)
         probe.httpShouldHandleCookies = false
@@ -1046,6 +1068,11 @@ final class PayrollClient: ObservableObject {
     }
     func savedAttendanceKiosk() throws -> AttendanceIdentity? {
         guard attendanceTestHost else { return nil }
+        #if DEBUG
+        if isDeviceAttendancePilot {
+            guard let token = try checkedToken(), try DeviceAttendancePilot.shared.authorized(token) else { return nil }
+        }
+        #endif
         guard let scope = try offlineScope(), let id = try KeychainSessionStore(account: "attendance-scope-" + scope.id).load(),
               UUID(uuidString: id) != nil else { return nil }
         return AttendanceIdentity(id: id, role: "kiosk", name: "Kiosco")
@@ -1054,6 +1081,13 @@ final class PayrollClient: ObservableObject {
         let commands = ["session","unlock","lock","management","people","retire","punch","review","enrollment-access","status"]
         guard commands.contains(command), (command == "session") == (data == nil),
               (data?.count ?? 0) <= 16384, let token = try checkedToken() else { throw APIError.unauthorized }
+        #if DEBUG
+        if isDeviceAttendancePilot {
+            let result = try DeviceAttendancePilot.shared.operation(command, data: data, token: token, ticket: ticket)
+            if result.1 == 401 { try clearSession(); throw APIError.unauthorized }
+            return result
+        }
+        #endif
         var call = URLRequest(url: resourceURL(path: "api/attendance/" + command, query: []))
         call.httpShouldHandleCookies = false
         call.cachePolicy = .reloadIgnoringLocalCacheData

@@ -3160,6 +3160,70 @@ final class PayrollClientTests: XCTestCase {
     }
 
     #if os(iOS) && DEBUG
+    @MainActor func testDeviceAttendanceLedgerAndOperator() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockProtocol.self]
+        MockProtocol.handler = { _ in XCTFail("El piloto del dispositivo intentó usar la red."); throw URLError(.notConnectedToInternet) }
+        defer { MockProtocol.handler = nil }
+        let vault = MemorySession()
+        let client = PayrollClient(baseURL: DeviceAttendancePilot.origin, vault: vault, configuration: config, isAttendancePilot: true)
+        defer { try? client.clearSession() }
+        let ready = try await client.attendanceServerReady()
+        XCTAssertTrue(ready)
+        do { try await client.login(username: "admin", password: "incorrecta"); XCTFail("Aceptó otra contraseña") } catch {}
+        XCTAssertNil(try vault.load())
+        try await client.login(username: "admin", password: "admin")
+        let account = try XCTUnwrap(client.savedAttendanceKiosk()?.id)
+        do { _ = try await client.overview(); XCTFail("Abrió nómina desde la prueba") } catch APIError.forbidden {}
+        func call(_ command: String, _ body: [String: Any]? = nil, key: String? = nil, status: Int = 200) async throws -> [String: Any] {
+            let data = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+            let (reply, code) = try await client.attendanceRequest(command: command, data: data, ticket: key)
+            XCTAssertEqual(code, status, command)
+            return try XCTUnwrap(try JSONSerialization.jsonObject(with: reply) as? [String: Any])
+        }
+        let profile = try await call("session")
+        XCTAssertEqual(profile["mode"] as? String, "device")
+        _ = try await call("management", [:], status: 403)
+        _ = try await call("unlock", ["password":"admin"], status: 403)
+        let grant = try await call("unlock", ["password":"gestion-demo"])
+        let key = try XCTUnwrap(grant["ticket"] as? String)
+        let employee = UUID().uuidString.lowercased()
+        _ = try await call("people", ["people":[["id":employee, "code":String(employee.prefix(8)), "name":"Prueba del dispositivo"]]], key: key)
+        let id = UUID().uuidString.lowercased()
+        var punch: [String: Any] = ["account":account, "id":id, "employee":employee, "device":UUID().uuidString,
+                                    "movement":"entry", "device_time":"2026-11-20T12:00:00.000Z", "method":"supervised"]
+        let first = try await call("punch", punch)
+        let retry = try await call("punch", punch)
+        XCTAssertNotNil(first["stored_at"])
+        XCTAssertNil(first["received_at"])
+        XCTAssertEqual(first["stored_at"] as? String, retry["stored_at"] as? String)
+        punch["movement"] = "exit"
+        _ = try await call("punch", punch, status: 409)
+        punch["id"] = UUID().uuidString.lowercased()
+        _ = try await call("punch", punch)
+        var review: [String:Any] = ["id":UUID().uuidString, "punch":id, "revision":0, "action":"approve",
+                                    "movement":"entry", "device_time":"2026-11-20T12:00:00.000Z", "reason":"Prueba presencial"]
+        _ = try await call("review", review, status: 403)
+        _ = try await call("review", review, key: key)
+        _ = try await call("review", review, key: key)
+        review["id"] = UUID().uuidString
+        _ = try await call("review", review, key: key, status: 409)
+        _ = try await call("retire", ["id":employee,"revision":1], key: key)
+        _ = try await call("lock", [:], key: key)
+        _ = try await call("management", [:], key: key, status: 403)
+        try await client.logout()
+        XCTAssertNil(try client.savedAttendanceKiosk())
+        try await client.login(username: "admin", password: "admin")
+        _ = try await call("management", [:], key: key, status: 403)
+        let again = try await call("unlock", ["password":"gestion-demo"])
+        let records = try await call("management", [:], key: again["ticket"] as? String)
+        let punches = try XCTUnwrap(records["punches"] as? [[String: Any]])
+        XCTAssertEqual(punches.first { $0["id"] as? String == id }?["review_state"] as? String, "approved")
+        let people = try XCTUnwrap(records["people"] as? [[String: Any]])
+        XCTAssertEqual(people.first { $0["id"] as? String == employee }?["active"] as? Bool, false)
+        try await client.logout()
+    }
+
     @MainActor func testOnlyTheKioskAccountAndAPrivateOriginCanSelectAttendance() {
         XCTAssertTrue(JACAccountSessions.isKioskLogin(" Admin "))
         XCTAssertTrue(JACAccountSessions.isKioskLogin("admin@attendance.invalid"))

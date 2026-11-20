@@ -16,6 +16,9 @@
     management = null,
     generation = 0;
   const labelMove = value => value === 'entry' ? 'Entrada' : 'Salida';
+  const deviceOnly = () => identity?.mode === 'device';
+  const connectedLabel = () => deviceOnly() ? 'Prueba en este dispositivo' : 'Conectado';
+  const savedTime = row => deviceOnly() ? row.stored_at : row.received_at;
   const localDate = value => new Date(value).toLocaleString('es-CO', {
     dateStyle: 'short',
     timeStyle: 'medium'
@@ -126,9 +129,9 @@
   }
   async function boot() {
     let profile;
+    let cached = false;
     try {
       profile = await api('session');
-      $('connection').textContent = 'Conectado';
     } catch (e) {
       if (e.status && e.status < 500) {
         say(e.message);
@@ -143,7 +146,7 @@
         say(native && e.message ? 'No se pudo cargar la sesión de Asistencia. ' + e.message : 'Conecta este dispositivo e inicia sesión para preparar el kiosco.');
         return;
       }
-      $('connection').textContent = 'Sin conexión';
+      cached = true;
     }
     if (profile.role !== 'kiosk' || (!native && hint() !== profile.id)) {
       clearPrivate();
@@ -153,8 +156,13 @@
     identity = {
       id: profile.id,
       name: profile.name,
-      role: profile.role
+      role: profile.role,
+      mode: native && profile.mode === 'device' ? 'device' : 'server'
     };
+    $('connection').textContent = cached && !deviceOnly() ? 'Sin conexión' : connectedLabel();
+    $('sync').hidden = deviceOnly();
+    $('method').closest('label').hidden = deviceOnly();
+    if (deviceOnly()) $('method').value = 'supervised';
     await dataStore('write', 'profile', profile);
     device = await dataStore('device', 'device', crypto.randomUUID());
     roster = profile.people;
@@ -191,7 +199,7 @@
       roster = p.people;
       await dataStore('write', 'profile', p);
       renderRoster();
-      $('connection').textContent = 'Conectado';
+      $('connection').textContent = connectedLabel();
       await sync();
     } catch (e) {
       if (identity) $('connection').textContent = e.status ? 'Servicio no disponible' : 'Sin conexión';
@@ -206,7 +214,12 @@
       const li = document.createElement('li');
       li.append(el('strong', labelMove(p.movement) + ' · ' + (roster.find(e => e.id === p.employee)?.name || p.personName)));
       li.append(el('small', localDate(p.device_time)));
-      const msg = p.delivery === 'blocked' ? 'Bloqueada · ' + p.error : p.received_at ? p.state === 'approved' ? 'Recibida · supervisión aprobada' : 'Recibida · supervisión pendiente' : 'Guardada en este dispositivo · por enviar';
+      let msg = deviceOnly() ? 'Guardada en este dispositivo' : 'Guardada en este dispositivo · por enviar';
+      if (savedTime(p)) {
+        const where = deviceOnly() ? 'Guardada aquí' : 'Recibida';
+        msg = where + (p.state === 'approved' ? ' · supervisión aprobada' : ' · supervisión pendiente');
+      }
+      if (p.delivery === 'blocked') msg = 'Bloqueada · ' + p.error;
       li.append(el('span', msg, p.delivery === 'blocked' ? 'warning' : p.state === 'approved' ? 'ok' : 'muted'));
       list.append(li);
     }
@@ -225,7 +238,7 @@
         if (identity?.id !== account || !sameAccount()) break;
         if (p.delivery === 'blocked') continue;
         // Received entries are read together below.
-        if (p.received_at) continue;
+        if (savedTime(p)) continue;
         if (!force && p.next > Date.now()) {
           next = Math.min(next, p.next);
           continue;
@@ -248,13 +261,13 @@
             device_time,
             method
           });
-          if (ack.id !== id || !ack.received_at) throw Error('Confirmación incompleta.');
+          if (ack.id !== id || !savedTime(ack)) throw Error('Confirmación incompleta.');
           Object.assign(p, ack, {
-            delivery: 'received',
+            delivery: deviceOnly() ? 'device' : 'received',
             attempts: 0,
             next: 0
           });
-          $('connection').textContent = 'Conectado';
+          $('connection').textContent = connectedLabel();
         } catch (e) {
           if (e.status === 401 || identity?.id !== account) break;
           if (e.status >= 400 && e.status < 500 && e.status !== 429) {
@@ -264,13 +277,13 @@
             p.attempts = (p.attempts || 0) + 1;
             p.next = Date.now() + Math.min(120000, 2000 * 2 ** Math.min(8, p.attempts - 1));
             next = Math.min(next, p.next);
-            $('connection').textContent = 'Por sincronizar';
+            $('connection').textContent = deviceOnly() ? 'Pendiente de guardar' : 'Por sincronizar';
           }
         }
         await store('write', 'punch/' + id, p);
       }
       if (sameAccount() && identity.id === account) {
-        const known = rows.filter(p => p.received_at).sort((a, b) => b.device_time.localeCompare(a.device_time)).slice(0, 12);
+        const known = rows.filter(savedTime).sort((a, b) => b.device_time.localeCompare(a.device_time)).slice(0, 12);
         if (known.length) {
           try {
             const reply = await api('status', {
@@ -394,11 +407,11 @@
     for (const p of snapshot.people) {
       const li = el('li', '');
       li.append(el('strong', p.code + ' · ' + p.name));
-      const enrolled = await bio.enrolled(dataStore, p.id);
-      li.append(el('small', p.active ? enrolled ? 'Muestra sintética local · caduca en 24 h' : 'Sin muestra sintética' : 'Inactivo'));
+      const enrolled = !deviceOnly() && await bio.enrolled(dataStore, p.id);
+      if (!p.active || !deviceOnly()) li.append(el('small', p.active ? enrolled ? 'Muestra sintética local · caduca en 24 h' : 'Sin muestra sintética' : 'Inactivo'));
       if (p.active) {
         const actions = el('div', '', 'actions');
-        actions.append(button(enrolled ? 'Borrar muestra' : 'Enrolar muestra sintética', async () => {
+        if (!deviceOnly()) actions.append(button(enrolled ? 'Borrar muestra' : 'Enrolar muestra sintética', async () => {
           await api('enrollment-access', {
             employee: p.id,
             action: enrolled ? 'remove' : 'enroll'
@@ -406,7 +419,8 @@
           if (activeTicket !== ticket) return;
           if (enrolled) await bio.remove(dataStore, p.id);else await bio.enroll(dataStore, p.id);
           await loadManagement();
-        }), button('Retirar empleado', async () => {
+        }));
+        actions.append(button('Retirar empleado', async () => {
           if (!confirm('¿Retirar a ' + p.name + '? Se conservará cualquier marcación.')) return;
           const res = await api('retire', {
             id: p.id,
@@ -423,7 +437,8 @@
     }
     for (const p of snapshot.punches) {
       const row = el('article', '', 'review');
-      row.append(el('strong', labelMove(p.effective_movement) + ' · ' + p.name), el('small', 'Dispositivo ' + localDate(p.effective_time) + ' · Recepción ' + localDate(p.received_at)), el('span', p.review_state === 'approved' ? 'Supervisión presencial aprobada' : 'Pendiente de revisión humana', p.review_state === 'approved' ? 'ok' : 'warning'));
+      const recorded = deviceOnly() ? ' · Guardada aquí ' + localDate(p.stored_at) : ' · Recepción ' + localDate(p.received_at);
+      row.append(el('strong', labelMove(p.effective_movement) + ' · ' + p.name), el('small', 'Dispositivo ' + localDate(p.effective_time) + recorded), el('span', p.review_state === 'approved' ? 'Supervisión presencial aprobada' : 'Pendiente de revisión humana', p.review_state === 'approved' ? 'ok' : 'warning'));
       if (p.method === 'simulation_failed') row.append(el('small', 'Falló la simulación sintética.', 'warning'));
       if (p.possible_duplicate || p.clock_difference) row.append(el('small', [p.possible_duplicate ? 'Posible duplicado' : '', p.clock_difference ? 'Revisar diferencia de reloj o envío tardío' : ''].filter(Boolean).join(' · '), 'warning'));
       const detail = el('details', ''),
@@ -569,6 +584,7 @@
   $('retryConnection').onclick = () => void openKiosk();
   window.addEventListener('online', () => { if (identity) void refresh(); else void openKiosk(); });
   window.addEventListener('offline', () => {
+    if (deviceOnly()) return;
     $('connection').textContent = 'Sin conexión';
     if (ticket) {
       stopGrant();

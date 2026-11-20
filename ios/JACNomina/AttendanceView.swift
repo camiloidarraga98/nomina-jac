@@ -27,6 +27,7 @@ struct AttendanceView: UIViewRepresentable {
         config.userContentController.addScriptMessageHandler(context.coordinator, contentWorld: .page, name: "attendance")
         let view = WKWebView(frame: .zero, configuration: config)
         view.navigationDelegate = context.coordinator
+        view.uiDelegate = context.coordinator
         if let file = Bundle.main.url(forResource: "index", withExtension: "html", subdirectory: "attendance") {
             view.loadFileURL(file, allowingReadAccessTo: file.deletingLastPathComponent())
         }
@@ -38,7 +39,7 @@ struct AttendanceView: UIViewRepresentable {
         view.configuration.userContentController.removeScriptMessageHandler(forName: "attendance", contentWorld: .page)
     }
 
-    @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKScriptMessageHandlerWithReply {
+    @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
         let store: PayrollStore
         let account: String
         private let local: AttendanceStorage
@@ -55,6 +56,17 @@ struct AttendanceView: UIViewRepresentable {
         private var allowed: Bool {
             guard (try? store.client.hasSession()) == true else { return false }
             return store.attendanceKiosk?.id == account
+        }
+        func webView(_ webView: WKWebView, runJavaScriptConfirmPanelWithMessage message: String,
+                     initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping (Bool) -> Void) {
+            guard allowed, frame.isMainFrame, frame.request.url?.isFileURL == true,
+                  let presenter = webView.window?.rootViewController, presenter.presentedViewController == nil else {
+                completionHandler(false); return
+            }
+            let alert = UIAlertController(title: "Asistencia", message: message, preferredStyle: .alert)
+            alert.addAction(UIAlertAction(title: "Cancelar", style: .cancel) { _ in completionHandler(false) })
+            alert.addAction(UIAlertAction(title: "Confirmar", style: .destructive) { _ in completionHandler(self.allowed) })
+            presenter.present(alert, animated: true)
         }
         func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage,
                                    replyHandler: @escaping (Any?, String?) -> Void) {
@@ -96,7 +108,7 @@ struct AttendanceView: UIViewRepresentable {
     }
 }
 
-private struct AttendanceStorage: Sendable {
+struct AttendanceStorage: Sendable {
     private static let queue = DispatchQueue(label: "co.jacmusic.asistencia.storage", qos: .utility)
     private let partition: String
     init(origin: String, account: String) {
@@ -110,14 +122,18 @@ private struct AttendanceStorage: Sendable {
             }
         }
     }
-    private func transact(op: String, key: String, input: Data) throws -> Data {
+    static func directory() throws -> URL {
         let fm = FileManager.default
         var directory = try fm.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: true).appendingPathComponent("JACAsistencia", isDirectory: true)
         try fm.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.complete])
         var protection = URLResourceValues()
         protection.isExcludedFromBackup = true
         try directory.setResourceValues(protection)
-        let file = directory.appendingPathComponent(partition + ".json")
+        return directory
+    }
+    private func transact(op: String, key: String, input: Data) throws -> Data {
+        let fm = FileManager.default
+        let file = try Self.directory().appendingPathComponent(partition + ".json")
         var records: [String: Any] = [:]
         if fm.fileExists(atPath: file.path) {
             guard let decoded = try JSONSerialization.jsonObject(with: Data(contentsOf: file)) as? [String: Any] else { throw AttendanceFailure.invalid }
