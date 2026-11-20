@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile, readdir } from 'node:fs/promises';
 import { startAttendancePilot, seedAttendance } from '../scripts/attendance-pilot.mjs';
-test('compiled JAC, isolated kiosk and operator, versioned supervision and idempotent offline delivery', async () => {
-  const f = await startAttendancePilot();
+for (const simulator of [false, true]) test(`${simulator ? 'iPad simulator' : 'compiled JAC'}: isolated kiosk and operator, versioned supervision and idempotent offline delivery`, async () => {
+  const f = await startAttendancePilot({simulator});
   try {
     const call = (path, {
       cookie = '',

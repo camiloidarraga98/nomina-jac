@@ -41,16 +41,17 @@ echo "$1" >> work/calls
 if [ "$1" = ci ]; then
   while [ ! -f work/installed ]; do sleep 0.1; done
   mkdir -p node_modules/.bin
-  touch node_modules/.bin/vinext
+  touch node_modules/.bin/workerd node_modules/.bin/esbuild
 else
-  if [ -f work/fail-build ]; then exit 1; fi
-  mkdir -p dist/server dist/client/attendance
-  touch dist/server/index.js dist/client/attendance/index.html
+  exit 1
 fi
 `, {mode:0o700});
     await writeFile(join(root, 'scripts/attendance-pilot.mjs'), `
       import {createServer} from 'node:http';
-      export async function startAttendancePilot() {
+      import {existsSync} from 'node:fs';
+      export async function startAttendancePilot({simulator, onPreparation}) {
+        if (!simulator || existsSync('work/fail-build')) throw Error('Simulated worker build failure');
+        onPreparation('database');
         const server = createServer((req,res) => {
           if (req.url === '/_jac/attendance-ready') res.writeHead(204, {'X-JAC-Attendance':'ready'}).end();
           else res.end(req.headers.origin + ' ' + req.headers.host);
@@ -60,9 +61,6 @@ fi
       }
     `);
     await writeFile(join(root, '.gitignore'), 'work/\nnode_modules/\ndist/\n');
-    await exec('git', ['init', '-q'], options);
-    await exec('git', ['add', '.'], options);
-    await exec('git', ['-c','user.name=Fixture','-c','user.email=fixture@example.invalid','commit','-qm','fixture'], options);
     await writeFile(join(root, 'work/fail-build'), '');
     await Promise.all([launch('--xcode'), launch('--xcode')]);
     await health('starting', 'install');
@@ -85,7 +83,7 @@ fi
     await launch('--stop');
     await launch('--xcode');
     await health('ready');
-    assert.deepEqual((await readFile(join(root, 'work/calls'),'utf8')).trim().split('\n'), ['ci','run','run']);
+    assert.deepEqual((await readFile(join(root, 'work/calls'),'utf8')).trim().split('\n'), ['ci']);
   } finally {
     await launch('--stop').catch(() => {});
     await rm(root, { recursive:true, force:true });

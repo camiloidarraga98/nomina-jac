@@ -9,7 +9,7 @@ const captures = resolve(process.env.JAC_ATTENDANCE_CAPTURES || '.sites-runtime/
 await mkdir(captures, {
   recursive: true
 });
-const f = await startAttendancePilot(),
+const f = await startAttendancePilot({simulator: process.argv.includes('--simulator')}),
   browser = await chromium.launch({
     headless: true,
     ...(process.env.CHROMIUM_PATH ? {

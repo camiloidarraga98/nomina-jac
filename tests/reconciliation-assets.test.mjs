@@ -7,6 +7,8 @@ import {join,resolve} from 'node:path';
 import {pathToFileURL} from 'node:url';
 
 const compiled=await build({stdin:{contents:"export {default as worker} from './worker/cloudflare';",resolveDir:process.cwd()},bundle:true,platform:'node',format:'esm',write:false,plugins:[{name:'reconciliation-assets-fixtures',setup(builder){
+  builder.onResolve({filter:/^cloudflare:workers$/},()=>({path:'bindings',namespace:'inactive-pilot'}));
+  builder.onLoad({filter:/.*/,namespace:'inactive-pilot'},()=>({contents:'export const env={};'}));
   builder.onResolve({filter:/fans-birthday$/},()=>({path:'fans',namespace:'fixture'}));
   builder.onResolve({filter:/maintenance$/},()=>({path:'maintenance',namespace:'fixture'}));
   builder.onResolve({filter:/^\.\/index$/},args=>args.importer===resolve('worker/cloudflare.ts')?{path:'app',namespace:'fixture'}:undefined);

@@ -13,18 +13,24 @@ export async function seedAttendance(db, pepper, operatorPassword) {
 }
 export async function startAttendancePilot({
   port = 0,
-  enabled = true
+  enabled = true,
+  simulator = false,
+  onPreparation = () => {}
 } = {}) {
-  const root = resolve('dist/server'),
-    assets = resolve('dist/client'),
-    entry = resolve(root, 'index.js');
-  await stat(entry);
-  const modules = [entry, ...(await readdir(root, {
-    recursive: true
-  })).filter(p => p.endsWith('.js') && p !== 'index.js').map(p => resolve(root, p))].map(path => ({
-    type: 'ESModule',
-    path
-  }));
+  const root = resolve(simulator ? 'scripts' : 'dist/server');
+  const assets = resolve(simulator ? 'public' : 'dist/client');
+  let modules, browserAssets;
+  if (simulator) {
+    const {simulatorWorker} = await import('./attendance-simulator.mjs');
+    modules = [await simulatorWorker()];
+  } else {
+    const entry = resolve(root, 'index.js');
+    await stat(entry);
+    modules = [entry, ...(await readdir(root, {recursive: true}))
+      .filter(p => p.endsWith('.js') && p !== 'index.js').map(p => resolve(root, p))]
+      .map(path => ({type: 'ESModule', path}));
+  }
+  onPreparation('database');
   const pepper = randomBytes(32).toString('hex'),
     operatorPassword = randomBytes(15).toString('base64url');
   const mime = {
@@ -62,7 +68,14 @@ export async function startAttendancePilot({
     }),
     serviceBindings: {
       ASSETS: async req => {
-        const path = resolve(assets, '.' + new URL(req.url).pathname);
+        const name = new URL(req.url).pathname;
+        if (simulator && ['/_jac/acceso.js', '/_jac/acceso.css'].includes(name)) {
+          browserAssets ??= import('./attendance-simulator.mjs').then(m => m.browserLoginAssets())
+            .catch(error => { browserAssets = undefined; throw error; });
+          const file = (await browserAssets).get(name);
+          return new Response(req.method === 'HEAD' ? null : file.contents, {headers: {'Content-Type': file.type}});
+        }
+        const path = resolve(assets, '.' + name);
         if (!path.startsWith(assets + sep)) return new Response(null, {
           status: 404
         });

@@ -8,7 +8,7 @@ Después de actualizar `main`, abre `ios/JACNomina.xcodeproj` y pulsa **Run** co
 
 En el simulador, Xcode inicia el servidor en segundo plano en el Mac. Ingresa con usuario `admin` y contraseña temporal `admin`. La pantalla indica si está instalando las herramientas, compilando el piloto, preparando las cuentas o validando el usuario. **Cancelar espera** permite volver al formulario durante la preparación. Si el Mac no responde, puedes abrir `scripts/asistencia-mac.command` en Finder y reintentar desde el mismo formulario.
 
-El iniciador necesita Node 24 o posterior y npm. Admite el runtime del proyecto, Homebrew y las instalaciones de usuario habituales. Conserva una compilación válida para la misma revisión limpia. En un arranque desde Xcode, el detalle de instalación y compilación queda en `work/local/asistencia/servidor.log` y la clave de supervisión en el archivo privado `work/local/asistencia/supervision.txt`. Para terminar el ensayo y descartar su base efímera, ejecuta `bash scripts/asistencia-mac.command --stop` desde la carpeta del proyecto.
+El iniciador necesita Node 24 o posterior y npm. Admite el runtime del proyecto, Homebrew y las instalaciones de usuario habituales. El simulador prepara únicamente el servicio de autenticación y Asistencia. Si abres la página en un navegador, el iniciador carga entonces el formulario web habitual de JAC. En un arranque desde Xcode, el detalle de instalación y compilación queda en `work/local/asistencia/servidor.log` y la clave de supervisión en el archivo privado `work/local/asistencia/supervision.txt`. Para terminar el ensayo y descartar su base efímera, ejecuta `bash scripts/asistencia-mac.command --stop` desde la carpeta del proyecto.
 
 ## Probar la web
 

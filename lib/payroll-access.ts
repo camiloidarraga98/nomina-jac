@@ -12,4 +12,4 @@ export async function payrollUser():Promise<AccessUser|null>{
  if(process.env.NODE_ENV==='development'&&local)return {email:OWNER_EMAIL,id:'preview',username:'camilo',displayName:'Vista previa · Camilo',fullName:null,isOwner:true,permissions:permissionKeys,legacy:true};
  return null;
 }
-export const payrollHeaders={'Cache-Control':'private, no-store, max-age=0','X-Robots-Tag':'noindex, nofollow','Vary':'Cookie','X-Content-Type-Options':'nosniff','Referrer-Policy':'same-origin'};
+export {payrollHeaders} from './payroll-auth-http';

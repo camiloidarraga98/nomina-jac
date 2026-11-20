@@ -41,14 +41,6 @@ function ownedProcess() {
   } catch { return null; }
 }
 
-function cleanRevision() {
-  const git = args => execFileSync('git', args, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim();
-  try {
-    if (git(['status', '--porcelain'])) return null;
-    return [git(['rev-parse', 'HEAD']), process.versions.node, process.platform, process.arch].join(' ');
-  } catch { return null; }
-}
-
 async function serve() {
   let step = 'install', failed = false, pilot, command;
   const listener = createServer((req, res) => {
@@ -104,21 +96,14 @@ async function serve() {
   });
   try {
     const installing = join(folder, 'instalando');
-    if (!existsSync('node_modules/.bin/vinext') || existsSync(installing)) {
+    if (!existsSync('node_modules/.bin/workerd') || !existsSync('node_modules/.bin/esbuild') || existsSync(installing)) {
       writeFileSync(installing, '', { mode: 0o600 });
       await npm(['ci', '--no-audit', '--no-fund']);
       rmSync(installing);
     }
     step = 'build';
-    const revision = cleanRevision(), stamp = 'dist/server/.jac-attendance-revision';
-    if (!revision || !existsSync('dist/server/index.js') || !existsSync('dist/client/attendance/index.html') ||
-        !existsSync(stamp) || readFileSync(stamp, 'utf8') !== revision) {
-      await npm(['run', 'build']);
-      if (revision && cleanRevision() === revision) writeFileSync(stamp, revision);
-    }
-    step = 'database';
     const { startAttendancePilot } = await import('./attendance-pilot.mjs');
-    pilot = await startAttendancePilot();
+    pilot = await startAttendancePilot({ simulator: true, onPreparation: next => { step = next; } });
     writeFileSync(operatorFile, pilot.operatorPassword + '\n', { mode: 0o600 });
     console.log('JAC · Asistencia de prueba\n' + origin + '/acceso\nClave de supervisión en ' + operatorFile);
   } catch (error) {

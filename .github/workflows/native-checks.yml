@@ -41,6 +41,10 @@ jobs:
         if: env.JAC_ATTENDANCE == 'true'
         with:
           node-version: 24
+          cache: npm
+      - name: Install the simulator worker dependencies
+        if: env.JAC_ATTENDANCE == 'true'
+        run: npm ci --no-audit --no-fund --prefer-offline
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
@@ -172,7 +176,7 @@ jobs:
           if [ "$JAC_ATTENDANCE" = true ]; then
             # xcodebuild test uses TestAction rather than the simulator Run pre-action.
             bash scripts/asistencia-mac.command --xcode
-            trap 'bash scripts/asistencia-mac.command --stop' EXIT
+            trap 'if [ "$?" -ne 0 ]; then tail -n 40 work/local/asistencia/servidor.log; fi; bash scripts/asistencia-mac.command --stop' EXIT
             export TEST_RUNNER_JAC_TEST_ATTENDANCE=1
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorCancelsPreparationBeforeSendingCredentials
