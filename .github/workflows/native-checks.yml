@@ -172,6 +172,7 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorShowsHowToRecoverFromAStoppedOrFailedPilot
               -only-testing:JACNominaTests/PayrollClientTests/testAttendanceWaitsForReadyAndRestoresOnlyTheAuthenticatedKiosk
               -only-testing:JACNominaTests/PayrollClientTests/testAttendanceRejectsAnUnmarkedServerAndANormalPayrollLogin
+              -only-testing:JACNominaTests/PayrollClientTests/testLocalVisualAttendanceUsesOnlyTheSelectedReference
               -only-testing:JACNominaTests/PayrollClientTests/testDeviceAttendanceLedgerAndOperator
               -only-testing:JACNominaUITests/LaunchTests/testLocalAttendanceKioskLoginAndRestart
             )

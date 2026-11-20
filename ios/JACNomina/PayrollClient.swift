@@ -1077,8 +1077,18 @@ final class PayrollClient: ObservableObject {
               UUID(uuidString: id) != nil else { return nil }
         return AttendanceIdentity(id: id, role: "kiosk", name: "Kiosco")
     }
+    #if DEBUG
+    func attendanceFaceRequest(command: String, data: Data, ticket: String?,
+                               capture: (String) async throws -> AttendanceFaceSignature) async throws -> (Data, Int) {
+        guard isDeviceAttendancePilot, data.count <= 16384, let token = try checkedToken() else { throw APIError.unauthorized }
+        return try await DeviceAttendancePilot.shared.captureFace(command, data: data, token: token, ticket: ticket, capture: capture)
+    }
+    #endif
     func attendanceRequest(command: String, data: Data?, ticket: String?) async throws -> (Data, Int) {
-        let commands = ["session","unlock","lock","management","people","retire","punch","review","enrollment-access","status"]
+        var commands = ["session","unlock","lock","management","people","retire","punch","review","enrollment-access","status"]
+        #if DEBUG
+        if isDeviceAttendancePilot { commands += ["device-recent", "face-remove"] }
+        #endif
         guard commands.contains(command), (command == "session") == (data == nil),
               (data?.count ?? 0) <= 16384, let token = try checkedToken() else { throw APIError.unauthorized }
         #if DEBUG

@@ -7,7 +7,7 @@
 <section id="kiosk" hidden><div class="columns"><form id="punchForm" class="card">
 <fieldset><legend>Movimiento</legend><div class="choices"><label><input type="radio" name="movement" value="entry" required checked> Entrada</label><label><input type="radio" name="movement" value="exit"> Salida</label></div></fieldset>
 <label>Empleado de prueba<select id="employee" required><option value="">Selecciona un empleado</option></select></label>
-<label>Método<select id="method"><option value="supervised">Solicitar supervisión presencial</option><option disabled>Comprobación facial 1:1 · pendiente de licencia</option><option value="simulation">Simulación sintética</option><option value="simulation_failed">Simular un fallo</option></select></label>
+<label>Método<select id="method"><option value="supervised">Solicitar supervisión presencial</option><option value="simulation">Simulación sintética</option><option value="simulation_failed">Simular un fallo</option></select></label>
 <p class="muted" id="methodInfo">El operador revisará la marcación antes de aprobarla.</p>
 <button class="primary" id="punch">Confirmar marcación</button></form>
 <aside class="card"><h2>En este dispositivo</h2><ul id="recent" class="items"></ul><button id="sync" class="subtle">Sincronizar ahora</button></aside></div></section>

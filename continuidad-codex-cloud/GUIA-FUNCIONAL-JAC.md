@@ -505,3 +505,7 @@ Camilo solicitó que un widget del iPhone permita elegir entre el calendario de 
 También pidió revisar los bloqueos al desplazar contenido y barra lateral. Se conserva el menú que empuja físicamente el contenido, las rutas/búsquedas/scroll al cambiar de sección, audio y subidas. Se elimina trabajo repetido de caché del dibujo y se suspenden consultas automáticas de secciones ocultas. Los controles de compilaciones futuras están en `docs/IOS_SCROLL_PERFORMANCE.md`; las pruebas de simulador no sustituyen la comprobación de fluidez del dispositivo real.
 
 La conciliación quedó publicada el10/11/2026 a las13:30Colombia con la carga contable autorizada verificada por la API administrativa. Los originales y las anotaciones permanecen separados; exportar no registra ingresos ni envía archivos a contabilidad. Confirmación visual local en Chromium; la red del entorno impidió abrir el dominio con una sesión real. Ver `docs/CRM_RECONCILIATION.md`.
+
+## Asistencia en JACNomina
+
+El piloto del dispositivo permite marcar entrada o salida con supervisión o con una comparación facial básica en la cámara frontal. Gestión registra y borra la referencia de cada voluntario en ese equipo. Las dos instalaciones de prueba tienen historiales separados. El detalle de uso, retención y revisión está en la [guía de Asistencia](../docs/ATTENDANCE_PILOT.md).

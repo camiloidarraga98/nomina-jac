@@ -35,6 +35,9 @@ struct AttendanceView: UIViewRepresentable {
     }
     func updateUIView(_ view: WKWebView, context: Context) {}
     static func dismantleUIView(_ view: WKWebView, coordinator: Coordinator) {
+        #if DEBUG
+        (view.window?.rootViewController?.presentedViewController as? AttendanceFaceCamera)?.cancelCapture()
+        #endif
         view.stopLoading()
         view.configuration.userContentController.removeScriptMessageHandler(forName: "attendance", contentWorld: .page)
     }
@@ -42,6 +45,9 @@ struct AttendanceView: UIViewRepresentable {
     @MainActor final class Coordinator: NSObject, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandlerWithReply {
         let store: PayrollStore
         let account: String
+        #if DEBUG
+        private var capturing = false
+        #endif
         private let local: AttendanceStorage
         init(store: PayrollStore, account: String) {
             self.store = store
@@ -95,7 +101,24 @@ struct AttendanceView: UIViewRepresentable {
                             guard let payload = body["body"] as? [String: Any] else { throw AttendanceFailure.invalid }
                             data = try JSONSerialization.data(withJSONObject: payload)
                         }
-                        let (response, status) = try await store.client.attendanceRequest(command: command, data: data, ticket: body["ticket"] as? String)
+                        let ticket = body["ticket"] as? String
+                        let response: Data, status: Int
+                        #if DEBUG
+                        if command == "face-enroll" || command == "face-punch" {
+                            guard !capturing, let data, let presenter = message.webView?.window?.rootViewController else {
+                                throw APIError.message("Ya hay una captura en curso o el kiosco se cerró.")
+                            }
+                            capturing = true
+                            defer { capturing = false }
+                            (response, status) = try await store.client.attendanceFaceRequest(command: command, data: data, ticket: ticket) { name in
+                                try await AttendanceFaceCamera.collect(for: name, from: presenter, stillAllowed: { self.allowed && message.webView?.window != nil })
+                            }
+                        } else {
+                            (response, status) = try await store.client.attendanceRequest(command: command, data: data, ticket: ticket)
+                        }
+                        #else
+                        (response, status) = try await store.client.attendanceRequest(command: command, data: data, ticket: ticket)
+                        #endif
                         guard allowed else { throw AttendanceFailure.invalid }
                         let result = try JSONSerialization.jsonObject(with: response)
                         replyHandler(["status": status, "data": result], nil)

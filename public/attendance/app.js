@@ -12,6 +12,7 @@
     retryTimer, opening,
     syncing = false,
     saving = false,
+    cameraBusy = false,
     device,
     management = null,
     generation = 0;
@@ -157,12 +158,14 @@
       id: profile.id,
       name: profile.name,
       role: profile.role,
+      faceCamera: native && profile.faceCamera === true,
       mode: native && profile.mode === 'device' ? 'device' : 'server'
     };
     $('connection').textContent = cached && !deviceOnly() ? 'Sin conexión' : connectedLabel();
     $('sync').hidden = deviceOnly();
-    $('method').closest('label').hidden = deviceOnly();
-    if (deviceOnly()) $('method').value = 'supervised';
+    if (deviceOnly()) {
+      $('method').replaceChildren(new Option('Comparar mi rostro', 'face'), new Option('Solicitar supervisión presencial', 'supervised'));
+    }
     await dataStore('write', 'profile', profile);
     device = await dataStore('device', 'device', crypto.randomUUID());
     roster = profile.people;
@@ -181,6 +184,26 @@
     const selected = $('employee').value;
     $('employee').replaceChildren(new Option('Selecciona un empleado', ''), ...roster.map(p => new Option(p.code + ' · ' + p.name, p.id)));
     if (roster.some(p => p.id === selected)) $('employee').value = selected;
+    if (deviceOnly()) updateFaceMethod(false);
+  }
+  function updateFaceMethod(selectedEmployeeChanged) {
+    const person = roster.find(p => p.id === $('employee').value);
+    const available = identity.faceCamera && person?.hasFace;
+    const choice = $('method').querySelector('option[value="face"]');
+    choice.disabled = !available;
+    if (!available) $('method').value = 'supervised';
+    else if (selectedEmployeeChanged) $('method').value = 'face';
+    if (!identity.faceCamera) $('methodInfo').textContent = 'La comparación necesita la cámara frontal de un iPhone o iPad físico. Aquí puedes usar supervisión.';
+    else if (person && !person.hasFace) $('methodInfo').textContent = 'Este empleado aún no tiene rostro registrado en este dispositivo. Puedes marcar con supervisión.';
+    else if ($('method').value === 'face') $('methodInfo').textContent = 'La cámara comparará tu rostro con tu referencia en este dispositivo.';
+    else $('methodInfo').textContent = 'El operador revisará la marcación antes de aprobarla.';
+  }
+  $('employee').onchange = () => { if (deviceOnly()) updateFaceMethod(true); };
+  async function useCamera(command, payload, operator = false) {
+    if (cameraBusy) throw Error('Ya hay una captura en curso.');
+    cameraBusy = true;
+    try { return await api(command, payload, operator); }
+    finally { cameraBusy = false; }
   }
   async function refresh() {
     // Foreground and online events also fire while the first session GET is
@@ -207,7 +230,14 @@
   }
   async function recent() {
     if (!identity) return;
-    const rows = (await dataStore('list', 'punch/')).sort((a, b) => b.device_time.localeCompare(a.device_time));
+    let rows = await dataStore('list', 'punch/');
+    if (deviceOnly()) {
+      const {records} = await api('device-recent', {});
+      const local = new Map(rows.map(p => [p.id, p]));
+      for (const p of records) local.set(p.id, p);
+      rows = [...local.values()];
+    }
+    rows.sort((a, b) => b.device_time.localeCompare(a.device_time));
     const list = $('recent');
     list.replaceChildren();
     for (const p of rows.slice(0, 12)) {
@@ -217,10 +247,12 @@
       let msg = deviceOnly() ? 'Guardada en este dispositivo' : 'Guardada en este dispositivo · por enviar';
       if (savedTime(p)) {
         const where = deviceOnly() ? 'Guardada aquí' : 'Recibida';
-        msg = where + (p.state === 'approved' ? ' · supervisión aprobada' : ' · supervisión pendiente');
+        if (p.state === 'visual_match') msg = where + ' · coincidencia visual';
+        else if (p.state === 'pending' && p.method === 'visual_review') msg = where + ' · sin coincidencia clara, pendiente de revisión';
+        else msg = where + (p.state === 'approved' ? ' · supervisión aprobada' : ' · supervisión pendiente');
       }
       if (p.delivery === 'blocked') msg = 'Bloqueada · ' + p.error;
-      li.append(el('span', msg, p.delivery === 'blocked' ? 'warning' : p.state === 'approved' ? 'ok' : 'muted'));
+      li.append(el('span', msg, p.delivery === 'blocked' ? 'warning' : ['approved', 'visual_match'].includes(p.state) ? 'ok' : 'muted'));
       list.append(li);
     }
     if (!rows.length) list.append(el('li', 'Aún no hay marcaciones en este dispositivo.', 'muted'));
@@ -317,6 +349,21 @@
         person = roster.find(p => p.id === employee);
       if (!person) throw Error('Selecciona un empleado activo.');
       const movement = new FormData($('punchForm')).get('movement');
+      if (deviceOnly() && $('method').value === 'face') {
+        const request = {account: identity.id, id: crypto.randomUUID(), employee, revision: person.revision, device, movement, device_time: new Date().toISOString()};
+        let receipt;
+        try { receipt = await useCamera('face-punch', request); }
+        catch (error) {
+          // A native commit can finish just before WebKit loses its reply.
+          if (sameAccount()) receipt = (await api('device-recent', {})).records.find(p => p.id === request.id);
+          if (!receipt) throw error;
+        }
+        $('employee').value = '';
+        updateFaceMethod(false);
+        say(receipt.method === 'visual_match' ? 'Marcación guardada con coincidencia visual.' : 'Marcación guardada. El rostro requiere revisión del operador.');
+        await recent();
+        return;
+      }
       const method = await bio.verify(dataStore, employee, $('method').value);
       const id = crypto.randomUUID(),
         row = {
@@ -336,6 +383,7 @@
         return;
       }
       $('employee').value = '';
+      if (deviceOnly()) updateFaceMethod(false);
       say(method === 'simulation_failed' ? 'Fallo de la simulación. Marcación guardada para revisión humana.' : 'Marcación guardada para supervisión.');
       await recent();
       await sync();
@@ -345,7 +393,8 @@
     });
   };
   $('method').onchange = () => {
-    $('methodInfo').textContent = $('method').value === 'supervised' ? 'El operador revisará la marcación antes de aprobarla.' : 'Datos sintéticos. La verificación facial real está bloqueada.';
+    if (deviceOnly()) { updateFaceMethod(false); return; }
+    $('methodInfo').textContent = $('method').value === 'supervised' ? 'El operador revisará la marcación antes de aprobarla.' : 'Simulación con una muestra de prueba guardada en este dispositivo.';
   };
   $('operator').onclick = () => {
     say('');
@@ -407,10 +456,25 @@
     for (const p of snapshot.people) {
       const li = el('li', '');
       li.append(el('strong', p.code + ' · ' + p.name));
-      const enrolled = !deviceOnly() && await bio.enrolled(dataStore, p.id);
+      const enrolled = deviceOnly() ? p.hasFace : await bio.enrolled(dataStore, p.id);
+      if (deviceOnly() && p.active) li.append(el('small', enrolled ? 'Referencia facial en este dispositivo' : 'Sin referencia facial en este dispositivo'));
       if (!p.active || !deviceOnly()) li.append(el('small', p.active ? enrolled ? 'Muestra sintética local · caduca en 24 h' : 'Sin muestra sintética' : 'Inactivo'));
       if (p.active) {
         const actions = el('div', '', 'actions');
+        if (deviceOnly() && (identity.faceCamera || enrolled)) actions.append(button(enrolled ? 'Borrar referencia facial' : 'Registrar rostro', async () => {
+          const body = {employee: p.id, revision: p.revision};
+          if (enrolled) {
+            if (!confirm('¿Borrar la referencia facial de ' + p.name + ' de este dispositivo?')) return;
+            await api('face-remove', body, true);
+          } else {
+            if (!confirm('¿La persona que participa como ' + p.name + ' autoriza guardar su referencia facial en este dispositivo durante 30 días? Puede borrarse en Gestión. La supervisión presencial sigue disponible.')) return;
+            await useCamera('face-enroll', {...body, consent: true}, true);
+          }
+          if (ticket !== activeTicket) return;
+          await loadManagement();
+          await refresh();
+          say(enrolled ? 'Referencia facial borrada.' : 'Rostro registrado en este dispositivo.');
+        }));
         if (!deviceOnly()) actions.append(button(enrolled ? 'Borrar muestra' : 'Enrolar muestra sintética', async () => {
           await api('enrollment-access', {
             employee: p.id,
@@ -438,13 +502,16 @@
     for (const p of snapshot.punches) {
       const row = el('article', '', 'review');
       const recorded = deviceOnly() ? ' · Guardada aquí ' + localDate(p.stored_at) : ' · Recepción ' + localDate(p.received_at);
-      row.append(el('strong', labelMove(p.effective_movement) + ' · ' + p.name), el('small', 'Dispositivo ' + localDate(p.effective_time) + recorded), el('span', p.review_state === 'approved' ? 'Supervisión presencial aprobada' : 'Pendiente de revisión humana', p.review_state === 'approved' ? 'ok' : 'warning'));
+      row.append(el('strong', labelMove(p.effective_movement) + ' · ' + p.name), el('small', 'Dispositivo ' + localDate(p.effective_time) + recorded), el('span', p.review_state === 'approved' ? 'Supervisión presencial aprobada' : p.review_state === 'visual_match' ? 'Coincidencia visual' : 'Pendiente de revisión humana', p.review_state === 'pending' ? 'warning' : 'ok'));
+      if (p.method === 'visual_review') row.append(el('small', 'La comparación facial quedó sin coincidencia clara.', 'warning'));
       if (p.method === 'simulation_failed') row.append(el('small', 'Falló la simulación sintética.', 'warning'));
       if (p.possible_duplicate || p.clock_difference) row.append(el('small', [p.possible_duplicate ? 'Posible duplicado' : '', p.clock_difference ? 'Revisar diferencia de reloj o envío tardío' : ''].filter(Boolean).join(' · '), 'warning'));
       const detail = el('details', ''),
         summary = el('summary', 'Original e historial');
       detail.append(summary, el('p', labelMove(p.movement) + ' · ' + localDate(p.device_time) + ' · ' + {
         supervised: 'Supervisión solicitada',
+        visual_match: 'Coincidencia visual en este dispositivo',
+        visual_review: 'Comparación facial sin coincidencia clara',
         simulation: 'Simulación sintética',
         simulation_failed: 'Simulación fallida'
       }[p.method]));
@@ -592,7 +659,7 @@
     }
   });
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden && ticket) {
+    if (document.hidden && ticket && !cameraBusy) {
       void lock().catch(() => {});
     } else if (!document.hidden && identity) void refresh();
   });

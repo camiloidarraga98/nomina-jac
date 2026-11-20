@@ -3160,6 +3160,80 @@ final class PayrollClientTests: XCTestCase {
     }
 
     #if os(iOS) && DEBUG
+    @MainActor func testLocalVisualAttendanceUsesOnlyTheSelectedReference() async throws {
+        // Synthetic aligned intensity fields exercise the matcher without capturing a person.
+        let side = AttendanceFaceSignature.side
+        let pixels: [Float] = (0..<(side * side)).map { i in
+            let x = Float(i % side), y = Float(i / side)
+            return 120 + 38 * sin(x / 6) + 34 * cos((x + y) / 9)
+        }
+        let reference = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels))
+        let brighter = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels.map { $0 + 18 }))
+        let other = try XCTUnwrap(AttendanceFaceSignature(alignedPixels: pixels.map { 240 - $0 }))
+        XCTAssertTrue(reference.resembles(brighter))
+        XCTAssertFalse(reference.resembles(other))
+        XCTAssertNil(AttendanceFaceSignature(alignedPixels: Array(repeating: 128, count: side * side)))
+        var turn = AttendanceFaceTurn()
+        XCTAssertNil(turn.observe(yaw: 0, at: 10) { reference })
+        XCTAssertNil(turn.observe(yaw: 0, at: 10.5) { reference })
+        XCTAssertNil(turn.observe(yaw: -0.4, at: 11) { nil })
+        XCTAssertNil(turn.observe(yaw: 0, at: 11.5) { other })
+        XCTAssertNil(turn.observe(yaw: 0, at: 12) { reference })
+        XCTAssertNil(turn.observe(yaw: 0.4, at: 12.5) { nil })
+        XCTAssertNotNil(turn.observe(yaw: 0, at: 13) { brighter })
+
+        let vault = MemorySession()
+        let client = PayrollClient(baseURL: DeviceAttendancePilot.origin, vault: vault, isAttendancePilot: true)
+        try await client.login(username: "admin", password: "admin")
+        defer { try? client.clearSession() }
+        func bytes(_ body: [String: Any]) throws -> Data { try JSONSerialization.data(withJSONObject: body) }
+        func request(_ command: String, _ body: [String: Any], _ key: String? = nil, _ status: Int = 200) async throws -> [String: Any] {
+            let (data, code) = try await client.attendanceRequest(command: command, data: bytes(body), ticket: key)
+            XCTAssertEqual(status, code, command)
+            return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        func camera(_ command: String, _ body: [String: Any], _ ticket: String?, _ status: Int,
+                    _ sample: (String) async throws -> AttendanceFaceSignature) async throws -> [String: Any] {
+            let (data, code) = try await client.attendanceFaceRequest(command: command, data: bytes(body), ticket: ticket, capture: sample)
+            XCTAssertEqual(status, code, command)
+            return try XCTUnwrap(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+        let grant = try await request("unlock", ["password":"gestion-demo"])
+        let ticket = try XCTUnwrap(grant["ticket"] as? String)
+        let employee = UUID().uuidString.lowercased()
+        _ = try await request("people", ["people":[["id":employee, "name":"Muestra ficticia", "code":String(employee.prefix(12))]]], ticket)
+        let noCapture: (String) async throws -> AttendanceFaceSignature = { _ in XCTFail("Abrió una captura innecesaria"); return other }
+        var person: [String: Any] = ["employee":employee, "revision":1]
+        _ = try await camera("face-enroll", person, nil, 403, noCapture)
+        _ = try await camera("face-enroll", person, ticket, 400, noCapture)
+        person["consent"] = true
+        _ = try await camera("face-enroll", person, ticket, 200) { _ in reference }
+        let device = UUID().uuidString
+        var punch: [String: Any] = ["id":UUID().uuidString, "account":DeviceAttendancePilot.account, "employee":employee,
+                                    "revision":2, "device":device, "device_time":"2026-11-20T12:00:00.000Z", "movement":"entry", "method":"visual_match"]
+        _ = try await request("punch", punch, nil, 400)
+        let match = try await camera("face-punch", punch, nil, 200) { _ in brighter }
+        XCTAssertEqual(match["state"] as? String, "visual_match")
+        let retried = try await camera("face-punch", punch, nil, 200, noCapture)
+        XCTAssertEqual(retried["stored_at"] as? String, match["stored_at"] as? String)
+        punch["id"] = UUID().uuidString
+        punch["movement"] = "exit"
+        let doubtful = try await camera("face-punch", punch, nil, 200) { _ in other }
+        XCTAssertEqual(doubtful["state"] as? String, "pending")
+        XCTAssertEqual(doubtful["method"] as? String, "visual_review")
+        person["revision"] = 2
+        _ = try await request("face-remove", person, nil, 403)
+        punch["id"] = UUID().uuidString
+        _ = try await camera("face-punch", punch, nil, 409) { _ in
+            _ = try await request("face-remove", person, ticket)
+            return brighter
+        }
+        punch["revision"] = 3
+        _ = try await camera("face-punch", punch, nil, 409, noCapture)
+        _ = try await request("retire", ["id":employee, "revision":3], ticket)
+        try await client.logout()
+    }
+
     @MainActor func testDeviceAttendanceLedgerAndOperator() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockProtocol.self]
