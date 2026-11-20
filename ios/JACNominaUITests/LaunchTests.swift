@@ -766,7 +766,7 @@ final class LaunchTests: XCTestCase {
         XCTAssertFalse(view.buttons["Crear empleado"].exists)
         let supervisor = view.secureTextFields.firstMatch
         supervisor.tap()
-        supervisor.typeText("gestion-demo")
+        supervisor.typeText("admin")
         view.buttons["Entrar a gestión"].tap()
         XCTAssertTrue(view.staticTexts["Gestión de asistencia"].waitForExistence(timeout: 10))
         let peopleTab = view.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Empleados de prueba")).firstMatch

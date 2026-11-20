@@ -111,8 +111,8 @@ final class DeviceAttendancePilot {
     }
     private func perform(_ command: String, body: Row, token: String, ticket: String?) throws -> Row {
         if command == "unlock" {
-            // This separate fixture credential exists only in development builds with synthetic records.
-            guard body["password"] as? String == "gestion-demo" else { throw Problem(403, "La clave de supervisión de prueba es incorrecta.") }
+            // Re-enter the demo password to request a short-lived supervisor grant.
+            guard body["password"] as? String == "admin" else { throw Problem(403, "La clave de supervisión de prueba es incorrecta.") }
             let value = newToken(), expires = Date().addingTimeInterval(300)
             grant = (token, value, expires)
             return ["ticket":value, "expires":clock.string(from: expires), "name":"Operador de prueba"]

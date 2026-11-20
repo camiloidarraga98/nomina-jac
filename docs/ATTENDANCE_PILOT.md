@@ -20,7 +20,7 @@ La cuenta de prueba `admin` abre el kiosco integrado en **JACNomina**. Tiene acc
 
 1. Actualiza `main`, abre `ios/JACNomina.xcodeproj`, selecciona **JACNomina** y el iPad o iPhone de prueba. Pulsa **Run**.
 2. Ingresa con usuario `admin` y contraseña `admin`. El indicador **Prueba en este dispositivo** identifica el piloto integrado. Encontrarás dos empleados ficticios para probar **Entrada** y **Salida** de inmediato.
-3. En **Gestión supervisada** escribe `gestion-demo`. La autorización de operador dura cinco minutos. En **Empleados de prueba** puedes crear fichas. En **Marcaciones** puedes revisar y corregir un registro con motivo e historial.
+3. En **Gestión supervisada** escribe `admin`. La autorización de operador dura cinco minutos. En **Empleados de prueba** puedes crear fichas. En **Marcaciones** puedes revisar y corregir un registro con motivo e historial.
 
 El primer arranque y el registro funcionan directamente en la app de desarrollo, incluso en modo avión. El iPad conserva las marcaciones en un archivo protegido y excluido de las copias de seguridad. Cerrar sesión bloquea la gestión y conserva el historial para el siguiente acceso autorizado en ese dispositivo. Cada dispositivo de prueba tiene su propio historial. Una marcación manual queda pendiente de revisión. En un dispositivo con cámara frontal también se puede elegir la comparación visual descrita más abajo. La cuenta y la clave de demostración están limitadas a la compilación de desarrollo y a sus datos de prueba.
 
@@ -28,7 +28,7 @@ Al actualizar desde el piloto que dependía del Mac puede volver a aparecer el f
 
 ## Ensayar la comparación en el simulador de Xcode
 
-1. En **JACNomina**, entra al kiosco como `admin` con contraseña `admin`. Abre **Gestión supervisada** con `gestion-demo` y toca **Empleados de prueba**.
+1. En **JACNomina**, entra al kiosco como `admin` con contraseña `admin`. Abre **Gestión supervisada** con `admin` y toca **Empleados de prueba**.
 2. En una ficha toca **Registrar rostro de prueba** y escoge **Rostro A** como referencia. Pulsa **Volver al kiosco**. Quedará seleccionado ese empleado.
 3. Elige **Entrada**, **Rostro A** y **Confirmar marcación**. Verás **Coincidencia de prueba**. Para probar el otro resultado, elige **Salida**, vuelve a seleccionar al mismo empleado y confirma con **Rostro B**. Verás **Rostros de prueba distintos**.
 4. Ambas marcaciones aparecen pendientes en **Gestión supervisada → Marcaciones**. Para hacer una marcación manual, elige **Solicitar supervisión presencial** en el selector de método.
