@@ -423,7 +423,7 @@ function startKiosk() {
       move = b.dataset.move;
       for (const other of document.querySelectorAll('[data-move]'))
         other.setAttribute('aria-pressed', b === other);
-      $('scan').textContent = 'Escanear para marcar ' + term();
+      $('scanLabel').textContent = 'Escanear para marcar ' + term();
     };
   $('scan').onclick = async () => {
     if (scanning) return;

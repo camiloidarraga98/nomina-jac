@@ -100,9 +100,36 @@
             <h1>Marca tu asistencia</h1>
             <p>Elige tu movimiento y escanea tu rostro.</p>
             <div class="choices">
-              <button data-move="entry" aria-pressed="true"><span aria-hidden="true">↪</span> Entrada</button
+              <button data-move="entry" aria-pressed="true">
+                <svg
+                  class="action-icon"
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M14 3h5a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-5" />
+                  <path d="M3 12h12m-5-5 5 5-5 5" />
+                </svg>
+                Entrada</button
               ><button data-move="exit" aria-pressed="false">
-                <span aria-hidden="true">↗</span> Salida
+                <svg
+                  class="action-icon"
+                  aria-hidden="true"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="1.8"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                >
+                  <path d="M10 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h5" />
+                  <path d="M9 12h12m-5-5 5 5-5 5" />
+                </svg>
+                Salida
               </button>
             </div>
             <div class="lens" aria-hidden="true">
@@ -118,7 +145,23 @@
                 />
               </svg>
             </div>
-            <button class="primary scan" id="scan">Escanear para marcar entrada</button>
+            <button class="primary scan" id="scan">
+              <svg
+                class="action-icon"
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="1.8"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M3 8V5a2 2 0 0 1 2-2h3m8 0h3a2 2 0 0 1 2 2v3M3 16v3a2 2 0 0 0 2 2h3m8 0h3a2 2 0 0 0 2-2v-3"
+                />
+                <path d="M3 12h18" /></svg
+              ><span id="scanLabel">Escanear para marcar entrada</span>
+            </button>
             <details class="claim" id="claim">
               <summary>Verificar con mi código de empleado</summary>
               <label

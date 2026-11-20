@@ -407,3 +407,16 @@ td .review-link {
   padding: 4px 0;
   font-size: 0.86rem;
 }
+
+.action-icon {
+  width: 21px;
+  height: 21px;
+  flex: none;
+}
+#home .choices button,
+.scan {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
