@@ -36,7 +36,7 @@ final class AttendanceNotificationService: UNNotificationServiceExtension {
             return
         }
         let grant = content.userInfo.removeValue(forKey: "photoGrant") as? String
-        guard content.userInfo["kind"] as? String == "attendance",
+        guard content.userInfo["kind"] as? String == "alert",
               let rawID = content.userInfo["noticeId"] as? String, let id = UUID(uuidString: rawID),
               let grant, grant.range(of: #"^[A-Fa-f0-9-]{36}\.[0-9]{10}\.[A-Za-z0-9_-]{43}$"#, options: .regularExpression) != nil,
               let url = URL(string: "https://jhonalexcastano.com/api/team-attendance/notification-photo?id=" + id.uuidString.lowercased())

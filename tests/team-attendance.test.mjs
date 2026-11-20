@@ -196,7 +196,7 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
       }
     }
     const rich=pushes.find(p=>p.token===testTokens[1]&&p.payload.noticeId===exit.id).payload;
-    assert.equal(rich.kind,'attendance');
+    assert.equal(rich.kind,'alert','existing iOS versions also open the exact alert when tapped');
     const preview=(id,grant)=>call('/api/team-attendance/notification-photo?id='+id,{'Authorization':'JAC-Photo '+grant});
     const photoResponse=await preview(exit.id,rich.photoGrant);
     assert.equal(photoResponse.status,200);assert.match(photoResponse.headers.get('cache-control'),/no-store/);

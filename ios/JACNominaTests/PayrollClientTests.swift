@@ -3173,7 +3173,7 @@ final class PayrollClientTests: XCTestCase {
         let service = AttendanceNotificationService(configuration: config)
         let content = UNMutableNotificationContent()
         content.title = "JAC Music · Entrada"; content.body = "Registro ficticio · 8:00 a. m."
-        content.userInfo = ["noticeId": id, "kind": "attendance", "photoGrant": grant]
+        content.userInfo = ["noticeId": id, "kind": "alert", "photoGrant": grant]
         let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
         let grayJPEG = try XCTUnwrap(Data(base64Encoded: "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAAIAAgBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AP//Z"))
         defer { MockProtocol.handler = nil }
@@ -3188,7 +3188,14 @@ final class PayrollClientTests: XCTestCase {
             }
             XCTAssertEqual(delivered.body, content.body); XCTAssertEqual(delivered.title, content.title)
             XCTAssertNil(delivered.userInfo["photoGrant"])
-            XCTAssertEqual(delivered.userInfo["noticeId"] as? String,id)
+            let noticeID = delivered.userInfo["noticeId"] as? String
+            let noticeKind = delivered.userInfo["kind"] as? String
+            XCTAssertEqual(noticeID, id)
+            await MainActor.run {
+                let hub = JACNotifications(pushAvailable: true, registerRemote: {}, unregisterRemote: {})
+                hub.received(noticeID: noticeID, kind: noticeKind, folderID: nil)
+                XCTAssertEqual(hub.noticeID, id)
+            }
             if status == 200 {
                 let attachment = try XCTUnwrap(delivered.attachments.first)
                 XCTAssertEqual(attachment.type, "public.jpeg")

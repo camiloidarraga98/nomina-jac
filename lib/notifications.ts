@@ -173,7 +173,7 @@ export async function dispatchPush(noticeId?:string){
     if(row.platform==='ios'&&!appleCredentials)state='unconfigured';
     else{
     const content=noticePushContent(active);
-    const preview=active.attendancePhoto&&row.platform==='ios'?{kind:'attendance' as const,photoGrant:attendancePhotoGrant(mailKey(),row.notice_id,{device:row.device_id,session:active.session,user:row.user_id})}:undefined;
+    const preview=active.attendancePhoto&&row.platform==='ios'?{kind:'alert' as const,photoGrant:attendancePhotoGrant(mailKey(),row.notice_id,{device:row.device_id,session:active.session,user:row.user_id})}:undefined;
     const request=row.platform==='ios'?await applePushRequest((data as Record<string,string>).token,(data as Record<string,string>).environment,appleCredentials!,row.notice_id,content,preview):await webPushRequest(data as WebSubscription,keys.web!,JSON.stringify({id:row.notice_id,...content,...(active.attendancePhoto?{kind:'attendance'}:{})}));
     // Encryption/signing can yield: revalidate deletion and access immediately before sending.
     if(!await activeDelivery()){await database().prepare("UPDATE jac_push_deliveries SET status='disabled',updated_at=? WHERE id=? AND status='sending'").bind(now(),row.id).run();return;}
