@@ -1,0 +1,1 @@
+ALTER TABLE `jac_attendance_records` ADD `notice_id` text;

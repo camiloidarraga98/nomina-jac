@@ -15,6 +15,7 @@ export async function startAttendancePilot({
   port = 0,
   enabled = true,
   simulator = false,
+  notificationTransport,
   onPreparation = () => {}
 } = {}) {
   const root = resolve(simulator ? 'scripts' : 'dist/server');
@@ -59,13 +60,14 @@ export async function startAttendancePilot({
       JAC_READY: '1',
       JAC_HOSTING: 'cloudflare',
       PAYROLL_AUTH_KEY: pepper,
+      ...(notificationTransport ? {PAYROLL_MAIL_KEY: randomBytes(32).toString('base64url')} : {}),
       ...(enabled ? {
         JAC_ATTENDANCE_PILOT: 'isolated-local'
       } : {})
     },
-    outboundService: () => new Response('External service disabled', {
+    outboundService: notificationTransport ?? (() => new Response('External service disabled', {
       status: 503
-    }),
+    })),
     serviceBindings: {
       ASSETS: async req => {
         const name = new URL(req.url).pathname;

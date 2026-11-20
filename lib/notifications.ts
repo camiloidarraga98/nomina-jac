@@ -8,18 +8,19 @@ import {database} from '@/db/raw';
 import {decryptMail,encryptMail} from './payroll-mail-core';
 import {mailKey} from './payroll-mail';
 import {tokenHash} from './payroll-auth-crypto';
+import {attendanceDelivery,attendancePhotoGrant,attendanceRecipient,attendanceSource} from './attendance-notices';
 import {hasSection,sectionSql,type AccessUser,type SectionKey} from './payroll-permissions';
 import {NoticeFailure,ITINERARY_CHANNEL,ITINERARY_TEAM,MAX_PDF_BYTES,createWebKeys,appleKey,applePushRequest,webPushRequest,noticePushContent,validateSubscription,type PushCredentials,type WebSubscription,type Notice} from './notifications-core';
 
 const uuid=z.string().uuid();
 const now=()=>new Date().toISOString();
 type Config={credentials:string;version:number};
-type Row={revision:number;updated_at:string;change_summary:string;sort_at:string;confirmed_revision:number;confirmed_at:string;id:string;kind:Notice['kind'];travel_date:string;title:string;body:string;filename:string;size:number;created_at:string;file_key:string;read_at:string};
+type Row={revision:number;updated_at:string;change_summary:string;sort_at:string;confirmed_revision:number;confirmed_at:string;id:string;kind:Notice['kind'];source:string|null;travel_date:string;title:string;body:string;filename:string;size:number;created_at:string;file_key:string;read_at:string};
 export const noticeOwner=(u:AccessUser)=>!u.legacy&&u.isOwner&&hasSection(u,'crm');
 export const anyNoticeSection=(u:AccessUser)=>hasSection(u,'itineraries')||hasSection(u,'alerts')||hasSection(u,'boarding');
 export const anyPushSection=(u:AccessUser)=>anyNoticeSection(u)||hasSection(u,'media');
 const noticeSection=(kind:Notice['kind']):SectionKey=>kind==='itinerary'?'itineraries':kind==='alert'?'alerts':'boarding';
-const noticeSectionSql=(user='u',notice='n')=>`((${notice}.kind='itinerary' AND ${sectionSql(user,'itineraries')}) OR (${notice}.kind='alert' AND ${sectionSql(user,'alerts')}) OR (${notice}.kind='boarding_pass' AND ${sectionSql(user,'boarding')}))`;
+const noticeSectionSql=(user='u')=>`((n.kind='itinerary' AND ${sectionSql(user,'itineraries')}) OR (n.kind='alert' AND ${sectionSql(user,'alerts')} AND (NOT (${attendanceSource}) OR ${attendanceRecipient(user)})) OR (n.kind='boarding_pass' AND ${sectionSql(user,'boarding')}))`;
 const anyNoticeSectionSql=(user:string)=>`(${sectionSql(user,'itineraries')} OR ${sectionSql(user,'alerts')} OR ${sectionSql(user,'boarding')})`;
 const anyPushSectionSql=(user:string)=>`(${anyNoticeSectionSql(user)} OR ${sectionSql(user,'media')})`;
 export async function noticeConfig(){return await database().prepare('SELECT credentials,version FROM jac_notice_settings WHERE id=?').bind('jac').first<Config>()??{credentials:'',version:0};}
@@ -27,13 +28,15 @@ export async function pushCredentials(c?:Config):Promise<PushCredentials>{const 
 export async function pushSettings(){return {webPublicKey:(await pushCredentials()).web?.publicKey??''};}
 async function settings(){const c=await noticeConfig(),keys=await pushCredentials(c);return {version:c.version,slackConnected:!!keys.slack,appleConfigured:!!keys.apns,appleSandboxConfigured:!!keys.apnsSandbox,webPublicKey:keys.web?.publicKey??'',channel:'#itinerarios-finales',webhook:'https://jhonalexcastano.com/api/notices/slack'};}
 function view(row:Row):Notice{const boardingDetails=row.kind==='boarding_pass'?parseBoardingMessage(row.body):undefined;return {revision:row.revision,updatedAt:row.updated_at,changeSummary:row.change_summary,confirmed:row.confirmed_revision===row.revision,id:row.id,kind:row.kind,title:row.title,body:row.body,filename:row.filename,size:row.size,createdAt:row.created_at,read:!!row.read_at,...(row.kind==='boarding_pass'?{travelDate:row.travel_date,...(boardingDetails?{boardingDetails}:{})}:{})};}
-const accessSql="(n.kind='itinerary' OR EXISTS(SELECT 1 FROM jac_notice_recipients a WHERE a.notice_id=n.id AND a.user_id=?) OR (n.kind<>'boarding_pass' AND ?=1))";
+const accessSql=`(n.kind='itinerary' OR EXISTS(SELECT 1 FROM jac_notice_recipients a WHERE a.notice_id=n.id AND a.user_id=?) OR (n.kind<>'boarding_pass' AND NOT (${attendanceSource}) AND ?=1))`;
 // Check both the authenticated view and the current row. A grant removed while
 // R2 is being read must not keep the old AccessUser object authorised.
 const noticeAccessSql=(u:AccessUser)=>`(${accessSql} AND ((n.kind='itinerary' AND ${Number(hasSection(u,'itineraries'))}) OR (n.kind='alert' AND ${Number(hasSection(u,'alerts'))}) OR (n.kind='boarding_pass' AND ${Number(hasSection(u,'boarding'))})) AND EXISTS(SELECT 1 FROM payroll_users notice_user WHERE notice_user.id=? AND notice_user.active=1 AND ${noticeSectionSql('notice_user')}))`;
 async function noticeViews(rows:Row[]){
  if(!rows.length)return [];const attachments=(await database().prepare(`SELECT id,notice_id,filename,mime_type,size FROM jac_notice_attachments WHERE state='ready' AND notice_id IN (${rows.map(()=>'?').join(',')}) ORDER BY id`).bind(...rows.map(r=>r.id)).all<{id:string;notice_id:string;filename:string;mime_type:string;size:number}>()).results;
- return rows.map(row=>{const files=[...(row.file_key?[{id:row.id,filename:row.filename,mimeType:'application/pdf',size:row.size}]:[]),...attachments.filter(a=>a.notice_id===row.id).map(a=>({id:a.id,filename:a.filename,mimeType:a.mime_type,size:a.size}))],item=view(row);if(files.length!==1)delete item.boardingDetails;return {...item,attachments:files};});
+ return rows.map(row=>{const files=[...(row.file_key?[{id:row.id,filename:row.filename,mimeType:'application/pdf',size:row.size}]:[]),...attachments.filter(a=>a.notice_id===row.id).map(a=>({id:a.id,filename:a.filename,mimeType:a.mime_type,size:a.size}))],item=view(row);
+  if(row.source?.startsWith('attendance:')&&row.size>0)files.push({id:row.id,filename:row.filename,mimeType:'image/jpeg',size:row.size});
+  if(files.length!==1)delete item.boardingDetails;return {...item,attachments:files};});
 }
 export async function noticeRecipientRoster(u:AccessUser){
  if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede consultar destinatarios.',403);
@@ -77,11 +80,12 @@ export async function deleteManualNotice(u:AccessUser,id:unknown,confirmation:un
  if(!noticeOwner(u))throw new NoticeFailure('Solo un administrador puede eliminar alertas.',403);
  if(!uuid.safeParse(id).success||confirmation!==id)throw new NoticeFailure('Confirma la alerta que deseas eliminar.');
  const target=id as string,db=database();
- const item=await db.prepare('SELECT kind FROM jac_notices WHERE id=?').bind(target).first<{kind:string}>();
+ const item=await db.prepare('SELECT kind,source FROM jac_notices WHERE id=?').bind(target).first<{kind:string;source:string|null}>();
  if(item&&item.kind!=='alert')throw new NoticeFailure('Selecciona una alerta para eliminar.');
+ if(item?.source?.startsWith('attendance:'))await allowedNotice(u,target);
  if(!await authorize())throw new NoticeFailure('Tu sesión cambió. Inicia sesión de nuevo.',403);
  await db.batch([
-  db.prepare("INSERT OR IGNORE INTO jac_deleted_alerts (id,deleted_at) SELECT id,? FROM jac_notices WHERE id=? AND kind='alert'").bind(now(),target),
+  db.prepare(`INSERT OR IGNORE INTO jac_deleted_alerts (id,deleted_at) SELECT n.id,? FROM jac_notices n WHERE n.id=? AND n.kind='alert' AND (NOT (${attendanceSource}) OR ${noticeAccessSql(u)})`).bind(now(),target,u.id,0,u.id),
   db.prepare("UPDATE jac_notice_attachments SET state='deleted',cleaned=0,cleanup_version=cleanup_version+1 WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)").bind(target,target),
   db.prepare('DELETE FROM jac_push_deliveries WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)').bind(target,target),
   db.prepare('DELETE FROM jac_notice_recipients WHERE notice_id=? AND EXISTS(SELECT 1 FROM jac_deleted_alerts WHERE id=?)').bind(target,target),
@@ -146,17 +150,18 @@ export async function registerDevice(u:AccessUser,body:Record<string,unknown>,se
  const result=await database().prepare(`INSERT INTO jac_push_devices (id,user_id,user_version,platform,data,session_id,updated_at) SELECT ?,id,version,?,?,?,? FROM payroll_users WHERE id=? AND active=1 AND ${anyPushSectionSql('payroll_users')} AND password_hash<>'' ON CONFLICT(id) DO UPDATE SET user_id=excluded.user_id,user_version=excluded.user_version,platform=excluded.platform,data=excluded.data,session_id=excluded.session_id,enabled=1,updated_at=excluded.updated_at`).bind(body.id,body.platform,cipher,tokenHash(sessionId),now(),u.id).run();if(result.meta.changes!==1)throw new NoticeFailure('Tu acceso cambió. Inicia sesión de nuevo.',403);
 }
 export async function unregisterDevice(u:AccessUser,id:unknown){if(!uuid.safeParse(id).success)throw new NoticeFailure('Selecciona un dispositivo válido.');await database().prepare('UPDATE jac_push_devices SET enabled=0 WHERE id=? AND user_id=?').bind(id,u.id).run();}
-export async function queuePush(id:string){await database().prepare(`INSERT OR IGNORE INTO jac_push_deliveries (id,notice_id,device_id,updated_at,notice_revision) SELECT ?||'|'||d.id||CASE WHEN n.revision=1 THEN '' ELSE '|v'||n.revision END,?,d.id,?,n.revision FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? JOIN jac_notices n ON n.id=r.notice_id WHERE r.push_target=1 AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>''`).bind(id,id,now(),id).run();}
-export async function dispatchPush(){
+export async function queuePush(id:string){await database().prepare(`INSERT OR IGNORE INTO jac_push_deliveries (id,notice_id,device_id,updated_at,notice_revision) SELECT ?||'|'||d.id||CASE WHEN n.revision=1 THEN '' ELSE '|v'||n.revision END,?,d.id,?,n.revision FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? JOIN jac_notices n ON n.id=r.notice_id WHERE NOT (${attendanceSource}) AND r.push_target=1 AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>''`).bind(id,id,now(),id).run();}
+export async function dispatchPush(noticeId?:string){
  await database().prepare("UPDATE jac_push_deliveries SET status='uncertain',updated_at=? WHERE status='sending' AND updated_at<?").bind(now(),new Date(Date.now()-120000).toISOString()).run();
+ const rows=(await database().prepare(`SELECT p.id,p.notice_id,p.device_id,d.user_id,d.platform,d.data FROM jac_push_deliveries p JOIN jac_push_devices d ON d.id=p.device_id JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.notice_id=p.notice_id AND r.user_id=u.id JOIN jac_notices n ON n.id=r.notice_id WHERE p.status='pending' AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>'' ${noticeId?'AND p.notice_id=?':''} ORDER BY p.updated_at LIMIT 24`).bind(...(noticeId?[noticeId]:[])).all<{id:string;notice_id:string;device_id:string;user_id:string;platform:string;data:string}>()).results;
+ if(!rows.length)return;
  const keys=await pushCredentials();
- const rows=(await database().prepare(`SELECT p.id,p.notice_id,p.device_id,d.user_id,d.platform,d.data FROM jac_push_deliveries p JOIN jac_push_devices d ON d.id=p.device_id JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.notice_id=p.notice_id AND r.user_id=u.id JOIN jac_notices n ON n.id=r.notice_id WHERE p.status='pending' AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>'' ORDER BY p.updated_at LIMIT 24`).all<{id:string;notice_id:string;device_id:string;user_id:string;platform:string;data:string}>()).results;
  await Promise.all(rows.map(async row=>{
   const claimed=await database().prepare("UPDATE jac_push_deliveries SET status='sending',updated_at=? WHERE id=? AND status='pending'").bind(now(),row.id).run();if(claimed.meta.changes!==1)return;
   let state='uncertain';
   try{
    // A permission/account change after listing must prevent the provider call.
-   const activeDelivery=()=>database().prepare(`SELECT d.id,n.kind,n.title,n.body,n.revision,n.change_summary AS changeSummary FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? AND r.push_target=1 JOIN jac_notices n ON n.id=r.notice_id JOIN jac_push_deliveries p ON p.device_id=d.id AND p.notice_id=n.id WHERE p.notice_revision=n.revision AND p.id=? AND p.status='sending' AND d.id=? AND d.data=? AND d.user_id=? AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>''`).bind(row.notice_id,row.id,row.device_id,row.data,row.user_id).first<{id:string;kind:Notice['kind'];title:string;body:string;revision:number;changeSummary:string}>();
+   const activeDelivery=()=>database().prepare(`SELECT d.id,d.session_id AS session,(${attendanceSource} AND n.size>0) AS attendancePhoto,n.kind,n.title,n.body,n.revision,n.change_summary AS changeSummary FROM jac_push_devices d JOIN payroll_users u ON u.id=d.user_id AND u.version=d.user_version JOIN jac_notice_recipients r ON r.user_id=u.id AND r.notice_id=? AND r.push_target=1 JOIN jac_notices n ON n.id=r.notice_id JOIN jac_push_deliveries p ON p.device_id=d.id AND p.notice_id=n.id WHERE p.notice_revision=n.revision AND p.id=? AND p.status='sending' AND d.id=? AND d.data=? AND d.user_id=? AND d.enabled=1 AND u.active=1 AND ${noticeSectionSql()} AND u.password_hash<>'' AND (NOT (${attendanceSource}) OR (${attendanceDelivery}))`).bind(row.notice_id,row.id,row.device_id,row.data,row.user_id).first<{id:string;session:string;attendancePhoto:number;kind:Notice['kind'];title:string;body:string;revision:number;changeSummary:string}>();
    const active=await activeDelivery();
    if(!active)state='disabled';else if(row.platform==='ios'?(!keys.apns&&!keys.apnsSandbox):!keys.web)state='unconfigured';
    else{
@@ -168,7 +173,8 @@ export async function dispatchPush(){
     if(row.platform==='ios'&&!appleCredentials)state='unconfigured';
     else{
     const content=noticePushContent(active);
-    const request=row.platform==='ios'?await applePushRequest((data as Record<string,string>).token,(data as Record<string,string>).environment,appleCredentials!,row.notice_id,content):await webPushRequest(data as WebSubscription,keys.web!,JSON.stringify({id:row.notice_id,...content}));
+    const preview=active.attendancePhoto&&row.platform==='ios'?{kind:'attendance' as const,photoGrant:attendancePhotoGrant(mailKey(),row.notice_id,{device:row.device_id,session:active.session,user:row.user_id})}:undefined;
+    const request=row.platform==='ios'?await applePushRequest((data as Record<string,string>).token,(data as Record<string,string>).environment,appleCredentials!,row.notice_id,content,preview):await webPushRequest(data as WebSubscription,keys.web!,JSON.stringify({id:row.notice_id,...content,...(active.attendancePhoto?{kind:'attendance'}:{})}));
     // Encryption/signing can yield: revalidate deletion and access immediately before sending.
     if(!await activeDelivery()){await database().prepare("UPDATE jac_push_deliveries SET status='disabled',updated_at=? WHERE id=? AND status='sending'").bind(now(),row.id).run();return;}
     const response=await fetch(request.url,request.options);state=response.ok?'sent':response.status===404||response.status===410?'expired':'failed';
@@ -289,6 +295,13 @@ export async function publishManualNotice(u:AccessUser,input:unknown,authorize:(
 }
 export async function noticeAttachment(u:AccessUser,id:string,file:string){
  const item=await allowedNotice(u,id);if(file===id&&item.file_key){const object=await env.BUCKET.get(item.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);if((await allowedNotice(u,id)).file_key!==item.file_key)throw new NoticeFailure('El itinerario cambió. Abre la versión actual.',409);return {filename:item.filename,mimeType:'application/pdf',object};}
+ if(file===id&&item.source?.startsWith('attendance:')){
+  const portrait=await database().prepare('SELECT photo_jpeg AS jpeg FROM jac_attendance_records WHERE id=? AND notice_id=? AND device IS NOT NULL AND photo_jpeg IS NOT NULL')
+   .bind(item.source.slice('attendance:'.length),id).first<{jpeg:number[]|ArrayBuffer}>();
+  if(!portrait)throw new NoticeFailure('La foto de la marcación no está disponible.',404);
+  await allowedNotice(u,id);
+  return {filename:item.filename,mimeType:'image/jpeg',object:{body:new Response(new Uint8Array(portrait.jpeg)).body!}};
+ }
  if(!uuid.safeParse(file).success)throw new NoticeFailure('El archivo no está disponible.',404);
  const get=()=>database().prepare("SELECT file_key,filename,mime_type FROM jac_notice_attachments WHERE id=? AND notice_id=? AND state='ready'").bind(file,id).first<{file_key:string;filename:string;mime_type:string}>();
  const row=await get();if(!row)throw new NoticeFailure('El archivo no está disponible.',404);const object=await env.BUCKET.get(row.file_key);if(!object)throw new NoticeFailure('El archivo no está disponible.',404);await allowedNotice(u,id);if(!await get())throw new NoticeFailure('El archivo fue eliminado.',404);return {filename:row.filename,mimeType:row.mime_type,object};

@@ -3,6 +3,7 @@ import { Buffer } from 'node:buffer';
 import { createHash } from 'node:crypto';
 import { sessionToken, tokenHash } from './payroll-auth-crypto';
 import { sectionSql } from './payroll-permissions';
+import { attendanceNoticeStatements, attendancePushPhoto } from './attendance-notices';
 
 const prefix = '/api/team-attendance/';
 const adminQuery = `SELECT u.id FROM payroll_sessions s JOIN payroll_users u ON u.id=s.user_id AND u.version=s.user_version
@@ -81,7 +82,7 @@ const privateHeaders = {
 const json = (body: unknown, status = 200) => Response.json(body, { status, headers: privateHeaders });
 const error = (message: string, status: number) => json({ error: message }, status);
 const conflict = () => error('El registro cambió o ya existe. Actualiza los datos antes de continuar.', 409);
-type Env = { DB: D1Database; ASSETS: Fetcher };
+type Env = { DB: D1Database; ASSETS: Fetcher; PAYROLL_MAIL_KEY?: string };
 type Row = Record<string, string | number | null>;
 
 async function bodyOf(request: Request, maxBytes = 4096) {
@@ -400,7 +401,7 @@ function checkedPortrait(encoded: string): Buffer | null {
   }
   return null;
 }
-async function kiosk(request: Request, db: D1Database) {
+async function kiosk(request: Request, db: D1Database, notify: (notice: string) => void) {
   const device = request.headers.get('x-jac-device') || '',
     authorization = request.headers.get('authorization') || '';
   const token = /^JAC-Kiosk ([a-f0-9]{64})$/.exec(authorization)?.[1];
@@ -456,11 +457,12 @@ async function kiosk(request: Request, db: D1Database) {
   if (!verified) return conflict();
   const now = new Date().toISOString();
   const jpeg = photo ? Uint8Array.from(photo).buffer : null;
-  const [, receipt] = await db.batch<Row>([
+  const notice = crypto.randomUUID();
+  const [inserted, receipt] = await db.batch<Row>([
     db
       .prepare(
-        `INSERT INTO jac_attendance_records(id,employee,movement,occurred_at,received_at,device,enrollment,photo_jpeg,possible_duplicate)
-      SELECT ?,e.employee,?,?,?,e.device,e.id,?,${duplicate} FROM jac_attendance_enrollments e
+        `INSERT INTO jac_attendance_records(id,employee,movement,occurred_at,received_at,device,enrollment,photo_jpeg,notice_id,possible_duplicate)
+      SELECT ?,e.employee,?,?,?,e.device,e.id,?,?,${duplicate} FROM jac_attendance_enrollments e
       JOIN jac_attendance_people p ON e.employee=p.id AND e.revision=p.face_revision AND p.active=1
       WHERE e.employee=? AND e.id=? AND e.device=? AND julianday(e.created_at,'+30 days')>julianday('now') AND EXISTS(${deviceQuery}) ON CONFLICT(id) DO NOTHING`
       )
@@ -470,6 +472,7 @@ async function kiosk(request: Request, db: D1Database) {
         input.occurredAt,
         now,
         jpeg,
+        notice,
         input.employee,
         input.movement,
         input.occurredAt,
@@ -484,12 +487,14 @@ async function kiosk(request: Request, db: D1Database) {
           deviceQuery +
           ')'
       )
-      .bind(input.id, input.employee, input.movement, input.occurredAt, device, input.enrollment, jpeg, ...keys)
+      .bind(input.id, input.employee, input.movement, input.occurredAt, device, input.enrollment, jpeg, ...keys),
+    ...attendanceNoticeStatements(db, input.id, notice, input.movement, input.occurredAt)
   ]);
+  if (inserted.meta.changes && receipt.results[0]) notify(notice);
   return receipt.results[0] ? json({ ...receipt.results[0], ...(photoHash ? { photoHash } : {}) }) : conflict();
 }
 
-export async function teamAttendance(request: Request, env: Env): Promise<Response | null> {
+export async function teamAttendance(request: Request, env: Env, notify: (notice: string) => void): Promise<Response | null> {
   const url = new URL(request.url),
     path = url.pathname;
   const panel = [
@@ -502,7 +507,14 @@ export async function teamAttendance(request: Request, env: Env): Promise<Respon
   if (!(panel ? ['GET', 'HEAD'] : ['GET', 'POST']).includes(request.method))
     return error('Método no disponible.', 405);
   try {
-    if (path === prefix + 'kiosk') return await kiosk(request, env.DB);
+    if (path === prefix + 'notification-photo') {
+      if (request.method !== 'GET') return error('Método no disponible.', 405);
+      const jpeg = env.PAYROLL_MAIL_KEY && await attendancePushPhoto(env.DB, env.PAYROLL_MAIL_KEY,
+        url.searchParams.get('id') || '', request.headers.get('authorization') || '');
+      return jpeg ? new Response(jpeg, { headers: { ...privateHeaders, 'Content-Type': 'image/jpeg' } })
+        : error('La foto no está disponible.', 404);
+    }
+    if (path === prefix + 'kiosk') return await kiosk(request, env.DB, notify);
     if (!panel && path !== prefix + 'admin') return error('Ruta no disponible.', 404);
     const bearer = /^Bearer ([A-Za-z0-9_-]{43})$/.exec(request.headers.get('authorization') || '')?.[1];
     const token = bearer || sessionToken(request.headers.get('cookie') || '', url.protocol === 'https:');

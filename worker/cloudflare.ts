@@ -1,4 +1,5 @@
 import {teamAttendance} from '../lib/team-attendance';
+import {dispatchPush} from '../lib/notifications';
 import {runMaintenance} from '../lib/maintenance';
 import {handleBirthdayApi,processBirthdayJobs} from '../lib/fans-birthday';
 import {attendanceBoundary} from '../lib/attendance-http';
@@ -30,7 +31,7 @@ export default {
     // or expose the CRM. Readiness is a runtime secret set after migration QA;
     // it is deliberately absent from the build configuration and GitHub.
     if(env.JAC_READY!=='1')return new Response('JAC está preparando este entorno. El sitio habitual sigue disponible.',{status:503,headers:{'Content-Type':'text/plain; charset=utf-8','Cache-Control':'no-store','Retry-After':'3600','X-Robots-Tag':'noindex, nofollow'}});
-    const team=await teamAttendance(request,env); if(team)return team;
+    const team=await teamAttendance(request,env,id=>ctx.waitUntil(dispatchPush(id).catch(()=>{}))); if(team)return team;
     const attendance=await attendanceBoundary(request,env);if(attendance)return attendance;
     // Public fan experience has its own anonymous cookie, bot checks and bounded
     // queue. It never enters the administrative application's authentication.

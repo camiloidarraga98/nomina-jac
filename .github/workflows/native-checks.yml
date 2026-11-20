@@ -175,6 +175,7 @@ jobs:
               -only-testing:JACNominaTests/PayrollClientTests/testLocalVisualAttendanceUsesOnlyTheSelectedReference
               -only-testing:JACNominaTests/PayrollClientTests/testSharedAttendanceResolvesWeakAndAmbiguousScansAgainstTheEnrolledRoster
               -only-testing:JACNominaTests/PayrollClientTests/testAttendancePortraitIsCroppedFromTheObservedFaceRegion
+              -only-testing:JACNominaTests/PayrollClientTests/testAttendanceNotificationIncludesPhotoAndKeepsTextWhenPhotoIsUnavailable
               -only-testing:JACNominaTests/PayrollClientTests/testSimulatorComparesBundledPortraitsAndKeepsBothResultsPending
               -only-testing:JACNominaTests/PayrollClientTests/testDeviceAttendanceLedgerAndOperator
               -only-testing:JACNominaTests/PayrollClientTests/testOnlyTheKioskAccountAndAPrivateOriginCanSelectAttendance

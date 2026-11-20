@@ -7,6 +7,14 @@ const offlineSource=await readFile('public/jac-music-offline.js','utf8');
 function fixture(){const listeners={},notices=[],opened=[];let windows=[];const self={location:{origin:'https://fixture.example.invalid'},addEventListener:(type,callback)=>listeners[type]=callback,skipWaiting:async()=>{},registration:{showNotification:async(title,options)=>notices.push({title,options})},clients:{claim:async()=>{},matchAll:async()=>windows,openWindow:async url=>opened.push(url)}};const publicRequests=[];const caches={open:async()=>({addAll:async requests=>publicRequests.push(...requests)}),match:async()=>new Response('offline shell')};const fetch=async()=>new Response('public shell');
  const context=createContext({self,URL,TextEncoder,TextDecoder,Request:class extends Request{constructor(input,options){super(new URL(input,self.location.origin),options);}},Response,caches,fetch,importScripts:path=>{assert.equal(path,'/jac-music-offline.js');runInContext(offlineSource,context);}});runInContext(source,context);return {listeners,notices,opened,publicRequests,setWindows:value=>windows=value};}
 const id='33333333-3333-4333-8333-333333333333';
+test('la notificación de asistencia usa la foto del aviso en JAC y abre el detalle de ese registro',async()=>{
+ const f=fixture();let task;
+ f.listeners.push({data:{json:()=>({id,kind:'attendance',title:'JAC Music · Entrada',body:'Ana acaba de registrar su ingreso a laborar.',image:'https://untrusted.example.invalid/face'})},waitUntil:p=>task=p});
+ await task;
+ const notice=f.notices[0];assert.equal(notice.options.image,'/api/notices/file?id='+id+'&file='+id);
+ f.listeners.notificationclick({notification:{data:notice.options.data,close:()=>{}},waitUntil:p=>task=p});await task;
+ assert.deepEqual(f.opened,['https://fixture.example.invalid/?jac-notice='+id]);
+});
 test('service worker muestra título y descripción recibidos, sin guardar ni interceptar API/PDF',async()=>{
  const f=fixture();assert.deepEqual(Object.keys(f.listeners),['install','activate','fetch','push','notificationclick']);let task;
  f.listeners.push({data:{json:()=>({id,title:'Mensaje privado',body:'Datos privados',url:'https://untrusted.example.invalid'})},waitUntil:p=>task=p});await task;

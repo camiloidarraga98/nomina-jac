@@ -3160,6 +3160,46 @@ final class PayrollClientTests: XCTestCase {
     }
 
     #if os(iOS) && DEBUG
+    func testAttendanceNotificationIncludesPhotoAndKeepsTextWhenPhotoIsUnavailable() async throws {
+        let plugins = try XCTUnwrap(Bundle.main.builtInPlugInsURL)
+        let extensionBundle = try XCTUnwrap(Bundle(url: plugins.appendingPathComponent("JACAttendanceNotification.appex")))
+        let definition = try XCTUnwrap(extensionBundle.object(forInfoDictionaryKey: "NSExtension") as? [String: String])
+        XCTAssertEqual(definition["NSExtensionPointIdentifier"], "com.apple.usernotifications.service")
+        XCTAssertTrue(definition["NSExtensionPrincipalClass"]?.hasSuffix(".AttendanceNotificationService") == true)
+        let id = UUID().uuidString.lowercased()
+        let grant = UUID().uuidString.lowercased() + ".1800000000." + String(repeating: "a", count: 43)
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockProtocol.self]
+        let service = AttendanceNotificationService(configuration: config)
+        let content = UNMutableNotificationContent()
+        content.title = "JAC Music · Entrada"; content.body = "Registro ficticio · 8:00 a. m."
+        content.userInfo = ["noticeId": id, "kind": "attendance", "photoGrant": grant]
+        let request = UNNotificationRequest(identifier: id, content: content, trigger: nil)
+        let grayJPEG = try XCTUnwrap(Data(base64Encoded: "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDBQNDAsLDBkSEw8UHRofHh0aHBwgJC4nICIsIxwcKDcpLDAxNDQ0Hyc5PTgyPC4zNDL/wAALCAAIAAgBAREA/8QAFAABAAAAAAAAAAAAAAAAAAAAAP/EABQQAQAAAAAAAAAAAAAAAAAAAAD/2gAIAQEAAD8AP//Z"))
+        defer { MockProtocol.handler = nil }
+        for status in [200, 404] {
+            MockProtocol.handler = { request in
+                XCTAssertEqual(request.url?.absoluteString, "https://jhonalexcastano.com/api/team-attendance/notification-photo?id=" + id)
+                XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "JAC-Photo " + grant)
+                return (HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "image/jpeg"])!, grayJPEG)
+            }
+            let delivered = await withCheckedContinuation { completion in
+                service.didReceive(request) { completion.resume(returning: $0) }
+            }
+            XCTAssertEqual(delivered.body, content.body); XCTAssertEqual(delivered.title, content.title)
+            XCTAssertNil(delivered.userInfo["photoGrant"])
+            XCTAssertEqual(delivered.userInfo["noticeId"] as? String,id)
+            if status == 200 {
+                let attachment = try XCTUnwrap(delivered.attachments.first)
+                XCTAssertEqual(attachment.type, "public.jpeg")
+                defer { try? FileManager.default.removeItem(at: attachment.url) }
+                XCTAssertEqual(try Data(contentsOf: attachment.url), grayJPEG)
+            } else {
+                XCTAssertTrue(delivered.attachments.isEmpty)
+            }
+        }
+    }
+
     @MainActor func testAttendancePortraitIsCroppedFromTheObservedFaceRegion() throws {
         let context = CIContext()
         let frame = CGRect(x: 0, y: 0, width: 512, height: 512)

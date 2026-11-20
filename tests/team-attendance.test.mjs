@@ -1,20 +1,26 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomBytes, randomUUID, createHash } from 'node:crypto';
+import { randomBytes, randomUUID, createHash, generateKeyPairSync } from 'node:crypto';
 import { startAttendancePilot } from '../scripts/attendance-pilot.mjs';
 
 test('two independent kiosks share attendance only with ordinary JAC administrators', async (t) => {
-  const f = await startAttendancePilot({ enabled: false });
+  const pushes = [];
+  const f = await startAttendancePilot({ enabled: false, notificationTransport: async (request) => {
+    const url = new URL(request.url);
+    assert.equal(url.hostname,'api.sandbox.push.apple.com');
+    pushes.push({token:url.pathname.split('/').at(-1),payload:await request.json()});
+    return new Response(null,{status:200});
+  } });
   t.after(() => f.close());
   const hash = (value) => createHash('sha256').update(value).digest('hex');
-  async function session(admin) {
+  async function session(admin, email) {
     const token = randomBytes(32).toString('base64url'),
       uid = randomUUID();
     await f.db
       .prepare(
         "INSERT INTO payroll_users(id,username,email,name,password_hash,permissions,created_at,updated_at) VALUES(?,?,?,'Operador ficticio','fixture',?,'','')"
       )
-      .bind(uid, uid, uid + '@example.invalid', admin ? '["administrator"]' : '[]')
+      .bind(uid, uid, email ?? uid + '@example.invalid', admin ? '["administrator"]' : '[]')
       .run();
     await f.db
       .prepare(
@@ -24,7 +30,9 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
       .run();
     return token;
   }
-  const [owner, second, staff] = await Promise.all([session(true), session(true), session(false)]);
+  const [owner, second, staff] = await Promise.all([
+    session(true,'camilo@mac2you.co'), session(true), session(false,'jhonalexcastano@gmail.com')
+  ]);
   const auth = { Authorization: 'Bearer ' + owner },
     other = { Cookie: 'jac_session=' + second, Origin: f.origin };
   const call = (route, headers = {}, body) =>
@@ -36,6 +44,16 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
     });
   const admin = (a = auth, p) => call('/api/team-attendance/admin', a, p);
   const device = (headers, p) => call('/api/team-attendance/kiosk', headers, p);
+  const cookie = (token) => ({ Cookie: 'jac_session='+token, Origin: f.origin });
+  const noticeCommand = (token, command) => call('/api/notices',cookie(token),command);
+  const privateKey=generateKeyPairSync('ec',{namedCurve:'P-256'}).privateKey.export({type:'pkcs8',format:'pem'}).toString();
+  assert.equal((await noticeCommand(owner,{action:'configure',kind:'apple',environment:'sandbox',version:0,teamId:'TESTTEAM01',keyId:'SANDKEY001',privateKey})).status,200);
+  const testTokens=['aa','bb','cc'].map(s=>s.repeat(32)), deviceIds=[];
+  for(const [index, token] of [owner,staff,second].entries()){
+    const id=randomUUID();
+    assert.equal((await noticeCommand(token,{action:'register',id,platform:'ios',token:testTokens[index],environment:'sandbox'})).status,200);
+    deviceIds.push(id);
+  }
   assert.equal((await admin({})).status, 401);
   assert.equal((await admin({ Authorization: 'Bearer ' + staff })).status, 403);
   assert.equal((await call('/asistencia-equipo/')).status, 303);
@@ -144,6 +162,54 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
   };
   assert.equal((await admin(other, manual)).status, 200);
   assert.equal((await admin(other, manual)).status, 200);
+  await t.test('accepted kiosk punches notify just the two named accounts with local time and the signed portrait', async () => {
+    const alerts=(await f.db.prepare("SELECT id,source,title,body FROM jac_notices WHERE source LIKE 'attendance:%'").all()).results;
+    assert.equal(alerts.length,2,'manual supervision and replays do not create a new notice');
+    const entry=alerts.find(n=>n.source==='attendance:'+input.id), exit=alerts.find(n=>n.source==='attendance:'+out.id);
+    assert.match(entry.body,/Empleado ficticio acaba de registrar su ingreso a laborar\.[\s\S]*8:00/);
+    assert.match(exit.body,/Empleado ficticio acaba de registrar su salida de JAC Music\.[\s\S]*5:00/);
+    assert.match(exit.body,/20.*2026.*Colombia/);
+    const photoFile='/api/notices/file?id='+exit.id+'&file='+exit.id;
+    for(const token of [staff,owner]){
+      const res=await call('/api/notices?item='+exit.id,cookie(token));
+      assert.equal(res.status,200);
+      const {item}=await res.json();
+      assert.deepEqual(item.attachments,[{id:exit.id,filename:'Foto de la marcación.jpg',mimeType:'image/jpeg',size:Buffer.from(photo,'base64').length}]);
+      const file=await call(photoFile,cookie(token));
+      assert.equal(file.headers.get('content-type'),'image/jpeg');
+      assert.equal(Buffer.from(await file.arrayBuffer()).toString('base64'),photo);
+    }
+    for(const route of ['/api/notices?item='+exit.id,photoFile]){
+      assert.equal((await call(route,cookie(second))).status,404,'another JAC administrator');
+      assert.equal((await call(route)).status,401);
+    }
+    assert.equal((await noticeCommand(second,{action:'deleteAlert',id:exit.id,confirmation:exit.id})).status,404);
+    for(let attempt=0;attempt<80&&pushes.length<4;attempt++)await new Promise(r=>setTimeout(r,50));
+    assert.equal(pushes.length,4);
+    for(const note of [entry,exit]){
+      const sent=pushes.filter(p=>p.payload.noticeId===note.id);
+      assert.deepEqual(sent.map(p=>p.token).sort(),testTokens.slice(0,2));
+      for(const {payload} of sent){
+        assert.deepEqual(payload.aps.alert,{title:note.title,body:note.body});
+        assert.equal(payload.aps['mutable-content'],note===exit?1:undefined);
+        assert.equal(JSON.stringify(payload).includes(photo),false);
+      }
+    }
+    const rich=pushes.find(p=>p.token===testTokens[1]&&p.payload.noticeId===exit.id).payload;
+    assert.equal(rich.kind,'attendance');
+    const preview=(id,grant)=>call('/api/team-attendance/notification-photo?id='+id,{'Authorization':'JAC-Photo '+grant});
+    const photoResponse=await preview(exit.id,rich.photoGrant);
+    assert.equal(photoResponse.status,200);assert.match(photoResponse.headers.get('cache-control'),/no-store/);
+    assert.equal(Buffer.from(await photoResponse.arrayBuffer()).toString('base64'),photo);
+    assert.equal((await preview(entry.id,rich.photoGrant)).status,404);
+    assert.equal((await preview(exit.id,rich.photoGrant.replace(/\.\d+\./,'.1600000000.'))).status,404);
+    const parts=rich.photoGrant.split('.');
+    parts[2]=(parts[2][0]==='A'?'B':'A')+parts[2].slice(1);
+    assert.equal((await preview(exit.id,parts.join('.'))).status,404);
+    assert.equal((await noticeCommand(staff,{action:'unregister',id:deviceIds[1]})).status,200);
+    assert.equal((await preview(exit.id,rich.photoGrant)).status,404);
+    assert.equal((await call(photoFile,cookie(staff))).status,200,'the alert stays in the signed-in inbox');
+  });
   const feed = await (
     await call('/api/team-attendance/admin?employee=' + uid + '&day=2026-11-20', other)
   ).json();

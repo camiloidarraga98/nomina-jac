@@ -11,7 +11,8 @@ self.addEventListener('push',event=>{
  const body=typeof data.body==='string'&&data.body.trim()&&data.body.length<=2001?data.body:'Tienes un aviso nuevo. Abre JAC para consultarlo.';
  const media=data.kind==='media_folder';
  if(media&&(typeof data.folderId!=='string'||!/^r2_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(data.folderId)))return;
- event.waitUntil(self.registration.showNotification(title,{body,icon:'/jac-app-icon.png',badge:'/jac-app-icon.png',tag:'jac-'+data.id,renotify:false,data:{id:data.id,...(media?{kind:'media_folder',folderId:data.folderId}:{})}}));
+ const image=data.kind==='attendance'?'/api/notices/file?id='+data.id+'&file='+data.id:undefined;
+ event.waitUntil(self.registration.showNotification(title,{body,...(image?{image}:{}),icon:'/jac-app-icon.png',badge:'/jac-app-icon.png',tag:'jac-'+data.id,renotify:false,data:{id:data.id,...(media?{kind:'media_folder',folderId:data.folderId}:{})}}));
 });
 self.addEventListener('notificationclick',event=>{
  event.notification.close();const id=event.notification.data?.id;if(!/^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/.test(id??''))return;

@@ -127,7 +127,7 @@ function drawRoster(feed) {
                 'Inscribir a ' + p.name,
                 'Comprueba presencialmente que esta persona corresponde a la ficha ' +
                   p.code +
-                  ' y que acepta la verificación facial y la foto que se guarda con cada marcación.'
+                  ' y que acepta la verificación facial y el envío de la foto de cada marcación a Jhon Alex y Camilo.'
               ))
             )
               return;

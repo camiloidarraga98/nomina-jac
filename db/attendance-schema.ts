@@ -43,6 +43,7 @@ export const attendanceRecords = sqliteTable('jac_attendance_records', {
   reason: text('reason'),
   possibleDuplicate: integer('possible_duplicate').notNull().default(0),
   photoJpeg: blob('photo_jpeg', { mode: 'buffer' }),
+  noticeId: text('notice_id'),
 }, (t) => [
   check('attendance_record_movement', sql`movement IN ('entry','exit')`),
   check('attendance_record_source', sql`(device IS NOT NULL AND enrollment IS NOT NULL AND supervisor IS NULL)
