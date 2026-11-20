@@ -3,12 +3,52 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createServer } from 'node:net';
-import { copyFile, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const exec = promisify(execFile);
+test('A fresh Mac requests its own architecture and discards incomplete or unverified downloads', async t => {
+  for (const [machine, archiveArch] of [['arm64', 'arm64'], ['x86_64', 'x64']]) {
+    await t.test(machine, async t => {
+      const root = await mkdtemp(join(tmpdir(), 'JAC fresh Mac '));
+      t.after(() => rm(root, { recursive: true, force: true }));
+      const scripts = join(root, 'scripts');
+      const commands = join(root, 'commands');
+      await mkdir(scripts);
+      await mkdir(commands);
+      await copyFile('scripts/asistencia-mac.command', join(scripts, 'asistencia-mac.command'));
+      await writeFile(join(commands, 'uname'), `#!/bin/sh
+if [ "$1" = -s ]; then echo Darwin; else echo "${machine}"; fi
+`, { mode: 0o700 });
+      await writeFile(join(commands, 'curl'), `#!/bin/sh
+while [ "$1" != --output ]; do shift; done
+echo "$3" >> requests
+printf 'incomplete archive' > "$2"
+test -f connected
+`, { mode: 0o700 });
+      await writeFile(join(commands, 'tar'), '#!/bin/sh\ntouch unexpected-extraction\nexit 1\n', { mode: 0o700 });
+      const run = () => exec('/bin/bash', ['scripts/asistencia-mac.command', '--prepare-runtime'], {
+        cwd: root, env: { ...process.env, PATH: commands + ':' + process.env.PATH }, timeout: 5000
+      });
+      await assert.rejects(run(), error => /No se pudo descargar/.test(error.stderr));
+      await writeFile(join(root, 'connected'), '');
+      await assert.rejects(run(), error => /no coincide con la oficial/.test(error.stderr));
+      const urls = (await readFile(join(root, 'requests'), 'utf8')).trim().split('\n');
+      assert.equal(urls.length, 2);
+      assert.equal(urls[0], urls[1]);
+      const url = new URL(urls[0]);
+      assert.equal(url.origin, 'https://nodejs.org');
+      const version = url.pathname.split('/')[2];
+      assert.match(version, /^v24\.\d+\.\d+$/);
+      assert.equal(url.pathname, '/dist/' + version + '/node-' + version + '-darwin-' + archiveArch + '.tar.gz');
+      assert.deepEqual(await readdir(join(root, 'work/local/toolchain')), []);
+      await assert.rejects(stat(join(root, 'unexpected-extraction')), { code: 'ENOENT' });
+    });
+  }
+});
+
 test('Xcode starts one headless fixture, reports setup failures and retries without touching another process', async () => {
   const root = await mkdtemp(join(tmpdir(), 'JAC simulator '));
   const reservation = createServer();
@@ -37,6 +77,7 @@ test('Xcode starts one headless fixture, reports setup failures and retries with
     await symlink(process.execPath, join(bin, 'node'));
     await writeFile(join(bin, 'npm'), `#!/bin/sh
 set -eu
+if [ "$1" = --version ]; then echo 11; exit 0; fi
 echo "$1" >> work/calls
 if [ "$1" = ci ]; then
   while [ ! -f work/installed ]; do sleep 0.1; done
