@@ -5,8 +5,18 @@ struct LoginView: View {
     @State private var username = ""
     @State private var password = ""
     @State private var keepSignedIn = false
+    #if os(iOS) && DEBUG
+    @EnvironmentObject private var accounts: JACAccountSessions
+    @State private var privateAddress = JACAccountSessions.lastAddress
+    private var kioskLogin: Bool { JACAccountSessions.isKioskLogin(username) }
+    private var openingPilot: Bool { accounts.openingPilot }
+    #else
+    private var kioskLogin: Bool { false }
+    private var openingPilot: Bool { false }
+    #endif
     @FocusState private var focus: Field?
     private enum Field { case username, password }
+    private var busy: Bool { store.busy || openingPilot }
 
     var body: some View {
         NavigationStack {
@@ -38,23 +48,49 @@ struct LoginView: View {
                         Toggle("Mantener la sesión iniciada", isOn: $keepSignedIn).font(.subheadline).accessibilityIdentifier("login.keepSignedIn")
                         Text("Si la activas, permanecerás conectado en este \(JACDevice.name) hasta que cierres sesión.").font(.caption).foregroundStyle(.secondary)
                         if let error = store.error { InlineError(message: error) }
+                        #if os(iOS) && DEBUG
+                        if kioskLogin && JACAccountSessions.needsAddressField {
+                            VStack(alignment: .leading, spacing: 7) {
+                                Text("Servidor privado de Asistencia").font(.caption.weight(.semibold))
+                                TextField("https://asistencia.local", text: $privateAddress)
+                                    .keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
+                                    .textFieldStyle(.roundedBorder).accessibilityIdentifier("login.attendanceServer")
+                            }
+                        }
+                        #endif
                         Button(action: signIn) {
-                            HStack { Spacer(); if store.busy { ProgressView().tint(.white) }; Text("Iniciar sesión"); Image(systemName: "arrow.right"); Spacer() }
-                        }.buttonStyle(JACPrimaryButtonStyle()).disabled(store.busy).accessibilityIdentifier("login.submit")
+                            HStack {
+                                Spacer()
+                                if busy { ProgressView().tint(.white) }
+                                Text(openingPilot ? "Conectando con Asistencia…" : "Iniciar sesión")
+                                Image(systemName: "arrow.right"); Spacer()
+                            }
+                        }.buttonStyle(JACPrimaryButtonStyle()).disabled(busy).accessibilityIdentifier("login.submit")
                     }.padding(22).background(JACTheme.card,in:RoundedRectangle(cornerRadius:24))
-                    NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() }
-                        .font(.subheadline.weight(.medium)).frame(maxWidth:.infinity).padding(.vertical,4)
-                    Text("Usa la misma cuenta que en la web. Acceso exclusivo del equipo autorizado.").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity).multilineTextAlignment(.center)
+                    if !kioskLogin && !store.client.isAttendancePilot {
+                        NavigationLink("Activar cuenta o restablecer contraseña") { ActivateAccountView() }
+                            .font(.subheadline.weight(.medium)).frame(maxWidth:.infinity).padding(.vertical,4)
+                        Text("Usa la misma cuenta que en la web. Acceso exclusivo del equipo autorizado.").font(.caption).foregroundStyle(.secondary).frame(maxWidth:.infinity).multilineTextAlignment(.center)
+                    }
                 }.padding(20).frame(maxWidth: JACDevice.isPad ? 540 : .infinity).frame(maxWidth: .infinity)
             }
             .jacSurface().navigationTitle("JAC Music").jacInlineTitle()
-            .scrollDismissesKeyboard(.interactively).disabled(store.busy)
+            .scrollDismissesKeyboard(.interactively).disabled(busy)
         }
     }
     private func signIn() {
-        guard !store.busy else { return }
+        guard !busy else { return }
         focus = nil
-        Task { await store.signIn(username: username, password: password, keepSignedIn: keepSignedIn); password = "" }
+        Task {
+            defer { password = "" }
+            #if os(iOS) && DEBUG
+            if kioskLogin {
+                await accounts.signInPilot(password: password, keepSignedIn: keepSignedIn, address: privateAddress)
+                return
+            }
+            #endif
+            await store.signIn(username: username, password: password, keepSignedIn: keepSignedIn)
+        }
     }
 }
 

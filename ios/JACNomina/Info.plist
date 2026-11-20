@@ -4,6 +4,10 @@
 <!-- Cifrado exento provisto por iOS (CryptoKit/Security). Revisar si cambian el cifrado o las dependencias. -->
 <key>ITSAppUsesNonExemptEncryption</key><false/>
 <key>NSCameraUsageDescription</key><string>Fotografiar comprobantes de gastos de viaje para enviarlos a revisión en JAC.</string>
+<key>NSLocalNetworkUsageDescription</key><string>Conectar el kiosco de Asistencia con su servidor de pruebas en la red privada de JAC.</string>
+<key>NSAppTransportSecurity</key><dict><key>NSExceptionDomains</key><dict>
+<key>localhost</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+</dict></dict>
 <key>NSPhotoLibraryAddUsageDescription</key><string>Guardar en Fotos las fotos y videos de las carpetas de JAC que tú selecciones.</string>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>
 <key>UIBackgroundModes</key><array><string>audio</string><string>fetch</string></array>

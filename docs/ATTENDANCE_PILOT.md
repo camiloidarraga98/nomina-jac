@@ -4,9 +4,9 @@ La cuenta de prueba `admin` entra por el acceso habitual de JAC y abre directame
 
 ## Abrir el piloto desde Xcode
 
-Después de actualizar `main`, abre el proyecto habitual `ios/JACNomina.xcodeproj`. Selecciona el esquema **JAC Asistencia**, elige un simulador de iPad o iPhone y pulsa **Run**. El esquema abre el servidor local en Terminal y compila el mismo target **JACNomina**. Necesita Node.js 24 o posterior y npm en el Mac. En el primer arranque instala las dependencias del proyecto si faltan.
+Después de actualizar `main`, abre `ios/JACNomina.xcodeproj` y pulsa **Run** con **JACNomina** y el simulador de iPhone o iPad. El formulario habitual abre el kiosco con la cuenta de prueba `admin`. Las demás cuentas siguen su recorrido de JAC. Al salir del kiosco vuelve el mismo formulario. Si la versión anterior había dejado dos sesiones guardadas en el dispositivo, el siguiente usuario debe identificarse de nuevo.
 
-Espera a que Terminal muestre **JAC · Asistencia de prueba** e inicia sesión en la app con usuario `admin` y contraseña temporal `admin`. La misma ventana muestra la clave de supervisión de este ensayo. Déjala abierta durante la prueba. Puedes detener el servidor con Control-C.
+En el simulador, Xcode inicia el servidor de pruebas del Mac. Ingresa con usuario `admin` y contraseña temporal `admin`. La app espera a que el servidor termine de preparar las cuentas. La ventana de Terminal muestra la clave de supervisión del ensayo. Déjala abierta durante la prueba. Puedes detener el servidor con Control-C. El iniciador usa Node 24 y npm de `work/local/toolchain/node/bin` o de Terminal e instala las dependencias que falten en el primer arranque.
 
 ## Probar la web
 
@@ -27,9 +27,9 @@ El servidor escucha en el loopback del Mac u ordenador de prueba. Usa Miniflare,
 
 ## iPhone y iPad físicos
 
-La interfaz de Asistencia está incluida en el bundle de JAC y el cliente nativo se encarga de la sesión de Llavero, el transporte y el almacenamiento protegido. En un dispositivo físico el esquema solicita la dirección privada de pruebas. La distribución habitual continúa usando su configuración de JAC.
+En la compilación de desarrollo, abre **JACNomina** en el dispositivo e ingresa `admin`. En **Servidor privado de Asistencia**, escribe la dirección HTTPS de tu servidor de pruebas accesible desde ese iPhone o iPad. Debe terminar en `.local` o `.test` y usar un certificado de confianza. El dispositivo recuerda la dirección tras el primer acceso correcto. La app también admite una dirección preconfigurada mediante `JAC_ATTENDANCE_ORIGIN`. La distribución de producción utiliza la autenticación habitual de JAC.
 
-Para probar el recorrido automatizado con el servidor local activo, habilita `JAC_TEST_ATTENDANCE=1` para el proceso de pruebas y ejecuta `LaunchTests/testLocalAttendanceKioskLoginAndRestart`. La verificación física requiere Xcode, firma de desarrollo e instalación en el dispositivo. En Debug, `JAC_ATTENDANCE_ORIGIN` admite el origen HTTPS de un servidor de prueba ya accesible desde el dispositivo mediante un nombre privado terminado en `.local` o `.test` y un certificado de confianza. El loopback del iPad apunta al propio iPad.
+El servidor automático del simulador escucha en el loopback del Mac. Para probar el recorrido automatizado con ese servidor activo, habilita `JAC_TEST_ATTENDANCE=1` para el proceso de pruebas y ejecuta `LaunchTests/testLocalAttendanceKioskLoginAndRestart` con el esquema JACNomina. La verificación física requiere Xcode, firma de desarrollo e instalación en el dispositivo.
 
 ## Qué se conserva
 

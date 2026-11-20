@@ -49,141 +49,242 @@ import UIKit
 import AppKit
 #endif
 
- #if os(iOS)
+#if os(iOS)
 @main
 @MainActor
 struct JACNominaApp: App {
     @UIApplicationDelegateAdaptor(JACPushDelegate.self) private var pushDelegate
-    @StateObject private var store = JACNominaApp.makeStore()
-    @StateObject private var connectivity = AgendaConnectivity()
-    @State private var incomingShare: MediaIncomingShare?
-    @Environment(\.scenePhase) private var scenePhase
+    @StateObject private var accounts = JACAccountSessions()
     init() { JACTheme.configure() }
 
     var body: some Scene {
         WindowGroup {
-            ZStack {
-                Group {
-                    if Self.isUnitTestHost { Color(uiColor: .systemBackground) }
-                    else if Self.attendanceNeedsServer {
-                        ContentUnavailableView("Asistencia de prueba", systemImage: "network.slash",
-                            description: Text("Selecciona un simulador en Xcode o configura JAC_ATTENDANCE_ORIGIN con la dirección HTTPS privada del piloto para este dispositivo."))
-                    }
-                    else if store.restoring { ProgressView("Conectando…") }
-                    else if let kiosk = store.attendanceKiosk { AttendanceView(account: kiosk.id).id(kiosk.id) }
-                    else if let overview = store.overview { PayrollHomeView(overview: overview, agendaOnly: store.isAgendaOnly) }
-                    else if store.hasSavedSession { OfflineStartView() }
-                    else { LoginView() }
-                }
-                .environmentObject(store)
-                .tint(JACTheme.action)
-                if scenePhase != .active {
-                    Color(uiColor: .systemBackground).ignoresSafeArea()
-                    BrandView().frame(width: 220).accessibilityIdentifier("privacy.cover")
-                }
-            }
-            .background(WindowPrivacyShield())
-            .modifier(JACWidgetLifecycle(store: store, enabled: Self.widgetIntegrationEnabled && store.attendanceKiosk == nil))
-            #if DEBUG
-            .overlay(alignment: .bottomTrailing) {
-                if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance") {
-                    JACScrollDiagnosticsProbe().padding(.trailing, 6).padding(.bottom, 3)
-                }
-            }
-            .transformEnvironment(\.dynamicTypeSize) { size in
-                if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-sidebar") { size = .accessibility5 }
-            }
-            #endif
-            .onOpenURL { url in
-                guard store.allowsExternalDestination else { return }
-                if url.isFileURL { store.receiveAudio(url); return }
-                if JACWidgetNavigation.shared.receive(url) { return }
-                if let share = MediaIncomingShare.parse(url) { incomingShare = share }
-            }
-            .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
-                guard store.allowsExternalDestination else { return }
-                if let url = activity.webpageURL, let share = MediaIncomingShare.parse(url) { incomingShare = share }
-            }
-            .onChange(of: store.attendanceKiosk?.id) { _, kiosk in if kiosk != nil { incomingShare = nil } }
-            .sheet(item: $incomingShare) { share in MediaSharedFolderBrowser(share: share).id(share.id) }
-            .task {
-                guard !Self.isUnitTestHost, !Self.attendanceNeedsServer else { return }
-                await store.restore()
-                await store.resumeMediaUploads()
-                store.prefetchMediaRoot()
-                while !Task.isCancelled {
-                    do { try await Task.sleep(for: .seconds(30)) } catch { return }
-                    // Read the current scene state; a long-lived task must not
-                    // keep the inactive value captured during cold startup.
-                    if UIApplication.shared.applicationState == .active && store.hasSavedSession { try? await store.refreshAutomatically() }
-                }
-            }
-            .onChange(of: scenePhase) { _, value in
-                guard value == .active, !Self.isUnitTestHost, store.hasSavedSession || (try? store.client.hasSession()) == true else { return }
-                Task {
-                    if !store.hasSavedSession { await store.restore() }
-                    else { try? await store.refreshAutomatically() }
-                    await store.resumeMediaUploads()
-                }
-            }
-            .onChange(of: connectivity.connected) { old, new in
-                guard store.hasSavedSession && !Self.isUnitTestHost else { return }
-                if new == false { store.client.beginOfflineRestore() }
-                if old == false && new == true { Task { try? await store.refreshAutomatically(); await store.resumeMediaUploads() } }
-            }
-            .onChange(of: store.isOffline) { old, new in if old && !new && !Self.isUnitTestHost { store.prefetchMediaRoot() } }
-            .onChange(of: store.overview?.user.id) { _, _ in if !Self.isUnitTestHost { store.prefetchMediaRoot() } }
+            JACPhoneSession(store: accounts.store)
+                .id(ObjectIdentifier(accounts.store))
+                .environmentObject(accounts)
         }
         .backgroundTask(.appRefresh(JACWidgetBridge.backgroundTaskIdentifier)) {
-            guard await Self.widgetIntegrationEnabled else { return }
-            await JACWidgetBridge.shared.refreshInBackground(client: store.client)
+            guard let client = await accounts.widgetClient else { return }
+            await JACWidgetBridge.shared.refreshInBackground(client: client)
         }
     }
-    private static var widgetIntegrationEnabled: Bool {
+}
+
+@MainActor
+private struct JACPhoneSession: View {
+    @ObservedObject var store: PayrollStore
+    @EnvironmentObject private var accounts: JACAccountSessions
+    @StateObject private var connectivity = AgendaConnectivity()
+    @State private var incomingShare: MediaIncomingShare?
+    @Environment(\.scenePhase) private var scenePhase
+
+    var body: some View {
+        ZStack {
+            Group {
+                if JACAccountSessions.isUnitTestHost { Color(uiColor: .systemBackground) }
+                else if store.restoring { ProgressView("Conectando…") }
+                else if let kiosk = store.attendanceKiosk { AttendanceView(account: kiosk.id).id(kiosk.id) }
+                else if let overview = store.overview { PayrollHomeView(overview: overview, agendaOnly: store.isAgendaOnly) }
+                else if store.hasSavedSession { OfflineStartView() }
+                else { LoginView() }
+            }
+            .environmentObject(store)
+            .tint(JACTheme.action)
+            if scenePhase != .active {
+                Color(uiColor: .systemBackground).ignoresSafeArea()
+                BrandView().frame(width: 220).accessibilityIdentifier("privacy.cover")
+            }
+        }
+        .background(WindowPrivacyShield())
+        .modifier(JACWidgetLifecycle(store: store, enabled: accounts.widgetClient != nil && store.attendanceKiosk == nil))
         #if DEBUG
-        let arguments = ProcessInfo.processInfo.arguments
-        return !Self.isUnitTestHost && !arguments.contains("--uitest-payroll") && !arguments.contains("--attendance-local") && Self.attendanceOrigin == nil
-        #else
-        return true
+        .overlay(alignment: .bottomTrailing) {
+            if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-performance") {
+                JACScrollDiagnosticsProbe().padding(.trailing, 6).padding(.bottom, 3)
+            }
+        }
+        .transformEnvironment(\.dynamicTypeSize) { size in
+            if ProcessInfo.processInfo.arguments.contains("--uitest-scroll-sidebar") { size = .accessibility5 }
+        }
         #endif
+        .onOpenURL { url in
+            guard store.allowsExternalDestination else { return }
+            if url.isFileURL { store.receiveAudio(url); return }
+            if JACWidgetNavigation.shared.receive(url) { return }
+            if let share = MediaIncomingShare.parse(url) { incomingShare = share }
+        }
+        .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+            guard store.allowsExternalDestination else { return }
+            if let url = activity.webpageURL, let share = MediaIncomingShare.parse(url) { incomingShare = share }
+        }
+        .onChange(of: store.attendanceKiosk?.id) { _, kiosk in
+            if kiosk != nil { incomingShare = nil }
+            else { accounts.didLeaveKiosk(store) }
+        }
+        .sheet(item: $incomingShare) { share in MediaSharedFolderBrowser(share: share).id(share.id) }
+        .task {
+            guard !JACAccountSessions.isUnitTestHost else { return }
+            await store.restore()
+            if store.client.isAttendancePilot { accounts.didLeaveKiosk(store); return }
+            await store.resumeMediaUploads()
+            store.prefetchMediaRoot()
+            while !Task.isCancelled {
+                do { try await Task.sleep(for: .seconds(30)) } catch { return }
+                // Read the current scene state; a long-lived task must not
+                // keep the inactive value captured during cold startup.
+                if UIApplication.shared.applicationState == .active && store.hasSavedSession { try? await store.refreshAutomatically() }
+            }
+        }
+        .onChange(of: scenePhase) { _, value in
+            guard value == .active, !JACAccountSessions.isUnitTestHost else { return }
+            if store.client.isAttendancePilot {
+                if store.attendanceKiosk == nil { Task { await store.restore(); accounts.didLeaveKiosk(store) } }
+                return
+            }
+            guard store.hasSavedSession || (try? store.client.hasSession()) == true else { return }
+            Task {
+                if !store.hasSavedSession { await store.restore() }
+                else { try? await store.refreshAutomatically() }
+                await store.resumeMediaUploads()
+            }
+        }
+        .onChange(of: connectivity.connected) { old, new in
+            guard !store.client.isAttendancePilot, store.hasSavedSession, !JACAccountSessions.isUnitTestHost else { return }
+            if new == false { store.client.beginOfflineRestore() }
+            if old == false && new == true { Task { try? await store.refreshAutomatically(); await store.resumeMediaUploads() } }
+        }
+        .onChange(of: store.isOffline) { old, new in if old && !new && !JACAccountSessions.isUnitTestHost { store.prefetchMediaRoot() } }
+        .onChange(of: store.overview?.user.id) { _, _ in if !JACAccountSessions.isUnitTestHost { store.prefetchMediaRoot() } }
     }
-    private static var isUnitTestHost: Bool {
+}
+
+/// The selected account owns the entire store, including its Keychain session and offline data.
+@MainActor
+final class JACAccountSessions: ObservableObject {
+    @Published private(set) var store: PayrollStore
+    @Published private(set) var openingPilot = false
+
+    static var isUnitTestHost: Bool {
         #if DEBUG
         return Bundle.allBundles.contains { $0.bundleURL.lastPathComponent == "JACNominaTests.xctest" }
         #else
         return false
         #endif
     }
+    var widgetClient: PayrollClient? {
+        guard !store.client.isAttendancePilot, !Self.isUnitTestHost,
+              !ProcessInfo.processInfo.arguments.contains("--uitest-payroll") else { return nil }
+        return store.client
+    }
+
+    init() {
+        #if DEBUG
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--uitest-payroll") {
+            store = PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"), offline: arguments.contains("--uitest-offline"), slowAgenda: arguments.contains("--uitest-slow-agenda"), persistentAgenda: arguments.contains("--uitest-agenda-cache"), resetAgenda: arguments.contains("--uitest-reset-agenda")))
+            return
+        }
+        // Also recognize sessions created with the previous version of the pilot.
+        let remembered = Self.activeOrigin
+        if !Self.isUnitTestHost, let origin = remembered ?? Self.pilotOrigin(address: Self.lastAddress), let host = origin.host,
+           remembered != nil || (try? KeychainSessionStore(account: host).load()) != nil {
+            let client = PayrollClient(baseURL: origin, isAttendancePilot: true)
+            if remembered != nil || (try? client.savedAttendanceKiosk()) != nil {
+                UserDefaults.standard.set(origin.absoluteString, forKey: Self.activeKey)
+                store = PayrollStore(client: client)
+                return
+            }
+        }
+        #endif
+        store = PayrollStore()
+    }
+
     #if DEBUG
-    private static var attendanceOrigin: URL? {
-        guard let raw = ProcessInfo.processInfo.environment["JAC_ATTENDANCE_ORIGIN"],
-              let url = URL(string: raw), url.scheme == "https", let host = url.host,
-              host.hasSuffix(".local") || host.hasSuffix(".test"),
-              url.user == nil, url.password == nil, url.query == nil, url.fragment == nil, url.path.isEmpty else { return nil }
-        return url
+    private static let activeKey = "jac.attendance.activeOrigin"
+    private static let addressKey = "jac.attendance.privateOrigin"
+    static var lastAddress: String { UserDefaults.standard.string(forKey: addressKey) ?? "" }
+    private static var activeOrigin: URL? {
+        guard let saved = UserDefaults.standard.string(forKey: activeKey) else { return nil }
+        #if targetEnvironment(simulator)
+        if saved == "http://localhost:8789" { return URL(string: saved) }
+        #endif
+        return privateOrigin(saved)
+    }
+
+    static func isKioskLogin(_ input: String) -> Bool {
+        let name = input.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        return name == "admin" || name == "admin@attendance.invalid"
+    }
+    static var needsAddressField: Bool {
+        if let configured = ProcessInfo.processInfo.environment["JAC_ATTENDANCE_ORIGIN"] {
+            return privateOrigin(configured) == nil
+        }
+        #if targetEnvironment(simulator)
+        return false
+        #else
+        return true
+        #endif
+    }
+    static func privateOrigin(_ input: String) -> URL? {
+        let raw = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var parts = URLComponents(string: raw), parts.scheme?.lowercased() == "https",
+              let host = parts.host?.lowercased(), host.hasSuffix(".local") || host.hasSuffix(".test"),
+              host.range(of: #"^[a-z0-9-]+(\.[a-z0-9-]+)+$"#, options: .regularExpression) != nil,
+              parts.user == nil, parts.password == nil, parts.query == nil, parts.fragment == nil,
+              parts.path.isEmpty || parts.path == "/", parts.port.map({ (1...65535).contains($0) }) ?? true else { return nil }
+        parts.path = ""; parts.host = host; parts.scheme = "https"
+        return parts.url
+    }
+    private static func pilotOrigin(address: String) -> URL? {
+        if let configured = ProcessInfo.processInfo.environment["JAC_ATTENDANCE_ORIGIN"] {
+            return privateOrigin(configured) ?? privateOrigin(address)
+        }
+        #if targetEnvironment(simulator)
+        return URL(string: "http://localhost:8789")
+        #else
+        return privateOrigin(address)
+        #endif
+    }
+
+    func signInPilot(password: String, keepSignedIn: Bool, address: String) async {
+        let login = store
+        guard !openingPilot, !login.busy, !login.hasSavedSession else { return }
+        login.error = nil
+        guard let origin = Self.pilotOrigin(address: address) else {
+            login.error = "Ingresa la dirección HTTPS privada del servidor de Asistencia, terminada en .local o .test."
+            return
+        }
+        guard !password.isEmpty else { login.error = "Ingresa la contraseña del kiosco."; return }
+        openingPilot = true
+        defer { openingPilot = false }
+        let client = PayrollClient(baseURL: origin, isAttendancePilot: true)
+        do {
+            try await client.waitForAttendanceServer()
+            guard store === login, !login.hasSavedSession else { return }
+            try await client.login(username: "admin", password: password, keepSignedIn: keepSignedIn)
+            guard store === login, !login.hasSavedSession else { try client.clearSession(); return }
+            if origin.scheme == "https" { UserDefaults.standard.set(origin.absoluteString, forKey: Self.addressKey) }
+            UserDefaults.standard.set(origin.absoluteString, forKey: Self.activeKey)
+            store = PayrollStore(client: client)
+        } catch { login.report(error) }
     }
     #endif
 
-    private static var attendanceNeedsServer: Bool {
-        #if DEBUG && !targetEnvironment(simulator)
-        return ProcessInfo.processInfo.arguments.contains("--attendance-local") && attendanceOrigin == nil
-        #else
-        return false
-        #endif
-    }
-
-    private static func makeStore() -> PayrollStore {
+    func didLeaveKiosk(_ previous: PayrollStore) {
         #if DEBUG
-        let arguments = ProcessInfo.processInfo.arguments
-        if let url = attendanceOrigin { return PayrollStore(client: PayrollClient(baseURL: url)) }
-        #if targetEnvironment(simulator)
-        if arguments.contains("--attendance-local") { return PayrollStore(client: PayrollClient(baseURL: URL(string: "http://localhost:8789")!)) }
-        #else
-        if attendanceNeedsServer { return PayrollStore(client: PayrollClient(baseURL: URL(string: "https://asistencia.invalid")!)) }
+        guard store === previous, previous.client.isAttendancePilot, previous.attendanceKiosk == nil,
+              (try? previous.client.hasSession()) == false else { return }
+        do {
+            // Older builds could leave a second account signed in on the same device.
+            // A kiosk logout must lead to a fresh login, even on those installations.
+            let regularVault = KeychainSessionStore(account: PayrollClient.productionURL.host!)
+            if try regularVault.load() != nil { try regularVault.clear() }
+            UserDefaults.standard.removeObject(forKey: Self.activeKey)
+            let regular = PayrollStore()
+            regular.error = previous.error
+            store = regular
+        } catch { previous.report(error) }
         #endif
-        if arguments.contains("--uitest-payroll") { return PayrollStore(client: UITestBackend.client(reader: arguments.contains("--uitest-reader"), conflict: arguments.contains("--uitest-conflict"), cancelledReads: arguments.contains("--uitest-cancelled-reads"), offline: arguments.contains("--uitest-offline"), slowAgenda: arguments.contains("--uitest-slow-agenda"), persistentAgenda: arguments.contains("--uitest-agenda-cache"), resetAgenda: arguments.contains("--uitest-reset-agenda"))) }
-        #endif
-        return PayrollStore()
     }
 }
 

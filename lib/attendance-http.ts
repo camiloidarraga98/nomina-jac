@@ -165,11 +165,27 @@ export async function attendanceBoundary(request: Request, env: PilotEnv): Promi
     path = url.pathname;
   // The raw bundle is only read through ASSETS by this handler or from the native app.
   if (path === '/attendance' || path.startsWith('/attendance/')) return issue('Sección no disponible.', 404);
+  const readiness = path === '/_jac/attendance-ready';
   const api = path.startsWith('/api/attendance/'),
     page = path === '/asistencia' || path.startsWith('/asistencia/');
   // Pilot bindings are only supplied by the loopback/simulator runner.
   const enabled = attendancePilotOrigin(url);
-  if (!enabled) return page || api ? issue('Sección no disponible.', 404) : null;
+  if (!enabled) return page || api || readiness ? issue('Sección no disponible.', 404) : null;
+  if (readiness) {
+    if (request.method !== 'GET') return issue('Método no permitido.', 405);
+    // Miniflare can accept HTTP while the runner is still migrating its empty database.
+    // Both fixture accounts are inserted in the final transaction.
+    try {
+      const ready = await env.DB.prepare(
+        "SELECT COUNT(*) AS count FROM payroll_users WHERE active=1 AND owner=0 AND password_hash<>'' " +
+        "AND ((username COLLATE BINARY='admin' AND attendance_role='kiosk') OR (username='operador' AND attendance_role='operator'))"
+      ).first<{count: number}>();
+      if (ready?.count === 2) return new Response(null, {status: 204, headers: {...headers, 'X-JAC-Attendance': 'ready'}});
+    } catch {
+      // The pilot schema may not exist yet.
+    }
+    return new Response(null, {status: 503, headers: {...headers, 'X-JAC-Attendance': 'starting', 'Retry-After': '2'}});
+  }
   const token = sessionToken(request.headers.get('cookie') || '', !['localhost', '127.0.0.1'].includes(url.hostname));
   const current = token ? await attendanceSession(token) : null;
   const identity = current?.kiosk;

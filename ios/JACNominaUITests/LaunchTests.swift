@@ -748,7 +748,6 @@ final class LaunchTests: XCTestCase {
         try XCTSkipUnless(ProcessInfo.processInfo.environment["JAC_TEST_ATTENDANCE"] == "1",
                           "Requiere el servidor efímero de scripts/attendance-pilot.mjs en el Mac del simulador.")
         let app = XCUIApplication()
-        app.launchArguments = ["--attendance-local"]
         app.launch()
         let view = app.webViews.firstMatch
         if !view.buttons["Gestión supervisada"].exists {
@@ -759,13 +758,17 @@ final class LaunchTests: XCTestCase {
             password.tap(); password.typeText("admin")
             app.buttons["login.submit"].tap()
         }
-        XCTAssertTrue(view.buttons["Gestión supervisada"].waitForExistence(timeout: 20))
+        XCTAssertTrue(view.buttons["Gestión supervisada"].waitForExistence(timeout: 70))
         XCTAssertFalse(app.buttons["phone.menu"].exists)
         app.terminate(); app.launch()
         XCTAssertTrue(view.buttons["Confirmar marcación"].waitForExistence(timeout: 15))
         view.buttons["Gestión supervisada"].tap()
         XCTAssertTrue(view.buttons["Entrar a gestión"].waitForExistence(timeout: 5))
         XCTAssertFalse(view.buttons["Crear empleado"].exists)
+        view.buttons["Salir"].tap()
+        XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout: 10))
+        XCTAssertFalse(view.buttons["Confirmar marcación"].exists)
+        XCTAssertTrue(app.buttons["login.submit"].exists)
     }
 
     @MainActor func testLoginIsVisibleAndUsableAfterLaunchAndResume() {

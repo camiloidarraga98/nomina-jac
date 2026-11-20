@@ -6,12 +6,16 @@ final class PayrollStore: ObservableObject {
     #if os(iOS)
     @Published private(set) var attendanceKiosk: AttendanceIdentity?
     var allowsExternalDestination: Bool {
-        do { guard attendanceKiosk == nil else { return false }; return try client.savedAttendanceKiosk() == nil }
+        do { guard !client.isAttendancePilot, attendanceKiosk == nil else { return false }; return try client.savedAttendanceKiosk() == nil }
         catch { return false }
     }
     private func restoreAttendanceKiosk() throws -> Bool {
         attendanceKiosk = try client.savedAttendanceKiosk()
         if attendanceKiosk != nil { forgetAgenda(); overview = nil; workspace = nil; pending = nil; notice = nil; return true }
+        if client.isAttendancePilot {
+            try client.clearSession()
+            throw APIError.message("Vuelve a iniciar sesión con la cuenta del kiosco.")
+        }
         return false
     }
     #endif
@@ -51,8 +55,12 @@ final class PayrollStore: ObservableObject {
         #if os(iOS)
         // Choose the authenticated kiosk before restoring any workspace or agenda cache.
         let allowWorkspaceCaches: Bool
-        do { attendanceKiosk = try client.savedAttendanceKiosk(); allowWorkspaceCaches = attendanceKiosk == nil }
+        do { attendanceKiosk = try client.savedAttendanceKiosk(); allowWorkspaceCaches = !client.isAttendancePilot && attendanceKiosk == nil }
         catch { allowWorkspaceCaches = false }
+        if client.isAttendancePilot, !Self.isUnitTestHost {
+            JACWidgetBridge.shared.invalidate()
+            JACNotifications.shared.stop()
+        }
         #else
         let allowWorkspaceCaches = true
         #endif
@@ -203,7 +211,7 @@ final class PayrollStore: ObservableObject {
     }
     func refresh() async throws {
         #if os(iOS)
-        if attendanceKiosk != nil { return }
+        if client.isAttendancePilot || attendanceKiosk != nil { return }
         #endif
         guard pending == nil else { throw APIError.message("Conserva o descarta tus cambios pendientes antes de actualizar.") }
         let sessionScope = try client.offlineScope()?.id
@@ -232,7 +240,7 @@ final class PayrollStore: ObservableObject {
     }
     func resumeMediaUploads() async {
         #if os(iOS)
-        guard attendanceKiosk == nil, !Self.isUnitTestHost else { return }
+        guard !client.isAttendancePilot, attendanceKiosk == nil, !Self.isUnitTestHost else { return }
         let uploads = MediaUploadQueue.shared
         uploads.bind(client)
         if let user = overview?.user, !user.canUploadMedia { uploads.revoke(); return }

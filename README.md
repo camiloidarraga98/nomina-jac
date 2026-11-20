@@ -17,7 +17,7 @@ Las pruebas usan bases en memoria y correo simulado. Para vista local usa `npm r
 
 ## Funciones
 
-La cuenta de prueba `admin` abre Asistencia en la web y en el esquema **JAC Asistencia** del proyecto de iPhone y iPad. [Guía del piloto](docs/ATTENDANCE_PILOT.md)
+En la web de pruebas y en la app **JACNomina** para iPhone y iPad, la cuenta de prueba `admin` abre Asistencia desde el formulario habitual de JAC. [Guía del piloto](docs/ATTENDANCE_PILOT.md)
 
 La app nativa de iPhone está en [`ios/`](ios/README.md), con proyecto SwiftUI/Xcode, acceso a las mismas cuentas y funciones de quincenas, pagos, personal, edición, cierres, archivo, usuarios, correo y documentos/impresión. Puede instalarse de forma privada en los tres iPhones registrados de Camilo sin publicarla en App Store. La guía detalla el alcance de esta entrega y la firma desde su Mac.
 

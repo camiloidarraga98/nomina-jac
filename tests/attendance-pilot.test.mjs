@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { startAttendancePilot, seedAttendance } from '../scripts/attendance-pilot.mjs';
 test('compiled JAC, isolated kiosk and operator, versioned supervision and idempotent offline delivery', async () => {
   const f = await startAttendancePilot();
@@ -39,6 +39,19 @@ test('compiled JAC, isolated kiosk and operator, versioned supervision and idemp
       };
     };
     const payrollBefore = JSON.stringify((await f.db.prepare('SELECT * FROM payroll_state').all()).results);
+    const probe = () => call('/_jac/attendance-ready');
+    const ready = await probe();
+    assert.equal(ready.status, 204);
+    assert.equal(ready.headers.get('X-JAC-Attendance'), 'ready');
+    assert.equal(await ready.text(), '');
+    assert.equal((await call('/_jac/attendance-ready', {body:{}})).status, 405);
+    await f.db.prepare("UPDATE payroll_users SET active=0 WHERE username='operador'").run();
+    const starting = await probe();
+    assert.equal(starting.status, 503);
+    assert.equal(starting.headers.get('X-JAC-Attendance'), 'starting');
+    assert.equal(starting.headers.get('Retry-After'), '2');
+    await f.db.prepare("UPDATE payroll_users SET active=1 WHERE username='operador'").run();
+    assert.equal((await probe()).status, 204);
     const k = await login('admin', 'admin');
     const supervisor = await f.db.prepare("SELECT id FROM payroll_users WHERE attendance_role='operator'").first();
     const otherId = randomUUID();
@@ -277,7 +290,11 @@ test('an inert pilot binding never enables fixture credentials, shell or API', a
       })
     });
     assert.equal(r.status, 401);
-    for (const path of ['/asistencia/', '/api/attendance/session','/attendance/index.html']) assert.equal((await fetch(f.origin + path)).status, 404);
+    for (const path of ['/asistencia/', '/api/attendance/session', '/attendance/index.html', '/_jac/attendance-ready']) {
+      const response = await fetch(f.origin + path);
+      assert.equal(response.status, 404);
+      assert.equal(response.headers.get('X-JAC-Attendance'), null);
+    }
   } finally {
     await f.close();
   }
@@ -292,8 +309,12 @@ test('iOS target embeds the shared offline resources and selects kiosk before an
   assert.match(bridge, /\.completeFileProtection/);
   assert.match(bridge, /isExcludedFromBackup = true/);
   assert.match(bridge, /message.frameInfo.isMainFrame/);
-  const scheme = await readFile('ios/JACNomina.xcodeproj/xcshareddata/xcschemes/JAC Asistencia.xcscheme', 'utf8');
+  const folder = 'ios/JACNomina.xcodeproj/xcshareddata/xcschemes';
+  const schemes = await readdir(folder);
+  assert(!schemes.some(name => /asistencia/i.test(name)));
+  const scheme = await readFile(folder + '/JACNomina.xcscheme', 'utf8');
   assert.match(scheme, /BlueprintName="JACNomina"/);
-  assert.match(scheme, /argument="--attendance-local" isEnabled="YES"/);
+  assert.match(scheme, /iphonesimulator.*?asistencia-mac\.command/);
+  assert(!scheme.includes('--attendance-local'));
   assert.match(bridge, /return store.attendanceKiosk\?\.id == account/);
 });

@@ -3159,6 +3159,75 @@ final class PayrollClientTests: XCTestCase {
         XCTAssertNil(try vault.load())
     }
 
+    #if os(iOS) && DEBUG
+    @MainActor func testOnlyTheKioskAccountAndAPrivateOriginCanSelectAttendance() {
+        XCTAssertTrue(JACAccountSessions.isKioskLogin(" Admin "))
+        XCTAssertTrue(JACAccountSessions.isKioskLogin("admin@attendance.invalid"))
+        for name in ["camilo", "administrador", "admin@empresa.test", "operador"] {
+            XCTAssertFalse(JACAccountSessions.isKioskLogin(name))
+        }
+        XCTAssertEqual(JACAccountSessions.privateOrigin("https://ASISTENCIA.local:8789/")?.absoluteString, "https://asistencia.local:8789")
+        for url in ["http://asistencia.local", "https://jhonalexcastano.com", "https://asistencia.test.example.com", "https://u@jac.test", "https://jac.test/sesion", "https://jac.test?clave=x"] {
+            XCTAssertNil(JACAccountSessions.privateOrigin(url))
+        }
+    }
+
+    @MainActor func testAttendanceWaitsForReadyAndRestoresOnlyTheAuthenticatedKiosk() async throws {
+        let vault = MemorySession()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: base, vault: vault, configuration: config, isAttendancePilot: true)
+        let id = UUID().uuidString
+        defer { try? client.clearSession() }
+        vault.token = token
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.path, "/_jac/attendance-ready")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            return (HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: ["X-JAC-Attendance": "starting"])!, Data())
+        }
+        let starting = try await client.attendanceServerReady()
+        XCTAssertFalse(starting)
+        MockProtocol.handler = { request in
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            if request.url?.path == "/_jac/attendance-ready" {
+                return (HTTPURLResponse(url: request.url!, statusCode: 204, httpVersion: nil, headerFields: ["X-JAC-Attendance": "ready"])!, Data())
+            }
+            XCTAssertEqual(request.url?.path, "/api/auth")
+            let reply = try JSONEncoder().encode(["attendance": AttendanceIdentity(id: id, role: "kiosk", name: "Kiosco")])
+            return (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Set-Cookie": "__Host-jac_session=\(self.token); Path=/; HttpOnly; Secure"])!, reply)
+        }
+        try await client.waitForAttendanceServer()
+        try await client.login(username: "admin", password: "demo")
+        let restored = PayrollStore(client: client)
+        await restored.restore()
+        XCTAssertEqual(restored.attendanceKiosk?.id, id)
+        XCTAssertFalse(restored.allowsExternalDestination)
+        XCTAssertNil(restored.overview)
+        XCTAssertNil(restored.workspace)
+        XCTAssertNil(restored.savedAgenda)
+        MockProtocol.handler = { _ in XCTFail("El kiosco intentó consultar nómina."); throw URLError(.badURL) }
+        do { _ = try await client.overview(); XCTFail("Se permitió consultar nómina.") }
+        catch APIError.forbidden(_) { }
+    }
+
+    @MainActor func testAttendanceRejectsAnUnmarkedServerAndANormalPayrollLogin() async throws {
+        let vault = MemorySession()
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: base, vault: vault, configuration: config, isAttendancePilot: true)
+        MockProtocol.handler = { request in
+            (HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: ["Set-Cookie": "__Host-jac_session=\(self.token); Path=/; HttpOnly; Secure"])!, Data("{\"ok\":true}".utf8))
+        }
+        do { _ = try await client.attendanceServerReady(); XCTFail("Una respuesta genérica no identifica al piloto.") }
+        catch APIError.message(_) { }
+        do { try await client.login(username: "admin", password: "demo"); XCTFail("El acceso requería el rol kiosk.") }
+        catch APIError.forbidden(_) { }
+        XCTAssertNil(vault.token)
+        XCTAssertNil(try client.savedAttendanceKiosk())
+    }
+    #endif
+
     @MainActor func testLoginUsesOriginAndStoresSessionWithoutSavingPassword() async throws {
         let vault = MemorySession()
         let client = makeClient(vault)

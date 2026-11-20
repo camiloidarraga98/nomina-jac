@@ -235,6 +235,7 @@ private struct OfflineSaveResult: @unchecked Sendable { let changed: Bool; let n
 final class PayrollClient: ObservableObject {
     nonisolated static let productionURL = URL(string: "https://jhonalexcastano.com")!
     let baseURL: URL
+    let isAttendancePilot: Bool
     private let vault: SessionStoring
     private let session: URLSession
     private let mediaSession: URLSession
@@ -285,14 +286,15 @@ final class PayrollClient: ObservableObject {
     private var cookieName: String { baseURL.scheme == "http" ? "jac_session" : "__Host-jac_session" }
     private var origin: String { baseURL.absoluteString.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
 
-    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil, offlineCache: OfflineResponseCache? = nil, mediaOffline: MediaOfflineCache? = nil, automaticallyDownloadOffline: Bool? = nil, mediaUploadTransport: MediaUploadTransporting? = nil) {
+    init(baseURL: URL = PayrollClient.productionURL, vault: SessionStoring? = nil, configuration: URLSessionConfiguration = .ephemeral, agendaCache: AgendaOfflineCache? = nil, offlineCache: OfflineResponseCache? = nil, mediaOffline: MediaOfflineCache? = nil, automaticallyDownloadOffline: Bool? = nil, mediaUploadTransport: MediaUploadTransporting? = nil, isAttendancePilot: Bool = false) {
         #if DEBUG && targetEnvironment(simulator)
-        let isPilotLoopback = baseURL.scheme == "http" && baseURL.host == "localhost" && baseURL.port == 8789
+        let isPilotLoopback = isAttendancePilot && baseURL.scheme == "http" && baseURL.host == "localhost" && baseURL.port == 8789
         #else
         let isPilotLoopback = false
         #endif
         precondition((isPilotLoopback || baseURL.scheme == "https") && baseURL.host != nil && baseURL.path.isEmpty && baseURL.user == nil && baseURL.query == nil)
         self.baseURL = baseURL
+        self.isAttendancePilot = isAttendancePilot
         self.vault = vault ?? KeychainSessionStore(account: baseURL.host!)
         self.mediaUploadTransport = mediaUploadTransport
         self.musicOffline = MediaOfflineCache(root: baseURL.host!.hasSuffix(".invalid") ? FileManager.default.temporaryDirectory.appendingPathComponent("music-fixture-" + UUID().uuidString) : FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("JACMusicOffline", isDirectory: true))
@@ -311,6 +313,8 @@ final class PayrollClient: ObservableObject {
         mediaConfiguration.timeoutIntervalForRequest = 120
         mediaConfiguration.timeoutIntervalForResource = 2 * 60 * 60
         mediaSession = URLSession(configuration: mediaConfiguration, delegate: NoRedirects(), delegateQueue: nil)
+        // The kiosk uses its own protected files. Never load or prune payroll caches for it.
+        if isAttendancePilot { return }
         if let token = try? self.checkedToken(), token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { self.offlineCache.removeOtherSessions(OfflineResponseCache.scope(origin: baseURL.absoluteString, token: token)) }
         permissionUser = rawCachedWorkspace()?.user ?? cachedAgenda()?.user
         if let scope = try? musicScope() { musicOffline.removeOtherSessions(scope) }
@@ -560,6 +564,9 @@ final class PayrollClient: ObservableObject {
     }
 
     private func request(path: String, query: [URLQueryItem] = [], body: JSONValue? = nil, document: Bool = false, forceNetwork: Bool = false, cacheRevision: Int = 0, nativeBearer: Bool = false, progress:(@MainActor (Int64,Int64)->Void)? = nil, maximumBytes:Int = 0) async throws -> (Data, HTTPURLResponse) {
+        if isAttendancePilot && !(path == "api/auth" && ["login", "logout"].contains(body?["action"].text ?? "")) {
+            throw APIError.forbidden("Esta cuenta solo tiene acceso a Asistencia.")
+        }
         let mediaThumbnailRead = path == "api/media/file" && query.contains { $0.name == "thumbnail" && $0.value == "1" }
         let mediaPreviewRead = path == "api/media/file" && query.contains { $0.name == "preview" && $0.value == "1" }
         guard allowsResource(path,query:query,body:body) else {throw APIError.forbidden("Tu cuenta no tiene acceso a esta sección.")}
@@ -587,7 +594,7 @@ final class PayrollClient: ObservableObject {
         request.setValue(document ? "*/*" : "application/json", forHTTPHeaderField: "Accept")
         request.setValue("JACNomina-\(JACDevice.name)/1.0", forHTTPHeaderField: "User-Agent")
         let sentToken = try checkedToken()
-        if let token = sentToken {
+        if let token = sentToken, !(isAttendancePilot && body?["action"].text == "login") {
             guard token.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil else { try clearSession(); throw APIError.unauthorized }
             if nativeBearer {
                 guard path == "api/mobile/contracts" else {throw APIError.invalid("Ruta móvil no disponible.")}
@@ -664,9 +671,26 @@ final class PayrollClient: ObservableObject {
         }
         if path == "api/auth" {
             let fields = Dictionary(uniqueKeysWithValues: response.allHeaderFields.map { (String(describing: $0.key), String(describing: $0.value)) })
-            if let cookie = HTTPCookie.cookies(withResponseHeaderFields: fields, for: baseURL).first(where: { $0.name == cookieName }) {
+            let cookie = HTTPCookie.cookies(withResponseHeaderFields: fields, for: baseURL).first(where: { $0.name == cookieName })
+            if isAttendancePilot, body?["action"].text == "login",
+               cookie?.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) == nil {
+                throw APIError.message("El servidor de Asistencia no entregó una sesión válida.")
+            }
+            if let cookie {
                 if cookie.value.isEmpty { try clearSession() }
-                else if cookie.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil { if cookie.value != sentToken { if let scope { offlineCache.clear(scope) }; if let mediaScope = try mediaScope() { mediaOffline.clear(mediaScope) }; clearCachedAgenda(); TemporaryDocuments.clear() }; try vault.save(cookie.value); _ = try checkedToken(); if let currentScope = try offlineScope() { offlineCache.removeOtherSessions(currentScope) }; if let mediaScope = try mediaScope() { mediaOffline.removeOtherSessions(mediaScope) } }
+                else if cookie.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) != nil {
+                    if !isAttendancePilot, cookie.value != sentToken {
+                        if let scope { offlineCache.clear(scope) }
+                        if let mediaScope = try mediaScope() { mediaOffline.clear(mediaScope) }
+                        clearCachedAgenda(); TemporaryDocuments.clear()
+                    }
+                    try vault.save(cookie.value)
+                    _ = try checkedToken()
+                    if !isAttendancePilot {
+                        if let currentScope = try offlineScope() { offlineCache.removeOtherSessions(currentScope) }
+                        if let mediaScope = try mediaScope() { mediaOffline.removeOtherSessions(mediaScope) }
+                    }
+                }
             }
         }
         if path == "api/mobile/payroll", query.contains(where: { $0.name == "workspace" }), body == nil { usingOfflineCopy = false }
@@ -913,15 +937,73 @@ final class PayrollClient: ObservableObject {
         }
     }
 
+    var attendanceConnectionHelp: String {
+        if baseURL.host == "localhost" {
+            return "En el Mac, deja abierta la ventana de Terminal del piloto. Si está cerrada, abre scripts/asistencia-mac.command en la carpeta de JAC."
+        }
+        return "Comprueba que el dispositivo tenga acceso al servidor privado \(baseURL.host ?? "") y que su certificado HTTPS sea de confianza."
+    }
+
+    func attendanceServerReady() async throws -> Bool {
+        guard isAttendancePilot else { throw APIError.invalid("Elige el servidor privado de Asistencia para esta prueba.") }
+        var probe = URLRequest(url: baseURL.appendingPathComponent("_jac/attendance-ready"),
+                               cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4)
+        probe.httpShouldHandleCookies = false
+        let (_, response) = try await session.data(for: probe)
+        guard let http = response as? HTTPURLResponse, http.url == probe.url else {
+            throw APIError.message("Revisa la dirección del servidor de Asistencia.")
+        }
+        let marker = http.value(forHTTPHeaderField: "X-JAC-Attendance")
+        if http.statusCode == 204 && marker == "ready" { return true }
+        if http.statusCode == 503 && marker == "starting" { return false }
+        throw APIError.message("El servidor respondió sin identificar el piloto actualizado. Reinicia el servidor de Asistencia con la versión de main.")
+    }
+
+    func waitForAttendanceServer() async throws {
+        let clock = ContinuousClock()
+        let deadline = clock.now.advanced(by: .seconds(60))
+        repeat {
+            do {
+                if try await attendanceServerReady() { return }
+            } catch let error as URLError {
+                if error.code == .cancelled { throw CancellationError() }
+                let starting = baseURL.host == "localhost" && [.cannotConnectToHost, .networkConnectionLost, .timedOut].contains(error.code)
+                if !starting { throw APIError.message(attendanceConnectionHelp) }
+            }
+            try await Task.sleep(for: .seconds(2))
+        } while clock.now < deadline
+        throw APIError.message("El servidor de Asistencia aún no está listo. " + attendanceConnectionHelp)
+    }
+
     func login(username: String, password: String, keepSignedIn: Bool = false) async throws {
-        let (loginData, _) = try await request(path: "api/auth", body: .object(["action": .string("login"), "username": .string(username.trimmingCharacters(in: .whitespacesAndNewlines)), "password": .string(password), "keepSignedIn": .bool(keepSignedIn)]))
+        #if os(iOS)
+        if isAttendancePilot && (!attendanceTestHost || username != "admin") {
+            throw APIError.forbidden("El kiosco requiere la cuenta admin y el servidor privado de pruebas.")
+        }
+        #endif
+        let loginData: Data
+        do {
+            (loginData, _) = try await request(path: "api/auth", body: .object(["action": .string("login"), "username": .string(username.trimmingCharacters(in: .whitespacesAndNewlines)), "password": .string(password), "keepSignedIn": .bool(keepSignedIn)]))
+        } catch let error as URLError where isAttendancePilot && error.code != .cancelled {
+            throw APIError.message("Se perdió la conexión con Asistencia. " + attendanceConnectionHelp)
+        } catch APIError.unauthorized where isAttendancePilot {
+            throw APIError.message("Comprueba la contraseña de la cuenta admin de Asistencia.")
+        }
         #if os(iOS)
         struct LoginReply: Decodable { let attendance: AttendanceIdentity? }
-        let profile = try JSONDecoder().decode(LoginReply.self, from: loginData).attendance
-        if attendanceTestHost, let scope = try offlineScope() {
-            let marker = KeychainSessionStore(account: "attendance-scope-" + scope.id)
-            if let profile, profile.role == "kiosk" { try marker.save(profile.id) }
-            else { try marker.clear() }
+        do {
+            let profile = try JSONDecoder().decode(LoginReply.self, from: loginData).attendance
+            if isAttendancePilot && (!attendanceTestHost || profile?.role != "kiosk" || UUID(uuidString: profile?.id ?? "") == nil) {
+                throw APIError.forbidden("El servidor no autorizó esta cuenta como kiosco de Asistencia.")
+            }
+            if attendanceTestHost, let scope = try offlineScope() {
+                let marker = KeychainSessionStore(account: "attendance-scope-" + scope.id)
+                if let profile, profile.role == "kiosk" { try marker.save(profile.id) }
+                else { try marker.clear() }
+            }
+        } catch {
+            if isAttendancePilot { try clearSession() }
+            throw error
         }
         #endif
         guard try hasSession() else { throw APIError.message("No se pudo guardar la sesión. Intenta de nuevo.") }
