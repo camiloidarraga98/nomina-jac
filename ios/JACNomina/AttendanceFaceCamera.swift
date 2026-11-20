@@ -156,10 +156,18 @@ final class AttendanceFaceCamera: UIViewController {
     private let hint = UILabel()
     private let titleLabel = UILabel()
     private lazy var stream = AttendanceFaceStream(event: { [weak self] result in self?.finish(result) },
-                                                  instruction: { [weak self] text in self?.hint.text = text })
+                                                  instruction: { [weak self] text in
+        self?.hint.text = text
+        // The preview connection can appear after the first layout on a landscape iPad.
+        self?.view.setNeedsLayout()
+        if UIAccessibility.isVoiceOverRunning { UIAccessibility.post(notification: .announcement, argument: text) }
+    })
     private lazy var preview = AVCaptureVideoPreviewLayer(session: stream.session)
 
-    static var frontCamera: AVCaptureDevice? { AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) }
+    static var frontCamera: AVCaptureDevice? {
+        let types: [AVCaptureDevice.DeviceType] = [.builtInWideAngleCamera, .builtInUltraWideCamera, .builtInTrueDepthCamera]
+        return AVCaptureDevice.DiscoverySession(deviceTypes: types, mediaType: .video, position: .front).devices.first
+    }
 
     static func collect(for name: String, from presenter: UIViewController, stillAllowed: () -> Bool) async throws -> AttendanceFaceSignature {
         guard let camera = frontCamera else { throw APIError.message("Para comparar un rostro, usa un dispositivo con cámara frontal. Puedes elegir supervisión.") }
