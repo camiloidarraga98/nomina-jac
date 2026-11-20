@@ -26,6 +26,22 @@ try {
     locale: 'es-CO'
   });
   let p = await ctx.newPage();
+  await p.addInitScript(() => {
+    if (location.pathname !== '/asistencia/') return;
+    const fetch = window.fetch.bind(window);
+    let firstSession = true;
+    window.fetch = (input, init) => {
+      const response = fetch(input, init);
+      if (firstSession && new URL(input.url || input, location.href).pathname === '/api/attendance/session') {
+        firstSession = false;
+        queueMicrotask(() => {
+          window.dispatchEvent(new Event('online'));
+          document.dispatchEvent(new Event('visibilitychange'));
+        });
+      }
+      return response;
+    };
+  });
   p.setDefaultTimeout(9000);
   const failures = [];
   p.on('pageerror', error => failures.push(error.message));

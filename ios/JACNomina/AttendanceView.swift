@@ -75,8 +75,14 @@ struct AttendanceView: UIViewRepresentable {
                         replyHandler(try JSONSerialization.jsonObject(with: output, options: [.fragmentsAllowed]), nil)
                     case "api":
                         guard let command = body["command"] as? String else { throw AttendanceFailure.invalid }
-                        let payload = body["body"].flatMap { $0 is NSNull ? nil : $0 }
-                        let data = try payload.map { try JSONSerialization.data(withJSONObject: $0) }
+                        let data: Data?
+                        if command == "session" {
+                            guard body["body"] == nil || body["body"] is NSNull else { throw AttendanceFailure.invalid }
+                            data = nil
+                        } else {
+                            guard let payload = body["body"] as? [String: Any] else { throw AttendanceFailure.invalid }
+                            data = try JSONSerialization.data(withJSONObject: payload)
+                        }
                         let (response, status) = try await store.client.attendanceRequest(command: command, data: data, ticket: body["ticket"] as? String)
                         guard allowed else { throw AttendanceFailure.invalid }
                         let result = try JSONSerialization.jsonObject(with: response)

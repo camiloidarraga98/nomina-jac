@@ -48,6 +48,10 @@ async function serve() {
       res.writeHead(400).end(); return;
     }
     if (pilot) {
+      if (req.url === '/api/auth' || req.url === '/api/attendance/session') {
+        // The local diagnostic omits headers, cookies, identities and request bodies.
+        res.once('finish', () => console.log(req.method, req.url, res.statusCode));
+      }
       // Forward the original Host, Origin, cookies and response headers to the
       // private worker on its assigned port, including when serving the web app.
       const upstream = request(pilot.origin, { path: req.url, method: req.method, headers: { ...req.headers, connection: 'close' } }, response => {

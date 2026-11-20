@@ -9,7 +9,7 @@
     ticket = null,
     grantTimer,
     refreshTimer,
-    retryTimer,
+    retryTimer, opening,
     syncing = false,
     saving = false,
     device,
@@ -85,7 +85,7 @@
         action: 'api',
         command,
         method,
-        body: body ?? null,
+        ...(body === undefined ? {} : {body}),
         ticket: operator ? ticket?.ticket || '' : ''
       });
       status = r.status;
@@ -139,7 +139,8 @@
       }) : hint();
       if (account) profile = await window.AttendanceStorage.access(account, 'read', 'profile');
       if (!profile) {
-        say('Conecta este dispositivo e inicia sesión para preparar el kiosco.');
+        $('connection').textContent = 'Sin conexión';
+        say(native && e.message ? 'No se pudo cargar la sesión de Asistencia. ' + e.message : 'Conecta este dispositivo e inicia sesión para preparar el kiosco.');
         return;
       }
       $('connection').textContent = 'Sin conexión';
@@ -174,6 +175,9 @@
     if (roster.some(p => p.id === selected)) $('employee').value = selected;
   }
   async function refresh() {
+    // Foreground and online events also fire while the first session GET is
+    // pending in WebKit. There is no earlier identity to invalidate then.
+    if (!identity) return;
     if (!sameAccount()) {
       clearPrivate();
       return;
@@ -547,7 +551,23 @@
       location.replace('/acceso');
     }
   });
-  window.addEventListener('online', () => void refresh());
+  function openKiosk() {
+    if (opening) return opening;
+    $('retryConnection').hidden = true;
+    $('connection').textContent = 'Conectando…';
+    say('');
+    opening = boot().catch(e => {
+      clearPrivate();
+      say(e.message || 'No se pudo preparar este dispositivo.');
+    }).finally(() => {
+      opening = null;
+      $('retryConnection').hidden = !!identity;
+      if (native && !identity) $('logout').hidden = false;
+    });
+    return opening;
+  }
+  $('retryConnection').onclick = () => void openKiosk();
+  window.addEventListener('online', () => { if (identity) void refresh(); else void openKiosk(); });
   window.addEventListener('offline', () => {
     $('connection').textContent = 'Sin conexión';
     if (ticket) {
@@ -566,5 +586,5 @@
   if (!native && 'serviceWorker' in navigator) void navigator.serviceWorker.register('./sw.js', {
     scope: './'
   }).catch(() => say('No se pudo preparar la interfaz sin conexión.'));
-  void boot().catch(e => say(e.message || 'No se pudo preparar este dispositivo.'));
+  void openKiosk();
 })();

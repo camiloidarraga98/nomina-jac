@@ -3,6 +3,7 @@
 <body><header><div class="brand"><span class="monogram">JAC</span><span class="divider"></span>Asistencia</div><nav><button id="operator" hidden>Gestión supervisada</button><button id="lock" hidden>Volver al kiosco</button><button id="logout" hidden>Salir</button></nav></header>
 <main><div class="section-title"><div><p class="eyebrow">JAC MUSIC · PILOTO</p><h1 id="title">Registro de asistencia</h1></div><span id="connection" class="status" role="status">Conectando…</span></div>
 <p id="message" role="status" aria-live="polite"></p>
+<button id="retryConnection" class="subtle" hidden>Reintentar conexión</button>
 <section id="kiosk" hidden><div class="columns"><form id="punchForm" class="card">
 <fieldset><legend>Movimiento</legend><div class="choices"><label><input type="radio" name="movement" value="entry" required checked> Entrada</label><label><input type="radio" name="movement" value="exit"> Salida</label></div></fieldset>
 <label>Empleado de prueba<select id="employee" required><option value="">Selecciona un empleado</option></select></label>
