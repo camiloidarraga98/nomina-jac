@@ -5,7 +5,7 @@
 <LaunchAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" launchStyle="0" useCustomWorkingDirectory="NO" ignoresPersistentStateOnLaunch="NO" debugDocumentVersioning="YES" debugServiceExtension="internal" allowLocationSimulation="YES">
     <PreActions>
       <ExecutionAction ActionType="Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
-        <ActionContent title="Abrir el servidor local de Asistencia para el simulador" scriptText="if [ &quot;$PLATFORM_NAME&quot; = iphonesimulator ]; then &quot;$SRCROOT/../scripts/asistencia-mac.command&quot; --xcode; fi">
+        <ActionContent title="Preparar Asistencia en el Mac para el simulador" scriptText="case &quot;${TARGET_DEVICE_PLATFORM_NAME:-}:${PLATFORM_NAME:-}:${EFFECTIVE_PLATFORM_NAME:-}:${SDK_NAME:-}&quot; in&#10;  *iphonesimulator*|:::) /bin/bash &quot;${SRCROOT:-$PROJECT_DIR}/../scripts/asistencia-mac.command&quot; --xcode ;;&#10;esac">
           <EnvironmentBuildable>
             <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="7D1043473D55BFA90E8530D3" BuildableName="JACNomina.app" BlueprintName="JACNomina" ReferencedContainer="container:JACNomina.xcodeproj"/>
           </EnvironmentBuildable>

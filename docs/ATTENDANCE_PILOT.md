@@ -6,7 +6,9 @@ La cuenta de prueba `admin` entra por el acceso habitual de JAC y abre directame
 
 Después de actualizar `main`, abre `ios/JACNomina.xcodeproj` y pulsa **Run** con **JACNomina** y el simulador de iPhone o iPad. El formulario habitual abre el kiosco con la cuenta de prueba `admin`. Las demás cuentas siguen su recorrido de JAC. Al salir del kiosco vuelve el mismo formulario. Si la versión anterior había dejado dos sesiones guardadas en el dispositivo, el siguiente usuario debe identificarse de nuevo.
 
-En el simulador, Xcode inicia el servidor de pruebas del Mac. Ingresa con usuario `admin` y contraseña temporal `admin`. La app espera a que el servidor termine de preparar las cuentas. La ventana de Terminal muestra la clave de supervisión del ensayo. Déjala abierta durante la prueba. Puedes detener el servidor con Control-C. El iniciador usa Node 24 y npm de `work/local/toolchain/node/bin` o de Terminal e instala las dependencias que falten en el primer arranque.
+En el simulador, Xcode inicia el servidor en segundo plano en el Mac. Ingresa con usuario `admin` y contraseña temporal `admin`. La pantalla indica si está instalando las herramientas, compilando el piloto, preparando las cuentas o validando el usuario. **Cancelar espera** permite volver al formulario durante la preparación. Si el Mac no responde, puedes abrir `scripts/asistencia-mac.command` en Finder y reintentar desde el mismo formulario.
+
+El iniciador necesita Node 24 o posterior y npm. Admite el runtime del proyecto, Homebrew y las instalaciones de usuario habituales. Conserva una compilación válida para la misma revisión limpia. En un arranque desde Xcode, el detalle de instalación y compilación queda en `work/local/asistencia/servidor.log` y la clave de supervisión en el archivo privado `work/local/asistencia/supervision.txt`. Para terminar el ensayo y descartar su base efímera, ejecuta `bash scripts/asistencia-mac.command --stop` desde la carpeta del proyecto.
 
 ## Probar la web
 
@@ -17,7 +19,7 @@ npm run asistencia
 ```
 
 1. Abre `http://127.0.0.1:8789/acceso`. Ingresa como `admin` con la contraseña temporal `admin`.
-2. Pulsa **Gestión supervisada** dentro del kiosco e ingresa la clave aleatoria que muestra Terminal. Esta credencial autoriza la gestión durante cinco minutos y únicamente dentro de la sesión actual de `admin`.
+2. Pulsa **Gestión supervisada** dentro del kiosco. Si abriste el piloto desde Xcode, usa la clave de `work/local/asistencia/supervision.txt`. Si ejecutaste `npm run asistencia`, usa la que muestra Terminal. Esta credencial autoriza la gestión durante cinco minutos y únicamente dentro de la sesión actual de `admin`.
 3. En **Empleados de prueba** crea una ficha o genera un lote. **Enrolar muestra sintética** guarda un marcador de demostración en este dispositivo. **Borrar muestra** lo retira. Al retirar un empleado, Gestión elimina la ficha sin historial o la desactiva y conserva sus marcaciones.
 4. Pulsa **Volver al kiosco**. Elige Entrada o Salida, selecciona al empleado, elige el método y confirma. El kiosco muestra cuándo la marcación está guardada localmente y cuándo el servidor confirma su recepción.
 5. En Gestión abre **Marcaciones → Supervisar** y registra el motivo de tu confirmación presencial. Para una corrección indica el movimiento, la hora y el motivo. El original y cada revisión están en **Original e historial**. Corregir reabre la supervisión.
@@ -59,7 +61,7 @@ mkdir -p work
 npm run lint
 npx tsc --noEmit
 npm run build
-node --test tests/attendance-pilot.test.mjs tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
+node --test tests/attendance-launcher.test.mjs tests/attendance-pilot.test.mjs tests/payroll.test.mjs tests/payroll-auth.test.mjs tests/payroll-mail.test.mjs tests/payroll-mobile.test.mjs tests/payroll-mobile-oauth.test.mjs
 ```
 
 Con Playwright y Chromium disponibles en el equipo, `node scripts/attendance-browser.mjs` comprueba el acceso desde el formulario de JAC, kiosco, gestión, creación y retiro de empleados, enrolamiento sintético, aprobación, cierre de sesión, recarga sin red, respuesta perdida y reintento con el mismo UUID. Acepta `JAC_PLAYWRIGHT_MODULE` y `CHROMIUM_PATH` para usar herramientas ya instaladas. Las capturas se guardan en `.sites-runtime/asistencia` o en la carpeta indicada mediante `JAC_ATTENDANCE_CAPTURES`. La compilación del binario Apple y los ensayos en hardware quedan pendientes en este entorno Linux.

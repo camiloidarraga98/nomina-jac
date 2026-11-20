@@ -3211,6 +3211,64 @@ final class PayrollClientTests: XCTestCase {
         catch APIError.forbidden(_) { }
     }
 
+    #if targetEnvironment(simulator)
+    @MainActor func testSimulatorCancelsPreparationBeforeSendingCredentials() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockProtocol.self]
+        let vault = MemorySession()
+        let origin = URL(string: "http://localhost:8789")!
+        let client = PayrollClient(baseURL: origin, vault: vault, configuration: config, isAttendancePilot: true)
+        XCTAssertEqual(client.baseURL, origin, "La actualización debe conservar la identidad de las sesiones anteriores.")
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.url?.absoluteString, "http://127.0.0.1:8789/_jac/attendance-ready")
+            XCTAssertEqual(request.httpMethod, "GET")
+            XCTAssertNil(request.value(forHTTPHeaderField: "Cookie"))
+            XCTAssertNil(request.httpBodyStream)
+            XCTAssertNil(request.httpBody)
+            let fields = ["X-JAC-Attendance": "starting", "X-JAC-Attendance-Step": "build"]
+            return (HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: fields)!, Data())
+        }
+        let compiled = expectation(description: "El formulario muestra que el piloto se está compilando")
+        let attempt = Task {
+            try await client.waitForAttendanceServer { progress in
+                XCTAssertTrue(progress.contains("Compilando"))
+                compiled.fulfill()
+            }
+        }
+        await fulfillment(of: [compiled], timeout: 5)
+        attempt.cancel()
+        do { try await attempt.value; XCTFail("El intento cancelado continuó hasta el acceso.") }
+        catch is CancellationError { }
+        XCTAssertNil(vault.token)
+    }
+
+    @MainActor func testSimulatorShowsHowToRecoverFromAStoppedOrFailedPilot() async throws {
+        let config = URLSessionConfiguration.ephemeral
+        config.protocolClasses = [MockProtocol.self]
+        let client = PayrollClient(baseURL: URL(string: "http://localhost:8789")!, vault: MemorySession(), configuration: config, isAttendancePilot: true)
+        let attempts = expectation(description: "Se comprueba si el Mac responde")
+        attempts.expectedFulfillmentCount = 3
+        MockProtocol.handler = { request in
+            XCTAssertEqual(request.httpMethod, "GET")
+            attempts.fulfill()
+            throw URLError(.cannotConnectToHost)
+        }
+        do { try await client.waitForAttendanceServer(); XCTFail("El servidor estaba detenido.") }
+        catch APIError.message(let message) { XCTAssertTrue(message.contains("asistencia-mac.command")) }
+        await fulfillment(of: [attempts], timeout: 1)
+
+        MockProtocol.handler = { request in
+            let fields = ["X-JAC-Attendance": "failed", "X-JAC-Attendance-Step": "install"]
+            return (HTTPURLResponse(url: request.url!, statusCode: 503, httpVersion: nil, headerFields: fields)!, Data())
+        }
+        do { try await client.waitForAttendanceServer(); XCTFail("La instalación había fallado.") }
+        catch APIError.message(let message) {
+            XCTAssertTrue(message.contains("instalar las dependencias"))
+            XCTAssertTrue(message.contains("servidor.log"))
+        }
+    }
+    #endif
+
     @MainActor func testAttendanceRejectsAnUnmarkedServerAndANormalPayrollLogin() async throws {
         let vault = MemorySession()
         let config = URLSessionConfiguration.ephemeral

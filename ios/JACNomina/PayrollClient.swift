@@ -235,6 +235,7 @@ private struct OfflineSaveResult: @unchecked Sendable { let changed: Bool; let n
 final class PayrollClient: ObservableObject {
     nonisolated static let productionURL = URL(string: "https://jhonalexcastano.com")!
     let baseURL: URL
+    private let transportURL: URL
     let isAttendancePilot: Bool
     private let vault: SessionStoring
     private let session: URLSession
@@ -294,6 +295,9 @@ final class PayrollClient: ObservableObject {
         #endif
         precondition((isPilotLoopback || baseURL.scheme == "https") && baseURL.host != nil && baseURL.path.isEmpty && baseURL.user == nil && baseURL.query == nil)
         self.baseURL = baseURL
+        // Keep localhost as the stored session/queue identity across upgrades.
+        // The development worker listens on this exact IPv4 loopback address.
+        self.transportURL = isPilotLoopback ? URL(string: "http://127.0.0.1:8789")! : baseURL
         self.isAttendancePilot = isAttendancePilot
         self.vault = vault ?? KeychainSessionStore(account: baseURL.host!)
         self.mediaUploadTransport = mediaUploadTransport
@@ -306,8 +310,12 @@ final class PayrollClient: ObservableObject {
         configuration.httpShouldSetCookies = false
         configuration.urlCache = nil
         configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.timeoutIntervalForRequest = 30
-        configuration.timeoutIntervalForResource = 60
+        configuration.timeoutIntervalForRequest = isPilotLoopback ? 8 : 30
+        configuration.timeoutIntervalForResource = isPilotLoopback ? 20 : 60
+        if isPilotLoopback {
+            configuration.waitsForConnectivity = false
+            configuration.connectionProxyDictionary = [:]
+        }
         session = URLSession(configuration: configuration, delegate: NoRedirects(), delegateQueue: nil)
         let mediaConfiguration = configuration.copy() as! URLSessionConfiguration
         mediaConfiguration.timeoutIntervalForRequest = 120
@@ -459,7 +467,7 @@ final class PayrollClient: ObservableObject {
     func mediaAccessStamp() throws -> String? { try mediaScope().map { $0.id + ":" + String(cacheGeneration) } }
     func beginOfflineRestore() { usingOfflineCopy = true }
     private func resourceURL(path: String, query: [URLQueryItem]) -> URL {
-        var parts = URLComponents(url: baseURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        var parts = URLComponents(url: transportURL.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
         if !query.isEmpty { parts.queryItems = query.sorted { ($0.name, $0.value ?? "") < ($1.name, $1.value ?? "") } }
         return parts.url!
     }
@@ -604,7 +612,7 @@ final class PayrollClient: ObservableObject {
         if let body {
             request.httpMethod = "POST"
             request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.setValue(origin, forHTTPHeaderField: "Origin")
+            request.setValue(transportURL.absoluteString, forHTTPHeaderField: "Origin")
             request.httpBody = try JSONEncoder().encode(body)
         }
         let data: Data, rawResponse: URLResponse
@@ -671,7 +679,7 @@ final class PayrollClient: ObservableObject {
         }
         if path == "api/auth" {
             let fields = Dictionary(uniqueKeysWithValues: response.allHeaderFields.map { (String(describing: $0.key), String(describing: $0.value)) })
-            let cookie = HTTPCookie.cookies(withResponseHeaderFields: fields, for: baseURL).first(where: { $0.name == cookieName })
+            let cookie = HTTPCookie.cookies(withResponseHeaderFields: fields, for: transportURL).first(where: { $0.name == cookieName })
             if isAttendancePilot, body?["action"].text == "login",
                cookie?.value.range(of: "^[A-Za-z0-9_-]{43}$", options: .regularExpression) == nil {
                 throw APIError.message("El servidor de Asistencia no entregó una sesión válida.")
@@ -939,15 +947,15 @@ final class PayrollClient: ObservableObject {
 
     var attendanceConnectionHelp: String {
         if baseURL.host == "localhost" {
-            return "En el Mac, deja abierta la ventana de Terminal del piloto. Si está cerrada, abre scripts/asistencia-mac.command en la carpeta de JAC."
+            return "El simulador no recibe respuesta del Mac. Abre scripts/asistencia-mac.command en la carpeta de JAC y vuelve a iniciar sesión."
         }
         return "Comprueba que el dispositivo tenga acceso al servidor privado \(baseURL.host ?? "") y que su certificado HTTPS sea de confianza."
     }
 
-    func attendanceServerReady() async throws -> Bool {
+    func attendanceServerReady(onPreparation: (String) -> Void = { _ in }) async throws -> Bool {
         guard isAttendancePilot else { throw APIError.invalid("Elige el servidor privado de Asistencia para esta prueba.") }
-        var probe = URLRequest(url: baseURL.appendingPathComponent("_jac/attendance-ready"),
-                               cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 4)
+        var probe = URLRequest(url: transportURL.appendingPathComponent("_jac/attendance-ready"),
+                               cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 3)
         probe.httpShouldHandleCookies = false
         let (_, response) = try await session.data(for: probe)
         guard let http = response as? HTTPURLResponse, http.url == probe.url else {
@@ -955,24 +963,47 @@ final class PayrollClient: ObservableObject {
         }
         let marker = http.value(forHTTPHeaderField: "X-JAC-Attendance")
         if http.statusCode == 204 && marker == "ready" { return true }
-        if http.statusCode == 503 && marker == "starting" { return false }
+        if http.statusCode == 503 {
+            let step = http.value(forHTTPHeaderField: "X-JAC-Attendance-Step")
+            if marker == "starting" {
+                switch step {
+                case "install": onPreparation("Instalando herramientas en el Mac…")
+                case "build": onPreparation("Compilando el piloto en el Mac…")
+                default: onPreparation("Preparando las cuentas de Asistencia…")
+                }
+                return false
+            }
+            if marker == "failed" {
+                let reason: String
+                switch step {
+                case "install": reason = "El Mac no pudo instalar las dependencias."
+                case "build": reason = "Falló la compilación del piloto en el Mac."
+                default: reason = "Falló la preparación del servidor de pruebas."
+                }
+                throw APIError.message(reason + " Revisa work/local/asistencia/servidor.log y vuelve a ejecutar JACNomina.")
+            }
+        }
         throw APIError.message("El servidor respondió sin identificar el piloto actualizado. Reinicia el servidor de Asistencia con la versión de main.")
     }
 
-    func waitForAttendanceServer() async throws {
+    func waitForAttendanceServer(onPreparation: (String) -> Void = { _ in }) async throws {
         let clock = ContinuousClock()
-        let deadline = clock.now.advanced(by: .seconds(60))
+        let deadline = clock.now.advanced(by: .seconds(120))
+        var missedProbes = 0
         repeat {
+            try Task.checkCancellation()
             do {
-                if try await attendanceServerReady() { return }
+                if try await attendanceServerReady(onPreparation: onPreparation) { return }
+                missedProbes = 0
             } catch let error as URLError {
                 if error.code == .cancelled { throw CancellationError() }
-                let starting = baseURL.host == "localhost" && [.cannotConnectToHost, .networkConnectionLost, .timedOut].contains(error.code)
-                if !starting { throw APIError.message(attendanceConnectionHelp) }
+                missedProbes += 1
+                let handoff = baseURL.host == "localhost" && [.cannotConnectToHost, .networkConnectionLost, .timedOut].contains(error.code)
+                if !handoff || missedProbes >= 3 { throw APIError.message(attendanceConnectionHelp) }
             }
-            try await Task.sleep(for: .seconds(2))
+            try await Task.sleep(for: .seconds(1))
         } while clock.now < deadline
-        throw APIError.message("El servidor de Asistencia aún no está listo. " + attendanceConnectionHelp)
+        throw APIError.message("El servidor sigue preparándose. Puedes reintentar el acceso cuando termine.")
     }
 
     func login(username: String, password: String, keepSignedIn: Bool = false) async throws {
@@ -1028,7 +1059,7 @@ final class PayrollClient: ObservableObject {
         call.cachePolicy = .reloadIgnoringLocalCacheData
         call.httpMethod = data == nil ? "GET" : "POST"
         call.setValue(cookieName + "=" + token, forHTTPHeaderField: "Cookie")
-        call.setValue(origin, forHTTPHeaderField: "Origin")
+        call.setValue(transportURL.absoluteString, forHTTPHeaderField: "Origin")
         call.setValue("application/json", forHTTPHeaderField: "Content-Type")
         if let ticket, !ticket.isEmpty { call.setValue(ticket, forHTTPHeaderField: "X-Attendance-Operator") }
         call.httpBody = data

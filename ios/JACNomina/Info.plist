@@ -7,6 +7,7 @@
 <key>NSLocalNetworkUsageDescription</key><string>Conectar el kiosco de Asistencia con su servidor de pruebas en la red privada de JAC.</string>
 <key>NSAppTransportSecurity</key><dict><key>NSExceptionDomains</key><dict>
 <key>localhost</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
+<key>127.0.0.1</key><dict><key>NSExceptionAllowsInsecureHTTPLoads</key><true/></dict>
 </dict></dict>
 <key>NSPhotoLibraryAddUsageDescription</key><string>Guardar en Fotos las fotos y videos de las carpetas de JAC que tú selecciones.</string>
 <key>UISupportedInterfaceOrientations~ipad</key><array><string>UIInterfaceOrientationPortrait</string><string>UIInterfaceOrientationPortraitUpsideDown</string><string>UIInterfaceOrientationLandscapeLeft</string><string>UIInterfaceOrientationLandscapeRight</string></array>

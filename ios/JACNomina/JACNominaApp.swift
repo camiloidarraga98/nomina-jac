@@ -162,7 +162,12 @@ private struct JACPhoneSession: View {
 @MainActor
 final class JACAccountSessions: ObservableObject {
     @Published private(set) var store: PayrollStore
-    @Published private(set) var openingPilot = false
+    #if DEBUG
+    @Published private(set) var pilotProgress: String?
+    private var preparation: Task<Void, Error>?
+    var canCancelPreparation: Bool { preparation != nil }
+    func cancelPreparation() { preparation?.cancel() }
+    #endif
 
     static var isUnitTestHost: Bool {
         #if DEBUG
@@ -246,27 +251,37 @@ final class JACAccountSessions: ObservableObject {
         #endif
     }
 
-    func signInPilot(password: String, keepSignedIn: Bool, address: String) async {
+    func signInPilot(password: String, keepSignedIn: Bool, address: String, sendingPassword: () -> Void) async {
         let login = store
-        guard !openingPilot, !login.busy, !login.hasSavedSession else { return }
+        guard pilotProgress == nil, !login.busy, !login.hasSavedSession else { return }
         login.error = nil
         guard let origin = Self.pilotOrigin(address: address) else {
             login.error = "Ingresa la dirección HTTPS privada del servidor de Asistencia, terminada en .local o .test."
             return
         }
         guard !password.isEmpty else { login.error = "Ingresa la contraseña del kiosco."; return }
-        openingPilot = true
-        defer { openingPilot = false }
         let client = PayrollClient(baseURL: origin, isAttendancePilot: true)
+        let probe = Task {
+            try await client.waitForAttendanceServer { message in
+                if self.pilotProgress != message { self.pilotProgress = message }
+            }
+        }
+        preparation = probe
+        pilotProgress = "Buscando el servidor de Asistencia…"
+        defer { preparation = nil; pilotProgress = nil }
         do {
-            try await client.waitForAttendanceServer()
-            guard store === login, !login.hasSavedSession else { return }
+            try await probe.value
+            guard !probe.isCancelled, store === login, !login.hasSavedSession else { return }
+            preparation = nil
+            pilotProgress = "Validando el usuario…"
+            sendingPassword()
             try await client.login(username: "admin", password: password, keepSignedIn: keepSignedIn)
             guard store === login, !login.hasSavedSession else { try client.clearSession(); return }
             if origin.scheme == "https" { UserDefaults.standard.set(origin.absoluteString, forKey: Self.addressKey) }
             UserDefaults.standard.set(origin.absoluteString, forKey: Self.activeKey)
             store = PayrollStore(client: client)
-        } catch { login.report(error) }
+        } catch is CancellationError { return }
+        catch { login.report(error) }
     }
     #endif
 
