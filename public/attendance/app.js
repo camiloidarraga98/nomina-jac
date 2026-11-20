@@ -13,6 +13,7 @@
     syncing = false,
     saving = false,
     cameraBusy = false,
+    faceSelection = null,
     device,
     management = null,
     generation = 0;
@@ -20,6 +21,7 @@
   const deviceOnly = () => identity?.mode === 'device';
   const connectedLabel = () => deviceOnly() ? 'Prueba en este dispositivo' : 'Conectado';
   const savedTime = row => deviceOnly() ? row.stored_at : row.received_at;
+  const demoOutcomes = {simulation: 'Coincidencia de prueba', simulation_failed: 'Rostros de prueba distintos'};
   const localDate = value => new Date(value).toLocaleString('es-CO', {
     dateStyle: 'short',
     timeStyle: 'medium'
@@ -72,6 +74,7 @@
     stopGrant();
     identity = null;
     roster = [];
+    faceSelection = null;
     $('recent').replaceChildren();
     $('employee').replaceChildren();
     screen(null);
@@ -159,12 +162,26 @@
       name: profile.name,
       role: profile.role,
       faceCamera: native && profile.faceCamera === true,
+      faceSimulator: native && profile.mode === 'device' && profile.faceSimulator === true,
       mode: native && profile.mode === 'device' ? 'device' : 'server'
     };
     $('connection').textContent = cached && !deviceOnly() ? 'Sin conexión' : connectedLabel();
     $('sync').hidden = deviceOnly();
     if (deviceOnly()) {
-      $('method').replaceChildren(new Option('Comparar mi rostro', 'face'), new Option('Solicitar supervisión presencial', 'supervised'));
+      $('method').replaceChildren(new Option(identity.faceSimulator ? 'Comparar rostros de prueba' : 'Comparar mi rostro', 'face'), new Option('Solicitar supervisión presencial', 'supervised'));
+      if (identity.faceSimulator) {
+        const choices = ['a', 'b'].map(sample => {
+          const label = el('label', 'Rostro ' + sample.toUpperCase());
+          const radio = document.createElement('input');
+          radio.type = 'radio';
+          radio.name = 'demoSample';
+          radio.value = sample;
+          radio.required = true;
+          label.prepend(radio, sampleImage(sample, 'capture'));
+          return label;
+        });
+        $('demoChoices').replaceChildren(...choices);
+      }
     }
     await dataStore('write', 'profile', profile);
     device = await dataStore('device', 'device', crypto.randomUUID());
@@ -184,22 +201,42 @@
     const selected = $('employee').value;
     $('employee').replaceChildren(new Option('Selecciona un empleado', ''), ...roster.map(p => new Option(p.code + ' · ' + p.name, p.id)));
     if (roster.some(p => p.id === selected)) $('employee').value = selected;
-    if (deviceOnly()) updateFaceMethod(false);
+    if (deviceOnly()) updateFaceMethod();
   }
-  function updateFaceMethod(selectedEmployeeChanged) {
+  function sampleImage(sample, take) {
+    const image = document.createElement('img');
+    image.src = './samples/' + sample + '-' + take + '.png';
+    image.alt = '';
+    image.className = 'sample-image';
+    return image;
+  }
+  function updateFaceMethod() {
     const person = roster.find(p => p.id === $('employee').value);
-    const available = identity.faceCamera && person?.hasFace;
-    const choice = $('method').querySelector('option[value="face"]');
-    const wasAvailable = !choice.disabled;
-    choice.disabled = !available;
-    if (!available) $('method').value = 'supervised';
-    else if (selectedEmployeeChanged || !wasAvailable) $('method').value = 'face';
-    if (!identity.faceCamera) $('methodInfo').textContent = 'La comparación necesita la cámara frontal de un iPhone o iPad físico. Aquí puedes usar supervisión.';
-    else if (person && !person.hasFace) $('methodInfo').textContent = 'Este empleado aún no tiene rostro registrado en este dispositivo. Puedes marcar con supervisión.';
-    else if ($('method').value === 'face') $('methodInfo').textContent = 'La cámara comparará tu rostro con tu referencia en este dispositivo.';
-    else $('methodInfo').textContent = 'El operador revisará la marcación antes de aprobarla.';
+    const selection = person ? person.id + '/' + person.revision : '';
+    if (selection !== faceSelection) {
+      faceSelection = selection;
+      $('method').value = 'face';
+      for (const radio of $('demoChoices').querySelectorAll('input')) radio.checked = false;
+    }
+    const demo = identity.faceSimulator;
+    const face = $('method').value === 'face';
+    const available = demo ? !!person?.demoPortrait : identity.faceCamera && person?.hasFace;
+    const chooseSample = face && demo && available;
+    $('demoSamples').hidden = $('demoSamples').disabled = !chooseSample;
+    $('prepareFace').hidden = !(face && person && !available && (demo || identity.faceCamera));
+    $('punch').disabled = saving || !person || (face && (!available || (demo && !$('demoChoices').querySelector(':checked'))));
+    let info;
+    if (!face) info = 'El operador revisará la marcación antes de aprobarla.';
+    else if (demo && !person) info = 'Simulador de Xcode. Elige un empleado para comparar rostros ficticios.';
+    else if (demo && !available) info = 'Registra un rostro ficticio para este empleado en Gestión o elige supervisión presencial.';
+    else if (demo) info = 'El simulador comparará la muestra que elijas con la referencia de ' + person.name + '.';
+    else if (!identity.faceCamera) info = 'Este dispositivo necesita una cámara frontal para comparar rostros. Puedes elegir supervisión presencial.';
+    else if (person && !available) info = 'Registra el rostro de este empleado en Gestión o elige supervisión presencial.';
+    else info = 'La cámara comparará el rostro con la referencia del empleado seleccionado.';
+    $('methodInfo').textContent = info;
   }
-  $('employee').onchange = () => { if (deviceOnly()) updateFaceMethod(true); };
+  $('employee').onchange = () => { if (deviceOnly()) updateFaceMethod(); };
+  $('demoChoices').onchange = updateFaceMethod;
   async function captureWithCamera(command, payload, operator = false) {
     if (cameraBusy) throw Error('Ya hay una captura en curso.');
     cameraBusy = true;
@@ -248,7 +285,8 @@
       let msg = deviceOnly() ? 'Guardada en este dispositivo' : 'Guardada en este dispositivo · por enviar';
       if (savedTime(p)) {
         const where = deviceOnly() ? 'Guardada aquí' : 'Recibida';
-        if (p.state === 'visual_match') msg = where + ' · coincidencia visual';
+        if (deviceOnly() && demoOutcomes[p.method]) msg = demoOutcomes[p.method] + (p.state === 'approved' ? ' · supervisión aprobada' : ' · pendiente de revisión');
+        else if (p.state === 'visual_match') msg = where + ' · coincidencia visual';
         else if (p.state === 'pending' && p.method === 'visual_review') msg = where + ' · sin coincidencia clara, pendiente de revisión';
         else msg = where + (p.state === 'approved' ? ' · supervisión aprobada' : ' · supervisión pendiente');
       }
@@ -352,16 +390,25 @@
       const movement = new FormData($('punchForm')).get('movement');
       if (deviceOnly() && $('method').value === 'face') {
         const request = {account: identity.id, id: crypto.randomUUID(), employee, revision: person.revision, device, movement, device_time: new Date().toISOString()};
+        const demo = identity.faceSimulator;
+        if (demo) {
+          const choice = $('demoChoices').querySelector('input:checked');
+          if (!person.demoPortrait || !choice) throw Error('Registra una referencia y elige el rostro de esta marcación.');
+          request.sample = choice.value;
+        } else if (!identity.faceCamera || !person.hasFace) {
+          throw Error('Para marcar con cámara se necesita una referencia facial en este dispositivo.');
+        }
         let receipt;
-        try { receipt = await captureWithCamera('face-punch', request); }
+        try { receipt = demo ? await api('demo-face-punch', request) : await captureWithCamera('face-punch', request); }
         catch (error) {
           // A native commit can finish just before WebKit loses its reply.
           if (sameAccount()) receipt = (await api('device-recent', {})).records.find(p => p.id === request.id);
           if (!receipt) throw error;
         }
         $('employee').value = '';
-        updateFaceMethod(false);
-        say(receipt.method === 'visual_match' ? 'Marcación guardada con coincidencia visual.' : 'Marcación guardada. El rostro requiere revisión del operador.');
+        updateFaceMethod();
+        if (demo) say(demoOutcomes[receipt.method] + '. Marcación pendiente de revisión.');
+        else say(receipt.method === 'visual_match' ? 'Marcación guardada con coincidencia visual.' : 'Marcación guardada. El rostro requiere revisión del operador.');
         await recent();
         return;
       }
@@ -384,23 +431,28 @@
         return;
       }
       $('employee').value = '';
-      if (deviceOnly()) updateFaceMethod(false);
+      if (deviceOnly()) updateFaceMethod();
       say(method === 'simulation_failed' ? 'Fallo de la simulación. Marcación guardada para revisión humana.' : 'Marcación guardada para supervisión.');
       await recent();
       await sync();
     }).finally(() => {
       saving = false;
-      $('punch').disabled = false;
+      if (deviceOnly()) updateFaceMethod();
+      else $('punch').disabled = false;
     });
   };
   $('method').onchange = () => {
-    if (deviceOnly()) { updateFaceMethod(false); return; }
+    if (deviceOnly()) { updateFaceMethod(); return; }
     $('methodInfo').textContent = $('method').value === 'supervised' ? 'El operador revisará la marcación antes de aprobarla.' : 'Simulación con una muestra de prueba guardada en este dispositivo.';
   };
   $('operator').onclick = () => {
     say('');
     screen('unlock');
     $('unlock').elements.password.focus();
+  };
+  $('prepareFace').onclick = () => {
+    tab(true);
+    $('operator').click();
   };
   $('cancel').onclick = () => {
     stopGrant();
@@ -457,12 +509,47 @@
     for (const p of snapshot.people) {
       const li = el('li', '');
       li.append(el('strong', p.code + ' · ' + p.name));
-      const enrolled = deviceOnly() ? p.hasFace : await bio.enrolled(dataStore, p.id);
-      if (deviceOnly() && p.active) li.append(el('small', enrolled ? 'Referencia facial en este dispositivo' : 'Sin referencia facial en este dispositivo'));
+      const demo = deviceOnly() && identity.faceSimulator;
+      const enrolled = deviceOnly() ? (demo ? p.demoPortrait : p.hasFace) : await bio.enrolled(dataStore, p.id);
+      if (demo && p.active) li.append(el('small', enrolled ? 'Referencia de prueba · Rostro ' + enrolled.toUpperCase() : 'Sin rostro de prueba'));
+      else if (deviceOnly() && p.active) li.append(el('small', enrolled ? 'Referencia facial en este dispositivo' : 'Sin referencia facial en este dispositivo'));
       if (!p.active || !deviceOnly()) li.append(el('small', p.active ? enrolled ? 'Muestra sintética local · caduca en 24 h' : 'Sin muestra sintética' : 'Inactivo'));
       if (p.active) {
         const actions = el('div', '', 'actions');
-        if (deviceOnly() && (identity.faceCamera || enrolled)) {
+        if (demo) {
+          const setSample = async sample => {
+            if (activeTicket !== ticket) return;
+            const body = {employee: p.id, revision: p.revision};
+            if (sample) await api('demo-face-enroll', {...body, sample}, true);
+            else await api('demo-face-remove', body, true);
+            if (activeTicket !== ticket) return;
+            await loadManagement();
+            await refresh();
+            if (activeTicket !== ticket) return;
+            if (sample) {
+              $('employee').value = p.id;
+              updateFaceMethod();
+            }
+            say(sample ? 'Rostro ' + sample.toUpperCase() + ' registrado para ' + p.name + '.' : 'Referencia de prueba borrada.');
+          };
+          actions.append(button(enrolled ? 'Borrar rostro de prueba' : 'Registrar rostro de prueba', async () => {
+            if (enrolled) {
+              if (confirm('¿Borrar el rostro de prueba de ' + p.name + '?')) await setSample(null);
+            } else if (!li.querySelector('.demo-enroll')) {
+              const picker = el('fieldset', '', 'demo-enroll');
+              const group = el('div', '', 'actions');
+              for (const sample of ['a', 'b']) {
+                const choice = button('Rostro ' + sample.toUpperCase(), () => setSample(sample));
+                choice.className = 'sample-button';
+                choice.prepend(sampleImage(sample, 'reference'));
+                group.append(choice);
+              }
+              picker.append(el('legend', 'Elige la referencia ficticia de ' + p.name), group);
+              li.append(picker);
+              group.firstElementChild.focus();
+            }
+          }));
+        } else if (deviceOnly() && (identity.faceCamera || enrolled)) {
           const body = {employee: p.id, revision: p.revision};
           const updateFace = async () => {
             if (activeTicket !== ticket) return;
@@ -516,7 +603,8 @@
       const recorded = deviceOnly() ? ' · Guardada aquí ' + localDate(p.stored_at) : ' · Recepción ' + localDate(p.received_at);
       row.append(el('strong', labelMove(p.effective_movement) + ' · ' + p.name), el('small', 'Dispositivo ' + localDate(p.effective_time) + recorded), el('span', p.review_state === 'approved' ? 'Supervisión presencial aprobada' : p.review_state === 'visual_match' ? 'Coincidencia visual' : 'Pendiente de revisión humana', p.review_state === 'pending' ? 'warning' : 'ok'));
       if (p.method === 'visual_review') row.append(el('small', 'La comparación facial quedó sin coincidencia clara.', 'warning'));
-      if (p.method === 'simulation_failed') row.append(el('small', 'Falló la simulación sintética.', 'warning'));
+      if (deviceOnly() && demoOutcomes[p.method]) row.append(el('small', demoOutcomes[p.method]));
+      else if (p.method === 'simulation_failed') row.append(el('small', 'Falló la simulación sintética.', 'warning'));
       if (p.possible_duplicate || p.clock_difference) row.append(el('small', [p.possible_duplicate ? 'Posible duplicado' : '', p.clock_difference ? 'Revisar diferencia de reloj o envío tardío' : ''].filter(Boolean).join(' · '), 'warning'));
       const detail = el('details', ''),
         summary = el('summary', 'Original e historial');

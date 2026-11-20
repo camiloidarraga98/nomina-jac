@@ -1087,7 +1087,12 @@ final class PayrollClient: ObservableObject {
     func attendanceRequest(command: String, data: Data?, ticket: String?) async throws -> (Data, Int) {
         var commands = ["session","unlock","lock","management","people","retire","punch","review","enrollment-access","status"]
         #if DEBUG
-        if isDeviceAttendancePilot { commands += ["device-recent", "face-remove"] }
+        if isDeviceAttendancePilot {
+            commands += ["device-recent", "face-remove"]
+            #if targetEnvironment(simulator)
+            commands += ["demo-face-enroll", "demo-face-remove", "demo-face-punch"]
+            #endif
+        }
         #endif
         guard commands.contains(command), (command == "session") == (data == nil),
               (data?.count ?? 0) <= 16384, let token = try checkedToken() else { throw APIError.unauthorized }

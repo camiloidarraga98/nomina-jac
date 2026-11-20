@@ -2,6 +2,33 @@
 import Foundation
 import Vision
 import CoreVideo
+#if targetEnvironment(simulator)
+import ImageIO
+
+/// Only bundled illustrations can enter the Xcode rehearsal. The kiosk chooses a sample, never a verdict.
+enum AttendanceDemoPortrait: String, Codable {
+    case a, b
+
+    func signature(forCapture: Bool) throws -> AttendanceFaceSignature {
+        let name = rawValue + (forCapture ? "-capture" : "-reference")
+        let side = AttendanceFaceSignature.side
+        let unreadable = APIError.message("No se pudo leer el rostro de prueba incluido en JACNomina.")
+        guard let url = Bundle.main.url(forResource: name, withExtension: "png", subdirectory: "attendance/samples"),
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil),
+              image.width == side, image.height == side else { throw unreadable }
+        var pixels = [UInt8](repeating: 0, count: side * side)
+        try pixels.withUnsafeMutableBytes { buffer in
+            guard let context = CGContext(data: buffer.baseAddress, width: side, height: side, bitsPerComponent: 8,
+                                          bytesPerRow: side, space: CGColorSpaceCreateDeviceGray(),
+                                          bitmapInfo: CGImageAlphaInfo.none.rawValue) else { throw unreadable }
+            context.draw(image, in: CGRect(x: 0, y: 0, width: CGFloat(side), height: CGFloat(side)))
+        }
+        guard let sample = AttendanceFaceSignature(alignedPixels: pixels.map { Float($0) }) else { throw unreadable }
+        return sample
+    }
+}
+#endif
 
 /// A basic appearance comparison for the chosen employee, not a probability of identity.
 struct AttendanceFaceSignature: Codable, Sendable {

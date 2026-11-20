@@ -1,5 +1,5 @@
 /* Only the neutral interface is cached. Private responses never enter this cache. */
-const version = 'jac-attendance-interface-v4';
+const version = 'jac-attendance-interface-v5';
 const files = ['index.html', 'style.css', 'storage.js', 'biometrics.js', 'app.js'];
 const paths = files.map(file => new URL(file, self.registration.scope).href);
 self.addEventListener('install', event => event.waitUntil(

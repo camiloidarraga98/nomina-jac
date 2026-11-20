@@ -3256,6 +3256,69 @@ final class PayrollClientTests: XCTestCase {
         try await client.logout()
     }
 
+    #if targetEnvironment(simulator)
+    @MainActor func testSimulatorComparesBundledPortraitsAndKeepsBothResultsPending() async throws {
+        let client = PayrollClient(baseURL: DeviceAttendancePilot.origin, vault: MemorySession(), isAttendancePilot: true)
+        try await client.login(username: "admin", password: "admin")
+        defer { try? client.clearSession() }
+        func call(_ command: String, _ body: [String: Any]? = nil, key: String? = nil, status: Int = 200) async throws -> [String: Any] {
+            let data = try body.map { try JSONSerialization.data(withJSONObject: $0) }
+            let (reply, code) = try await client.attendanceRequest(command: command, data: data, ticket: key)
+            XCTAssertEqual(code, status, command)
+            return try XCTUnwrap(try JSONSerialization.jsonObject(with: reply) as? [String: Any])
+        }
+        let profile = try await call("session")
+        XCTAssertEqual(profile["faceSimulator"] as? Bool, true)
+        let account = try XCTUnwrap(profile["id"] as? String)
+        let grant = try await call("unlock", ["password":"gestion-demo"])
+        let key = try XCTUnwrap(grant["ticket"] as? String)
+        let employee = UUID().uuidString.lowercased()
+        _ = try await call("people", ["people":[["id":employee, "code":String(employee.prefix(8)), "name":"Retrato ficticio"]]], key: key)
+        let enroll: [String: Any] = ["employee":employee, "revision":1, "sample":"b"]
+        var punch: [String: Any] = ["account":account, "id":UUID().uuidString, "employee":employee, "device":UUID().uuidString,
+                                    "movement":"entry", "device_time":"2026-11-20T12:00:00.000Z", "revision":1, "sample":"a"]
+        _ = try await call("demo-face-punch", punch, status: 409)
+        _ = try await call("demo-face-enroll", enroll, status: 403)
+        _ = try await call("demo-face-enroll", enroll, key: key)
+        _ = try await call("demo-face-punch", punch, status: 409)
+        punch["revision"] = 2
+        punch["sample"] = "b"
+        let match = try await call("demo-face-punch", punch)
+        XCTAssertEqual(match["method"] as? String, "simulation")
+        XCTAssertEqual(match["state"] as? String, "pending")
+        let (cameraReply, cameraStatus) = try await client.attendanceFaceRequest(command: "face-punch",
+            data: JSONSerialization.data(withJSONObject: punch), ticket: nil) { _ in
+            XCTFail("Una muestra sintética no debe abrir la cámara.")
+            throw APIError.invalid("Captura inesperada")
+        }
+        XCTAssertEqual(cameraStatus, 409)
+        XCTAssertFalse(cameraReply.isEmpty)
+        punch["sample"] = "a"
+        _ = try await call("demo-face-punch", punch, status: 409)
+        punch["id"] = UUID().uuidString
+        // A client-supplied verdict cannot turn the other portrait into a match.
+        punch["method"] = "visual_match"
+        let different = try await call("demo-face-punch", punch)
+        XCTAssertEqual(different["method"] as? String, "simulation_failed")
+        XCTAssertEqual(different["state"] as? String, "pending")
+        let remove: [String: Any] = ["employee":employee, "revision":2]
+        _ = try await call("demo-face-remove", remove, status: 403)
+        _ = try await call("demo-face-remove", remove, key: key)
+        let retried = try await call("demo-face-punch", punch)
+        XCTAssertEqual(retried["stored_at"] as? String, different["stored_at"] as? String)
+        punch["id"] = UUID().uuidString
+        punch["revision"] = 3
+        _ = try await call("demo-face-punch", punch, status: 409)
+        _ = try await call("punch", punch, status: 400)
+        let snapshot = try await call("management", [:], key: key)
+        let receipts = try XCTUnwrap(snapshot["punches"] as? [[String: Any]])
+        let ids = [match["id"] as? String, different["id"] as? String].compactMap { $0 }
+        XCTAssertEqual(receipts.filter { ids.contains($0["id"] as? String ?? "") && $0["review_state"] as? String == "pending" }.count, 2)
+        _ = try await call("retire", ["id":employee, "revision":3], key: key)
+        try await client.logout()
+    }
+    #endif
+
     @MainActor func testDeviceAttendanceLedgerAndOperator() async throws {
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [MockProtocol.self]

@@ -9,6 +9,8 @@
 <label>Empleado de prueba<select id="employee" required><option value="">Selecciona un empleado</option></select></label>
 <label>Método<select id="method"><option value="supervised">Solicitar supervisión presencial</option><option value="simulation">Simulación sintética</option><option value="simulation_failed">Simular un fallo</option></select></label>
 <p class="muted" id="methodInfo">El operador revisará la marcación antes de aprobarla.</p>
+<button class="subtle" type="button" id="prepareFace" hidden>Registrar rostro en Gestión</button>
+<fieldset id="demoSamples" hidden disabled><legend>Elige el rostro de esta marcación</legend><div class="choices" id="demoChoices"></div></fieldset>
 <button class="primary" id="punch">Confirmar marcación</button></form>
 <aside class="card"><h2>En este dispositivo</h2><ul id="recent" class="items"></ul><button id="sync" class="subtle">Sincronizar ahora</button></aside></div></section>
 <form id="unlock" class="card narrow" hidden><h2>Gestión supervisada</h2><label>Clave de supervisión<input name="password" type="password" autocomplete="off" required maxlength="512"></label><div class="actions"><button class="primary">Entrar a gestión</button><button type="button" id="cancel">Volver</button></div></form>

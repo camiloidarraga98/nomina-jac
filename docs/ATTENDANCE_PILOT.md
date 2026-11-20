@@ -12,6 +12,15 @@ El primer arranque y el registro funcionan directamente en la app de desarrollo,
 
 Al actualizar desde el piloto que dependía del Mac puede volver a aparecer el formulario de acceso. El nuevo historial empieza con las fichas de demostración. Los registros del servidor anterior pertenecen a aquel ensayo.
 
+## Ensayar la comparación en el simulador de Xcode
+
+1. En **JACNomina**, entra al kiosco como `admin` con contraseña `admin`. Abre **Gestión supervisada** con `gestion-demo` y toca **Empleados de prueba**.
+2. En una ficha toca **Registrar rostro de prueba** y escoge **Rostro A** como referencia. Pulsa **Volver al kiosco**. Quedará seleccionado ese empleado.
+3. Elige **Entrada**, **Rostro A** y **Confirmar marcación**. Verás **Coincidencia de prueba**. Para probar el otro resultado, elige **Salida**, vuelve a seleccionar al mismo empleado y confirma con **Rostro B**. Verás **Rostros de prueba distintos**.
+4. Ambas marcaciones aparecen pendientes en **Gestión supervisada → Marcaciones**. Para hacer una marcación manual, elige **Solicitar supervisión presencial** en el selector de método.
+
+El simulador usa dos retratos ficticios incluidos en la app. El comparador de JAC calcula el parecido entre la referencia del empleado y otra imagen de prueba con distinta iluminación. Este ensayo funciona sin cámara ni servidor. La captura de un rostro y el giro de cabeza se prueban en un dispositivo físico. Puedes borrar la referencia ficticia desde la ficha del empleado.
+
 ## Probar la web con el servidor de desarrollo
 
 La web conserva el piloto que permite ensayar el intercambio con un servidor, la sincronización entre clientes y los marcadores sintéticos. Para usarlo, abre `scripts/asistencia-mac.command` en el Mac o ejecuta este comando desde la raíz del repositorio con Node 24 y las dependencias de JAC instaladas.
@@ -57,7 +66,7 @@ La cámara solicita una sola cara y obtiene dos vistas frontales separadas por u
 
 Las imágenes de cámara se procesan en memoria. La referencia se cifra con AES-GCM y una clave del Llavero exclusiva del dispositivo. Su archivo tiene protección completa y se excluye de copias de seguridad. La referencia caduca a los 30 días y se elimina al siguiente acceso al registro. Solo se expone el resultado al módulo de Asistencia. La comparación funciona sin internet y sin un SDK de pago.
 
-La prueba facial está integrada en **JACNomina** para desarrollo. En el simulador sin cámara frontal se puede probar el flujo supervisado. La web y el modo de servidor privado conservan la supervisión y el simulador sintético. Las pruebas automáticas usan patrones ficticios para verificar comparación, permisos e historial. La precisión con personas requiere una prueba física con voluntarios autorizados, consentimiento y revisión de privacidad antes de incorporar empleados reales.
+La prueba facial está integrada en **JACNomina** para desarrollo. El simulador de Xcode ofrece la comparación con retratos ficticios y la supervisión presencial. La web y el modo de servidor privado ofrecen supervisión y marcadores sintéticos. Las pruebas automáticas usan patrones ficticios para verificar comparación, permisos e historial. La precisión con personas requiere una prueba física con voluntarios autorizados, consentimiento y revisión de privacidad antes de incorporar empleados reales.
 
 ## Comprobaciones reproducibles
 

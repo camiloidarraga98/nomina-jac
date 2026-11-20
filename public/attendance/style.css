@@ -221,6 +221,22 @@ input[type=radio] {
   accent-color: #066ab1;
 }
 
+.sample-image {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+}
+
+#demoChoices label,.sample-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+#demoSamples,#prepareFace {
+  margin-bottom: 14px;
+}
+
 .items {
   list-style: none;
   padding: 0;

@@ -508,4 +508,4 @@ La conciliación quedó publicada el10/11/2026 a las13:30Colombia con la carga c
 
 ## Asistencia en JACNomina
 
-El piloto del dispositivo permite marcar entrada o salida con supervisión o con una comparación facial básica en la cámara frontal. Gestión registra y borra la referencia de cada voluntario en ese equipo. Las dos instalaciones de prueba tienen historiales separados. El detalle de uso, retención y revisión está en la [guía de Asistencia](../docs/ATTENDANCE_PILOT.md).
+El piloto del dispositivo permite marcar entrada o salida con supervisión o con una comparación facial básica en la cámara frontal. Gestión registra y borra la referencia de cada voluntario en ese equipo. En el simulador de Xcode, el operador asigna uno de dos retratos ficticios al empleado. Cada marcación compara la muestra elegida con esa referencia y queda pendiente de revisión. Las dos instalaciones de prueba tienen historiales separados. [Guía de Asistencia](../docs/ATTENDANCE_PILOT.md)

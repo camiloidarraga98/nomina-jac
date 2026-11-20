@@ -773,6 +773,22 @@ final class LaunchTests: XCTestCase {
         XCTAssertTrue(peopleTab.waitForExistence(timeout: 5))
         peopleTab.tap()
         XCTAssertTrue(view.buttons["Crear empleado"].waitForExistence(timeout: 5))
+        #if targetEnvironment(simulator)
+        view.buttons["Registrar rostro de prueba"].firstMatch.tap()
+        view.buttons["Rostro A"].firstMatch.tap()
+        let saved = view.staticTexts.matching(NSPredicate(format: "label BEGINSWITH %@", "Rostro A registrado para ")).firstMatch
+        XCTAssertTrue(saved.waitForExistence(timeout: 8))
+        view.buttons["Volver al kiosco"].tap()
+        let sample = view.descendants(matching: .any).matching(NSPredicate(format: "label == %@", "Rostro A")).firstMatch
+        XCTAssertTrue(sample.waitForExistence(timeout: 8))
+        let confirm = view.buttons["Confirmar marcación"]
+        XCTAssertFalse(confirm.isEnabled)
+        sample.tap()
+        XCTAssertTrue(confirm.isEnabled)
+        confirm.tap()
+        let pending = view.staticTexts["Coincidencia de prueba. Marcación pendiente de revisión."]
+        XCTAssertTrue(pending.waitForExistence(timeout: 8))
+        #endif
         view.buttons["Salir"].tap()
         XCTAssertTrue(app.textFields["login.username"].waitForExistence(timeout: 10))
         XCTAssertFalse(view.buttons["Confirmar marcación"].exists)

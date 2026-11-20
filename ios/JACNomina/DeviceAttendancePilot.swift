@@ -40,12 +40,22 @@ final class DeviceAttendancePilot {
         var active = true
         var revision = 1
         var face: FaceReference?
-        var row: Row { ["id":id, "code":code, "name":name, "active":active, "revision":revision, "hasFace":face != nil] }
+        #if targetEnvironment(simulator)
+        var demoPortrait: AttendanceDemoPortrait?
+        #endif
+        var row: Row {
+            var result: Row = ["id":id, "code":code, "name":name, "active":active, "revision":revision, "hasFace":face != nil]
+            #if targetEnvironment(simulator)
+            result["demoPortrait"] = demoPortrait?.rawValue
+            #endif
+            return result
+        }
     }
     private struct Punch: Codable {
         let id, employee, device, movement, deviceTime, storedAt: String
         let possibleDuplicate, clockDifference: Bool
         var method: String?
+        var demoSample: String?
         var recordedMethod: String { method ?? "supervised" }
     }
     private struct Review: Codable {
@@ -107,7 +117,11 @@ final class DeviceAttendancePilot {
             grant = (token, value, expires)
             return ["ticket":value, "expires":clock.string(from: expires), "name":"Operador de prueba"]
         }
-        if !["session", "punch", "status", "device-recent"].contains(command) {
+        var kioskCommands = ["session", "punch", "status", "device-recent"]
+        #if targetEnvironment(simulator)
+        kioskCommands.append("demo-face-punch")
+        #endif
+        if !kioskCommands.contains(command) {
             try requireOperator(token, ticket)
         }
         if command == "lock" { grant = nil; return ["ok":true] }
@@ -116,8 +130,14 @@ final class DeviceAttendancePilot {
         let result: Row
         switch command {
         case "session":
-            return ["id":Self.account, "role":"kiosk", "name":"Kiosco de prueba", "mode":"device", "faceCamera":AttendanceFaceCamera.frontCamera != nil,
-                    "people":ledger.people.filter(\.active).map(\.row)]
+            var profile: Row = ["id":Self.account, "role":"kiosk", "name":"Kiosco de prueba", "mode":"device",
+                                "people":ledger.people.filter(\.active).map(\.row)]
+            #if targetEnvironment(simulator)
+            profile["faceSimulator"] = true
+            #else
+            profile["faceCamera"] = AttendanceFaceCamera.frontCamera != nil
+            #endif
+            return profile
         case "device-recent":
             return ["records":ledger.punches.suffix(12).reversed().map { punch -> Row in
                 var row = receipt(punch, ledger)
@@ -151,6 +171,9 @@ final class DeviceAttendancePilot {
             }
             if ledger.punches.contains(where: { $0.employee == id }) {
                 ledger.people[index].face = nil
+                #if targetEnvironment(simulator)
+                ledger.people[index].demoPortrait = nil
+                #endif
                 ledger.people[index].active = false
                 ledger.people[index].revision += 1
                 result = ["status":"inactive"]
@@ -163,6 +186,27 @@ final class DeviceAttendancePilot {
             ledger.people[i].face = nil
             ledger.people[i].revision += 1
             result = ["ok":true]
+        #if targetEnvironment(simulator)
+        case "demo-face-enroll", "demo-face-remove":
+            let i = try personIndex(body, ledger)
+            if command == "demo-face-enroll" {
+                guard let sample = body["sample"] as? String, let portrait = AttendanceDemoPortrait(rawValue: sample) else { throw invalid }
+                _ = try portrait.signature(forCapture: false)
+                ledger.people[i].demoPortrait = portrait
+            } else {
+                ledger.people[i].demoPortrait = nil
+            }
+            ledger.people[i].revision += 1
+            result = ["ok":true]
+        case "demo-face-punch":
+            guard let sample = body["sample"] as? String, let portrait = AttendanceDemoPortrait(rawValue: sample) else { throw invalid }
+            if let previous = try existingFacePunch(body, in: ledger, demoSample: sample) { return previous }
+            let person = ledger.people[try personIndex(body, ledger)]
+            guard let enrolled = person.demoPortrait else { throw Problem(409, "Registra primero un rostro de prueba en Gestión.") }
+            let reference = try enrolled.signature(forCapture: false)
+            let capture = try portrait.signature(forCapture: true)
+            result = try record(body, method: reference.resembles(capture) ? "simulation" : "simulation_failed", demoSample: sample, in: &ledger)
+        #endif
         case "punch":
             guard body["method"] as? String == "supervised" else { throw invalid }
             result = try record(body, method: "supervised", in: &ledger)
@@ -271,13 +315,14 @@ final class DeviceAttendancePilot {
     private func encoded(_ row: Row) throws -> (Data, Int) {
         (try JSONSerialization.data(withJSONObject: row), 200)
     }
-    private func existingFacePunch(_ body: Row, in ledger: Ledger) throws -> Row? {
+    private func existingFacePunch(_ body: Row, in ledger: Ledger, demoSample: String? = nil) throws -> Row? {
         let id = try uuid(body, "id"), employee = try uuid(body, "employee"), device = try uuid(body, "device")
         let (move, time, _) = try movementAndTime(body)
         guard body["account"] as? String == Self.account else { throw invalid }
         guard let previous = ledger.punches.first(where: { $0.id == id }) else { return nil }
         guard previous.employee == employee, previous.device == device, previous.movement == move,
-              previous.deviceTime == time, ["visual_match", "visual_review"].contains(previous.recordedMethod) else {
+              previous.deviceTime == time, previous.demoSample == demoSample,
+              demoSample != nil || ["visual_match", "visual_review"].contains(previous.recordedMethod) else {
             throw Problem(409, "Existe otra marcación con ese identificador.")
         }
         return receipt(previous, ledger)
@@ -312,14 +357,14 @@ final class DeviceAttendancePilot {
                 "stored_at":punch.storedAt, "method":punch.recordedMethod, "review_state":state(punch, ledger),
                 "revision":last?.revision ?? 0, "possible_duplicate":punch.possibleDuplicate, "clock_difference":punch.clockDifference]
     }
-    private func record(_ input: Row, method: String, in ledger: inout Ledger) throws -> Row {
+    private func record(_ input: Row, method: String, demoSample: String? = nil, in ledger: inout Ledger) throws -> Row {
         guard input["account"] as? String == Self.account else { throw invalid }
         let id = try uuid(input, "id"), employee = try uuid(input, "employee"), device = try uuid(input, "device")
         let (move, time, date) = try movementAndTime(input)
         let punch: Punch
         if let previous = ledger.punches.first(where: { $0.id == id }) {
             guard previous.employee == employee, previous.device == device, previous.movement == move,
-                  previous.deviceTime == time, previous.recordedMethod == method else { throw Problem(409, "Existe otra marcación con ese identificador.") }
+                  previous.deviceTime == time, previous.recordedMethod == method, previous.demoSample == demoSample else { throw Problem(409, "Existe otra marcación con ese identificador.") }
             punch = previous
         } else {
             guard ledger.people.contains(where: { $0.id == employee && $0.active }) else { throw Problem(409, "El empleado está inactivo.") }
@@ -329,7 +374,8 @@ final class DeviceAttendancePilot {
             }
             let now = Date()
             punch = Punch(id: id, employee: employee, device: device, movement: move, deviceTime: time,
-                          storedAt: clock.string(from: now), possibleDuplicate: duplicate, clockDifference: abs(now.timeIntervalSince(date)) > 300, method: method)
+                          storedAt: clock.string(from: now), possibleDuplicate: duplicate, clockDifference: abs(now.timeIntervalSince(date)) > 300,
+                          method: method, demoSample: demoSample)
             ledger.punches.append(punch)
         }
         return receipt(punch, ledger)
