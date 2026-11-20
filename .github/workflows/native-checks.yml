@@ -14,7 +14,7 @@ on:
       scope:
         description: Checks to run after completing the change
         type: choice
-        options: [preliquidation, andres-routes, payroll-promotional, contract-forms, wide-workspace, photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
+        options: [attendance, preliquidation, andres-routes, payroll-promotional, contract-forms, wide-workspace, photo-filmstrip, media-native-actions, full, calendar-compile, slack-boarding, scroll-widgets, adaptive-photos, redesign, redesign-followup, redesign-forms-ui-only, video-upload, video-quality, video-upload-ui, gallery-media, gallery-update, gallery-stability, gallery-prefetch, media-delete, media-light, music, navigation, layout, audit, photo-preview, photo-notices, photo-notices-ipad, apple-push, apple-push-ui, apple-wallet, wallet-details, wallet-details-ui, boarding-card, boarding-card-ui, ios-bundle]
         default: full
 
 permissions:
@@ -30,11 +30,17 @@ jobs:
     # Public standard runners are free; never use the exhausted private quota.
     if: ${{ github.event.repository.private == false && inputs.scope != 'ios-bundle' && !(github.event_name == 'push' && contains(github.event.head_commit.message, '[check-ios-bundle]')) }}
     runs-on: macos-15
+    env:
+      JAC_ATTENDANCE: ${{ inputs.scope == 'attendance' || contains(github.event.head_commit.message, '[check-attendance]') }}
     timeout-minutes: ${{ (inputs.scope == 'wide-workspace' || contains(github.event.head_commit.message, '[check-wide-workspace]')) && 40 || (inputs.scope == 'scroll-widgets' || contains(github.event.head_commit.message, '[check-scroll-widgets]')) && 35 || 25 }}
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      - uses: actions/setup-node@v4
+        if: env.JAC_ATTENDANCE == 'true'
+        with:
+          node-version: 24
       - name: Record installed Xcodes and select the latest for the focused compiler check
         shell: bash
         env:
@@ -69,7 +75,7 @@ jobs:
           subprocess.run(['xcodebuild', '-version'], check=True)
           subprocess.run(['xcrun', 'swift', '--version'], check=True)
           PYCODE
-      - name: Record Xcode and select a fresh iPhone simulator
+      - name: Record Xcode and select a fresh iOS simulator
         shell: bash
         run: |
           set -euo pipefail
@@ -83,12 +89,13 @@ jobs:
           import json, os, re, subprocess
           sdk = tuple(map(int, subprocess.check_output(['xcrun', '--sdk', 'iphonesimulator', '--show-sdk-version'], text=True).strip().split('.')))
           devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+          family = 'iPad' if os.environ['JAC_ATTENDANCE'] == 'true' else 'iPhone'
           for runtime in sorted(devices, key=lambda name: tuple(map(int, re.findall(r'\d+', name))), reverse=True):
               if '.iOS-' not in runtime:
                   continue
               if tuple(map(int, re.findall(r'\d+', runtime)))[:2] > sdk[:2]:
                   continue
-              candidates = [device for device in devices[runtime] if device['name'].startswith('iPhone') and device.get('deviceTypeIdentifier')]
+              candidates = [device for device in devices[runtime] if device['name'].startswith(family) and device.get('deviceTypeIdentifier')]
               if candidates:
                   device = candidates[0]
                   simulator = subprocess.check_output(['xcrun', 'simctl', 'create', 'JAC CI', device['deviceTypeIdentifier'], runtime], text=True).strip()
@@ -96,7 +103,7 @@ jobs:
                       output.write('JAC_CI_SIMULATOR_ID=' + simulator + '\n')
                   break
           else:
-              raise SystemExit('No iPhone simulator runtime compatible with the selected Xcode SDK was found.')
+              raise SystemExit('No ' + family + ' simulator compatible with the selected Xcode SDK was found.')
           PY
       - name: Build and check the affected iPhone flows
         shell: bash
@@ -162,7 +169,19 @@ jobs:
         run: |
           set -euo pipefail
           build_action=test
-          if [ "$JAC_PRELIQUIDATION" = true ]; then
+          if [ "$JAC_ATTENDANCE" = true ]; then
+            # xcodebuild test uses TestAction rather than the simulator Run pre-action.
+            bash scripts/asistencia-mac.command --xcode
+            trap 'bash scripts/asistencia-mac.command --stop' EXIT
+            export TEST_RUNNER_JAC_TEST_ATTENDANCE=1
+            checks=(
+              -only-testing:JACNominaTests/PayrollClientTests/testSimulatorCancelsPreparationBeforeSendingCredentials
+              -only-testing:JACNominaTests/PayrollClientTests/testSimulatorShowsHowToRecoverFromAStoppedOrFailedPilot
+              -only-testing:JACNominaTests/PayrollClientTests/testAttendanceWaitsForReadyAndRestoresOnlyTheAuthenticatedKiosk
+              -only-testing:JACNominaTests/PayrollClientTests/testAttendanceRejectsAnUnmarkedServerAndANormalPayrollLogin
+              -only-testing:JACNominaUITests/LaunchTests/testLocalAttendanceKioskLoginAndRestart
+            )
+          elif [ "$JAC_PRELIQUIDATION" = true ]; then
             checks=(
               -only-testing:JACNominaTests/PayrollClientTests/testPreliquidationUsesSavedRevisionFreshGETAndOnlyGeneralDocuments
               -only-testing:JACNominaTests/PayrollClientTests/testPermissionDenialPreservesSessionAndDoesNotWriteDocument
@@ -707,6 +726,9 @@ jobs:
             ${checks[@]+"${checks[@]}"} \
             ONLY_ACTIVE_ARCH=YES CODE_SIGNING_ALLOWED=YES CODE_SIGN_IDENTITY=- DEVELOPMENT_TEAM= JAC_PUSH_ENABLED=NO \
             "$build_action" 2>&1 | tee native-ci/iphone-tests.log
+          if [ "$JAC_ATTENDANCE" = true ]; then
+            grep -Eq 'testLocalAttendanceKioskLoginAndRestart.* passed' native-ci/iphone-tests.log
+          fi
       - name: Verify the affected iPad flow using the compiled app
         if: ${{ !cancelled() && (inputs.scope == 'media-light' || inputs.scope == 'photo-notices' || inputs.scope == 'photo-notices-ipad' || (github.event_name == 'push' && (contains(github.event.head_commit.message, '[check-media-light]') || contains(github.event.head_commit.message, '[check-photo-notices]') || contains(github.event.head_commit.message, '[photo-notices-ipad-only]')))) }}
         shell: bash
