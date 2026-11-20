@@ -6,6 +6,7 @@ const employeeCode = customType<{ data: string }>({ dataType: () => 'text COLLAT
 export const attendancePeople = sqliteTable('jac_attendance_people', {
   id: text('id').primaryKey().notNull(),
   code: employeeCode('code').notNull().unique(),
+  removedCode: text('removed_code'),
   name: text('name').notNull(),
   active: integer('active').notNull().default(1),
   faceRevision: integer('face_revision').notNull().default(1),

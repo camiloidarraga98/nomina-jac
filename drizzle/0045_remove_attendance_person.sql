@@ -1,0 +1,1 @@
+ALTER TABLE `jac_attendance_people` ADD `removed_code` text;

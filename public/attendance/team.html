@@ -213,12 +213,12 @@
         </div>
       </form>
     </dialog>
-    <dialog id="confirmation">
+    <dialog id="confirmation" aria-labelledby="question" aria-describedby="explain">
       <form method="dialog">
         <h2 id="question"></h2>
         <p id="explain"></p>
         <div class="choices">
-          <button value="cancel">Cancelar</button><button value="yes" class="primary">Confirmar</button>
+          <button value="cancel" autofocus>Cancelar</button><button value="yes" id="confirmAction" class="primary">Confirmar</button>
         </div>
       </form>
     </dialog>

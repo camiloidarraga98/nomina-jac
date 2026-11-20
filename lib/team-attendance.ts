@@ -34,6 +34,7 @@ const devicePunch = z
 const actions = z.discriminatedUnion('action', [
   z.object({ action: z.literal('person'), id: uuid, code: z.string().trim().min(1).max(32), name }).strict(),
   z.object({ action: z.literal('archive'), employee: uuid, revision: z.number().int().positive() }).strict(),
+  z.object({ action: z.literal('removePerson'), employee: uuid, revision: z.number().int().positive() }).strict(),
   z
     .object({ action: z.literal('resetFace'), employee: uuid, revision: z.number().int().positive() })
     .strict(),
@@ -104,7 +105,7 @@ async function bodyOf(request: Request, maxBytes = 4096) {
 }
 
 const effectiveTime = 'COALESCE(v.occurred_at,r.occurred_at)';
-const history = `SELECT r.id,r.employee,p.name AS employeeName,p.code,COALESCE(v.movement,r.movement) AS movement,${effectiveTime} AS occurredAt, r.movement AS originalMovement, r.occurred_at AS originalTime, COALESCE(v.revision,0) AS revision,
+const history = `SELECT r.id,r.employee,p.name AS employeeName,COALESCE(p.removed_code,p.code) AS code,COALESCE(v.movement,r.movement) AS movement,${effectiveTime} AS occurredAt, r.movement AS originalMovement, r.occurred_at AS originalTime, COALESCE(v.revision,0) AS revision,
  r.received_at AS receivedAt,d.name AS deviceName,u.name AS supervisor,r.reason,r.possible_duplicate AS possibleDuplicate,r.photo_jpeg IS NOT NULL AS hasPhoto
  FROM jac_attendance_records r JOIN jac_attendance_people p ON p.id=r.employee
  LEFT JOIN jac_attendance_devices d ON d.id=r.device LEFT JOIN payroll_users u ON u.id=r.supervisor
@@ -159,7 +160,7 @@ async function adminFeed(db: D1Database, hash: string, params: URLSearchParams) 
   const [people, devices, records] = await db.batch<Row>([
     db
       .prepare(
-        'SELECT id,code,name,active,face_revision AS revision FROM jac_attendance_people WHERE EXISTS(' +
+        'SELECT id,COALESCE(removed_code,code) AS code,name,active,face_revision AS revision,removed_code IS NOT NULL AS removed FROM jac_attendance_people WHERE EXISTS(' +
           adminQuery +
           ') ORDER BY active DESC,name COLLATE NOCASE,code'
       )
@@ -180,7 +181,8 @@ async function adminFeed(db: D1Database, hash: string, params: URLSearchParams) 
   const rows = records.results.slice(0, 50),
     last = rows.at(-1);
   return json({
-    people: people.results,
+    people: people.results.filter((person) => !person.removed),
+    formerPeople: people.results.filter((person) => person.removed).map(({ id, code, name }) => ({ id, code, name })),
     devices: devices.results,
     records: rows,
     nextCursor: records.results.length > 50 && last ? last.occurredAt + '|' + last.id : null
@@ -213,6 +215,28 @@ async function adminWrite(db: D1Database, hash: string, input: z.infer<typeof ac
         )
         .bind(input.employee, input.revision, hash);
       break;
+    case 'removePerson': {
+      const target = `id=? AND face_revision=? AND removed_code IS NULL AND EXISTS(${adminQuery})`;
+      const unused = target +
+        ' AND NOT EXISTS(SELECT 1 FROM jac_attendance_records r WHERE r.employee=jac_attendance_people.id)';
+      const keys = [input.employee, input.revision, hash];
+      // D1 commits the roster change together with any cleanup. A simultaneous punch either
+      // creates history first or sees an ineligible enrollment.
+      const [, , , state] = await db.batch<{ outcome: 'deleted' | 'history' | null }>([
+        db.prepare(`DELETE FROM jac_attendance_enrollments WHERE employee IN
+          (SELECT id FROM jac_attendance_people WHERE ${unused})`).bind(...keys),
+        db.prepare('DELETE FROM jac_attendance_people WHERE ' + unused).bind(...keys),
+        // Keep the original code for history and free the unique roster code. UUIDs are 36
+        // characters; a user-supplied employee code has at most 32.
+        db.prepare(`UPDATE jac_attendance_people SET removed_code=code,code=id,active=0,
+          face_revision=face_revision+1 WHERE ${target}`).bind(...keys),
+        db.prepare(`SELECT CASE WHEN p.id IS NULL THEN 'deleted' WHEN p.removed_code IS NOT NULL THEN 'history' END AS outcome
+          FROM (${adminQuery}) a LEFT JOIN jac_attendance_people p ON p.id=?`).bind(hash, input.employee)
+      ]);
+      const receipt = state.results[0];
+      if (!receipt) return error('Se requiere acceso de administración.', 403);
+      return receipt.outcome ? json({ outcome: receipt.outcome }) : conflict();
+    }
     case 'pair': {
       const [insert, existing] = await db.batch([
         db

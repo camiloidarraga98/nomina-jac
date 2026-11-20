@@ -202,6 +202,9 @@ summary {
 .item-actions button {
   font-size: 0.84rem;
 }
+.item-actions .delete-person {
+  color: #9c3434;
+}
 .tools + .scroll {
   min-height: 80px;
 }

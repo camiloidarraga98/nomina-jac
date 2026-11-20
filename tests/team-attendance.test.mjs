@@ -84,7 +84,9 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
       );
       return { ...input, signature: Buffer.from(signature).toString('base64') };
     };
-    return { id, headers, enrollment, sign };
+    const enrollAnother = (employee) => admin({ ...auth, 'x-jac-kiosk-token': secret },
+      { ...command, id: randomUUID(), employee });
+    return { id, headers, enrollment, sign, enrollAnother };
   };
   const first = await addKiosk('Recepción ficticia'),
     next = await addKiosk('Sala ficticia');
@@ -177,6 +179,68 @@ test('two independent kiosks share attendance only with ordinary JAC administrat
   assert.equal((await admin(auth, { action: 'archive', employee: uid, revision: 2 })).status, 200);
   assert.equal((await (await device(next.headers)).json()).people.length, 0);
   assert.equal((await (await admin(other)).json()).records.length, 3);
+
+  await t.test('removal preserves dated records, receipts and photos while freeing the roster code', async () => {
+    const remove = { action: 'removePerson', employee: uid, revision: 3 };
+    assert.equal((await admin(next.headers, remove)).status, 401);
+    assert.equal((await admin({ Authorization: 'Bearer ' + staff }, remove)).status, 403);
+    assert.equal((await admin(auth, { ...remove, revision: 2 })).status, 409);
+    const responses = await Promise.all([admin(other, remove), admin(auth, remove)]);
+    for (const response of responses) {
+      assert.equal(response.status, 200);
+      assert.deepEqual(await response.json(), { outcome: 'history' });
+    }
+    const replacement = { ...person, id: randomUUID(), code: person.code.toLowerCase() };
+    assert.equal((await admin(auth, replacement)).status, 200);
+    assert.equal((await admin(other, remove)).status, 200);
+    const after = await (await call('/api/team-attendance/admin?employee=' + uid, auth)).json();
+    assert.deepEqual(after.people.map((p) => p.id), [replacement.id]);
+    assert.deepEqual(after.formerPeople, [{ id: uid, name: person.name, code: person.code }]);
+    assert.equal(after.records.length, 3);
+    assert.ok(after.records.every((r) => r.employee === uid && r.code === person.code));
+    assert.equal(after.records.find((r) => r.id === input.id).revision, 1);
+    assert.equal((await (await call(photoPath, auth)).json()).jpeg, photo);
+    assert.deepEqual(await (await device(next.headers, out)).json(), receipt);
+    assert.equal((await device(next.headers, await next.sign({ ...out, id: randomUUID() }))).status, 409);
+    assert.equal((await admin(other, { ...manual, id: randomUUID() })).status, 409);
+    for (const kiosk of [first, next]) {
+      const roster = await (await device(kiosk.headers)).json();
+      assert.deepEqual(roster.people.map((p) => p.id), [replacement.id]);
+      assert.equal(roster.people[0].enrollment, null);
+    }
+
+    // This active replacement has two facial enrollments but has never marked.
+    for (const kiosk of [first, next]) assert.equal((await kiosk.enrollAnother(replacement.id)).status, 200);
+    const discard = { action: 'removePerson', employee: replacement.id, revision: 1 };
+    assert.equal((await admin(auth, { ...discard, revision: 9 })).status, 409);
+    for (const kiosk of [first, next]) assert.ok((await (await device(kiosk.headers)).json()).people[0].enrollment);
+    for (const session of [auth, other]) {
+      const removed = await admin(session, discard);
+      assert.equal(removed.status, 200);
+      assert.deepEqual(await removed.json(), { outcome: 'deleted' });
+    }
+    assert.equal(await f.db.prepare('SELECT id FROM jac_attendance_people WHERE id=?').bind(replacement.id).first(), null);
+    assert.equal(await f.db.prepare('SELECT id FROM jac_attendance_enrollments WHERE employee=?').bind(replacement.id).first(), null);
+    assert.equal((await (await device(first.headers)).json()).people.length, 0);
+    assert.equal((await (await admin(other)).json()).formerPeople.length, 1);
+  });
+
+  await t.test('a first punch racing a removal is either preserved or rejected by both devices', async () => {
+    const employee = randomUUID(), punch = { ...manual, employee, id: randomUUID() };
+    assert.equal((await admin(auth, { ...person, id: employee, code: 'TEMP' })).status, 200);
+    const [marked, removed] = await Promise.all([
+      admin(other, punch), admin(auth, { action: 'removePerson', employee, revision: 1 })
+    ]);
+    assert.equal(removed.status, 200);
+    assert.ok([200, 409].includes(marked.status));
+    const accepted = marked.status === 200;
+    assert.equal((await removed.json()).outcome, accepted ? 'history' : 'deleted');
+    const after = await (await call('/api/team-attendance/admin?employee=' + employee, auth)).json();
+    assert.equal(after.records.length, accepted ? 1 : 0);
+    assert.equal(after.formerPeople.some((p) => p.id === employee), accepted);
+    assert.ok(!after.people.some((p) => p.id === employee));
+    assert.equal((await admin(auth, { ...punch, id: randomUUID() })).status, 409);
+  });
   assert.equal((await admin(auth, { action: 'revoke', id: first.id })).status, 200);
   assert.equal((await device(first.headers)).status, 403);
   await f.db

@@ -19,10 +19,11 @@ function button(label, action) {
   node.onclick = () => run(action);
   return node;
 }
-function confirmAction(title, detail) {
+function confirmAction(title, detail, confirmLabel = 'Confirmar') {
   const dialog = $('confirmation');
   $('question').textContent = title;
   $('explain').textContent = detail;
+  $('confirmAction').textContent = confirmLabel;
   dialog.returnValue = 'cancel';
   dialog.showModal();
   return new Promise((resolve) =>
@@ -76,10 +77,16 @@ async function run(action) {
     writing = false;
   }
 }
-function fill(select, items, placeholder) {
+function fill(select, items, placeholder, former = []) {
   const previous = select.value;
-  select.replaceChildren(new Option(placeholder, ''));
-  for (const p of items) select.add(new Option(p.name + ' · ' + p.code, p.id));
+  const option = (p) => new Option(p.name + ' · ' + p.code, p.id);
+  select.replaceChildren(new Option(placeholder, ''), ...items.map(option));
+  if (former.length) {
+    const group = document.createElement('optgroup');
+    group.label = 'Personal eliminado';
+    group.append(...former.map(option));
+    select.append(group);
+  }
   if (Array.from(select.options).some((o) => o.value === previous)) select.value = previous;
 }
 function line(title, detail) {
@@ -94,7 +101,7 @@ function line(title, detail) {
 }
 function drawRoster(feed) {
   people = feed.people;
-  fill($('filter'), people, 'Todo el equipo');
+  fill($('filter'), people, 'Todo el equipo', feed.formerPeople);
   fill(
     $('manual').elements.employee,
     people.filter((p) => p.active),
@@ -155,6 +162,20 @@ function drawRoster(feed) {
         })
       );
     }
+    const remove = button('Eliminar empleado', async () => {
+      const confirmed = await confirmAction(
+        '¿Eliminar a ' + p.name + ' de Asistencia?',
+        'La ficha ' + p.code + ' se retirará de Personal y de los kioscos. Sus entradas, salidas y fotos anteriores seguirán en Marcaciones.',
+        'Eliminar empleado'
+      );
+      if (!confirmed) return;
+      const result = await api({ action: 'removePerson', employee: p.id, revision: p.revision });
+      await reload();
+      $('notice').textContent = p.name + ' se eliminó de Personal.' +
+        (result.outcome === 'history' ? ' Puedes consultar su historial en Marcaciones.' : '');
+    });
+    remove.className = 'delete-person';
+    item.actions.append(remove);
     $('peopleList').append(item.wrap);
   }
   $('pair').hidden = !bridge || devInfo.paired;
