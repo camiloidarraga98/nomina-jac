@@ -3191,6 +3191,7 @@ final class PayrollClientTests: XCTestCase {
         let weak = AttendanceFaceMatch.choose(["a": 0.10])
         let unclear = AttendanceFaceMatch.choose(["a": 0.80, "b": 0.79, "c": 0.15])
         XCTAssertEqual(weak, .suggested("a"))
+        XCTAssertEqual(AttendanceFaceMatch.choose(["a": 0.10, "b": 0.03, "c": -0.15]), .automatic("a"))
         XCTAssertEqual(AttendanceFaceMatch.choose(["a": 0.099]), .unknown)
         XCTAssertEqual(unclear, .needsCode(["a", "b"]))
         let agreed = try await TeamAttendanceDevice.resolve(weak, in: roster, expected: nil) {

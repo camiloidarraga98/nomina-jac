@@ -51,13 +51,15 @@ enum AttendanceFaceMatch: Equatable, Sendable {
     }
 
     static func choose(_ similarities: [String: Float]) -> Self {
-        let ranked = similarities.filter { $0.value.isFinite && $0.value >= 0.10 }
+        let ranked = similarities.filter { $0.value.isFinite }
             .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
-        guard let first = ranked.first else { return .unknown }
-        let contenders = ranked.prefix { first.value - $0.value <= 0.025 }
+        guard let first = ranked.first, first.value >= 0.10 else { return .unknown }
+        let contenders = ranked.prefix { $0.value >= 0.10 && first.value - $0.value <= 0.025 }
         if contenders.count > 1 { return .needsCode(contenders.map(\.key)) }
         let runnerUp = ranked.dropFirst().first
-        if first.value >= 0.86 || (first.value >= 0.64 && runnerUp.map { first.value - $0.value >= 0.05 } == true) {
+        // Even the minimum evidence can identify an employee when it separates them from the roster.
+        // With a single enrollment a weak similarity has no runner-up for comparison.
+        if first.value >= 0.86 || runnerUp.map({ first.value - $0.value >= 0.05 }) == true {
             return .automatic(first.key)
         }
         return .suggested(first.key)
